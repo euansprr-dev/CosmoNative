@@ -1,0 +1,152 @@
+name: CosmoOS
+options:
+  bundleIdPrefix: com.cosmo
+  deploymentTarget:
+    macOS: 26.0
+  xcodeVersion: 16.0
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 6.0.0
+  Supabase:
+    url: https://github.com/supabase-community/supabase-swift
+    from: 2.0.0
+  mlx-swift:
+    url: https://github.com/ml-explore/mlx-swift
+    from: 0.21.0
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: 0.15.0
+
+targets:
+  # Main Application
+  CosmoOS:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - AI
+      - Canvas
+      - Components
+      - config
+      - Core
+      - Cosmo
+      - CosmoGlass
+      - path: Daemon
+        excludes:
+          - "main.swift"  # Exclude daemon entry point from main app
+      - Data
+      - Editor
+      - Focus
+      - Graph
+      - Library
+      - Models
+      - Navigation
+      - Resources
+      - Scheduler
+      - Services
+      - Settings
+      - Shared
+      - Sync
+      - SwipeFile
+      - UI
+      - Views
+      - Voice
+    settings:
+      CODE_SIGN_ENTITLEMENTS: CosmoOS.entitlements
+      ENABLE_HARDENED_RUNTIME: YES
+      INFOPLIST_FILE: Info.plist
+      PRODUCT_BUNDLE_IDENTIFIER: com.cosmo.CosmoOS
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      SWIFT_VERSION: "5.9"
+      # Ad-Hoc Signing (Identity "-") - Enables Entitlements without Portal Profile
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Manual
+      PROVISIONING_PROFILE_SPECIFIER: ""
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGNING_ALLOWED: YES
+      DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: Supabase
+        product: Supabase
+      - package: mlx-swift
+        product: MLX
+      - package: mlx-swift
+        product: MLXNN
+      - package: mlx-swift
+        product: MLXRandom
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: mlx-swift-lm
+        product: MLXEmbedders
+      - package: WhisperKit
+        product: WhisperKit
+      - target: CosmoVoiceDaemon
+        embed: true
+        codeSign: false
+    preBuildScripts:
+
+  # XPC Service Daemon (keeps ML models hot in RAM)
+  CosmoVoiceDaemon:
+    type: xpc-service
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Daemon
+        includes:
+          - "main.swift"
+          - "CosmoVoiceDaemon.swift"
+          - "AXContextService.swift"
+        excludes:
+          - "DaemonXPCClient.swift"  # Client-side code, stays in main app
+          - "DaemonInstaller.swift"  # Client-side code, stays in main app
+          - "Info.plist"
+      # Include shared types needed by the daemon
+      - path: Shared/VoiceTypes.swift
+    dependencies:
+      - package: mlx-swift
+        product: MLX
+      - package: mlx-swift
+        product: MLXNN
+      - package: mlx-swift
+        product: MLXRandom
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: mlx-swift-lm
+        product: MLXEmbedders
+      - package: WhisperKit
+        product: WhisperKit
+    settings:
+      INFOPLIST_FILE: Daemon/Info.plist
+      PRODUCT_BUNDLE_IDENTIFIER: com.cosmo.voicedaemon
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      SWIFT_VERSION: "5.9"
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGNING_ALLOWED: YES
+      SKIP_INSTALL: YES
+      # XPC service specific settings
+      MACH_O_TYPE: mh_execute
+      # Entitlements for network access (downloading models)
+      CODE_SIGN_ENTITLEMENTS: Daemon/CosmoVoiceDaemon.entitlements
+
+schemes:
+  CosmoOS:
+    build:
+      targets:
+        CosmoOS: all
+    run:
+      config: Debug
+      executable: CosmoOS
+

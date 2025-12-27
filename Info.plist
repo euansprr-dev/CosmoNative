@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>CosmoOS</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.cosmo.CosmoOS</string>
+    <key>CFBundleName</key>
+    <string>CosmoOS</string>
+    <key>CFBundleDisplayName</key>
+    <string>CosmoOS</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>CosmoOS needs microphone access for voice commands</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>CosmoOS uses on-device speech recognition for instant voice commands</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>CosmoOS uses accessibility for global keyboard shortcuts (Option+Z for voice)</string>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
+</dict>
+</plist>

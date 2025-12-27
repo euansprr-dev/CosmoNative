@@ -1,0 +1,515 @@
+// CosmoOS/UI/Sanctuary/Dimensions/Reflection/ReflectionDimensionView.swift
+// Reflection Dimension View - "The Inner Sanctum" complete dimension experience
+// Phase 8: Following SANCTUARY_UI_SPEC_V2.md section 3.6
+
+import SwiftUI
+
+// MARK: - Reflection Dimension View
+
+/// The complete Reflection Dimension view with all components
+/// Layout: Emotional Landscape, Journaling Rhythm, Meditation, Themes, Grail Insights
+public struct ReflectionDimensionView: View {
+
+    // MARK: - Properties
+
+    @StateObject private var viewModel: ReflectionDimensionViewModel
+    @State private var selectedTheme: ReflectionTheme?
+    @State private var selectedInsight: GrailInsight?
+    @State private var showThemeDetail: Bool = false
+    @State private var showInsightDetail: Bool = false
+
+    let onBack: () -> Void
+
+    // MARK: - Initialization
+
+    public init(
+        data: ReflectionDimensionData = .preview,
+        onBack: @escaping () -> Void
+    ) {
+        _viewModel = StateObject(wrappedValue: ReflectionDimensionViewModel(data: data))
+        self.onBack = onBack
+    }
+
+    // MARK: - Body
+
+    public var body: some View {
+        ZStack {
+            // Background
+            backgroundLayer
+
+            // Main content
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: SanctuaryLayout.Spacing.xxl) {
+                    // Header with back button
+                    headerSection
+
+                    // Emotional Landscape
+                    EmotionalLandscapePanel(
+                        currentState: viewModel.data.currentEmotionalState,
+                        dataPoints: viewModel.data.emotionalDataPoints,
+                        weekAverage: viewModel.data.weekAverageState,
+                        trendDirection: viewModel.data.emotionalTrend,
+                        moodTimeline: viewModel.data.todayMoodTimeline
+                    )
+
+                    // Journaling and Meditation row
+                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
+                        JournalingRhythmPanel(
+                            currentStreak: viewModel.data.journalingStreak,
+                            longestStreak: viewModel.data.longestJournalingStreak,
+                            todayWordCount: viewModel.data.todayWordCount,
+                            averageWordCount: viewModel.data.averageWordCount,
+                            todayDepthScore: viewModel.data.todayDepthScore,
+                            weeklyDepthData: viewModel.weeklyDepthData,
+                            consistency: viewModel.data.journalingConsistency
+                        )
+                        .frame(maxWidth: .infinity)
+
+                        MeditationPanel(
+                            todayMinutes: viewModel.data.todayMeditationMinutes,
+                            goalMinutes: viewModel.data.meditationGoalMinutes,
+                            currentStreak: viewModel.data.meditationStreak,
+                            totalSessions: viewModel.data.totalMeditationSessions,
+                            totalMinutes: viewModel.data.totalMeditationMinutes,
+                            weeklyData: viewModel.data.weeklyMeditationData,
+                            preferredTime: viewModel.data.preferredMeditationTime
+                        )
+                        .frame(maxWidth: 400)
+                    }
+
+                    // Recurring Themes
+                    RecurringThemesPanel(
+                        themes: viewModel.data.themes,
+                        topThemes: viewModel.topThemes,
+                        emergingThemes: viewModel.emergingThemes,
+                        fadingThemes: viewModel.fadingThemes,
+                        onThemeTap: { theme in
+                            selectedTheme = theme
+                            showThemeDetail = true
+                        }
+                    )
+
+                    // Grail Insights
+                    GrailInsightsPanel(
+                        insights: viewModel.data.grailInsights,
+                        patterns: viewModel.data.insightPatterns,
+                        predictions: viewModel.data.predictions,
+                        totalInsights: viewModel.data.totalGrailInsights,
+                        onInsightTap: { insight in
+                            selectedInsight = insight
+                            showInsightDetail = true
+                        }
+                    )
+
+                    // Bottom spacer for safe area
+                    Spacer(minLength: 40)
+                }
+                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                .padding(.top, SanctuaryLayout.Spacing.lg)
+            }
+
+            // Detail overlays
+            detailOverlays
+        }
+    }
+
+    // MARK: - Background Layer
+
+    private var backgroundLayer: some View {
+        ZStack {
+            // Base void
+            SanctuaryColors.Background.void
+                .ignoresSafeArea()
+
+            // Reflection dimension tint - soft, meditative
+            RadialGradient(
+                colors: [
+                    SanctuaryColors.Dimensions.reflection.opacity(0.12),
+                    SanctuaryColors.Dimensions.reflection.opacity(0.04),
+                    Color.clear
+                ],
+                center: .center,
+                startRadius: 100,
+                endRadius: 700
+            )
+            .ignoresSafeArea()
+
+            // Subtle lotus-inspired pattern
+            ForEach(0..<8, id: \.self) { i in
+                petalShape(index: i)
+            }
+
+            // Floating light particles
+            ForEach(0..<15, id: \.self) { _ in
+                Circle()
+                    .fill(SanctuaryColors.Dimensions.reflection.opacity(Double.random(in: 0.03...0.08)))
+                    .frame(width: CGFloat.random(in: 3...8))
+                    .position(
+                        x: CGFloat.random(in: 0...1200),
+                        y: CGFloat.random(in: 0...1000)
+                    )
+                    .blur(radius: 2)
+            }
+
+            // Edge vignette
+            RadialGradient(
+                colors: [Color.clear, Color.black.opacity(0.5)],
+                center: .center,
+                startRadius: 300,
+                endRadius: 900
+            )
+            .ignoresSafeArea()
+        }
+    }
+
+    private func petalShape(index: Int) -> some View {
+        let angle = Double(index) * (360.0 / 8.0)
+        let radius: CGFloat = 250
+
+        return Ellipse()
+            .fill(SanctuaryColors.Dimensions.reflection.opacity(0.03))
+            .frame(width: 100, height: 200)
+            .rotationEffect(.degrees(angle))
+            .offset(
+                x: CGFloat(cos(angle * .pi / 180)) * radius * 0.3,
+                y: CGFloat(sin(angle * .pi / 180)) * radius * 0.3
+            )
+            .blur(radius: 30)
+    }
+
+    // MARK: - Header Section
+
+    private var headerSection: some View {
+        HStack(alignment: .center) {
+            // Back button
+            Button(action: onBack) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+
+                    Text("Sanctuary")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .foregroundColor(SanctuaryColors.Text.secondary)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            Spacer()
+
+            // Title
+            VStack(spacing: 2) {
+                Text("REFLECTION")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .tracking(4)
+
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                    Text("The Inner Sanctum")
+                        .font(.system(size: 12))
+                        .foregroundColor(SanctuaryColors.Text.secondary)
+
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
+
+                    Text("Level \(viewModel.dimensionLevel)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
+
+                    Text("Rank: SAGE")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                }
+            }
+
+            Spacer()
+
+            // Status indicator
+            statusIndicator
+        }
+    }
+
+    private var statusIndicator: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(SanctuaryColors.Semantic.success)
+                    .frame(width: 6, height: 6)
+                    .modifier(PulseModifier())
+
+                Text("MINDFUL")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+            }
+
+            Text(viewModel.data.currentEmotionalState.label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(SanctuaryColors.Dimensions.reflection)
+
+            Text("\(viewModel.data.journalingStreak) day streak")
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Detail Overlays
+
+    @ViewBuilder
+    private var detailOverlays: some View {
+        // Theme detail
+        if showThemeDetail, let theme = selectedTheme {
+            overlayBackground
+                .onTapGesture {
+                    showThemeDetail = false
+                }
+
+            ThemeDetailPanel(
+                theme: theme,
+                relatedThemes: viewModel.relatedThemes(for: theme),
+                journalExcerpts: [], // Would be loaded from journal entries
+                onDismiss: { showThemeDetail = false }
+            )
+            .frame(maxWidth: 450)
+            .transition(.scale.combined(with: .opacity))
+        }
+
+        // Insight detail
+        if showInsightDetail, let insight = selectedInsight {
+            overlayBackground
+                .onTapGesture {
+                    showInsightDetail = false
+                }
+
+            InsightDetailPanel(
+                insight: insight,
+                onDismiss: { showInsightDetail = false }
+            )
+            .frame(maxWidth: 500)
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    private var overlayBackground: some View {
+        Color.black.opacity(0.5)
+            .ignoresSafeArea()
+            .transition(.opacity)
+    }
+}
+
+// MARK: - Pulse Modifier
+
+@MainActor
+private struct PulseModifier: ViewModifier {
+    @State private var isPulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
+            .animation(
+                .easeInOut(duration: 1.2)
+                .repeatForever(autoreverses: true),
+                value: isPulsing
+            )
+            .onAppear { isPulsing = true }
+    }
+}
+
+// MARK: - Reflection Dimension View Model
+
+@MainActor
+public final class ReflectionDimensionViewModel: ObservableObject {
+
+    // MARK: - Published State
+
+    @Published public var data: ReflectionDimensionData
+    @Published public var isLoading: Bool = false
+
+    // MARK: - Computed Properties
+
+    public var dimensionLevel: Int {
+        // Would be loaded from CosmoLevelState
+        18
+    }
+
+    public var topThemes: [ReflectionTheme] {
+        data.themes.sorted { $0.frequency > $1.frequency }
+    }
+
+    public var emergingThemes: [ReflectionTheme] {
+        data.themes.filter { $0.growthRate > 0.1 }
+    }
+
+    public var fadingThemes: [ReflectionTheme] {
+        data.themes.filter { $0.growthRate < -0.1 }
+    }
+
+    public var weeklyDepthData: [DailyJournalDepth] {
+        // Generate from actual data or create sample
+        let calendar = Calendar.current
+        let today = Date()
+        let dayLabels = ["M", "T", "W", "T", "F", "S", "S"]
+
+        return (0..<7).map { offset in
+            let date = calendar.date(byAdding: .day, value: offset - 6, to: today) ?? today
+            let isToday = offset == 6
+            let hasEntry = Bool.random() || isToday
+            return DailyJournalDepth(
+                date: date,
+                dayLabel: dayLabels[offset],
+                depthScore: hasEntry ? Double.random(in: 4...9) : 0,
+                wordCount: hasEntry ? Int.random(in: 150...600) : 0,
+                hasEntry: hasEntry,
+                isToday: isToday
+            )
+        }
+    }
+
+    // MARK: - Initialization
+
+    public init(data: ReflectionDimensionData) {
+        self.data = data
+    }
+
+    // MARK: - Actions
+
+    public func refreshData() async {
+        isLoading = true
+        // Would load from SanctuaryDataProvider / reflection systems
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        isLoading = false
+    }
+
+    public func relatedThemes(for theme: ReflectionTheme) -> [ReflectionTheme] {
+        // Would calculate based on co-occurrence in journal entries
+        data.themes.filter { $0.id != theme.id }.prefix(3).map { $0 }
+    }
+
+    public func logMood(emoji: String, valence: Double, energy: Double) {
+        // TODO: Implement mood logging through ViewModel or DataProvider
+        // This would save to the reflection tracking system
+        // Currently a stub as data is immutable in the view
+        print("[ReflectionDimensionView] Mood logged: \(emoji) valence=\(valence) energy=\(energy)")
+    }
+
+    private func moodLabel(valence: Double, energy: Double) -> String {
+        if valence > 0.3 && energy > 0.3 { return "Excited" }
+        if valence > 0.3 && energy < -0.3 { return "Content" }
+        if valence < -0.3 && energy > 0.3 { return "Anxious" }
+        if valence < -0.3 && energy < -0.3 { return "Melancholy" }
+        return "Balanced"
+    }
+}
+
+// MARK: - Compact Reflection View
+
+/// Compact version for embedding in other views
+public struct ReflectionDimensionCompact: View {
+
+    let data: ReflectionDimensionData
+    let onExpand: () -> Void
+
+    @State private var isHovered: Bool = false
+
+    public init(data: ReflectionDimensionData, onExpand: @escaping () -> Void) {
+        self.data = data
+        self.onExpand = onExpand
+    }
+
+    public var body: some View {
+        VStack(spacing: SanctuaryLayout.Spacing.lg) {
+            // Header
+            HStack {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+
+                    Text("REFLECTION")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .tracking(2)
+                }
+
+                Spacer()
+
+                Button(action: onExpand) {
+                    HStack(spacing: 4) {
+                        Text("Expand")
+                            .font(.system(size: 11))
+
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            // Current emotional state
+            EmotionalLandscapeCompact(
+                currentState: data.currentEmotionalState,
+                trendDirection: data.emotionalTrend,
+                onExpand: {}
+            )
+
+            // Journaling compact
+            JournalingRhythmCompact(
+                currentStreak: data.journalingStreak,
+                todayWordCount: data.todayWordCount,
+                consistency: data.journalingConsistency,
+                onExpand: {}
+            )
+
+            // Meditation compact
+            MeditationCompact(
+                todayMinutes: data.todayMeditationMinutes,
+                goalMinutes: data.meditationGoalMinutes,
+                currentStreak: data.meditationStreak,
+                onExpand: {}
+            )
+        }
+        .padding(SanctuaryLayout.Spacing.lg)
+        .background(
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(
+                            isHovered ? SanctuaryColors.Dimensions.reflection.opacity(0.5) : SanctuaryColors.Glass.border,
+                            lineWidth: 1
+                        )
+                )
+        )
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(SanctuarySprings.hover, value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+// MARK: - Preview
+
+#if DEBUG
+struct ReflectionDimensionView_Previews: PreviewProvider {
+    static var previews: some View {
+        ReflectionDimensionView(
+            data: .preview,
+            onBack: {}
+        )
+        .frame(minWidth: 1200, minHeight: 1000)
+    }
+}
+#endif

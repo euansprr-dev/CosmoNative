@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service Identifier -->
+    <key>Label</key>
+    <string>com.cosmo.voicedaemon</string>
+
+    <!-- Bundle Identifier for XPC -->
+    <key>BundleProgram</key>
+    <string>/Applications/CosmoOS.app/Contents/XPCServices/CosmoVoiceDaemon.xpc/Contents/MacOS/CosmoVoiceDaemon</string>
+
+    <!-- Alternative: Use MachServices for XPC -->
+    <key>MachServices</key>
+    <dict>
+        <key>com.cosmo.voicedaemon</key>
+        <true/>
+    </dict>
+
+    <!-- Start on login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep daemon alive -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart if crashed -->
+        <key>SuccessfulExit</key>
+        <false/>
+        <!-- Only run when user is logged in -->
+        <key>AfterInitialDemand</key>
+        <true/>
+    </dict>
+
+    <!-- Throttle restart attempts (10 second minimum) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Enable XPC -->
+    <key>EnableTransactions</key>
+    <true/>
+
+    <!-- Low priority to avoid impacting foreground apps -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Nice value for background processing -->
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <!-- Memory pressure handling -->
+    <key>LowPriorityBackgroundIO</key>
+    <true/>
+
+    <!-- Standard output/error logging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/com.cosmo.voicedaemon.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.cosmo.voicedaemon.stderr.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Enable Metal GPU acceleration -->
+        <key>MLX_USE_GPU</key>
+        <string>1</string>
+        <!-- Set cache directory for MLX models -->
+        <key>MLX_CACHE_DIR</key>
+        <string>~/Library/Caches/com.cosmo.voicedaemon/mlx</string>
+    </dict>
+
+    <!-- Resource limits -->
+    <key>HardResourceLimits</key>
+    <dict>
+        <!-- Max 14GB memory (leave 2GB buffer) -->
+        <key>MemoryLock</key>
+        <integer>15032385536</integer>
+    </dict>
+
+    <!-- Session type (user session, not system) -->
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+    </array>
+
+    <!-- Associate with GUI session for AX permissions -->
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.cosmo.CosmoOS</string>
+    </array>
+</dict>
+</plist>

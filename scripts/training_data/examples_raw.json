@@ -1,0 +1,1114 @@
+[
+  {
+    "input": "Important order office supplies",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "order office supplies",
+      "metadata": {
+        "priority": "high"
+      }
+    }
+  },
+  {
+    "input": "I just had this idea for Morgan CI/CD pipeline",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "CI/CD pipeline",
+      "links": [
+        {
+          "type": "project",
+          "query": "Morgan"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add to Stephanie inbox referral program",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "referral program",
+      "links": [
+        {
+          "type": "project",
+          "query": "Stephanie"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Thought about microservices for side project",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "microservices",
+      "links": [
+        {
+          "type": "project",
+          "query": "side project"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Capture for Lisa goal setting",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "goal setting",
+      "links": [
+        {
+          "type": "project",
+          "query": "Lisa"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add to Kimberly inbox logging strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "logging strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "Kimberly"
+        }
+      ]
+    }
+  },
+  {
+    "input": "New idea for John pricing strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "pricing strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "John"
+        }
+      ]
+    }
+  },
+  {
+    "input": "pick up laundry",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "pick up laundry"
+    }
+  },
+  {
+    "input": "Todo drop off mail",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "drop off mail"
+    }
+  },
+  {
+    "input": "Need to update documentation",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "update documentation"
+    }
+  },
+  {
+    "input": "For David partnership strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "partnership strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "David"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create high priority idea about dark mode implementation",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "dark mode implementation",
+      "metadata": {
+        "priority": "high"
+      }
+    }
+  },
+  {
+    "input": "Add review analytics to tasks",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review analytics"
+    }
+  },
+  {
+    "input": "Add idea to Christopher project offline support",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "offline support",
+      "links": [
+        {
+          "type": "project",
+          "query": "Christopher"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Idea for customer success user personas",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "user personas",
+      "links": [
+        {
+          "type": "project",
+          "query": "customer success"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Need to text the group for Robert",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "text the group",
+      "links": [
+        {
+          "type": "project",
+          "query": "Robert"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add research for web platform about pricing strategy",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "pricing strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "web platform"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Drop a note about dark mode implementation",
+    "output": {
+      "action": "create",
+      "type": "note",
+      "title": "dark mode implementation"
+    }
+  },
+  {
+    "input": "Make sure I update dashboards",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "update dashboards"
+    }
+  },
+  {
+    "input": "Thought about case studies",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "case studies"
+    }
+  },
+  {
+    "input": "Low priority practice Spanish",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "practice Spanish",
+      "metadata": {
+        "priority": "low"
+      }
+    }
+  },
+  {
+    "input": "Brain dump about design tokens",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "design tokens"
+    }
+  },
+  {
+    "input": "New idea for PartnerGroup database schema",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "database schema",
+      "links": [
+        {
+          "type": "project",
+          "query": "PartnerGroup"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create project called home",
+    "output": {
+      "action": "create",
+      "type": "project",
+      "title": "home"
+    }
+  },
+  {
+    "input": "Thought for Amanda evening routine",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "evening routine",
+      "links": [
+        {
+          "type": "project",
+          "query": "Amanda"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Investigate skill development",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "skill development"
+    }
+  },
+  {
+    "input": "I just had this idea for Anthony logging strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "logging strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "Anthony"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Thought about growth hacking for Casey",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "growth hacking",
+      "links": [
+        {
+          "type": "project",
+          "query": "Casey"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Thought for Kevin market research",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "market research",
+      "links": [
+        {
+          "type": "project",
+          "query": "Kevin"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Look into caching strategy",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "caching strategy"
+    }
+  },
+  {
+    "input": "Idea for RedRock pricing strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "pricing strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "RedRock"
+        }
+      ]
+    }
+  },
+  {
+    "input": "New idea for finance about user onboarding",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "user onboarding",
+      "links": [
+        {
+          "type": "project",
+          "query": "finance"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add idea to Andrew project microservices",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "microservices",
+      "links": [
+        {
+          "type": "project",
+          "query": "Andrew"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Note about authorization patterns",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "authorization patterns"
+    }
+  },
+  {
+    "input": "review analytics",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review analytics"
+    }
+  },
+  {
+    "input": "Create idea about conversion funnel",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "conversion funnel"
+    }
+  },
+  {
+    "input": "Idea for Michael: pricing strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "pricing strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "Michael"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create connection about reading list",
+    "output": {
+      "action": "create",
+      "type": "connection",
+      "title": "reading list"
+    }
+  },
+  {
+    "input": "To do for PartnerGroup stretch",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "stretch",
+      "links": [
+        {
+          "type": "project",
+          "query": "PartnerGroup"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add note for Steven freemium model",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "freemium model",
+      "links": [
+        {
+          "type": "project",
+          "query": "Steven"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Remind me to update passport",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "update passport"
+    }
+  },
+  {
+    "input": "navigation patterns idea",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "navigation patterns"
+    }
+  },
+  {
+    "input": "Add to my list book dentist",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "book dentist"
+    }
+  },
+  {
+    "input": "Create task in Dr. Smith call dad",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "call dad",
+      "links": [
+        {
+          "type": "project",
+          "query": "Dr. Smith"
+        }
+      ]
+    }
+  },
+  {
+    "input": "New idea for customer success video content",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "video content",
+      "links": [
+        {
+          "type": "project",
+          "query": "customer success"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Look into social posts",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "social posts"
+    }
+  },
+  {
+    "input": "I have an idea about video content",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "video content"
+    }
+  },
+  {
+    "input": "For backend migration task to order supplies",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "order supplies",
+      "links": [
+        {
+          "type": "project",
+          "query": "backend migration"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Just got an idea for support database schema",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "database schema",
+      "links": [
+        {
+          "type": "project",
+          "query": "support"
+        }
+      ]
+    }
+  },
+  {
+    "input": "New idea for design referral program",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "referral program",
+      "links": [
+        {
+          "type": "project",
+          "query": "design"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Important idea about podcast episodes",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "podcast episodes",
+      "metadata": {
+        "priority": "high"
+      }
+    }
+  },
+  {
+    "input": "Todo call the dentist",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "call the dentist"
+    }
+  },
+  {
+    "input": "Let me note down email sequences",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "email sequences"
+    }
+  },
+  {
+    "input": "I just got this idea for personal error handling",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "error handling",
+      "links": [
+        {
+          "type": "project",
+          "query": "personal"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Just got an idea for Coach Williams market expansion",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "market expansion",
+      "links": [
+        {
+          "type": "project",
+          "query": "Coach Williams"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Brain dump about customer acquisition",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "customer acquisition"
+    }
+  },
+  {
+    "input": "Add to backend migration inbox social media campaign",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "social media campaign",
+      "links": [
+        {
+          "type": "project",
+          "query": "backend migration"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Save for Lisa unit economics",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "unit economics",
+      "links": [
+        {
+          "type": "project",
+          "query": "Lisa"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Put in Pat inbox data migration",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "data migration",
+      "links": [
+        {
+          "type": "project",
+          "query": "Pat"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Research about database schema",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "database schema"
+    }
+  },
+  {
+    "input": "exchange jacket for health project",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "exchange jacket",
+      "links": [
+        {
+          "type": "project",
+          "query": "health"
+        }
+      ]
+    }
+  },
+  {
+    "input": "To do for q1 goals cancel gym membership",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "cancel gym membership",
+      "links": [
+        {
+          "type": "project",
+          "query": "q1 goals"
+        }
+      ]
+    }
+  },
+  {
+    "input": "go to bank",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "go to bank"
+    }
+  },
+  {
+    "input": "For Sam idea about productivity system",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "productivity system",
+      "links": [
+        {
+          "type": "project",
+          "query": "Sam"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add thought on email sequences",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "email sequences"
+    }
+  },
+  {
+    "input": "New task update documentation",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "update documentation"
+    }
+  },
+  {
+    "input": "I just had this idea for marketing code refactoring",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "code refactoring",
+      "links": [
+        {
+          "type": "project",
+          "query": "marketing"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create task order office supplies",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "order office supplies"
+    }
+  },
+  {
+    "input": "New canvas conversion funnel",
+    "output": {
+      "action": "create",
+      "type": "thinkspace",
+      "title": "conversion funnel"
+    }
+  },
+  {
+    "input": "visit post office",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "visit post office"
+    }
+  },
+  {
+    "input": "Remind me for mobile app to review analytics",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review analytics",
+      "links": [
+        {
+          "type": "project",
+          "query": "mobile app"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add to Morgan fundraising deck",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "fundraising deck",
+      "links": [
+        {
+          "type": "project",
+          "query": "Morgan"
+        }
+      ]
+    }
+  },
+  {
+    "input": "I just got this idea for Nicole social posts",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "social posts",
+      "links": [
+        {
+          "type": "project",
+          "query": "Nicole"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add research for Alex about framework comparison",
+    "output": {
+      "action": "create",
+      "type": "research",
+      "title": "framework comparison",
+      "links": [
+        {
+          "type": "project",
+          "query": "Alex"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create task review applications",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review applications"
+    }
+  },
+  {
+    "input": "Add task for David go to bank",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "go to bank",
+      "links": [
+        {
+          "type": "project",
+          "query": "David"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Note for Jennifer meditation practice",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "meditation practice",
+      "links": [
+        {
+          "type": "project",
+          "query": "Jennifer"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Make sure I write tests",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "write tests"
+    }
+  },
+  {
+    "input": "New idea about deployment automation for Sarah",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "deployment automation",
+      "links": [
+        {
+          "type": "project",
+          "query": "Sarah"
+        }
+      ]
+    }
+  },
+  {
+    "input": "New idea about morning routine",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "morning routine"
+    }
+  },
+  {
+    "input": "To do schedule haircut",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "schedule haircut"
+    }
+  },
+  {
+    "input": "Add to my list cook dinner",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "cook dinner"
+    }
+  },
+  {
+    "input": "Create idea about framework comparison",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "framework comparison"
+    }
+  },
+  {
+    "input": "Make sure I review the PR",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review the PR"
+    }
+  },
+  {
+    "input": "Save for Casey logging strategy",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "logging strategy",
+      "links": [
+        {
+          "type": "project",
+          "query": "Casey"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add floating note about unit economics",
+    "output": {
+      "action": "create",
+      "type": "note",
+      "title": "unit economics"
+    }
+  },
+  {
+    "input": "Save for Michael documentation",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "documentation",
+      "links": [
+        {
+          "type": "project",
+          "query": "Michael"
+        }
+      ]
+    }
+  },
+  {
+    "input": "renew license for health project",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "renew license",
+      "links": [
+        {
+          "type": "project",
+          "query": "health"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Add idea for mobile UX",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "mobile UX"
+    }
+  },
+  {
+    "input": "Remind me to review applications",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "review applications"
+    }
+  },
+  {
+    "input": "New note authorization patterns",
+    "output": {
+      "action": "create",
+      "type": "note",
+      "title": "authorization patterns"
+    }
+  },
+  {
+    "input": "I need to practice Spanish",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "practice Spanish"
+    }
+  },
+  {
+    "input": "Mental model for whitepapers",
+    "output": {
+      "action": "create",
+      "type": "connection",
+      "title": "whitepapers"
+    }
+  },
+  {
+    "input": "Add note for backend migration goal setting",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "goal setting",
+      "links": [
+        {
+          "type": "project",
+          "query": "backend migration"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Brain dump about accessibility improvements",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "accessibility improvements"
+    }
+  },
+  {
+    "input": "New idea for GlobalSoft about code refactoring",
+    "output": {
+      "action": "create",
+      "type": "idea",
+      "title": "code refactoring",
+      "links": [
+        {
+          "type": "project",
+          "query": "GlobalSoft"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Remind me for q1 goals to exercise",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "exercise",
+      "links": [
+        {
+          "type": "project",
+          "query": "q1 goals"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Create task fix the bug",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "fix the bug"
+    }
+  },
+  {
+    "input": "To do for q2 planning update the roadmap",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "update the roadmap",
+      "links": [
+        {
+          "type": "project",
+          "query": "q2 planning"
+        }
+      ]
+    }
+  },
+  {
+    "input": "Task to clean apartment",
+    "output": {
+      "action": "create",
+      "type": "task",
+      "title": "clean apartment"
+    }
+  }
+]

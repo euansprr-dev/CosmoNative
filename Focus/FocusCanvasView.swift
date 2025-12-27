@@ -232,7 +232,9 @@ struct FocusCanvasView: View {
         }
     }
 
-    // MARK: - Editor View
+    // MARK: - Editor View (for standard focus types only)
+    // Note: Research and Connection types are handled directly in body
+    // and bypass standardFocusView entirely
     @ViewBuilder
     private var editorView: some View {
         switch entity.type {
@@ -242,22 +244,6 @@ struct FocusCanvasView: View {
         case .content:
             ContentEditorView(contentId: entity.id)
                 .environmentObject(voiceEngine)
-        case .research:
-            // Use new Research Focus Mode view
-            if let atom = loadedAtom {
-                ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
-            } else {
-                ProgressView("Loading...")
-                    .onAppear { loadAtomForFocusMode() }
-            }
-        case .connection:
-            // Use new Connection Focus Mode view
-            if let atom = loadedAtom {
-                ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
-            } else {
-                ProgressView("Loading...")
-                    .onAppear { loadAtomForFocusMode() }
-            }
         default:
             GenericEntityEditor(entity: entity)
         }

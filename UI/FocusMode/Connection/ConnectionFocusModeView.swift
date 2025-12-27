@@ -52,9 +52,16 @@ struct ConnectionFocusModeView: View {
                 }
             )
 
-            // Top bar overlay
+            // Top bar overlay (minimal)
             VStack {
                 topBar
+                Spacer()
+            }
+
+            // Floating title (centered, below top bar)
+            VStack {
+                floatingTitle
+                    .padding(.top, 60)
                 Spacer()
             }
 
@@ -77,6 +84,7 @@ struct ConnectionFocusModeView: View {
                 )
             }
         }
+        .ignoresSafeArea()
         .onAppear {
             loadState()
             Task {
@@ -115,124 +123,39 @@ struct ConnectionFocusModeView: View {
         }
     }
 
-    // MARK: - Anchored Connection Card
+    // MARK: - Anchored Connection Sections (Native Canvas Feel)
 
     private var anchoredConnectionCard: some View {
-        VStack(spacing: 0) {
-            // Card header
-            connectionCardHeader
-
-            Divider()
-                .background(Color.white.opacity(0.1))
-
-            // Sections scroll
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach($viewModel.state.sections) { $section in
-                        ConnectionSectionView(
-                            section: $section,
-                            onAddItem: { content in
-                                viewModel.addItem(content, toSection: section.type)
-                            },
-                            onEditItem: { item in
-                                viewModel.editItem(item, inSection: section.type)
-                            },
-                            onDeleteItem: { id in
-                                viewModel.deleteItem(id, fromSection: section.type)
-                            },
-                            onSourceTap: { sourceUUID in
-                                openSourceAsPanel(sourceUUID)
-                            },
-                            onAcceptGhost: { ghost in
-                                viewModel.acceptGhost(ghost, inSection: section.type)
-                            },
-                            onDismissGhost: { id in
-                                viewModel.dismissGhost(id, inSection: section.type)
-                            }
-                        )
+        VStack(spacing: 16) {
+            // Sections directly on canvas - no container
+            ForEach($viewModel.state.sections) { $section in
+                ConnectionSectionView(
+                    section: $section,
+                    onAddItem: { content in
+                        viewModel.addItem(content, toSection: section.type)
+                    },
+                    onEditItem: { item in
+                        viewModel.editItem(item, inSection: section.type)
+                    },
+                    onDeleteItem: { id in
+                        viewModel.deleteItem(id, fromSection: section.type)
+                    },
+                    onSourceTap: { sourceUUID in
+                        openSourceAsPanel(sourceUUID)
+                    },
+                    onAcceptGhost: { ghost in
+                        viewModel.acceptGhost(ghost, inSection: section.type)
+                    },
+                    onDismissGhost: { id in
+                        viewModel.dismissGhost(id, inSection: section.type)
                     }
-                }
-                .padding(16)
+                )
             }
         }
         .frame(width: 500)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.3), radius: 20, y: 10)
+        .padding(.top, 80) // Space for floating title
     }
 
-    // MARK: - Card Header
-
-    private var connectionCardHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                // Icon
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(CosmoColors.blockConnection)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("CONNECTION")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(CosmoColors.blockConnection)
-                        .tracking(1)
-
-                    Text(atom.title ?? "Untitled Connection")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
-                }
-
-                Spacer()
-
-                // Stats
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("\(viewModel.state.totalItemCount)")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("items")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(.white.opacity(0.7))
-
-                    HStack(spacing: 4) {
-                        Text("\(viewModel.state.completedSectionCount)/8")
-                            .font(.system(size: 11))
-                        Text("sections")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(.white.opacity(0.5))
-                }
-            }
-
-            // Ghost suggestions indicator
-            if viewModel.state.isGeneratingGhosts {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .tint(CosmoColors.blockConnection)
-
-                    Text("Finding suggestions...")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-            } else if viewModel.state.totalGhostCount > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10))
-                    Text("\(viewModel.state.totalGhostCount) suggestions available")
-                        .font(.system(size: 11))
-                }
-                .foregroundColor(CosmoColors.blockConnection.opacity(0.7))
-            }
-        }
-        .padding(16)
-        .background(CosmoColors.blockConnection.opacity(0.05))
-    }
 
     // MARK: - Floating Panels Layer
 
@@ -266,95 +189,121 @@ struct ConnectionFocusModeView: View {
         }
     }
 
-    // MARK: - Top Bar
+    // MARK: - Top Bar (Minimal)
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Back button
+            // Close button (X only, cleaner)
             Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(.white.opacity(0.7))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+                    .frame(width: 32, height: 32)
+                    .background(Color.white.opacity(0.08), in: Circle())
             }
             .buttonStyle(.plain)
-
-            // Title
-            Text(atom.title ?? "Connection")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(1)
-
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 10))
-                Text("CONNECTION")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-            }
-            .foregroundColor(CosmoColors.blockConnection)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(CosmoColors.blockConnection.opacity(0.15), in: Capsule())
 
             Spacer()
 
-            // Refresh ghosts button
-            Button {
-                Task {
-                    await viewModel.generateGhostSuggestions()
+            // Stats (item count and sections)
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Text("\(viewModel.state.totalItemCount)")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("items")
+                        .font(.system(size: 11))
                 }
-            } label: {
-                HStack(spacing: 6) {
+                .foregroundColor(.white.opacity(0.5))
+
+                HStack(spacing: 4) {
+                    Text("\(viewModel.state.completedSectionCount)/8")
+                        .font(.system(size: 11))
+                    Text("sections")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(.white.opacity(0.4))
+            }
+
+            Spacer()
+
+            // Right side actions
+            HStack(spacing: 8) {
+                // Refresh ghosts button
+                Button {
+                    Task {
+                        await viewModel.generateGhostSuggestions()
+                    }
+                } label: {
                     Image(systemName: "sparkles")
                         .font(.system(size: 12))
-                    Text("Refresh Suggestions")
-                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.08), in: Circle())
                 }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.state.isGeneratingGhosts)
+                .buttonStyle(.plain)
+                .disabled(viewModel.state.isGeneratingGhosts)
 
-            // Command-K button
-            Button {
-                showCommandK = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                    Text("⌘K")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                // Command-K button
+                Button {
+                    showCommandK = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11))
+                        Text("⌘K")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.08), in: Capsule())
                 }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Floating Title
+
+    private var floatingTitle: some View {
+        VStack(spacing: 6) {
+            // Title
+            Text(atom.title ?? "New Connection")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.white)
+
+            // Ghost suggestions indicator
+            if viewModel.state.isGeneratingGhosts {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .tint(CosmoColors.blockConnection)
+
+                    Text("Finding suggestions...")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+            } else if viewModel.state.totalGhostCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10))
+                    Text("\(viewModel.state.totalGhostCount) suggestions available")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(CosmoColors.blockConnection.opacity(0.7))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
-            LinearGradient(
-                colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.05))
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.ultraThinMaterial.opacity(0.3))
+                )
         )
     }
 
@@ -405,21 +354,6 @@ struct ConnectionFocusModeView: View {
     }
 
     // MARK: - Helpers
-
-    private var cardBackground: some View {
-        ZStack {
-            Color(hex: "#12121A")
-
-            LinearGradient(
-                colors: [
-                    CosmoColors.blockConnection.opacity(0.02),
-                    Color.clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
 
     private func handleRadialAction(_ action: RadialAction) {
         viewModel.radialMenuPosition = nil

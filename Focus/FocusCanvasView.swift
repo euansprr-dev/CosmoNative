@@ -48,6 +48,34 @@ struct FocusCanvasView: View {
     }
 
     var body: some View {
+        // Connection type gets its own full-screen view without wrapper
+        if entity.type == .connection {
+            connectionFocusView
+        } else {
+            standardFocusView
+        }
+    }
+
+    // MARK: - Connection Focus View (Full-screen, no wrapper)
+    @ViewBuilder
+    private var connectionFocusView: some View {
+        if let atom = loadedAtom {
+            ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
+        } else {
+            ZStack {
+                CosmoColors.thinkspaceVoid
+                    .ignoresSafeArea()
+                ProgressView("Loading...")
+                    .tint(.white)
+                    .foregroundColor(.white)
+            }
+            .onAppear { loadAtomForFocusMode() }
+        }
+    }
+
+    // MARK: - Standard Focus View (Ideas, Content, Research, etc.)
+    private var standardFocusView: some View {
         GeometryReader { geometry in
             let screenCenter = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
             let totalHorizontalOffset = canvasOffset.width + panOffset.width

@@ -48,9 +48,11 @@ struct FocusCanvasView: View {
     }
 
     var body: some View {
-        // Connection type gets its own full-screen view without wrapper
+        // Connection and Research types get their own full-screen view without wrapper
         if entity.type == .connection {
             connectionFocusView
+        } else if entity.type == .research {
+            researchFocusView
         } else {
             standardFocusView
         }
@@ -61,6 +63,24 @@ struct FocusCanvasView: View {
     private var connectionFocusView: some View {
         if let atom = loadedAtom {
             ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
+        } else {
+            ZStack {
+                CosmoColors.thinkspaceVoid
+                    .ignoresSafeArea()
+                ProgressView("Loading...")
+                    .tint(.white)
+                    .foregroundColor(.white)
+            }
+            .onAppear { loadAtomForFocusMode() }
+        }
+    }
+
+    // MARK: - Research Focus View (Full-screen, no wrapper)
+    @ViewBuilder
+    private var researchFocusView: some View {
+        if let atom = loadedAtom {
+            ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()
         } else {
             ZStack {

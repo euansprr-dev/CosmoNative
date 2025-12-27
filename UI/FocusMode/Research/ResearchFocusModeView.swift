@@ -52,7 +52,7 @@ struct ResearchFocusModeView: View {
                 }
             )
 
-            // Top bar overlay
+            // Top bar overlay (minimal)
             VStack {
                 topBar
                 Spacer()
@@ -69,6 +69,7 @@ struct ResearchFocusModeView: View {
                 )
             }
         }
+        .ignoresSafeArea()
         .onAppear {
             loadState()
         }
@@ -305,102 +306,69 @@ struct ResearchFocusModeView: View {
         }
     }
 
-    // MARK: - Top Bar
+    // MARK: - Top Bar (Minimal)
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Back button
+            // Close button (X only, cleaner)
             Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(.white.opacity(0.7))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+                    .frame(width: 32, height: 32)
+                    .background(Color.white.opacity(0.08), in: Circle())
             }
             .buttonStyle(.plain)
 
-            // Title
-            Text(atom.title ?? "Research")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(1)
-
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
-                Text("RESEARCH")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-            }
-            .foregroundColor(CosmoColors.blockResearch)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(CosmoColors.blockResearch.opacity(0.15), in: Capsule())
-
             Spacer()
 
-            // Annotation count
+            // Annotation count (centered)
             HStack(spacing: 4) {
                 Image(systemName: "note.text")
                     .font(.system(size: 11))
                 Text("\(viewModel.state.allAnnotations.count)")
                     .font(.system(size: 11, weight: .medium))
+                Text("annotations")
+                    .font(.system(size: 11))
             }
-            .foregroundColor(.white.opacity(0.6))
+            .foregroundColor(.white.opacity(0.5))
 
-            // Add Research Agent button
-            Button {
-                showResearchAgentSheet = true
-            } label: {
-                HStack(spacing: 6) {
+            Spacer()
+
+            // Right side actions
+            HStack(spacing: 8) {
+                // Research Agent button
+                Button {
+                    showResearchAgentSheet = true
+                } label: {
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 12))
-                    Text("Research Agent")
-                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Color(hex: "#06B6D4"))
+                        .frame(width: 32, height: 32)
+                        .background(Color(hex: "#06B6D4").opacity(0.15), in: Circle())
                 }
-                .foregroundColor(Color(hex: "#06B6D4"))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(hex: "#06B6D4").opacity(0.15), in: Capsule())
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(.plain)
 
-            // Command-K button
-            Button {
-                showCommandK = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                    Text("⌘K")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                // Command-K button
+                Button {
+                    showCommandK = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11))
+                        Text("⌘K")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.08), in: Capsule())
                 }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(
-            LinearGradient(
-                colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
     }
 
     // MARK: - Helpers

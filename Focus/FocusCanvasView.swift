@@ -48,41 +48,21 @@ struct FocusCanvasView: View {
     }
 
     var body: some View {
-        // Connection and Research types get their own full-screen view without wrapper
-        if entity.type == .connection {
-            connectionFocusView
-        } else if entity.type == .research {
-            researchFocusView
-        } else {
-            standardFocusView
-        }
-    }
-
-    // MARK: - Connection Focus View (Full-screen, no wrapper)
-    @ViewBuilder
-    private var connectionFocusView: some View {
+        // Route based on loaded atom type (not entity type)
+        // Connection and Research atoms get their own full-screen views without wrapper
         if let atom = loadedAtom {
-            ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
-                .ignoresSafeArea()
-        } else {
-            ZStack {
-                CosmoColors.thinkspaceVoid
+            switch atom.type {
+            case .connection:
+                ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
                     .ignoresSafeArea()
-                ProgressView("Loading...")
-                    .tint(.white)
-                    .foregroundColor(.white)
+            case .research:
+                ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            default:
+                standardFocusView
             }
-            .onAppear { loadAtomForFocusMode() }
-        }
-    }
-
-    // MARK: - Research Focus View (Full-screen, no wrapper)
-    @ViewBuilder
-    private var researchFocusView: some View {
-        if let atom = loadedAtom {
-            ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
-                .ignoresSafeArea()
         } else {
+            // Loading state - show dark canvas while loading atom
             ZStack {
                 CosmoColors.thinkspaceVoid
                     .ignoresSafeArea()

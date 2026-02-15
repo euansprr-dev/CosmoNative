@@ -23,6 +23,8 @@ public struct ScheduleBlockViewModel: Identifiable, Equatable {
     public let linkedTaskTitles: [String]
     public let difficulty: Double
     public let isCoreObjective: Bool
+    public let isRecurring: Bool
+    public let recurrenceText: String?
 
     public init(
         id: String,
@@ -37,7 +39,9 @@ public struct ScheduleBlockViewModel: Identifiable, Equatable {
         linkedAtomIds: [String] = [],
         linkedTaskTitles: [String] = [],
         difficulty: Double = 1.0,
-        isCoreObjective: Bool = false
+        isCoreObjective: Bool = false,
+        isRecurring: Bool = false,
+        recurrenceText: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -52,6 +56,8 @@ public struct ScheduleBlockViewModel: Identifiable, Equatable {
         self.linkedTaskTitles = linkedTaskTitles
         self.difficulty = difficulty
         self.isCoreObjective = isCoreObjective
+        self.isRecurring = isRecurring
+        self.recurrenceText = recurrenceText
     }
 
     public var duration: TimeInterval {
@@ -348,6 +354,11 @@ public struct TimeBlockCard: View {
                 .background(accentColor.opacity(0.1))
                 .clipShape(Capsule())
 
+            // Recurring badge
+            if block.isRecurring {
+                recurringBadge
+            }
+
             // Core objective badge
             if block.isCoreObjective {
                 HStack(spacing: 3) {
@@ -373,6 +384,20 @@ public struct TimeBlockCard: View {
             // XP preview
             xpPreview
         }
+    }
+
+    private var recurringBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 9))
+            Text(block.recurrenceText ?? "Recurring")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(PlannerumColors.textTertiary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.white.opacity(0.08))
+        .clipShape(Capsule())
     }
 
     private var difficultyIndicator: some View {

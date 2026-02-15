@@ -162,6 +162,8 @@ struct LibraryBrowser: View {
             let database = CosmoDatabase.shared
             var loadedEntities: [LibraryEntity] = []
 
+            print("📚 LibraryBrowser: Loading entities (filter: \(selectedFilter?.rawValue ?? "all"), query: \"\(query)\")")
+
             // Load based on filter
             if selectedFilter == nil || selectedFilter == .idea {
                 let ideas = try? await database.asyncRead { db in
@@ -177,7 +179,9 @@ struct LibraryBrowser: View {
                     return try request.order(Column("updated_at").desc).limit(20).fetchAll(db).map { IdeaWrapper(atom: $0) }
                 }
 
-                loadedEntities += (ideas ?? []).map { (idea: IdeaWrapper) -> LibraryEntity in
+                let ideaList = ideas ?? []
+                print("   📝 Ideas: \(ideaList.count)")
+                loadedEntities += ideaList.map { (idea: IdeaWrapper) -> LibraryEntity in
                     LibraryEntity(
                         entityId: idea.id ?? -1,
                         type: .idea,
@@ -232,6 +236,7 @@ struct LibraryBrowser: View {
                     return try request.order(Column("updated_at").desc).limit(20).fetchAll(db).map { ResearchWrapper(atom: $0) }
                 }) ?? []
 
+                print("   🔬 Research: \(research.count)")
                 loadedEntities += research.map { (item: ResearchWrapper) -> LibraryEntity in
                     LibraryEntity(
                         entityId: item.id ?? -1,
@@ -241,7 +246,9 @@ struct LibraryBrowser: View {
                         metadata: [
                             "sourceType": item.sourceType?.rawValue ?? "unknown",
                             "domain": item.domain ?? "",
-                            "thumbnailUrl": item.thumbnailUrl ?? ""
+                            "thumbnailUrl": item.thumbnailUrl ?? "",
+                            "transcriptStatus": item.richContent?.transcriptStatus ?? "",
+                            "uuid": item.uuid
                         ],
                         updatedAt: ISO8601DateFormatter().date(from: item.updatedAt)
                     )
@@ -374,6 +381,14 @@ struct LibraryBrowser: View {
             } else {
                 // Home Page: Sort by recency
                 loadedEntities.sort { ($0.updatedAt ?? Date.distantPast) > ($1.updatedAt ?? Date.distantPast) }
+            }
+
+            print("📚 LibraryBrowser: Loaded \(loadedEntities.count) entities")
+            for entity in loadedEntities.prefix(5) {
+                print("   - [\(entity.type.rawValue)] \(entity.title)")
+            }
+            if loadedEntities.count > 5 {
+                print("   ... and \(loadedEntities.count - 5) more")
             }
 
             await MainActor.run {

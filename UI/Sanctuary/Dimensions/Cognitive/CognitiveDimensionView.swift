@@ -13,6 +13,7 @@ public struct CognitiveDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: CognitiveDimensionViewModel
+    @StateObject private var dataProvider = CognitiveDataProvider()
     @State private var breathingScale: CGFloat = 1.0
     @State private var selectedSession: DeepWorkSession?
     @State private var selectedCorrelation: CognitiveCorrelation?
@@ -20,13 +21,12 @@ public struct CognitiveDimensionView: View {
     @State private var showSessionDetail: Bool = false
     @State private var showCorrelationDetail: Bool = false
     @State private var showInterruptionDetail: Bool = false
-
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: CognitiveDimensionData = .preview,
+        data: CognitiveDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: CognitiveDimensionViewModel(data: data))
@@ -88,6 +88,10 @@ public struct CognitiveDimensionView: View {
         }
         .onAppear {
             startBreathingAnimation()
+        }
+        .task {
+            await dataProvider.refreshData()
+            viewModel.data = dataProvider.data
         }
     }
 
@@ -375,8 +379,10 @@ public final class CognitiveDimensionViewModel: ObservableObject {
 
     public func refreshData() async {
         isLoading = true
-        // Would load from SanctuaryDataProvider
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        let provider = CognitiveDataProvider()
+        await provider.refreshData()
+        data = provider.data
+        currentPrediction = generatePrediction()
         isLoading = false
     }
 

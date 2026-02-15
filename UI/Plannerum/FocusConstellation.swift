@@ -161,7 +161,7 @@ public struct FocusConstellation: View {
         VStack(spacing: 24) {
             // Dormant message
             VStack(spacing: 8) {
-                Text("The void is calm")
+                Text("Ready to focus")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(PlannerumColors.textSecondary)
 
@@ -757,17 +757,17 @@ public struct HorizontalFocusStrip: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
+        Group {
             if let block = viewModel.activeBlock, viewModel.isInFocus {
-                // Active state - inline layout
-                activeFocusContent(block: block)
-            } else {
-                // Dormant state - minimal
-                dormantContent
+                // Active state - inline layout (only shown when a session is active)
+                HStack(spacing: 0) {
+                    activeFocusContent(block: block)
+                }
+                .frame(height: 56)
+                .background(stripBackground)
             }
+            // Dormant state removed — no bar when no session is active
         }
-        .frame(height: 56)
-        .background(stripBackground)
         .onAppear {
             Task { await viewModel.loadActiveFocus() }
             startPulse()
@@ -855,7 +855,7 @@ public struct HorizontalFocusStrip: View {
                     .fill(PlannerumColors.textMuted.opacity(0.3))
                     .frame(width: 8, height: 8)
 
-                Text("The void is calm")
+                Text("Ready to focus")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(PlannerumColors.textMuted)
 

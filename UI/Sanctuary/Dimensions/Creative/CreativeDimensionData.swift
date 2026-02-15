@@ -793,6 +793,18 @@ public struct CreativeDimensionData: Sendable {
     }
 }
 
+// MARK: - Empty Data
+
+extension CreativeDimensionData {
+    public static var empty: CreativeDimensionData {
+        CreativeDimensionData()
+    }
+
+    public var isEmpty: Bool {
+        totalReach == 0 && recentPosts.isEmpty && followerCount == 0
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

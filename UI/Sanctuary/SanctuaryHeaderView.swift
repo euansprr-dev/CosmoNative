@@ -17,6 +17,7 @@ public struct SanctuaryHeaderView: View {
     let onBack: (() -> Void)?
 
     @State private var xpBarAnimationProgress: CGFloat = 0
+    @State private var shimmerOffset: CGFloat = 0
     @State private var isHoveringBack: Bool = false
 
     // MARK: - Initialization
@@ -61,8 +62,8 @@ public struct SanctuaryHeaderView: View {
             Spacer()
 
             // Right side - Live metrics panel
-            if liveMetrics != nil {
-                SanctuaryLiveMetricsPanel(metrics: liveMetrics!)
+            if let metrics = liveMetrics, metrics.currentHRV != nil {
+                SanctuaryLiveMetricsPanel(metrics: metrics)
             }
         }
         .padding(.horizontal, SanctuaryLayout.Spacing.xxl)
@@ -175,30 +176,33 @@ public struct SanctuaryHeaderView: View {
     // MARK: - Shimmer Effect
 
     private func shimmerEffect(width: CGFloat, progress: Double) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.0) / 2.0
-
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0),
-                            Color.white.opacity(0.3),
-                            Color.white.opacity(0)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
+        // Core Animation-driven shimmer — no TimelineView CPU overhead
+        let fillWidth = width * CGFloat(progress)
+        return Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0),
+                        Color.white.opacity(0.3),
+                        Color.white.opacity(0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
                 )
-                .frame(width: 60, height: 8)
-                .offset(x: -30 + (width * CGFloat(progress) + 60) * CGFloat(phase))
-                .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs))
-                .mask(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs)
-                        .frame(width: width * CGFloat(progress), height: 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                )
-        }
+            )
+            .frame(width: 60, height: 8)
+            .offset(x: -30 + (fillWidth + 60) * shimmerOffset)
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs))
+            .mask(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs)
+                    .frame(width: fillWidth, height: 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            )
+            .onAppear {
+                withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 1.0
+                }
+            }
     }
 
     // MARK: - Animation
@@ -215,11 +219,15 @@ public struct SanctuaryHeaderView: View {
         SanctuaryRanks.color(for: rank)
     }
 
+    private static let _numberFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = ","
+        return f
+    }()
+
     private func formatNumber(_ number: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = ","
-        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
+        Self._numberFormatter.string(from: NSNumber(value: number)) ?? "\(number)"
     }
 }
 

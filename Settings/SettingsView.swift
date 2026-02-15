@@ -16,6 +16,7 @@ struct SettingsView: View {
         case appearance = "Appearance"
         case shortcuts = "Shortcuts"
         case about = "About"
+        case cosmoAgent = "Cosmo Agent"
 
         var icon: String {
             switch self {
@@ -25,6 +26,7 @@ struct SettingsView: View {
             case .appearance: return "paintbrush"
             case .shortcuts: return "keyboard"
             case .about: return "info.circle"
+            case .cosmoAgent: return "sparkles.rectangle.stack"
             }
         }
     }
@@ -53,7 +55,7 @@ struct SettingsView: View {
                 settingsContent
             }
         }
-        .frame(width: 620, height: 480)
+        .frame(width: 700, height: 480)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(CosmoColors.softWhite)
@@ -169,6 +171,8 @@ struct SettingsView: View {
                     shortcutsSettings
                 case .about:
                     aboutSettings
+                case .cosmoAgent:
+                    CosmoAgentSettingsTab()
                 }
             }
             .padding(24)

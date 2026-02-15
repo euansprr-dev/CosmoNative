@@ -384,6 +384,27 @@ public struct GraphQueryEngine: Sendable {
         }
     }
 
+    /// Batch query for edges where both source AND target are in the provided UUID set
+    @MainActor
+    public func getEdgesForBlocks(uuids: [String]) async throws -> [GraphEdge] {
+        guard uuids.count >= 2 else { return [] }
+        let placeholders = uuids.map { _ in "?" }.joined(separator: ", ")
+        let capturedUuids = uuids
+        return try await database.asyncRead { db in
+            try GraphEdge.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM graph_edges
+                    WHERE source_uuid IN (\(placeholders))
+                    AND target_uuid IN (\(placeholders))
+                    ORDER BY combined_weight DESC
+                    LIMIT 50
+                """,
+                arguments: StatementArguments(capturedUuids + capturedUuids)
+            )
+        }
+    }
+
     // MARK: - Path Finding
 
     /// Find shortest path between two nodes (BFS)

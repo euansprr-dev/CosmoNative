@@ -13,7 +13,7 @@ public struct PlannerumView: View {
 
     // MARK: - State
 
-    @State private var viewMode: PlannerumViewMode = .day
+    @State private var viewMode: PlannerumViewMode = .now
     @State private var selectedDate: Date = Date()
     @State private var selectedTimeBlock: ScheduleBlockViewModel?
     @State private var selectedInboxItem: UncommittedItemViewModel?
@@ -36,6 +36,18 @@ public struct PlannerumView: View {
 
     // XP State
     @StateObject private var xpViewModel = PlannerumXPViewModel()
+
+    // Plannerum ViewModel (for Now mode)
+    @StateObject private var plannerumViewModel = PlannerumViewModel.shared
+
+    // Deep Work Session Engine (used by SessionTimerBar overlay)
+    @StateObject private var sessionEngine = DeepWorkSessionEngine()
+
+    // Active Session Timer Manager (used by Now view hero — this is the real session source)
+    @ObservedObject private var sessionManager = ActiveSessionTimerManager.shared
+
+    // Keyboard shortcut state
+    @State private var showNewTaskSheet = false
 
     // Callbacks
     let onDismiss: () -> Void
@@ -140,6 +152,18 @@ public struct PlannerumView: View {
                         .padding(.horizontal, 20)
                         .padding(.bottom, 16)
                 }
+
+                // SESSION TIMER BAR OVERLAY (floats above content)
+                SessionTimerBar(engine: sessionEngine)
+
+                // SESSION SUMMARY CARD OVERLAY (modal after session ends)
+                if let result = sessionEngine.sessionResult {
+                    SessionSummaryCard(result: result) { notes in
+                        sessionEngine.dismissResult()
+                    }
+                    .transition(.opacity)
+                    .animation(PlannerumSprings.expand, value: sessionEngine.sessionResult != nil)
+                }
             }
         }
         .onAppear {
@@ -149,13 +173,89 @@ public struct PlannerumView: View {
 
             Task {
                 await xpViewModel.loadXPData()
+                // Load Plannerum data for Now mode
+                await plannerumViewModel.refresh()
+                plannerumViewModel.startLiveUpdates()
             }
         }
         .onDisappear {
             animationTimerCancellable?.cancel()
             animationTimerCancellable = nil
+            plannerumViewModel.stopLiveUpdates()
         }
         .preferredColorScheme(.dark)
+        // MARK: - Keyboard Shortcuts
+        .background {
+            // N = New task
+            Button("") { showNewTaskSheet = true }
+                .keyboardShortcut("n", modifiers: [])
+                .hidden()
+
+            // S = Start session on focus task
+            Button("") {
+                if let task = plannerumViewModel.focusNowTask?.task {
+                    let sessionType = sessionTypeForIntent(task.intent)
+                    sessionManager.startSession(
+                        taskId: task.id,
+                        taskTitle: task.title,
+                        sessionType: sessionType,
+                        targetMinutes: task.estimatedMinutes
+                    )
+                    plannerumViewModel.startSession(for: task)
+                }
+            }
+            .keyboardShortcut("s", modifiers: [])
+            .hidden()
+
+            // Space = Toggle completion on first today task
+            Button("") {
+                if let firstTask = plannerumViewModel.todayTasks.first {
+                    Task {
+                        await plannerumViewModel.completeTask(taskId: firstTask.id)
+                    }
+                }
+            }
+            .keyboardShortcut(.space, modifiers: [])
+            .hidden()
+
+            // Cmd+Shift+D = Day view
+            Button("") {
+                withAnimation(PlannerumSprings.viewMode) { viewMode = .day }
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .hidden()
+
+            // Cmd+Shift+W = Week view
+            Button("") {
+                withAnimation(PlannerumSprings.viewMode) { viewMode = .week }
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .hidden()
+
+            // Cmd+Shift+Q = Quarter view
+            Button("") {
+                withAnimation(PlannerumSprings.viewMode) { viewMode = .quarter }
+            }
+            .keyboardShortcut("q", modifiers: [.command, .shift])
+            .hidden()
+        }
+        .sheet(isPresented: $showNewTaskSheet) {
+            QuickTaskSheet(onAdd: { title, intent, linkedIdeaUUID, linkedContentUUID, linkedAtomUUID, recurrenceJSON in
+                Task {
+                    await plannerumViewModel.quickAddTask(
+                        title: title,
+                        intent: intent,
+                        linkedIdeaUUID: linkedIdeaUUID,
+                        linkedContentUUID: linkedContentUUID,
+                        linkedAtomUUID: linkedAtomUUID,
+                        recurrenceJSON: recurrenceJSON
+                    )
+                }
+                showNewTaskSheet = false
+            }, onCancel: {
+                showNewTaskSheet = false
+            })
+        }
     }
 
     // MARK: - Sanctuary-Style Header
@@ -382,6 +482,13 @@ public struct PlannerumView: View {
     @ViewBuilder
     private var temporalCanvasView: some View {
         switch viewMode {
+        case .now:
+            nowFocusLayout
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .leading).combined(with: .opacity)
+                ))
+
         case .day:
             DayTimelineView(
                 date: selectedDate,
@@ -446,6 +553,611 @@ public struct PlannerumView: View {
         QuarterView()
     }
 
+    // MARK: - Now Focus Layout (Session-Centric View)
+
+    /// The Now view: active session hero + intent-based resources + right sidebar
+    private var nowFocusLayout: some View {
+        HStack(alignment: .top, spacing: PlannerumLayout.spacingXL) {
+            // LEFT MAIN AREA: Active Session + Relevant Resources
+            VStack(spacing: PlannerumLayout.spacingLG) {
+                // TOP: Active Session Card or FocusNowCard
+                nowHeroSection
+
+                // MIDDLE: Relevant Resources Panel
+                nowResourcesSection
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+
+            // RIGHT SIDEBAR: Quests + Upcoming (fixed width)
+            VStack(spacing: PlannerumLayout.spacingLG) {
+                DailyQuestsPanel(
+                    questEngine: plannerumViewModel.liveQuestEngine,
+                    currentStreak: plannerumViewModel.xpProgress.streak
+                )
+
+                UpcomingSection(
+                    upcomingDays: plannerumViewModel.upcomingDays,
+                    onDayTap: { date in
+                        selectedDate = date
+                        withAnimation(PlannerumSprings.viewMode) {
+                            viewMode = .day
+                        }
+                    },
+                    onTaskTap: { _ in }
+                )
+
+                Spacer(minLength: 0)
+            }
+            .frame(width: DailyQuestsTokens.panelWidth)
+        }
+    }
+
+    // MARK: - Now Hero Section (Active Session or Focus Now)
+
+    @ViewBuilder
+    private var nowHeroSection: some View {
+        if let session = sessionManager.currentSession, sessionManager.state != .idle {
+            activeSessionCard(session)
+        } else {
+            FocusNowCard(
+                recommendation: plannerumViewModel.focusNowTask,
+                contextMessage: plannerumViewModel.contextMessage,
+                currentEnergy: plannerumViewModel.currentEnergy,
+                currentFocus: plannerumViewModel.currentFocus,
+                onStartSession: {
+                    if let task = plannerumViewModel.focusNowTask?.task {
+                        // Start the actual timer via ActiveSessionTimerManager
+                        let sessionType = sessionTypeForIntent(task.intent)
+                        sessionManager.startSession(
+                            taskId: task.id,
+                            taskTitle: task.title,
+                            sessionType: sessionType,
+                            targetMinutes: task.estimatedMinutes
+                        )
+
+                        // Route to the intent-specific workspace
+                        plannerumViewModel.startSession(for: task)
+                    }
+                },
+                onSkip: {
+                    Task { await plannerumViewModel.skipFocusNow() }
+                },
+                onTaskTap: { _ in
+                    selectedInboxItem = nil
+                }
+            )
+        }
+    }
+
+    // MARK: - Active Session Card
+
+    private func activeSessionCard(_ session: ActiveSession) -> some View {
+        let sessionType = session.sessionType
+        let accentColor = sessionTypeColor(sessionType)
+
+        return VStack(spacing: 0) {
+            HStack(spacing: PlannerumLayout.spacingLG) {
+                // Left: Task info + timer
+                VStack(alignment: .leading, spacing: PlannerumLayout.spacingSM) {
+                    // Session type badge
+                    sessionTypeBadge(sessionType)
+
+                    // Task name — the REAL block title from the active session
+                    Text(session.taskTitle)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(PlannerumColors.textPrimary)
+                        .lineLimit(2)
+
+                    // Live dimension routing label
+                    activeSessionDimensionLabel(session)
+
+                    // Elapsed timer — reads from the shared manager's live elapsed seconds
+                    activeSessionTimerLabel
+                }
+
+                Spacer()
+
+                // Right: Progress ring + controls
+                VStack(spacing: PlannerumLayout.spacingMD) {
+                    activeSessionProgressRing(session)
+                    activeSessionControls(session)
+                }
+            }
+            .padding(PlannerumLayout.spacingXL)
+        }
+        .background(activeSessionBackground(accentColor))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(accentColor.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: accentColor.opacity(0.15), radius: 20, y: 4)
+    }
+
+    @ViewBuilder
+    private func intentBadgeLabel(_ intent: TaskIntent) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: intent.iconName)
+                .font(.system(size: 9, weight: .semibold))
+            Text(intent.displayName)
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundColor(intent.color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(intent.color.opacity(0.15))
+        .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func sessionTypeBadge(_ type: SessionType) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: type.iconName)
+                .font(.system(size: 11, weight: .semibold))
+            Text(type.displayName)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundColor(sessionTypeColor(type))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(sessionTypeColor(type).opacity(0.15))
+        .clipShape(Capsule())
+    }
+
+    private func sessionTypeColor(_ type: SessionType) -> Color {
+        switch type {
+        case .deepWork: return PlannerumColors.primary
+        case .writing: return Color(red: 99/255, green: 102/255, blue: 241/255)
+        case .creative: return Color(red: 245/255, green: 158/255, blue: 11/255)
+        case .exercise: return PlannerumColors.nowMarker
+        case .meditation: return Color(red: 16/255, green: 185/255, blue: 129/255)
+        case .training: return Color(red: 236/255, green: 72/255, blue: 153/255)
+        }
+    }
+
+    @ViewBuilder
+    private func activeSessionDimensionLabel(_ session: ActiveSession) -> some View {
+        let intent: TaskIntent = {
+            if let taskId = session.taskId,
+               let task = plannerumViewModel.todayTasks.first(where: { $0.id == taskId }) {
+                return task.intent
+            }
+            return .general
+        }()
+
+        let allocations = DimensionXPRouter.routeXP(intent: intent, baseXP: 1)
+        let dims = allocations.map { DimensionXPRouter.dimensionDisplayName($0.dimension) }
+        let label = "XP \u{2192} " + dims.joined(separator: " & ")
+        let rgb = DimensionXPRouter.dimensionColor(intent.dimension)
+        let dimColor = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+
+        Text(label)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(dimColor)
+    }
+
+    private var activeSessionTimerLabel: some View {
+        let elapsed = Int(sessionManager.elapsedSeconds)
+        let minutes = elapsed / 60
+        let seconds = elapsed % 60
+        let timeString = String(format: "%02d:%02d", minutes, seconds)
+
+        return Text(timeString)
+            .font(.system(size: 36, weight: .bold, design: .monospaced))
+            .foregroundColor(PlannerumColors.textPrimary)
+            .monospacedDigit()
+    }
+
+    @ViewBuilder
+    private func activeSessionProgressRing(_ session: ActiveSession) -> some View {
+        let progress = min(session.progress, 1.0)
+        let progressColor: Color = progress >= 0.8
+            ? PlannerumColors.nowMarker
+            : progress >= 0.5
+                ? Color(red: 234/255, green: 179/255, blue: 8/255)
+                : sessionTypeColor(session.sessionType)
+
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.08), lineWidth: 4)
+                .frame(width: 56, height: 56)
+
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(progressColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 56, height: 56)
+
+            VStack(spacing: 0) {
+                Text("\(Int(progress * 100))%")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundColor(progressColor)
+                Text("done")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(PlannerumColors.textMuted)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func activeSessionControls(_ session: ActiveSession) -> some View {
+        HStack(spacing: 8) {
+            // Pause / Resume
+            Button(action: {
+                if sessionManager.state == .running {
+                    sessionManager.pauseSession()
+                } else if sessionManager.state == .paused {
+                    sessionManager.resumeSession()
+                }
+            }) {
+                activeSessionPauseResumeLabel
+            }
+            .buttonStyle(.plain)
+
+            // End
+            Button(action: {
+                sessionManager.endSession(completed: true)
+            }) {
+                activeSessionEndLabel
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var activeSessionPauseResumeLabel: some View {
+        let isPaused = sessionManager.state == .paused
+        Image(systemName: isPaused ? "play.fill" : "pause.fill")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(isPaused ? PlannerumColors.nowMarker : Color(red: 245/255, green: 158/255, blue: 11/255))
+            .frame(width: 32, height: 32)
+            .background(
+                (isPaused ? PlannerumColors.nowMarker : Color(red: 245/255, green: 158/255, blue: 11/255)).opacity(0.15)
+            )
+            .clipShape(Circle())
+    }
+
+    @ViewBuilder
+    private var activeSessionEndLabel: some View {
+        Image(systemName: "stop.fill")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(PlannerumColors.overdue)
+            .frame(width: 32, height: 32)
+            .background(PlannerumColors.overdue.opacity(0.15))
+            .clipShape(Circle())
+    }
+
+    private func activeSessionBackground(_ accentColor: Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 24/255, green: 24/255, blue: 42/255).opacity(0.95),
+                            Color(red: 18/255, green: 18/255, blue: 32/255).opacity(0.9)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            // Session type color glow
+            RoundedRectangle(cornerRadius: 20)
+                .fill(
+                    RadialGradient(
+                        colors: [accentColor.opacity(0.08), Color.clear],
+                        center: .topLeading,
+                        startRadius: 0,
+                        endRadius: 300
+                    )
+                )
+        }
+    }
+
+    // MARK: - Now Resources Section
+
+    @ViewBuilder
+    private var nowResourcesSection: some View {
+        if let session = sessionManager.currentSession, sessionManager.state != .idle {
+            // Active session: show context panel if the task has linked context
+            if sessionHasLinkedContext(session) {
+                NowViewContextPanel(session: session)
+            } else {
+                nowResourcesForSessionType(session.sessionType)
+            }
+        } else if let recommendation = plannerumViewModel.focusNowTask {
+            // Pre-session: show context panel for the recommended task
+            let task = recommendation.task
+            if recommendedTaskHasContext(task) {
+                NowViewContextPanel(task: task)
+            } else if !scheduledUpNextTasks.isEmpty {
+                nowUpNextSection
+            } else {
+                EmptyView() // Don't show "Your day is clear" when a recommendation is visible
+            }
+        } else if !scheduledUpNextTasks.isEmpty {
+            nowUpNextSection
+        } else {
+            nowEmptyState
+        }
+    }
+
+    /// Check whether the active session's task has linked idea/content/atom context
+    private func sessionHasLinkedContext(_ session: ActiveSession) -> Bool {
+        guard let taskId = session.taskId else { return false }
+        if let task = plannerumViewModel.todayTasks.first(where: { $0.id == taskId }) {
+            return recommendedTaskHasContext(task)
+        }
+        return false
+    }
+
+    /// Check whether a task view model has linked context worth showing
+    private func recommendedTaskHasContext(_ task: TaskViewModel) -> Bool {
+        let hasWrite = task.intent == .writeContent && (task.linkedIdeaUUID != nil || task.linkedContentUUID != nil)
+        let hasResearch = task.intent == .research && task.linkedAtomUUID != nil
+        let hasSwipes = task.intent == .studySwipes
+        return hasWrite || hasResearch || hasSwipes
+    }
+
+    /// Tasks scheduled for today that haven't started yet, sorted by scheduled time
+    private var scheduledUpNextTasks: [TaskViewModel] {
+        Array(
+            plannerumViewModel.todayTasks
+                .filter { $0.scheduledStart != nil || $0.scheduledTime != nil }
+                .sorted { ($0.scheduledStart ?? $0.scheduledTime ?? .distantFuture) < ($1.scheduledStart ?? $1.scheduledTime ?? .distantFuture) }
+                .prefix(3)
+        )
+    }
+
+    // MARK: - Resources for Intent
+
+    @ViewBuilder
+    private func nowResourcesForSessionType(_ type: SessionType) -> some View {
+        VStack(alignment: .leading, spacing: PlannerumLayout.spacingMD) {
+            // Section header
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(sessionTypeColor(type))
+                Text("RELEVANT RESOURCES")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundColor(PlannerumColors.textMuted)
+                    .tracking(2)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            nowResourceContent(type)
+        }
+    }
+
+    @ViewBuilder
+    private func nowResourceContent(_ type: SessionType) -> some View {
+        switch type {
+        case .writing:
+            nowWriteContentResources
+        case .training:
+            nowResearchResources
+        case .creative:
+            nowSwipeResources
+        default:
+            nowUpNextSection
+        }
+    }
+
+    @ViewBuilder
+    private var nowWriteContentResources: some View {
+        nowResourceCard(
+            icon: "pencil.line",
+            iconColor: TaskIntent.writeContent.color,
+            title: "Writing Session Active",
+            subtitle: "Open your linked idea or content draft in the Content workspace.",
+            actionLabel: "Open Content",
+            actionIcon: "arrow.right"
+        )
+    }
+
+    @ViewBuilder
+    private var nowResearchResources: some View {
+        nowResourceCard(
+            icon: "magnifyingglass",
+            iconColor: TaskIntent.research.color,
+            title: "Research Mode",
+            subtitle: "Capture findings and build connections in the Research workspace.",
+            actionLabel: "Open Research",
+            actionIcon: "arrow.right"
+        )
+    }
+
+    @ViewBuilder
+    private var nowSwipeResources: some View {
+        nowResourceCard(
+            icon: "bolt.fill",
+            iconColor: TaskIntent.studySwipes.color,
+            title: "Swipe Study",
+            subtitle: "Browse and analyze swipe files in the Swipe Gallery.",
+            actionLabel: "Open Gallery",
+            actionIcon: "arrow.right"
+        )
+    }
+
+    @ViewBuilder
+    private func nowResourceCard(
+        icon: String,
+        iconColor: Color,
+        title: String,
+        subtitle: String,
+        actionLabel: String,
+        actionIcon: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: PlannerumLayout.spacingMD) {
+            HStack(spacing: PlannerumLayout.spacingSM) {
+                ZStack {
+                    Circle()
+                        .fill(iconColor.opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(iconColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(PlannerumColors.textPrimary)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(PlannerumColors.textTertiary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+            }
+        }
+        .padding(PlannerumLayout.spacingLG)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(PlannerumColors.glassPrimary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(PlannerumColors.glassBorder, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Up Next Section
+
+    @ViewBuilder
+    private var nowUpNextSection: some View {
+        VStack(alignment: .leading, spacing: PlannerumLayout.spacingMD) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(PlannerumColors.textTertiary)
+                Text("UP NEXT")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundColor(PlannerumColors.textMuted)
+                    .tracking(2)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            if scheduledUpNextTasks.isEmpty {
+                nowEmptyState
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(scheduledUpNextTasks) { task in
+                        nowUpNextRow(task)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func nowUpNextRow(_ task: TaskViewModel) -> some View {
+        HStack(spacing: PlannerumLayout.spacingSM) {
+            // Time
+            if let time = task.scheduledStart ?? task.scheduledTime {
+                Text(PlannerumFormatters.time.string(from: time))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(PlannerumColors.textTertiary)
+                    .frame(width: 44, alignment: .leading)
+            }
+
+            // Intent color bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(task.intent.color)
+                .frame(width: 3, height: 32)
+
+            // Task info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(PlannerumColors.textPrimary)
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    intentBadgeLabel(task.intent)
+
+                    if task.estimatedMinutes > 0 {
+                        Text("\(task.estimatedMinutes)m")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(PlannerumColors.textMuted)
+                    }
+                }
+            }
+
+            Spacer()
+
+            // Start button
+            Button(action: {
+                let sessionType = sessionTypeForIntent(task.intent)
+                sessionManager.startSession(
+                    taskId: task.id,
+                    taskTitle: task.title,
+                    sessionType: sessionType,
+                    targetMinutes: task.estimatedMinutes
+                )
+                plannerumViewModel.startSession(for: task)
+            }) {
+                nowUpNextStartLabel
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(PlannerumLayout.spacingMD)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(PlannerumColors.glassBorder, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var nowUpNextStartLabel: some View {
+        Image(systemName: "play.fill")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(PlannerumColors.nowMarker)
+            .frame(width: 28, height: 28)
+            .background(PlannerumColors.nowMarker.opacity(0.15))
+            .clipShape(Circle())
+    }
+
+    // MARK: - Empty State
+
+    @ViewBuilder
+    private var nowEmptyState: some View {
+        VStack(spacing: PlannerumLayout.spacingMD) {
+            Image(systemName: "sun.max.fill")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(PlannerumColors.textMuted.opacity(0.5))
+
+            Text("Your day is clear")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(PlannerumColors.textSecondary)
+
+            Text("Plan your day in the Day view, or start a quick session.")
+                .font(.system(size: 12))
+                .foregroundColor(PlannerumColors.textMuted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, PlannerumLayout.spacingXXL)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.02))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(PlannerumColors.glassBorder.opacity(0.5), lineWidth: 1)
+        )
+    }
+
     // MARK: - Color Helpers
 
     private func rankColor(for rank: String) -> Color {
@@ -471,6 +1183,20 @@ public struct PlannerumView: View {
         case 0..<30: return Color(red: 239/255, green: 68/255, blue: 68/255)
         case 30..<60: return Color(red: 245/255, green: 158/255, blue: 11/255)
         default: return PlannerumColors.nowMarker
+        }
+    }
+
+    // MARK: - Intent to Session Type Mapping
+
+    /// Maps a TaskIntent to a SessionType for the ActiveSessionTimerManager
+    private func sessionTypeForIntent(_ intent: TaskIntent) -> SessionType {
+        switch intent {
+        case .writeContent: return .writing
+        case .research: return .training
+        case .studySwipes: return .creative
+        case .deepThink: return .deepWork
+        case .review: return .deepWork
+        case .general, .custom: return .deepWork
         }
     }
 
@@ -601,6 +1327,7 @@ struct TimeFlowBackground: View {
 // MARK: - Plannerum View Mode
 
 public enum PlannerumViewMode: String, CaseIterable {
+    case now = "Now"
     case day = "Day"
     case week = "Week"
     case month = "Month"
@@ -608,6 +1335,7 @@ public enum PlannerumViewMode: String, CaseIterable {
 
     var icon: String {
         switch self {
+        case .now: return "target"
         case .day: return "sun.max"
         case .week: return "calendar.day.timeline.leading"
         case .month: return "calendar"
@@ -686,6 +1414,135 @@ public class PlannerumXPViewModel: ObservableObject {
 
 private struct XPEventMetadataSimple: Codable {
     var xpAmount: Int?
+}
+
+// MARK: - Quick Task Sheet
+
+/// Minimal sheet for keyboard-shortcut task creation.
+/// Uses the unified 4x2 TaskIntentPicker grid with integrated linking.
+struct QuickTaskSheet: View {
+    let onAdd: (String, TaskIntent, String?, String?, String?, String?) -> Void
+    let onCancel: () -> Void
+
+    @State private var title = ""
+    @State private var selectedIntent: TaskIntent = .general
+    @State private var linkedIdeaUUID: String = ""
+    @State private var linkedAtomUUID: String = ""
+    @State private var linkedContentUUID: String = ""
+    @State private var intentTag: String = ""
+
+    // Recurrence state
+    @State private var isRecurrenceEnabled: Bool = false
+    @State private var recurrenceJSON: String? = nil
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(spacing: PlannerumLayout.spacingLG) {
+            // Header
+            quickTaskHeader
+
+            // Title field
+            quickTaskTitleField
+
+            // Intent picker (4x2 grid with built-in linking)
+            TaskIntentPicker(
+                selectedIntent: $selectedIntent,
+                linkedIdeaUUID: $linkedIdeaUUID,
+                linkedAtomUUID: $linkedAtomUUID,
+                linkedContentUUID: $linkedContentUUID,
+                intentTag: $intentTag
+            )
+
+            // Recurrence picker
+            RecurrencePickerView(
+                isEnabled: $isRecurrenceEnabled,
+                recurrenceJSON: $recurrenceJSON
+            )
+
+            // Add button
+            quickTaskAddButton
+        }
+        .padding(24)
+        .frame(width: 420)
+        .background(PlannerumColors.voidPrimary)
+        .onAppear { isFocused = true }
+    }
+
+    // MARK: - Header
+
+    @ViewBuilder
+    private var quickTaskHeader: some View {
+        HStack {
+            Text("New Task")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(PlannerumColors.textPrimary)
+            Spacer()
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(PlannerumColors.textMuted)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Title Field
+
+    @ViewBuilder
+    private var quickTaskTitleField: some View {
+        TextField("Task title...", text: $title)
+            .textFieldStyle(.plain)
+            .font(.system(size: 14))
+            .foregroundColor(PlannerumColors.textPrimary)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+            )
+            .focused($isFocused)
+            .onSubmit {
+                submitTask()
+            }
+    }
+
+    // MARK: - Add Button
+
+    @ViewBuilder
+    private var quickTaskAddButton: some View {
+        HStack {
+            Spacer()
+            Button(action: { submitTask() }) {
+                Text("Add Task")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .background(PlannerumColors.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+
+    // MARK: - Submit
+
+    private func submitTask() {
+        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        onAdd(
+            title.trimmingCharacters(in: .whitespaces),
+            selectedIntent,
+            linkedIdeaUUID.isEmpty ? nil : linkedIdeaUUID,
+            linkedContentUUID.isEmpty ? nil : linkedContentUUID,
+            linkedAtomUUID.isEmpty ? nil : linkedAtomUUID,
+            isRecurrenceEnabled ? recurrenceJSON : nil
+        )
+    }
 }
 
 // MARK: - Preview

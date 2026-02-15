@@ -676,7 +676,130 @@ public final class ContentPipelineService: ObservableObject {
         }
     }
 
-    private func awardContentXP(xp: Int, reason: String, contentUUID: String) async {
+    // MARK: - Swipe-Powered Idea Activation
+
+    /// Activate an idea into a content atom with swipe-powered drafting enrichment.
+    /// Runs IdeaInsightEngine.fullAnalysis() if stale, queries matching swipes by taxonomy,
+    /// and generates a ContentDraftPackage if enough swipe data is available.
+    ///
+    /// Returns the enriched content atom and optional draft package.
+    @discardableResult
+    func activateIdea(
+        ideaAtom: Atom,
+        targetFormat: ContentFormat,
+        contentAtomUUID: String
+    ) async -> ContentDraftPackage? {
+        guard ideaAtom.type == .idea else { return nil }
+
+        let ideaText = ideaAtom.body ?? ideaAtom.title ?? ""
+        guard !ideaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        // Query swipes by taxonomy using the idea's format
+        // Derive niche from the client profile if available
+        var niche: String?
+        if let clientUUID = ideaAtom.ideaClientUUID,
+           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID),
+           let clientMeta = client.metadataValue(as: ClientMetadata.self) {
+            niche = clientMeta.niche
+        }
+        let matchingSwipes: [Atom]
+        do {
+            matchingSwipes = try await AtomRepository.shared.fetchSwipesByTaxonomy(
+                contentType: targetFormat,
+                niche: niche
+            )
+        } catch {
+            print("ContentPipelineService: Failed to fetch swipes by taxonomy: \(error.localizedDescription)")
+            return nil
+        }
+
+        // Store matched swipe UUIDs even if insufficient for drafting
+        let matchedUUIDs = matchingSwipes.map(\.uuid)
+        if var contentAtom = try? await fetchContentAtom(uuid: contentAtomUUID),
+           var meta = contentAtom.metadataValue(as: ContentAtomMetadata.self) {
+            meta.inheritedSwipeUUIDs = matchedUUIDs
+            if matchingSwipes.count < 3 {
+                meta.draftReady = false
+                meta.draftingNote = "Capture more swipes to unlock AI drafting (\(matchingSwipes.count)/3 matched)"
+            } else {
+                meta.draftReady = true
+                meta.draftingNote = nil
+            }
+            contentAtom.metadata = meta.toJSON()
+            contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+            let atomToUpdate = contentAtom
+            try? await database.write { db in
+                try atomToUpdate.update(db)
+            }
+        }
+
+        // Require at least 3 matching swipes for AI drafting
+        guard matchingSwipes.count >= 3 else {
+            print("ContentPipelineService: Only \(matchingSwipes.count) matching swipes found. Need 3+ for AI drafting.")
+            return nil
+        }
+
+        // Load client profile if idea has one (may already be loaded from niche derivation)
+        var clientProfile: Atom?
+        if let clientUUID = ideaAtom.ideaClientUUID {
+            clientProfile = try? await AtomRepository.shared.fetch(uuid: clientUUID)
+        }
+
+
+        // Generate draft package via SwipeDraftEngine
+        guard let draftPackage = await SwipeDraftEngine.shared.generateDraftPackage(
+            idea: ideaAtom,
+            targetFormat: targetFormat,
+            matchingSwipes: Array(matchingSwipes.prefix(5)),
+            clientProfile: clientProfile
+        ) else {
+            print("ContentPipelineService: SwipeDraftEngine returned nil")
+            return nil
+        }
+
+        // Store the draft package on the content atom
+        if var contentAtom = try? await fetchContentAtom(uuid: contentAtomUUID),
+           var meta = contentAtom.metadataValue(as: ContentAtomMetadata.self) {
+
+            // Store draft package in structured JSON
+            if let packageData = try? JSONEncoder().encode(draftPackage),
+               let packageString = String(data: packageData, encoding: .utf8) {
+                contentAtom.structured = packageString
+            }
+
+            // Record swipe reference UUIDs in metadata
+            meta.inheritedSwipeUUIDs = draftPackage.swipeReferences.map(\.swipeUUID)
+            meta.draftingNote = nil
+            contentAtom.metadata = meta.toJSON()
+            contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+
+            let atomToUpdate = contentAtom
+            try? await database.write { db in
+                try atomToUpdate.update(db)
+            }
+
+            // Create AtomLinks from content to each referenced swipe
+            var linkedAtom = contentAtom
+            for ref in draftPackage.swipeReferences {
+                linkedAtom = linkedAtom.addingLink(
+                    .linksTo(ref.swipeUUID, entityType: .research)
+                )
+            }
+            if let linksData = try? JSONEncoder().encode(linkedAtom.linksList),
+               let linksString = String(data: linksData, encoding: .utf8) {
+                linkedAtom.links = linksString
+                linkedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                let finalAtom = linkedAtom
+                try? await database.write { db in
+                    try finalAtom.update(db)
+                }
+            }
+        }
+
+        return draftPackage
+    }
+
+    func awardContentXP(xp: Int, reason: String, contentUUID: String) async {
         do {
             try await database.write { db in
                 // Create XP event atom
@@ -726,6 +849,14 @@ struct ContentAtomMetadata: Codable, Sendable {
     var lastPhaseTransition: Date?
     var predictedReach: Int?
     var predictedEngagement: Double?
+    var sourceIdeaUUID: String?
+    var inheritedSwipeUUIDs: [String]?
+    var inheritedFramework: String?
+    var inheritedHooks: [String]?
+    var activatedAt: String?
+    var phaseEnteredAt: String?
+    var draftingNote: String?
+    var draftReady: Bool?
 
     func toJSON() -> String? {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
@@ -793,6 +924,64 @@ extension ClientProfileMetadata {
     func toJSON() -> String? {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// Formats the profile as a context string for AI prompt injection.
+    /// Returns a multi-line block suitable for embedding in system/user prompts.
+    func toAIContextString() -> String {
+        var lines: [String] = []
+        lines.append("CLIENT PROFILE: \(clientName)")
+
+        if let handle = handle, !handle.isEmpty {
+            lines.append("Handle: \(handle)")
+        }
+        if let niche = niche, !niche.isEmpty {
+            lines.append("Niche: \(niche)")
+        } else if let industry = industry, !industry.isEmpty {
+            lines.append("Industry: \(industry)")
+        }
+        if let targetAudience = targetAudience, !targetAudience.isEmpty {
+            lines.append("Target Audience: \(targetAudience)")
+        }
+        if let voiceNotes = voiceNotes, !voiceNotes.isEmpty {
+            lines.append("Brand Voice: \(voiceNotes)")
+        }
+        if let uniqueAngle = uniqueAngle, !uniqueAngle.isEmpty {
+            lines.append("Unique Angle: \(uniqueAngle)")
+        }
+        if let brandStory = brandStory, !brandStory.isEmpty {
+            lines.append("Brand Story: \(brandStory)")
+        }
+        if let brandVision = brandVision, !brandVision.isEmpty {
+            lines.append("Vision: \(brandVision)")
+        }
+        if let beliefs = coreBeliefs, !beliefs.isEmpty {
+            lines.append("Core Beliefs: \(beliefs.joined(separator: "; "))")
+        }
+        if !platforms.isEmpty {
+            lines.append("Platforms: \(platforms.map(\.displayName).joined(separator: ", "))")
+        }
+        if let bestFormats = bestFormats, !bestFormats.isEmpty {
+            lines.append("Best Formats: \(bestFormats.joined(separator: ", "))")
+        }
+        if let frequency = postingFrequency, !frequency.isEmpty {
+            lines.append("Posting Frequency: \(frequency)")
+        }
+        if let times = preferredPostTimes, !times.isEmpty {
+            lines.append("Preferred Post Times: \(times.joined(separator: ", "))")
+        }
+        if let transcripts = topPerformingTranscripts, !transcripts.isEmpty {
+            lines.append("Top Performing Content Examples:")
+            for (i, transcript) in transcripts.prefix(3).enumerated() {
+                let snippet = String(transcript.prefix(500))
+                lines.append("  \(i + 1). \(snippet)\(transcript.count > 500 ? "..." : "")")
+            }
+        }
+        if let personal = isPersonalBrand {
+            lines.append("Brand Type: \(personal ? "Personal Brand" : "Company/Agency")")
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
 

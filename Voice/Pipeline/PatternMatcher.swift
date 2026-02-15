@@ -218,6 +218,43 @@ actor PatternMatcher {
             metadataExtractor: { _ in ["status": VoiceAnyCodable("completed")] }
         ),
 
+        // ===== FORMAT-PREFIXED IDEA CREATION (IdeaForge) =====
+        // e.g., "thread idea: hooks that convert", "reel idea about morning routines"
+        CommandPattern(
+            regex: #"^(thread|reel|carousel|post|youtube|newsletter|long\s*form)\s+idea[\s:]+(.+)$"#,
+            action: .create,
+            atomType: .idea,
+            extractor: { match in
+                let formatStr = match[1].lowercased().replacingOccurrences(of: " ", with: "")
+                let title = match[2].trimmingCharacters(in: .whitespaces)
+                return PatternMatchResult(
+                    action: .create,
+                    atomType: .idea,
+                    title: title.capitalized,
+                    matchedPattern: "idea_format_prefixed",
+                    confidence: 0.93,
+                    metadata: ["contentFormat": formatStr, "captureSource": "voice"]
+                )
+            }
+        ),
+        // e.g., "content idea: ...", "content idea about ..."
+        CommandPattern(
+            regex: #"^content\s+idea[\s:]+(.+)$"#,
+            action: .create,
+            atomType: .idea,
+            extractor: { match in
+                let title = match[1].trimmingCharacters(in: .whitespaces)
+                return PatternMatchResult(
+                    action: .create,
+                    atomType: .idea,
+                    title: title.capitalized,
+                    matchedPattern: "idea_content_synonym",
+                    confidence: 0.92,
+                    metadata: ["captureSource": "voice"]
+                )
+            }
+        ),
+
         // ===== SIMPLE IDEA CREATION =====
         // NOTE: Project-specific patterns like "idea for Michael" are handled by the fine-tuned 0.5B model
         CommandPattern(

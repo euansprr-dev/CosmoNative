@@ -24,7 +24,7 @@ public struct SanctuaryHeroOrb: View {
     @State private var metricsOrbitAngle: Double = 0
     @State private var isHovered: Bool = false
     @State private var isPressed: Bool = false
-    @State private var surfaceNoisePhase: Double = 0
+    @State private var surfaceNoiseRotation: Double = 0
 
     // MARK: - Layout Constants
 
@@ -53,8 +53,8 @@ public struct SanctuaryHeroOrb: View {
             // Layer 4: Level Display
             levelDisplay
 
-            // Layer 5: Live Metrics Orbit
-            if liveMetrics != nil {
+            // Layer 5: Live Metrics Orbit — only when real health data is connected
+            if liveMetrics?.currentHRV != nil {
                 liveMetricsOrbit
             }
         }
@@ -93,6 +93,7 @@ public struct SanctuaryHeroOrb: View {
             )
             .frame(width: Layout.haloSize, height: Layout.haloSize)
             .blur(radius: 60)
+            .drawingGroup()  // Rasterize blur to GPU texture
             .opacity(0.3)
             .scaleEffect(haloScale * breathingScale)
     }
@@ -151,6 +152,7 @@ public struct SanctuaryHeroOrb: View {
             .frame(width: radius * 2, height: radius * 2)
             .rotationEffect(.degrees(rotation))
             .shadow(color: color.opacity(0.4), radius: 8, x: 0, y: 0)
+            .drawingGroup()  // Rasterize ring + shadow to GPU texture
     }
 
     private func angularGradientStops(gapCount: Int, color: Color) -> [Gradient.Stop] {
@@ -219,33 +221,29 @@ public struct SanctuaryHeroOrb: View {
                 .blur(radius: 2)
         }
         .frame(width: Layout.coreSize - 40, height: Layout.coreSize - 40) // 120pt
+        .clipShape(Circle())
         .scaleEffect(breathingScale)
         .shadow(color: Color.black.opacity(0.4), radius: 30, x: 0, y: 20)
         .shadow(color: SanctuaryColors.HeroOrb.glow.opacity(0.5), radius: 30, x: 0, y: 0)
     }
 
     private var surfaceNoiseOverlay: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-
-            Circle()
-                .fill(
-                    AngularGradient(
-                        colors: [
-                            Color.white.opacity(0.1),
-                            Color.clear,
-                            Color.white.opacity(0.05),
-                            Color.clear,
-                            Color.white.opacity(0.08),
-                            Color.clear
-                        ],
-                        center: .center,
-                        startAngle: .degrees(phase.truncatingRemainder(dividingBy: 360) * 10),
-                        endAngle: .degrees(phase.truncatingRemainder(dividingBy: 360) * 10 + 360)
-                    )
+        // Static angular gradient rotated via Core Animation (GPU-side, no CPU re-renders)
+        Circle()
+            .fill(
+                AngularGradient(
+                    colors: [
+                        Color.white.opacity(0.1),
+                        Color.clear,
+                        Color.white.opacity(0.05),
+                        Color.clear,
+                        Color.white.opacity(0.08),
+                        Color.clear
+                    ],
+                    center: .center
                 )
-                .rotationEffect(.degrees(phase.truncatingRemainder(dividingBy: 360) * 5))
-        }
+            )
+            .rotationEffect(.degrees(surfaceNoiseRotation))
     }
 
     // MARK: - Layer 4: Level Display
@@ -261,20 +259,6 @@ public struct SanctuaryHeroOrb: View {
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .foregroundColor(SanctuaryColors.Text.primary)
                     .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 2)
-
-                // XP progress ring
-                Circle()
-                    .trim(from: 0, to: CGFloat(state.xpProgress))
-                    .stroke(
-                        LinearGradient(
-                            colors: [SanctuaryColors.XP.primary, SanctuaryColors.XP.secondary],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                    )
-                    .frame(width: 80, height: 80)
-                    .rotationEffect(.degrees(-90))
             }
         }
     }
@@ -383,6 +367,11 @@ public struct SanctuaryHeroOrb: View {
         // Metrics orbit (slow rotation)
         withAnimation(.linear(duration: 60).repeatForever(autoreverses: false)) {
             metricsOrbitAngle = 360
+        }
+
+        // Surface noise rotation (slow, GPU-side via Core Animation)
+        withAnimation(.linear(duration: 36).repeatForever(autoreverses: false)) {
+            surfaceNoiseRotation = 360
         }
     }
 }

@@ -416,26 +416,31 @@ public struct DayOrbView: View {
                 }
             }
 
-            // Block type indicators
+            // Time block bars — small colored bars representing each block
             if dayData.blockCount > 0 {
-                HStack(spacing: 3) {
-                    ForEach(0..<min(dayData.blockCount, 6), id: \.self) { i in
-                        let type = dayData.blockTypes.indices.contains(i) ? dayData.blockTypes[i] : .deepWork
-                        Circle().fill(type.color).frame(width: 6, height: 6)
+                VStack(spacing: 2) {
+                    // Colored bars (show up to 5, then overflow)
+                    HStack(spacing: 2) {
+                        ForEach(0..<min(dayData.blockCount, 5), id: \.self) { i in
+                            let type = dayData.blockTypes.indices.contains(i) ? dayData.blockTypes[i] : .deepWork
+                            RoundedRectangle(cornerRadius: 1.5)
+                                .fill(type.color)
+                                .frame(width: 12, height: 4)
+                        }
+                        if dayData.blockCount > 5 {
+                            Text("+\(dayData.blockCount - 5)")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundColor(PlannerumColors.textMuted)
+                        }
                     }
-                    if dayData.blockCount > 6 {
-                        Text("+\(dayData.blockCount - 6)")
-                            .font(.system(size: 8, weight: .medium))
+
+                    // Hours label
+                    if dayData.totalHours > 0 {
+                        Text(String(format: "%.1fh", dayData.totalHours))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundColor(PlannerumColors.textMuted)
                     }
                 }
-            }
-
-            // Hours label
-            if dayData.totalHours > 0 {
-                Text(String(format: "%.1fh", dayData.totalHours))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(PlannerumColors.textMuted)
             }
         }
         .animation(PlannerumSprings.hover, value: isHovered)

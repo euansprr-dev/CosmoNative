@@ -46,13 +46,11 @@ public struct SanctuaryBackgroundView: View {
     @State private var particleTimerCancellable: AnyCancellable?
     @State private var lastUpdateTime: CFTimeInterval = 0
 
-    // PERFORMANCE FIX: Adaptive particle count based on device
     private var particleCount: Int {
         #if os(macOS)
-        return 50  // Mac can handle more
+        return 20
         #else
-        // iOS: reduce for non-Pro devices
-        return 35
+        return 12
         #endif
     }
 
@@ -145,9 +143,8 @@ public struct SanctuaryBackgroundView: View {
     // MARK: - Particle Timer
 
     private func startParticleTimer(size: CGSize) {
-        // PERFORMANCE FIX: Use 30fps timer independent of animationPhase
-        // This runs on RunLoop, not blocking main thread with sync updates
-        particleTimerCancellable = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
+        // 15fps is sufficient for slow-drifting ambient particles
+        particleTimerCancellable = Timer.publish(every: 1.0 / 15.0, on: .main, in: .common)
             .autoconnect()
             .sink { _ in
                 let now = CACurrentMediaTime()

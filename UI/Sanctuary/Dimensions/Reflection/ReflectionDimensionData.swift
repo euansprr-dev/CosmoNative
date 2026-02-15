@@ -718,6 +718,48 @@ public struct ReflectionDimensionData: Codable, Sendable {
     public var totalGrailInsights: Int { totalGrails }
 }
 
+// MARK: - Empty Factory
+
+extension ReflectionDimensionData {
+    public var isEmpty: Bool {
+        journalStreak == 0 && emotionalDataPoints.isEmpty && totalGrails == 0
+    }
+
+    public static var empty: ReflectionDimensionData {
+        ReflectionDimensionData(
+            emotionalDataPoints: [],
+            todayMood: EmotionalState(valence: 0, energy: 0, description: "No data yet", emoji: "🔘", comparedToAverage: "N/A"),
+            averageValence: 0,
+            averageEnergy: 0,
+            valenceTrend: .stable,
+            moodTimeline: [],
+            weeklyMoodData: [],
+            journalStreak: 0,
+            journalPersonalBest: 0,
+            wordsToday: 0,
+            wordsAverage: 0,
+            depthScore: 0,
+            todayEntryPreview: "",
+            todayEntryWordCount: 0,
+            meditationToday: 0,
+            meditationGoal: 15,
+            meditationThisWeek: 0,
+            meditationWeekData: [],
+            meditationStreak: 0,
+            averageSessionLength: 0,
+            recurringThemes: [],
+            themeEvolution: [],
+            emergingThemes: [],
+            grailInsights: [],
+            totalGrails: 0,
+            grailsThisMonth: 0,
+            pinnedGrails: [],
+            predictions: [],
+            insightPatterns: []
+        )
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

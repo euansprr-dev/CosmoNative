@@ -686,6 +686,67 @@ public struct BehavioralDimensionData: Codable, Sendable {
     }
 }
 
+// MARK: - Empty Factory
+
+extension BehavioralDimensionData {
+    public static var empty: BehavioralDimensionData {
+        let now = Date()
+        let emptyComponentScore = { (name: String) -> ComponentScore in
+            ComponentScore(name: name, currentScore: 0, trend: .stable, changePercent: 0, status: .needsWork)
+        }
+        let emptyRoutine = { (name: String) -> RoutineTracker in
+            RoutineTracker(
+                name: name,
+                targetTime: now,
+                toleranceMinutes: 0,
+                weekData: [],
+                consistency: 0,
+                averageTime: now,
+                trend: .stable
+            )
+        }
+        return BehavioralDimensionData(
+            disciplineIndex: 0,
+            disciplineChange: 0,
+            morningScore: emptyComponentScore("MORNING"),
+            deepWorkScore: emptyComponentScore("DEEP WORK"),
+            sleepScore: emptyComponentScore("SLEEP"),
+            movementScore: emptyComponentScore("MOVEMENT"),
+            screenScore: emptyComponentScore("SCREEN"),
+            taskScore: emptyComponentScore("TASKS"),
+            morningRoutine: emptyRoutine("MORNING ROUTINE"),
+            sleepSchedule: emptyRoutine("SLEEP SCHEDULE"),
+            wakeSchedule: emptyRoutine("WAKE SCHEDULE"),
+            activeStreaks: [],
+            endangeredStreaks: [],
+            personalBests: [],
+            dopamineDelay: 0,
+            dopamineTarget: 0,
+            walksCompleted: 0,
+            walksGoal: 0,
+            screenTimeAfter10pm: 0,
+            screenLimit: 0,
+            tasksCompleted: 0,
+            tasksTotal: 0,
+            todayEvents: [],
+            violations: [],
+            levelUpPath: LevelUpPath(
+                currentLevel: 0,
+                nextLevel: 1,
+                xpNeeded: 0,
+                xpProgress: 0,
+                fastestActions: [],
+                estimatedDays: 0
+            ),
+            predictions: []
+        )
+    }
+
+    public var isEmpty: Bool {
+        disciplineIndex == 0 && activeStreaks.isEmpty && todayEvents.isEmpty
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

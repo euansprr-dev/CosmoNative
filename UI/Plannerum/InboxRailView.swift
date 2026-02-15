@@ -125,14 +125,12 @@ public struct InboxRailView: View {
 
         do {
             switch streamType {
-            case .ideas:
-                _ = try await AtomRepository.shared.createIdea(title: title, content: "")
             case .tasks:
                 _ = try await AtomRepository.shared.createTask(title: title)
             case .project(let uuid, _):
                 _ = try await AtomRepository.shared.createTask(title: title, projectUuid: uuid)
             default:
-                _ = try await AtomRepository.shared.createIdea(title: title, content: "")
+                _ = try await AtomRepository.shared.createTask(title: title)
             }
 
             // Reload data
@@ -213,8 +211,6 @@ public struct InboxRailView: View {
             return viewModel.coreStreams
         case .tasks:
             return viewModel.coreStreams.filter { $0.type == .tasks }
-        case .ideas:
-            return viewModel.coreStreams.filter { $0.type == .ideas }
         }
     }
 
@@ -501,11 +497,10 @@ public struct InboxRailView: View {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Filter options for inbox streams
-/// Note: Content removed - Ideas encompasses content ideas
+/// Note: Ideas removed from Plannerum sidebar (accessible via Cmd+K)
 public enum InboxFilter: String, CaseIterable {
     case all = "All"
     case tasks = "Tasks"
-    case ideas = "Ideas"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -667,24 +662,20 @@ public class InboxRailViewModel: ObservableObject {
                 .filter { $0.isOverdue }
                 .sorted { ($0.dueDate ?? Date()) < ($1.dueDate ?? Date()) }
 
-            // Build core streams (Ideas and Tasks only - Content merged into Ideas)
-            var ideas: [UncommittedItemViewModel] = []
+            // Build core streams (Tasks only — Ideas accessible via Cmd+K IdeasTab)
             var tasks: [UncommittedItemViewModel] = []
 
             for item in viewModels where !item.isOverdue {
                 switch item.inferredType {
-                case "idea", "content": ideas.append(item) // Content merged into Ideas
                 case "task": tasks.append(item)
-                default: ideas.append(item)
+                default: break // Ideas/content handled via Cmd+K
                 }
             }
 
             // Sort by creation date (newest first)
-            ideas.sort { $0.createdAt > $1.createdAt }
             tasks.sort { $0.createdAt > $1.createdAt }
 
             coreStreams = [
-                InboxStream(type: .ideas, items: ideas),
                 InboxStream(type: .tasks, items: tasks)
             ]
 

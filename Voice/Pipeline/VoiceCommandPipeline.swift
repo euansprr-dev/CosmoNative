@@ -281,6 +281,24 @@ actor VoiceCommandPipeline {
                 throw VoicePipelineError.missingAtomType
             }
 
+            // Route idea creation through enriched path when format metadata is present
+            if atomType == .idea,
+               let metadata = action.metadata,
+               let formatValue = metadata["contentFormat"],
+               let formatStr = formatValue.value as? String {
+                let contentFormat = ContentFormat(rawValue: formatStr)
+                let captureSource = (metadata["captureSource"]?.value as? String) ?? "voice"
+                let clientQuery = metadata["clientQuery"]?.value as? String
+                let atom = try await repo.createEnrichedIdea(
+                    title: action.title,
+                    content: action.body ?? action.title ?? "",
+                    contentFormat: contentFormat,
+                    clientQuery: clientQuery,
+                    captureSource: captureSource
+                )
+                return [atom]
+            }
+
             let links = action.resolveLinks(using: context)
 
             let atom = try await repo.create(

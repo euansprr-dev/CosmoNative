@@ -832,6 +832,565 @@ public struct PlannerumXP {
 // MARK: - TIME UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - FOCUS NOW CARD TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for the Focus Now recommendation card
+public struct FocusNowTokens {
+
+    // MARK: - Layout
+
+    /// Card minimum height
+    public static let cardMinHeight: CGFloat = 180
+
+    /// Card maximum height
+    public static let cardMaxHeight: CGFloat = 240
+
+    /// Card corner radius
+    public static let cornerRadius: CGFloat = 20
+
+    /// Internal padding
+    public static let padding: CGFloat = 20
+
+    /// Header height
+    public static let headerHeight: CGFloat = 32
+
+    /// Action button height
+    public static let buttonHeight: CGFloat = 44
+
+    /// Button corner radius
+    public static let buttonCornerRadius: CGFloat = 12
+
+    /// Skip button width
+    public static let skipButtonWidth: CGFloat = 80
+
+    /// Badge size
+    public static let badgeSize: CGFloat = 24
+
+    // MARK: - Colors
+
+    /// Card gradient start
+    public static let gradientStart = Color(red: 24/255, green: 24/255, blue: 42/255).opacity(0.95)
+
+    /// Card gradient end
+    public static let gradientEnd = Color(red: 18/255, green: 18/255, blue: 32/255).opacity(0.9)
+
+    /// Primary action button color
+    public static let primaryButton = PlannerumColors.primary
+
+    /// Skip button background
+    public static let skipButton = Color.white.opacity(0.08)
+
+    /// Energy match excellent
+    public static let energyExcellent = Color(red: 34/255, green: 197/255, blue: 94/255)
+
+    /// Energy match good
+    public static let energyGood = Color(red: 245/255, green: 158/255, blue: 11/255)
+
+    /// Energy match poor
+    public static let energyPoor = Color(red: 239/255, green: 68/255, blue: 68/255)
+
+    /// Deadline urgent
+    public static let deadlineUrgent = Color(red: 239/255, green: 68/255, blue: 68/255)
+
+    /// Deadline approaching
+    public static let deadlineApproaching = Color(red: 245/255, green: 158/255, blue: 11/255)
+
+    /// Context message background
+    public static let contextBackground = Color.white.opacity(0.05)
+
+    // MARK: - Typography
+
+    /// Context message font
+    public static let contextFont = Font.system(size: 13, weight: .medium, design: .rounded)
+
+    /// Task title font
+    public static let titleFont = Font.system(size: 20, weight: .semibold, design: .rounded)
+
+    /// Project name font
+    public static let projectFont = Font.system(size: 13, weight: .medium)
+
+    /// Recommendation reason font
+    public static let reasonFont = Font.system(size: 12, weight: .medium)
+
+    /// XP estimate font
+    public static let xpFont = Font.system(size: 14, weight: .bold, design: .rounded)
+
+    /// Button font
+    public static let buttonFont = Font.system(size: 15, weight: .semibold)
+
+    // MARK: - Animation
+
+    /// Card appear animation
+    public static let appearAnimation = Animation.spring(response: 0.4, dampingFraction: 0.8)
+
+    /// Button press animation
+    public static let pressAnimation = Animation.spring(response: 0.15, dampingFraction: 0.9)
+
+    /// Skip transition animation
+    public static let skipAnimation = Animation.spring(response: 0.35, dampingFraction: 0.75)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - DAILY QUESTS PANEL TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for the Daily Quests panel
+public struct DailyQuestsTokens {
+
+    // MARK: - Layout
+
+    /// Panel width
+    public static let panelWidth: CGFloat = 280
+
+    /// Quest row height
+    public static let questRowHeight: CGFloat = 56
+
+    /// Progress bar height
+    public static let progressBarHeight: CGFloat = 6
+
+    /// Progress bar corner radius
+    public static let progressBarRadius: CGFloat = 3
+
+    /// Icon size
+    public static let iconSize: CGFloat = 24
+
+    /// Streak badge size
+    public static let streakBadgeSize: CGFloat = 32
+
+    /// Section padding
+    public static let padding: CGFloat = 16
+
+    /// Quest row spacing
+    public static let rowSpacing: CGFloat = 12
+
+    /// Corner radius
+    public static let cornerRadius: CGFloat = 16
+
+    // MARK: - Colors
+
+    /// Panel background
+    public static let background = Color(red: 18/255, green: 18/255, blue: 28/255).opacity(0.9)
+
+    /// Progress bar background
+    public static let progressBackground = Color.white.opacity(0.08)
+
+    /// Main quest progress fill
+    public static let mainQuestProgress = PlannerumColors.primary
+
+    /// Side quest progress fill
+    public static let sideQuestProgress = Color(red: 99/255, green: 102/255, blue: 241/255)
+
+    /// Bonus quest progress fill
+    public static let bonusQuestProgress = PlannerumColors.xpGold
+
+    /// Quest complete check
+    public static let completeCheck = Color(red: 34/255, green: 197/255, blue: 94/255)
+
+    /// Streak fire color
+    public static let streakFire = Color(red: 251/255, green: 146/255, blue: 60/255)
+
+    /// Locked quest overlay
+    public static let lockedOverlay = Color.black.opacity(0.5)
+
+    // MARK: - Typography
+
+    /// Panel header font
+    public static let headerFont = Font.system(size: 11, weight: .heavy)
+
+    /// Quest title font
+    public static let questTitleFont = Font.system(size: 14, weight: .medium)
+
+    /// Quest progress font
+    public static let progressFont = Font.system(size: 12, weight: .semibold, design: .monospaced)
+
+    /// XP reward font
+    public static let xpFont = Font.system(size: 12, weight: .bold, design: .rounded)
+
+    /// Streak count font
+    public static let streakFont = Font.system(size: 16, weight: .bold, design: .rounded)
+
+    // MARK: - Animation
+
+    /// Progress fill animation
+    public static let progressAnimation = Animation.spring(response: 0.5, dampingFraction: 0.8)
+
+    /// Quest complete animation
+    public static let completeAnimation = Animation.spring(response: 0.4, dampingFraction: 0.65)
+
+    /// Bonus unlock animation
+    public static let unlockAnimation = Animation.spring(response: 0.6, dampingFraction: 0.7)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - NOW VIEW TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for the Now view (formerly Today's Tasks panel)
+public struct NowViewTokens {
+
+    // MARK: - Layout
+
+    /// Task row height
+    public static let taskRowHeight: CGFloat = 52
+
+    /// Checkbox size
+    public static let checkboxSize: CGFloat = 22
+
+    /// Priority indicator width
+    public static let priorityIndicatorWidth: CGFloat = 4
+
+    /// Row horizontal padding
+    public static let rowPadding: CGFloat = 12
+
+    /// Row vertical spacing
+    public static let rowSpacing: CGFloat = 8
+
+    /// Section corner radius
+    public static let cornerRadius: CGFloat = 14
+
+    /// Due badge corner radius
+    public static let dueBadgeRadius: CGFloat = 6
+
+    /// XP badge size
+    public static let xpBadgeHeight: CGFloat = 20
+
+    // MARK: - Colors
+
+    /// Row background default
+    public static let rowBackground = Color.white.opacity(0.03)
+
+    /// Row background hover
+    public static let rowBackgroundHover = Color.white.opacity(0.06)
+
+    /// Checkbox unchecked border
+    public static let checkboxBorder = Color.white.opacity(0.3)
+
+    /// Checkbox checked fill
+    public static let checkboxChecked = Color(red: 34/255, green: 197/255, blue: 94/255)
+
+    /// Priority critical
+    public static let priorityCritical = Color(red: 239/255, green: 68/255, blue: 68/255)
+
+    /// Priority high
+    public static let priorityHigh = Color(red: 251/255, green: 146/255, blue: 60/255)
+
+    /// Priority medium
+    public static let priorityMedium = Color(red: 59/255, green: 130/255, blue: 246/255)
+
+    /// Priority low
+    public static let priorityLow = Color.white.opacity(0.3)
+
+    /// Overdue background
+    public static let overdueBackground = Color(red: 239/255, green: 68/255, blue: 68/255).opacity(0.15)
+
+    /// Due today background
+    public static let dueTodayBackground = Color(red: 251/255, green: 146/255, blue: 60/255).opacity(0.15)
+
+    /// Time badge background
+    public static let timeBadgeBackground = Color.white.opacity(0.08)
+
+    /// Completed task opacity
+    public static let completedOpacity: Double = 0.4
+
+    // MARK: - Typography
+
+    /// Section header font
+    public static let sectionHeaderFont = Font.system(size: 11, weight: .heavy)
+
+    /// Task title font
+    public static let taskTitleFont = Font.system(size: 14, weight: .medium)
+
+    /// Task title completed (strikethrough)
+    public static let taskTitleCompletedFont = Font.system(size: 14, weight: .regular)
+
+    /// Project tag font
+    public static let projectTagFont = Font.system(size: 11, weight: .medium)
+
+    /// Due time font
+    public static let dueTimeFont = Font.system(size: 11, weight: .medium, design: .monospaced)
+
+    /// XP font
+    public static let xpFont = Font.system(size: 11, weight: .bold, design: .rounded)
+
+    /// Task count font
+    public static let countFont = Font.system(size: 12, weight: .semibold, design: .rounded)
+
+    // MARK: - Animation
+
+    /// Checkbox toggle animation
+    public static let checkAnimation = Animation.spring(response: 0.25, dampingFraction: 0.7)
+
+    /// Row dismiss animation
+    public static let dismissAnimation = Animation.spring(response: 0.3, dampingFraction: 0.8)
+
+    /// Reorder animation
+    public static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.75)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - UPCOMING SECTION TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for the Upcoming days section
+public struct UpcomingSectionTokens {
+
+    // MARK: - Layout
+
+    /// Day column width
+    public static let dayColumnWidth: CGFloat = 140
+
+    /// Day column minimum height
+    public static let dayColumnMinHeight: CGFloat = 200
+
+    /// Day header height
+    public static let dayHeaderHeight: CGFloat = 56
+
+    /// Task mini-card height
+    public static let miniCardHeight: CGFloat = 36
+
+    /// Column spacing
+    public static let columnSpacing: CGFloat = 12
+
+    /// Internal padding
+    public static let padding: CGFloat = 12
+
+    /// Corner radius
+    public static let cornerRadius: CGFloat = 14
+
+    /// Mini-card corner radius
+    public static let miniCardRadius: CGFloat = 8
+
+    /// Day number size
+    public static let dayNumberSize: CGFloat = 28
+
+    /// Max visible tasks per day
+    public static let maxVisibleTasks: Int = 4
+
+    // MARK: - Colors
+
+    /// Column background
+    public static let columnBackground = Color.white.opacity(0.03)
+
+    /// Today column highlight
+    public static let todayHighlight = PlannerumColors.primary.opacity(0.1)
+
+    /// Tomorrow column background
+    public static let tomorrowBackground = Color.white.opacity(0.04)
+
+    /// Weekend column background
+    public static let weekendBackground = Color(red: 139/255, green: 92/255, blue: 246/255).opacity(0.05)
+
+    /// Day header text
+    public static let dayHeaderText = Color.white.opacity(0.9)
+
+    /// Day header text secondary
+    public static let dayHeaderTextSecondary = Color.white.opacity(0.5)
+
+    /// Today badge color
+    public static let todayBadge = PlannerumColors.primary
+
+    /// Task count badge
+    public static let taskCountBadge = Color.white.opacity(0.1)
+
+    /// Has deadline indicator
+    public static let deadlineIndicator = Color(red: 251/255, green: 146/255, blue: 60/255)
+
+    /// Drop target highlight
+    public static let dropTargetHighlight = PlannerumColors.primary.opacity(0.2)
+
+    // MARK: - Typography
+
+    /// Section header font
+    public static let sectionHeaderFont = Font.system(size: 11, weight: .heavy)
+
+    /// Day name font
+    public static let dayNameFont = Font.system(size: 11, weight: .semibold)
+
+    /// Day number font
+    public static let dayNumberFont = Font.system(size: 22, weight: .bold, design: .rounded)
+
+    /// Mini-card title font
+    public static let miniCardTitleFont = Font.system(size: 12, weight: .medium)
+
+    /// Task count font
+    public static let taskCountFont = Font.system(size: 11, weight: .semibold)
+
+    /// More tasks indicator font
+    public static let moreTasksFont = Font.system(size: 11, weight: .medium)
+
+    // MARK: - Animation
+
+    /// Horizontal scroll animation
+    public static let scrollAnimation = Animation.spring(response: 0.4, dampingFraction: 0.85)
+
+    /// Column expand animation
+    public static let expandAnimation = Animation.spring(response: 0.35, dampingFraction: 0.8)
+
+    /// Drop animation
+    public static let dropAnimation = Animation.spring(response: 0.3, dampingFraction: 0.75)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - PLANNERUM HEADER TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for the Plannerum header bar
+public struct PlannerumHeaderTokens {
+
+    // MARK: - Layout
+
+    /// Header height
+    public static let height: CGFloat = 72
+
+    /// XP bar height
+    public static let xpBarHeight: CGFloat = 8
+
+    /// XP bar corner radius
+    public static let xpBarRadius: CGFloat = 4
+
+    /// Level badge size
+    public static let levelBadgeSize: CGFloat = 40
+
+    /// Metric indicator size
+    public static let metricSize: CGFloat = 32
+
+    /// Section spacing
+    public static let sectionSpacing: CGFloat = 24
+
+    /// Horizontal padding
+    public static let padding: CGFloat = 20
+
+    // MARK: - Colors
+
+    /// XP bar background
+    public static let xpBarBackground = Color.white.opacity(0.08)
+
+    /// XP bar fill gradient start
+    public static let xpBarFillStart = PlannerumColors.xpGold
+
+    /// XP bar fill gradient end
+    public static let xpBarFillEnd = Color(red: 251/255, green: 191/255, blue: 36/255)
+
+    /// Level badge background
+    public static let levelBadgeBackground = Color(red: 24/255, green: 24/255, blue: 42/255)
+
+    /// Level badge border
+    public static let levelBadgeBorder = PlannerumColors.xpGold
+
+    /// Focus metric color (based on level)
+    public static func focusColor(percent: Int) -> Color {
+        if percent >= 70 { return Color(red: 34/255, green: 197/255, blue: 94/255) }
+        if percent >= 40 { return Color(red: 245/255, green: 158/255, blue: 11/255) }
+        return Color(red: 239/255, green: 68/255, blue: 68/255)
+    }
+
+    /// Energy metric color (based on level)
+    public static func energyColor(percent: Int) -> Color {
+        if percent >= 70 { return Color(red: 34/255, green: 197/255, blue: 94/255) }
+        if percent >= 40 { return Color(red: 245/255, green: 158/255, blue: 11/255) }
+        return Color(red: 239/255, green: 68/255, blue: 68/255)
+    }
+
+    // MARK: - Typography
+
+    /// Level number font
+    public static let levelFont = Font.system(size: 18, weight: .bold, design: .rounded)
+
+    /// XP progress font
+    public static let xpProgressFont = Font.system(size: 12, weight: .semibold, design: .monospaced)
+
+    /// Rank title font
+    public static let rankFont = Font.system(size: 11, weight: .medium)
+
+    /// Metric value font
+    public static let metricValueFont = Font.system(size: 14, weight: .bold, design: .rounded)
+
+    /// Metric label font
+    public static let metricLabelFont = Font.system(size: 10, weight: .medium)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - SESSION TIMER TOKENS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Design tokens for active session timer
+public struct SessionTimerTokens {
+
+    // MARK: - Layout
+
+    /// Timer display width
+    public static let timerWidth: CGFloat = 120
+
+    /// Timer display height
+    public static let timerHeight: CGFloat = 44
+
+    /// Progress ring size
+    public static let progressRingSize: CGFloat = 48
+
+    /// Progress ring stroke width
+    public static let progressRingStroke: CGFloat = 4
+
+    /// Control button size
+    public static let controlButtonSize: CGFloat = 36
+
+    /// Corner radius
+    public static let cornerRadius: CGFloat = 12
+
+    // MARK: - Colors
+
+    /// Timer background (running)
+    public static let runningBackground = Color(red: 34/255, green: 197/255, blue: 94/255).opacity(0.15)
+
+    /// Timer background (paused)
+    public static let pausedBackground = Color(red: 245/255, green: 158/255, blue: 11/255).opacity(0.15)
+
+    /// Progress ring track
+    public static let progressTrack = Color.white.opacity(0.1)
+
+    /// Progress ring fill (running)
+    public static let progressFillRunning = Color(red: 34/255, green: 197/255, blue: 94/255)
+
+    /// Progress ring fill (paused)
+    public static let progressFillPaused = Color(red: 245/255, green: 158/255, blue: 11/255)
+
+    /// Play button
+    public static let playButton = Color(red: 34/255, green: 197/255, blue: 94/255)
+
+    /// Pause button
+    public static let pauseButton = Color(red: 245/255, green: 158/255, blue: 11/255)
+
+    /// Stop button
+    public static let stopButton = Color(red: 239/255, green: 68/255, blue: 68/255)
+
+    // MARK: - Typography
+
+    /// Timer display font
+    public static let timerFont = Font.system(size: 20, weight: .bold, design: .monospaced)
+
+    /// Task name font
+    public static let taskNameFont = Font.system(size: 13, weight: .medium)
+
+    /// Session type font
+    public static let sessionTypeFont = Font.system(size: 11, weight: .semibold)
+
+    // MARK: - Animation
+
+    /// Progress tick animation
+    public static let tickAnimation = Animation.linear(duration: 1.0)
+
+    /// State change animation
+    public static let stateAnimation = Animation.spring(response: 0.3, dampingFraction: 0.8)
+
+    /// Pulse animation (running)
+    public static let pulseAnimation = Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: true)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - TIME UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Time formatting utilities
 public struct PlannerumTimeUtils {
 

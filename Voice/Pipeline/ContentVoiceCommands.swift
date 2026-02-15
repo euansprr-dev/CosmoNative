@@ -499,7 +499,7 @@ actor ContentQueryHandler {
             }
         }
 
-        let draftCount = phaseCounts[.draft, default: 0] + phaseCounts[.outline, default: 0]
+        let draftCount = phaseCounts[.draft, default: 0] + phaseCounts[.ideation, default: 0]
         let polishCount = phaseCounts[.polish, default: 0]
         let scheduledCount = phaseCounts[.scheduled, default: 0]
 

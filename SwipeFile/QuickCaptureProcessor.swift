@@ -352,9 +352,11 @@ final class QuickCaptureProcessor: ObservableObject {
 
     private func showSuccessNotification(for research: Research, classification: SwipeURLClassifier.Classification) async {
         let content = UNMutableNotificationContent()
-        content.title = "Research Saved"
+        content.title = "Captured Research"
         content.body = research.title ?? classification.sourceType.displayName
         content.sound = .default
+        content.categoryIdentifier = SwipeFileEngine.captureNotificationCategory
+        content.userInfo = ["atomUUID": research.uuid]
 
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,

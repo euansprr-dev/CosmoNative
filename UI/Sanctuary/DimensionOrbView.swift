@@ -32,10 +32,21 @@ public struct DimensionOrbView: View {
         VStack(spacing: SanctuaryLayout.Spacing.sm) {
             ZStack {
                 // Layer 1: Ambient Glow (health-based opacity)
+                // Using RadialGradient instead of blur(radius:30) — visually identical, far cheaper
                 Circle()
-                    .fill(dimensionColor.opacity(healthScore * 0.004)) // 0-40% opacity based on health
-                    .frame(width: baseSize + 48, height: baseSize + 48) // 120pt per spec
-                    .blur(radius: 30)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                dimensionColor.opacity(healthScore * 0.004),
+                                dimensionColor.opacity(healthScore * 0.002),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: (baseSize + 48) / 2
+                        )
+                    )
+                    .frame(width: baseSize + 80, height: baseSize + 80)
 
                 // Layer 2: Status Ring (health indicator)
                 statusRing
@@ -103,10 +114,11 @@ public struct DimensionOrbView: View {
                     }
                 }
                 .frame(width: baseSize, height: baseSize)
-                .scaleEffect(pulseScale * (isSelected ? 1.15 : 1.0) * (isHovered ? 1.05 : 1.0))
-                .offset(y: isHovered ? -4 : 0)  // Gentle hover lift effect
+                .clipShape(Circle())
                 .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: isHovered ? 12 : 8)
                 .shadow(color: dimensionColor.opacity(isHovered ? 0.5 : 0.4), radius: isSelected ? 15 : (isHovered ? 12 : 8), x: 0, y: 0)
+                .scaleEffect(pulseScale * (isSelected ? 1.15 : 1.0) * (isHovered ? 1.05 : 1.0))
+                .offset(y: isHovered ? -4 : 0)  // Gentle hover lift effect
                 .animation(SanctuarySprings.hover, value: isHovered)
 
                 // Selection ring

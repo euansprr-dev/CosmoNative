@@ -1,7 +1,7 @@
 // CosmoOS/Canvas/ResearchBlockView.swift
 // Green-accented Research block for Thinkspace canvas
 // Dark glass design matching Sanctuary aesthetic
-// December 2025 - Shows actual research content with metadata
+// Features: Playable video preview, collapsible transcript & annotations dropdown
 
 import SwiftUI
 
@@ -11,12 +11,16 @@ struct ResearchBlockView: View {
     @State private var isExpanded = false
     @State private var atom: Atom?
     @State private var isLoading = true
+    @State private var isPlayerActive = false
+    @State private var currentTimestamp: TimeInterval = 0
+    @State private var isDropdownOpen = false
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Green accent for research
     private let accentColor = CosmoColors.blockResearch
 
-    // Parsed metadata
+    // MARK: - Parsed Metadata
+
     private var platform: String? {
         guard let structured = atom?.structured,
               let data = structured.data(using: .utf8),
@@ -53,8 +57,24 @@ struct ResearchBlockView: View {
         return json["thumbnail_url"] as? String ?? json["thumbnail"] as? String
     }
 
+    /// Resolve the URL from atom data first, then fall back to block metadata
+    private var resolvedURL: String? {
+        // 1. Check loaded atom's url property
+        if let url = atom?.url, !url.isEmpty { return url }
+        // 2. Check atom's structured JSON
+        if let structured = atom?.structured,
+           let data = structured.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let url = json["url"] as? String, !url.isEmpty { return url }
+            if let url = json["source_url"] as? String, !url.isEmpty { return url }
+        }
+        // 3. Fall back to block metadata
+        if let url = block.metadata["url"], !url.isEmpty { return url }
+        return nil
+    }
+
     private var contentType: String {
-        let url = block.metadata["url"]?.lowercased() ?? ""
+        let url = resolvedURL?.lowercased() ?? ""
         if url.contains("youtube") || url.contains("youtu.be") || url.contains("vimeo") || url.contains("loom") {
             return "Video"
         } else if url.hasSuffix(".pdf") {
@@ -66,6 +86,28 @@ struct ResearchBlockView: View {
         }
         return "Research"
     }
+
+    private var isYouTubeContent: Bool {
+        let url = resolvedURL?.lowercased() ?? ""
+        return url.contains("youtube") || url.contains("youtu.be")
+    }
+
+    private var videoId: String? {
+        extractYouTubeVideoId(from: resolvedURL)
+    }
+
+    /// Build a YouTube thumbnail URL from the video ID if no explicit thumbnail is available
+    private var resolvedThumbnailURL: String? {
+        // Check atom's thumbnailUrl first
+        if let thumb = atom?.thumbnailUrl, !thumb.isEmpty { return thumb }
+        if let thumb = thumbnailURL, !thumb.isEmpty { return thumb }
+        if let vid = videoId {
+            return "https://img.youtube.com/vi/\(vid)/hqdefault.jpg"
+        }
+        return nil
+    }
+
+    // MARK: - Body
 
     var body: some View {
         CosmoBlockWrapper(
@@ -86,121 +128,255 @@ struct ResearchBlockView: View {
     // MARK: - Research Content
 
     private var researchContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header with icon and metadata
-            HStack(spacing: 12) {
-                // Thumbnail or icon
-                thumbnailView
-                    .frame(width: 60, height: 60)
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Header with metadata
+                metadataHeader
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    // Content type badge
-                    Text(contentType.uppercased())
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(accentColor)
-                        .tracking(0.8)
+                // Video area (replaces raw body text)
+                videoArea
+                    .padding(.horizontal, 16)
 
-                    // Title
-                    Text(block.title.isEmpty ? "Untitled Research" : block.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
+                // Dropdown toggle for Transcript & Notes
+                dropdownSection
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
 
-                    // Metadata row
-                    metadataRow
-                }
+                Spacer(minLength: 8)
 
-                Spacer()
-            }
-
-            // Body preview
-            if let body = atom?.body, !body.isEmpty {
-                Text(body)
-                    .font(.system(size: 13))
-                    .foregroundColor(Color.white.opacity(0.6))
-                    .lineLimit(isExpanded ? 6 : 3)
-            } else if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .tint(accentColor)
-                    Text("Loading...")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.4))
-                }
-            }
-
-            Spacer()
-
-            // Footer
-            HStack {
-                // URL indicator
-                if let url = block.metadata["url"], !url.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "link")
-                            .font(.system(size: 10))
-                        Text(extractDomain(from: url))
-                            .font(.system(size: 10))
-                            .lineLimit(1)
-                    }
-                    .foregroundColor(accentColor.opacity(0.7))
-                }
-
-                Spacer()
-
-                // Timestamp
-                if let created = block.metadata["created"] {
-                    Text(formatTimestamp(created))
-                        .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.3))
-                }
+                // Footer
+                footerRow
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    // MARK: - Thumbnail View
+    // MARK: - Metadata Header
+
+    private var metadataHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Content type badge
+            Text(contentType.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(accentColor)
+                .tracking(0.8)
+
+            // Title
+            Text(block.title.isEmpty ? "Untitled Research" : block.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+                .lineLimit(2)
+
+            // Metadata row
+            metadataRow
+        }
+    }
+
+    // MARK: - Video Area
 
     @ViewBuilder
-    private var thumbnailView: some View {
-        if let urlString = thumbnailURL, let url = URL(string: urlString) {
+    private var videoArea: some View {
+        if isLoading {
+            // Shimmer loading state
+            CosmicShimmer(entityColor: accentColor, cornerRadius: 10)
+                .frame(height: 158)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        } else if isPlayerActive, let vid = videoId {
+            // Active YouTube player
+            YouTubeFocusModePlayer(
+                videoId: vid,
+                currentTime: $currentTimestamp,
+                onDurationLoaded: { _ in },
+                onSeek: { time in
+                    currentTimestamp = time
+                }
+            )
+            .frame(height: 158)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .transition(.opacity)
+        } else if isYouTubeContent, let vid = videoId {
+            // YouTube thumbnail with play button overlay
+            videoThumbnailWithPlay(videoId: vid)
+        } else if let urlString = resolvedThumbnailURL, let url = URL(string: urlString) {
+            // Non-YouTube: thumbnail with "Open" button
+            nonYouTubeThumbnail(url: url)
+        } else {
+            // No thumbnail available: icon placeholder
+            videoIconPlaceholder
+        }
+    }
+
+    /// YouTube thumbnail at 16:9 with centered play button
+    private func videoThumbnailWithPlay(videoId: String) -> some View {
+        let thumbURL = resolvedThumbnailURL.flatMap { URL(string: $0) }
+
+        return Button {
+            withAnimation(ProMotionSprings.snappy) {
+                isPlayerActive = true
+            }
+        } label: {
+            ZStack {
+                // Thumbnail image
+                if let thumbURL = thumbURL {
+                    AsyncImage(url: thumbURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(16/9, contentMode: .fill)
+                        case .failure, .empty:
+                            thumbnailPlaceholderBackground
+                        @unknown default:
+                            thumbnailPlaceholderBackground
+                        }
+                    }
+                } else {
+                    thumbnailPlaceholderBackground
+                }
+
+                // Dark scrim for contrast
+                Color.black.opacity(0.25)
+
+                // Play button overlay
+                ZStack {
+                    Circle()
+                        .fill(Color.black.opacity(0.55))
+                        .frame(width: 48, height: 48)
+
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                        .offset(x: 2) // Optical center
+                }
+            }
+            .frame(height: 158)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Non-YouTube content: show thumbnail with an "Open" button
+    private func nonYouTubeThumbnail(url: URL) -> some View {
+        ZStack {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .aspectRatio(16/9, contentMode: .fill)
                 case .failure, .empty:
-                    iconPlaceholder
+                    thumbnailPlaceholderBackground
                 @unknown default:
-                    iconPlaceholder
+                    thumbnailPlaceholderBackground
                 }
             }
-        } else {
-            iconPlaceholder
+
+            Color.black.opacity(0.3)
+
+            // Open externally button
+            Button {
+                if let urlString = resolvedURL, let openURL = URL(string: urlString) {
+                    NSWorkspace.shared.open(openURL)
+                }
+            } label: {
+                VStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(0.55))
+                            .frame(width: 44, height: 44)
+
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 18))
+                            .foregroundColor(.white)
+                    }
+                    Text("Open")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+            }
+            .buttonStyle(.plain)
         }
+        .frame(height: 158)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private var iconPlaceholder: some View {
+    /// Icon placeholder when no thumbnail is available
+    private var videoIconPlaceholder: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(accentColor.opacity(0.15))
+            RoundedRectangle(cornerRadius: 10)
+                .fill(accentColor.opacity(0.08))
+
+            VStack(spacing: 8) {
+                Image(systemName: contentTypeIcon)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(accentColor.opacity(0.6))
+
+                Text(contentType)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color.white.opacity(0.35))
+            }
+        }
+        .frame(height: 158)
+    }
+
+    /// Simple dark gradient placeholder behind thumbnail area
+    private var thumbnailPlaceholderBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    LinearGradient(
+                        colors: [accentColor.opacity(0.12), Color.white.opacity(0.04)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
 
             Image(systemName: contentTypeIcon)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundColor(accentColor)
+                .font(.system(size: 28))
+                .foregroundColor(accentColor.opacity(0.4))
         }
     }
 
-    private var contentTypeIcon: String {
-        switch contentType {
-        case "Video": return "play.rectangle.fill"
-        case "PDF": return "doc.text.fill"
-        case "Social": return "bubble.left.and.bubble.right.fill"
-        case "Article": return "doc.richtext.fill"
-        default: return "magnifyingglass"
+    // MARK: - Dropdown Section
+
+    private var dropdownSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Toggle button
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    isDropdownOpen.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isDropdownOpen ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(accentColor)
+
+                    Text("Transcript & Notes")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.6))
+
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Dropdown content
+            if isDropdownOpen {
+                ResearchBlockDropdownView(
+                    atomUUID: block.entityUuid,
+                    atomBody: atom?.body
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -217,7 +393,7 @@ struct ResearchBlockView: View {
 
             if let platform = platform {
                 if author != nil {
-                    Text("·")
+                    Text("\u{00B7}")
                         .foregroundColor(Color.white.opacity(0.3))
                 }
                 Text(platform)
@@ -226,12 +402,51 @@ struct ResearchBlockView: View {
             }
 
             if let duration = duration {
-                Text("·")
+                Text("\u{00B7}")
                     .foregroundColor(Color.white.opacity(0.3))
                 Text(duration)
                     .font(.system(size: 11))
                     .foregroundColor(Color.white.opacity(0.5))
             }
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footerRow: some View {
+        HStack {
+            // URL indicator
+            if let url = resolvedURL {
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                        .font(.system(size: 10))
+                    Text(extractDomain(from: url))
+                        .font(.system(size: 10))
+                        .lineLimit(1)
+                }
+                .foregroundColor(accentColor.opacity(0.7))
+            }
+
+            Spacer()
+
+            // Timestamp
+            if let created = block.metadata["created"] {
+                Text(formatTimestamp(created))
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.3))
+            }
+        }
+    }
+
+    // MARK: - Content Type Icon
+
+    private var contentTypeIcon: String {
+        switch contentType {
+        case "Video": return "play.rectangle.fill"
+        case "PDF": return "doc.text.fill"
+        case "Social": return "bubble.left.and.bubble.right.fill"
+        case "Article": return "doc.richtext.fill"
+        default: return "magnifyingglass"
         }
     }
 
@@ -263,6 +478,38 @@ struct ResearchBlockView: View {
                 "id": block.entityId
             ]
         )
+    }
+
+    // MARK: - YouTube Video ID Extraction
+
+    private func extractYouTubeVideoId(from urlString: String?) -> String? {
+        guard let urlString = urlString else { return nil }
+
+        // Pattern 1: youtube.com/watch?v=VIDEO_ID
+        if let range = urlString.range(of: "v=") {
+            let startIndex = range.upperBound
+            let endIndex = urlString[startIndex...].firstIndex(of: "&") ?? urlString.endIndex
+            return String(urlString[startIndex..<endIndex])
+        }
+
+        // Pattern 2: youtu.be/VIDEO_ID
+        if urlString.contains("youtu.be/") {
+            let components = urlString.components(separatedBy: "youtu.be/")
+            if components.count > 1 {
+                let idPart = components[1]
+                let endIndex = idPart.firstIndex(of: "?") ?? idPart.firstIndex(of: "&") ?? idPart.endIndex
+                return String(idPart[..<endIndex])
+            }
+        }
+
+        // Pattern 3: youtube.com/embed/VIDEO_ID
+        if let range = urlString.range(of: "/embed/") {
+            let startIndex = range.upperBound
+            let endIndex = urlString[startIndex...].firstIndex(of: "?") ?? urlString.endIndex
+            return String(urlString[startIndex..<endIndex])
+        }
+
+        return nil
     }
 
     // MARK: - Helpers

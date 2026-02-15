@@ -4,6 +4,7 @@
 
 import GRDB
 import Foundation
+import SwiftUI
 
 // MARK: - Atom Type Enum
 /// All entity types that can be stored as Atoms
@@ -95,6 +96,10 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Planning & Objectives
     case objective                                      // Quarter/annual objectives (goals)
 
+    // MARK: - Swipe Intelligence Taxonomy
+    case creator                                        // Content creator profiles (for attribution)
+    case taxonomyValue = "taxonomy_value"               // User-defined taxonomy dimension values
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -102,7 +107,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .objective:
+             .note, .objective, .creator, .taxonomyValue:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
             return .leveling
@@ -234,6 +239,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .thinkspace: return "Thinkspace"
         // Planning
         case .objective: return "Objective"
+        // Swipe Intelligence Taxonomy
+        case .creator: return "Creator"
+        case .taxonomyValue: return "Taxonomy Value"
         }
     }
 
@@ -312,6 +320,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .thinkspace: return "Thinkspaces"
         // Planning
         case .objective: return "Objectives"
+        // Swipe Intelligence Taxonomy
+        case .creator: return "Creators"
+        case .taxonomyValue: return "Taxonomy Values"
         }
     }
 
@@ -390,6 +401,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .thinkspace: return "rectangle.3.group"
         // Planning
         case .objective: return "target"
+        // Swipe Intelligence Taxonomy
+        case .creator: return "person.crop.rectangle.fill"
+        case .taxonomyValue: return "tag.fill"
         }
     }
 }
@@ -529,6 +543,18 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     case preferenceFor = "preference_for"                  // Preference -> what it configures
     case routineInstance = "routine_instance"              // Schedule block -> routine definition
 
+    // MARK: - IdeaForge Links
+    case ideaToSwipe = "idea_to_swipe"                     // Idea matched/inspired by a swipe
+    case swipeToIdea = "swipe_to_idea"                     // Swipe linked to an idea
+    case ideaToContent = "idea_to_content"                 // Idea promoted to content
+    case contentToIdea = "content_to_idea"                 // Content originated from idea
+    case ideaToClient = "idea_to_client"                   // Idea assigned to client
+    case clientToIdea = "client_to_idea"                   // Client's assigned ideas
+
+    // MARK: - Swipe Intelligence Links
+    case swipeToCreator = "swipe_to_creator"               // Swipe attributed to a creator
+    case creatorToSwipe = "creator_to_swipe"               // Creator's swipe files
+
     // MARK: - Bidirectional Links (for knowledge graph traversal)
     case linksTo = "links_to"                              // Generic forward link
     case linkedFrom = "linked_from"                        // Generic back link
@@ -563,6 +589,14 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .semanticCluster: return .semanticMember
         case .clientContent: return .contentToClient
         case .contentToClient: return .clientContent
+        case .ideaToSwipe: return .swipeToIdea
+        case .swipeToIdea: return .ideaToSwipe
+        case .ideaToContent: return .contentToIdea
+        case .contentToIdea: return .ideaToContent
+        case .ideaToClient: return .clientToIdea
+        case .clientToIdea: return .ideaToClient
+        case .swipeToCreator: return .creatorToSwipe
+        case .creatorToSwipe: return .swipeToCreator
         default: return nil
         }
     }
@@ -621,6 +655,16 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .semanticSource: return "Semantic Source"
         case .computationResult: return "Computation Result"
         case .snapshotData: return "Snapshot Data"
+        // IdeaForge
+        case .ideaToSwipe: return "Idea to Swipe"
+        case .swipeToIdea: return "Swipe to Idea"
+        case .ideaToContent: return "Idea to Content"
+        case .contentToIdea: return "Content to Idea"
+        case .ideaToClient: return "Idea to Client"
+        case .clientToIdea: return "Client to Idea"
+        // Swipe Intelligence
+        case .swipeToCreator: return "Swipe to Creator"
+        case .creatorToSwipe: return "Creator to Swipe"
         }
     }
 }
@@ -876,6 +920,42 @@ public struct AtomLink: Codable, Equatable, Sendable, Hashable {
 
     static func snapshotData(_ atomUUID: String, entityType: AtomType) -> AtomLink {
         AtomLink(linkType: .snapshotData, uuid: atomUUID, entityType: entityType)
+    }
+
+    // MARK: - IdeaForge Link Factories
+
+    static func ideaToSwipe(_ swipeUUID: String) -> AtomLink {
+        AtomLink(linkType: .ideaToSwipe, uuid: swipeUUID, entityType: .research)
+    }
+
+    static func swipeToIdea(_ ideaUUID: String) -> AtomLink {
+        AtomLink(linkType: .swipeToIdea, uuid: ideaUUID, entityType: .idea)
+    }
+
+    static func ideaToContent(_ contentUUID: String) -> AtomLink {
+        AtomLink(linkType: .ideaToContent, uuid: contentUUID, entityType: .content)
+    }
+
+    static func contentToIdea(_ ideaUUID: String) -> AtomLink {
+        AtomLink(linkType: .contentToIdea, uuid: ideaUUID, entityType: .idea)
+    }
+
+    static func ideaToClient(_ clientUUID: String) -> AtomLink {
+        AtomLink(linkType: .ideaToClient, uuid: clientUUID, entityType: .clientProfile)
+    }
+
+    static func clientToIdea(_ ideaUUID: String) -> AtomLink {
+        AtomLink(linkType: .clientToIdea, uuid: ideaUUID, entityType: .idea)
+    }
+
+    // MARK: - Swipe Intelligence Link Factories
+
+    static func swipeToCreator(_ creatorUUID: String) -> AtomLink {
+        AtomLink(linkType: .swipeToCreator, uuid: creatorUUID, entityType: .creator)
+    }
+
+    static func creatorToSwipe(_ swipeUUID: String) -> AtomLink {
+        AtomLink(linkType: .creatorToSwipe, uuid: swipeUUID, entityType: .research)
     }
 
     // MARK: - Utility Methods
@@ -1175,6 +1255,522 @@ extension Atom {
     }
 }
 
+// MARK: - Focus Floating Block
+
+/// A floating block stored in an atom's metadata, so it travels with the atom
+struct FocusFloatingBlock: Codable, Sendable, Identifiable, Equatable {
+    var id: String  // UUID string
+    var linkedAtomUUID: String  // The atom being displayed
+    var linkedAtomType: String  // AtomType raw value
+    var title: String  // Cached title for display
+    var positionX: Double
+    var positionY: Double
+    var width: Double
+    var height: Double
+    var zIndex: Int
+    var displayState: String  // "collapsed", "standard", "expanded"
+    var addedAt: String  // ISO8601 date string
+
+    init(
+        id: String = UUID().uuidString,
+        linkedAtomUUID: String,
+        linkedAtomType: String,
+        title: String = "Untitled",
+        positionX: Double = 200,
+        positionY: Double = 200,
+        width: Double = 280,
+        height: Double = 140,
+        zIndex: Int = 0,
+        displayState: String = "standard",
+        addedAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.id = id
+        self.linkedAtomUUID = linkedAtomUUID
+        self.linkedAtomType = linkedAtomType
+        self.title = title
+        self.positionX = positionX
+        self.positionY = positionY
+        self.width = width
+        self.height = height
+        self.zIndex = zIndex
+        self.displayState = displayState
+        self.addedAt = addedAt
+    }
+
+    var position: CGPoint {
+        get { CGPoint(x: positionX, y: positionY) }
+        set {
+            positionX = newValue.x
+            positionY = newValue.y
+        }
+    }
+
+    var size: CGSize {
+        CGSize(width: width, height: height)
+    }
+
+    var atomType: AtomType? {
+        AtomType(rawValue: linkedAtomType)
+    }
+}
+
+/// Metadata wrapper for storing floating blocks in an atom
+struct FocusFloatingBlocksMetadata: Codable, Sendable {
+    var floatingBlocks: [FocusFloatingBlock]
+
+    init(floatingBlocks: [FocusFloatingBlock] = []) {
+        self.floatingBlocks = floatingBlocks
+    }
+}
+
+// MARK: - Atom Focus Floating Blocks Helpers
+
+extension Atom {
+    /// Get floating blocks from metadata
+    var focusFloatingBlocks: [FocusFloatingBlock] {
+        guard let metadata = metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let blocksJSON = dict["focusFloatingBlocks"],
+              let blocksData = try? JSONSerialization.data(withJSONObject: blocksJSON) else {
+            return []
+        }
+        return (try? JSONDecoder().decode([FocusFloatingBlock].self, from: blocksData)) ?? []
+    }
+
+    /// Create a copy with updated floating blocks in metadata
+    func withFocusFloatingBlocks(_ blocks: [FocusFloatingBlock]) -> Atom {
+        var copy = self
+
+        // Parse existing metadata or create new
+        var dict: [String: Any] = [:]
+        if let existingMetadata = copy.metadata,
+           let data = existingMetadata.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
+        }
+
+        // Encode floating blocks
+        if let blocksData = try? JSONEncoder().encode(blocks),
+           let blocksJSON = try? JSONSerialization.jsonObject(with: blocksData) {
+            dict["focusFloatingBlocks"] = blocksJSON
+        }
+
+        // Serialize back
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            copy.metadata = jsonString
+        }
+
+        return copy
+    }
+}
+
+// MARK: - IdeaForge Enums (must precede IdeaMetadata)
+
+/// Status pipeline for ideas
+enum IdeaStatus: String, Codable, Sendable, CaseIterable {
+    case spark
+    case developing
+    case ready
+    case inProduction
+    case published
+    case archived
+
+    var displayName: String {
+        switch self {
+        case .spark: return "Spark"
+        case .developing: return "Developing"
+        case .ready: return "Ready"
+        case .inProduction: return "In Production"
+        case .published: return "Published"
+        case .archived: return "Archived"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .spark: return "sparkles"
+        case .developing: return "hammer.fill"
+        case .ready: return "checkmark.seal.fill"
+        case .inProduction: return "gearshape.fill"
+        case .published: return "paperplane.fill"
+        case .archived: return "archivebox.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .spark: return Color(hex: "#FBBF24")
+        case .developing: return Color(hex: "#818CF8")
+        case .ready: return Color(hex: "#34D399")
+        case .inProduction: return Color(hex: "#F97316")
+        case .published: return Color(hex: "#38BDF8")
+        case .archived: return Color(hex: "#6B7280")
+        }
+    }
+
+    var sortOrder: Int {
+        switch self {
+        case .spark: return 0
+        case .developing: return 1
+        case .ready: return 2
+        case .inProduction: return 3
+        case .published: return 4
+        case .archived: return 5
+        }
+    }
+}
+
+/// Content format for ideas
+enum IdeaContentFormat: String, Codable, Sendable, CaseIterable {
+    case thread
+    case reel
+    case carousel
+    case post
+    case longForm
+    case youtube
+    case newsletter
+
+    var displayName: String {
+        switch self {
+        case .thread: return "Thread"
+        case .reel: return "Reel"
+        case .carousel: return "Carousel"
+        case .post: return "Post"
+        case .longForm: return "Long Form"
+        case .youtube: return "YouTube"
+        case .newsletter: return "Newsletter"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .thread: return "text.line.first.and.arrowtriangle.forward"
+        case .reel: return "play.rectangle.fill"
+        case .carousel: return "rectangle.split.3x1.fill"
+        case .post: return "square.text.square.fill"
+        case .longForm: return "doc.richtext.fill"
+        case .youtube: return "play.rectangle.fill"
+        case .newsletter: return "envelope.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .thread: return Color(hex: "#38BDF8")
+        case .reel: return Color(hex: "#F472B6")
+        case .carousel: return Color(hex: "#A78BFA")
+        case .post: return Color(hex: "#34D399")
+        case .longForm: return Color(hex: "#818CF8")
+        case .youtube: return Color(hex: "#EF4444")
+        case .newsletter: return Color(hex: "#FBBF24")
+        }
+    }
+
+    var idealSectionCount: ClosedRange<Int> {
+        switch self {
+        case .thread: return 5...15
+        case .reel: return 3...7
+        case .carousel: return 5...10
+        case .post: return 1...3
+        case .longForm: return 5...20
+        case .youtube: return 5...15
+        case .newsletter: return 3...8
+        }
+    }
+}
+
+/// Platform for idea distribution
+enum IdeaPlatform: String, Codable, Sendable, CaseIterable {
+    case youtube
+    case instagram
+    case x
+    case threads
+    case linkedin
+    case tiktok
+    case newsletter
+
+    var displayName: String {
+        switch self {
+        case .youtube: return "YouTube"
+        case .instagram: return "Instagram"
+        case .x: return "X"
+        case .threads: return "Threads"
+        case .linkedin: return "LinkedIn"
+        case .tiktok: return "TikTok"
+        case .newsletter: return "Newsletter"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .youtube: return "play.rectangle.fill"
+        case .instagram: return "camera.fill"
+        case .x: return "bubble.left.fill"
+        case .threads: return "at"
+        case .linkedin: return "briefcase.fill"
+        case .tiktok: return "music.note"
+        case .newsletter: return "envelope.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .youtube: return Color(hex: "#EF4444")
+        case .instagram: return Color(hex: "#E879F9")
+        case .x: return Color(hex: "#FFFFFF")
+        case .threads: return Color(hex: "#FFFFFF")
+        case .linkedin: return Color(hex: "#0A66C2")
+        case .tiktok: return Color(hex: "#00F2EA")
+        case .newsletter: return Color(hex: "#FBBF24")
+        }
+    }
+
+    var supportedFormats: [ContentFormat] {
+        switch self {
+        case .youtube: return [.youtube, .longForm]
+        case .instagram: return [.voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA, .carousel, .post]
+        case .x: return [.tweet, .thread, .post]
+        case .threads: return [.thread, .post]
+        case .linkedin: return [.post, .carousel, .longForm]
+        case .tiktok: return [.voiceoverReel, .oneSliderReel, .multiSliderReel]
+        case .newsletter: return [.newsletter, .longForm]
+        }
+    }
+}
+
+// MARK: - Narrative Style (Swipe Intelligence Taxonomy)
+
+/// Narrative approach used in a piece of content
+public enum NarrativeStyle: String, Codable, CaseIterable, Sendable {
+    case studentSuccess
+    case noValue
+    case lessonsLearned
+    case authorityHacking
+    case businessBreakdown
+    case storytelling
+    case fearMongering
+
+    public var displayName: String {
+        switch self {
+        case .studentSuccess: return "Student Success"
+        case .noValue: return "No Value"
+        case .lessonsLearned: return "Lessons Learned"
+        case .authorityHacking: return "Authority Hacking"
+        case .businessBreakdown: return "Business Breakdown"
+        case .storytelling: return "Storytelling"
+        case .fearMongering: return "Fear Mongering"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .studentSuccess: return "graduationcap.fill"
+        case .noValue: return "xmark.circle.fill"
+        case .lessonsLearned: return "book.closed.fill"
+        case .authorityHacking: return "checkmark.seal.fill"
+        case .businessBreakdown: return "chart.bar.doc.horizontal.fill"
+        case .storytelling: return "text.book.closed.fill"
+        case .fearMongering: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .studentSuccess: return Color(hex: "#34D399")   // Emerald
+        case .noValue: return Color(hex: "#6B7280")          // Gray
+        case .lessonsLearned: return Color(hex: "#FBBF24")   // Amber
+        case .authorityHacking: return Color(hex: "#818CF8") // Indigo
+        case .businessBreakdown: return Color(hex: "#38BDF8") // Sky
+        case .storytelling: return Color(hex: "#A78BFA")     // Violet
+        case .fearMongering: return Color(hex: "#EF4444")    // Red
+        }
+    }
+}
+
+// MARK: - Unified Content Format (Swipe Intelligence Taxonomy)
+
+/// Unified content format used by both swipes and ideas
+public enum ContentFormat: String, Codable, CaseIterable, Sendable {
+    // Short-form video
+    case voiceoverReel
+    case oneSliderReel
+    case multiSliderReel
+    case twoStepCTA
+    // Static/carousel
+    case carousel
+    // Text
+    case tweet
+    case thread
+    // Long-form (existing, kept for compat)
+    case longForm
+    case youtube
+    case newsletter
+    // Legacy compat
+    case post
+    case reel
+
+    public var displayName: String {
+        switch self {
+        case .voiceoverReel: return "Voiceover Reel"
+        case .oneSliderReel: return "One-Slider Reel"
+        case .multiSliderReel: return "Multi-Slider Reel"
+        case .twoStepCTA: return "Two-Step CTA"
+        case .carousel: return "Carousel"
+        case .tweet: return "Tweet"
+        case .thread: return "Thread"
+        case .longForm: return "Long Form"
+        case .youtube: return "YouTube"
+        case .newsletter: return "Newsletter"
+        case .post: return "Post"
+        case .reel: return "Reel"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .voiceoverReel: return "waveform"
+        case .oneSliderReel: return "play.rectangle.fill"
+        case .multiSliderReel: return "rectangle.split.2x1.fill"
+        case .twoStepCTA: return "arrow.right.circle.fill"
+        case .carousel: return "rectangle.split.3x1.fill"
+        case .tweet: return "bubble.left.fill"
+        case .thread: return "text.line.first.and.arrowtriangle.forward"
+        case .longForm: return "doc.richtext.fill"
+        case .youtube: return "play.rectangle.fill"
+        case .newsletter: return "envelope.fill"
+        case .post: return "square.text.square.fill"
+        case .reel: return "play.rectangle.fill"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .voiceoverReel: return Color(hex: "#F472B6")   // Pink
+        case .oneSliderReel: return Color(hex: "#FB923C")   // Soft orange
+        case .multiSliderReel: return Color(hex: "#F97316") // Orange
+        case .twoStepCTA: return Color(hex: "#34D399")      // Emerald
+        case .carousel: return Color(hex: "#A78BFA")        // Violet
+        case .tweet: return Color(hex: "#38BDF8")           // Sky
+        case .thread: return Color(hex: "#60A5FA")          // Blue
+        case .longForm: return Color(hex: "#818CF8")        // Indigo
+        case .youtube: return Color(hex: "#EF4444")         // Red
+        case .newsletter: return Color(hex: "#FBBF24")      // Amber
+        case .post: return Color(hex: "#34D399")            // Emerald
+        case .reel: return Color(hex: "#F472B6")            // Pink
+        }
+    }
+
+    /// Backward-compatible decoder: old ".reel" decodes as .reel (maps to oneSliderReel conceptually)
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        if let value = ContentFormat(rawValue: rawValue) {
+            self = value
+        } else {
+            // Fallback for unknown future values
+            self = .post
+        }
+    }
+
+    /// Convert from legacy IdeaContentFormat
+    init(from legacy: IdeaContentFormat) {
+        switch legacy {
+        case .thread: self = .thread
+        case .reel: self = .reel
+        case .carousel: self = .carousel
+        case .post: self = .post
+        case .longForm: self = .longForm
+        case .youtube: self = .youtube
+        case .newsletter: self = .newsletter
+        }
+    }
+
+    /// Ideal section count range for content blueprint generation
+    public var idealSectionCount: ClosedRange<Int> {
+        switch self {
+        case .voiceoverReel: return 3...6
+        case .oneSliderReel: return 3...6
+        case .multiSliderReel: return 4...8
+        case .twoStepCTA: return 2...5
+        case .carousel: return 5...10
+        case .tweet: return 1...2
+        case .thread: return 5...15
+        case .longForm: return 5...20
+        case .youtube: return 5...15
+        case .newsletter: return 3...8
+        case .post: return 1...3
+        case .reel: return 3...7
+        }
+    }
+
+    /// Grouped format categories for UI display
+    public static var shortFormVideo: [ContentFormat] {
+        [.voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
+    }
+
+    public static var staticFormats: [ContentFormat] {
+        [.carousel]
+    }
+
+    public static var textFormats: [ContentFormat] {
+        [.tweet, .thread, .post]
+    }
+
+    public static var longFormFormats: [ContentFormat] {
+        [.longForm, .youtube, .newsletter]
+    }
+}
+
+// MARK: - Classification Source
+
+/// How a taxonomy classification was assigned
+public enum ClassificationSource: String, Codable, Sendable {
+    case ai
+    case manual
+    case aiOverridden
+}
+
+/// Metadata for client profile atoms
+struct ClientMetadata: Codable, Sendable {
+    var handles: [String: String]?
+    var niche: String?
+    var preferredFormats: [String]?
+    var preferredPlatforms: [String]?
+    var brandVoice: String?
+    var color: String?
+    var isActive: Bool?
+}
+
+/// Metadata for content creator atoms (.creator type)
+struct CreatorMetadata: Codable, Sendable {
+    var handle: String?               // Primary handle (e.g., "@creator")
+    var platform: String?             // Primary platform (e.g., "instagram", "youtube")
+    var niche: String?                // Creator's niche/vertical
+    var followerCount: Int?           // Approximate follower count
+    var swipeCount: Int?              // Number of swipes saved from this creator
+    var averageHookScore: Double?     // Average hook score across their swipes
+    var topNarratives: [String]?      // Most common narrative styles (raw values)
+    var topFormats: [String]?         // Most common content formats (raw values)
+    var notes: String?                // User's notes about this creator
+    var profileUrl: String?           // URL to creator's profile
+    var thumbnailUrl: String?         // Cached avatar/thumbnail URL
+    var isActive: Bool?               // Whether creator is still tracked
+}
+
+/// Metadata for user-defined taxonomy values (.taxonomyValue type)
+struct TaxonomyValueMetadata: Codable, Sendable {
+    var dimension: String             // e.g., "niche", "narrative", "format"
+    var value: String                 // The actual value string
+    var sortOrder: Int                // Display ordering
+    var isDefault: Bool               // Whether this is a system default vs user-created
+    var parentValue: String?          // For hierarchical taxonomies
+    var usageCount: Int?              // How many swipes use this value
+    var color: String?                // Optional display color hex
+    var icon: String?                 // Optional SF Symbol name
+}
+
 // MARK: - Common Metadata Types
 
 /// Metadata for idea atoms
@@ -1183,6 +1779,197 @@ struct IdeaMetadata: Codable, Sendable {
     var priority: String?
     var isPinned: Bool?
     var pinnedAt: String?
+    // IdeaForge fields
+    var ideaStatus: IdeaStatus?
+    var contentFormat: ContentFormat?
+    var platform: IdeaPlatform?
+    var clientUUID: String?
+    var accountHandle: String?
+    var statusChangedAt: String?
+    var captureSource: String?
+    var originSwipeUUID: String?
+    var suggestedFramework: String?
+    var suggestedHookType: String?
+    var insightScore: Double?
+    var matchingSwipeCount: Int?
+    var lastAnalyzedAt: String?
+    var contentUUIDs: [String]?
+}
+
+// MARK: - Task Recommendation Types
+
+/// Task type for energy/focus matching in recommendation engine
+public enum TaskCategoryType: String, Codable, CaseIterable, Sendable {
+    case deepWork = "deepWork"
+    case creative = "creative"
+    case communication = "communication"
+    case administrative = "administrative"
+    case physical = "physical"
+    case learning = "learning"
+
+    /// Ideal energy range for this task type (0-100)
+    public var idealEnergyRange: ClosedRange<Int> {
+        switch self {
+        case .deepWork: return 60...100
+        case .creative: return 65...100
+        case .communication: return 50...100
+        case .administrative: return 30...100
+        case .physical: return 50...100
+        case .learning: return 55...100
+        }
+    }
+
+    /// Ideal focus range for this task type (0-100)
+    public var idealFocusRange: ClosedRange<Int> {
+        switch self {
+        case .deepWork: return 65...100
+        case .creative: return 60...100
+        case .communication: return 40...100
+        case .administrative: return 30...100
+        case .physical: return 20...100
+        case .learning: return 55...100
+        }
+    }
+
+    /// SF Symbol icon name
+    public var iconName: String {
+        switch self {
+        case .deepWork: return "brain.head.profile"
+        case .creative: return "paintbrush"
+        case .communication: return "message"
+        case .administrative: return "folder"
+        case .physical: return "figure.walk"
+        case .learning: return "book"
+        }
+    }
+
+    /// Display name
+    public var displayName: String {
+        switch self {
+        case .deepWork: return "Deep Work"
+        case .creative: return "Creative"
+        case .communication: return "Communication"
+        case .administrative: return "Administrative"
+        case .physical: return "Physical"
+        case .learning: return "Learning"
+        }
+    }
+}
+
+/// Extension to add numeric range to existing EnergyLevel
+extension EnergyLevel: CaseIterable {
+    public static var allCases: [EnergyLevel] { [.low, .medium, .high] }
+
+    public var numericRange: ClosedRange<Int> {
+        switch self {
+        case .low: return 0...40
+        case .medium: return 41...70
+        case .high: return 71...100
+        }
+    }
+}
+
+/// Cognitive load for task requirements
+public enum CognitiveLoad: String, Codable, CaseIterable, Sendable {
+    case light = "light"
+    case medium = "medium"
+    case deep = "deep"
+
+    public var focusRequirement: ClosedRange<Int> {
+        switch self {
+        case .light: return 0...40
+        case .medium: return 41...65
+        case .deep: return 66...100
+        }
+    }
+}
+
+// MARK: - Task Intent
+
+/// Smart task intent — determines what CosmoOS opens when a task session starts
+public enum TaskIntent: String, Codable, CaseIterable, Sendable {
+    case writeContent = "writeContent"    // Opens idea picker → activation → content focus mode
+    case research = "research"            // Opens CosmoAI Research mode
+    case studySwipes = "studySwipes"      // Opens Swipe Gallery
+    case deepThink = "deepThink"          // Opens Connection focus mode
+    case review = "review"                // Opens specific atom in read mode
+    case general = "general"              // No special action (standard task)
+    case custom = "custom"                // User-defined action chain
+
+    public var displayName: String {
+        switch self {
+        case .writeContent: return "Write Content"
+        case .research: return "Research"
+        case .studySwipes: return "Study Swipes"
+        case .deepThink: return "Deep Think"
+        case .review: return "Review"
+        case .general: return "General"
+        case .custom: return "Custom"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .writeContent: return "pencil.line"
+        case .research: return "magnifyingglass"
+        case .studySwipes: return "bolt.fill"
+        case .deepThink: return "brain.head.profile"
+        case .review: return "eye"
+        case .general: return "checkmark.circle"
+        case .custom: return "gear"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .writeContent: return Color(red: 129/255, green: 140/255, blue: 248/255) // Indigo
+        case .research: return Color(red: 56/255, green: 189/255, blue: 248/255)      // Cyan
+        case .studySwipes: return Color(red: 255/255, green: 215/255, blue: 0/255)    // Gold
+        case .deepThink: return Color(red: 168/255, green: 85/255, blue: 247/255)     // Purple
+        case .review: return Color(red: 74/255, green: 222/255, blue: 128/255)        // Green
+        case .general: return Color(red: 148/255, green: 163/255, blue: 184/255)      // Slate
+        case .custom: return Color(red: 251/255, green: 146/255, blue: 60/255)        // Orange
+        }
+    }
+
+    /// Primary Sanctuary dimension that receives XP for this intent
+    public var dimension: String {
+        switch self {
+        case .writeContent: return "creative"
+        case .research: return "cognitive"
+        case .studySwipes: return "creative"
+        case .deepThink: return "reflection"
+        case .review: return "creative"
+        case .general: return "behavioral"
+        case .custom: return "behavioral"
+        }
+    }
+
+    /// Display name for the dimension(s) receiving XP
+    public var dimensionDisplayName: String {
+        switch self {
+        case .writeContent: return "Creative"
+        case .research: return "Cognitive & Knowledge"
+        case .studySwipes: return "Creative & Cognitive"
+        case .deepThink: return "Reflection & Cognitive"
+        case .review: return "Creative & Behavioral"
+        case .general: return "Behavioral"
+        case .custom: return "Behavioral"
+        }
+    }
+
+    /// Color for the primary dimension receiving XP
+    public var dimensionColor: Color {
+        switch self {
+        case .writeContent: return Color(red: 245/255, green: 158/255, blue: 11/255)     // creative amber
+        case .research: return Color(red: 99/255, green: 102/255, blue: 241/255)         // cognitive indigo
+        case .studySwipes: return Color(red: 245/255, green: 158/255, blue: 11/255)      // creative amber
+        case .deepThink: return Color(red: 168/255, green: 85/255, blue: 247/255)        // reflection purple
+        case .review: return Color(red: 245/255, green: 158/255, blue: 11/255)           // creative amber
+        case .general: return Color(red: 20/255, green: 184/255, blue: 166/255)          // behavioral teal
+        case .custom: return Color(red: 20/255, green: 184/255, blue: 166/255)           // behavioral teal
+        }
+    }
 }
 
 /// Metadata for task atoms
@@ -1201,6 +1988,123 @@ struct TaskMetadata: Codable, Sendable {
     var description: String?
     var checklist: String?
     var recurrence: String?
+
+    // MARK: - Smart Task Intent (WP1)
+
+    /// Task intent determining what opens on session start
+    var intent: String?
+
+    /// Pre-linked idea UUID for .writeContent tasks
+    var linkedIdeaUUID: String?
+
+    /// Content UUID if idea already activated
+    var linkedContentUUID: String?
+
+    /// Generic link to any atom
+    var linkedAtomUUID: String?
+
+    // MARK: - Time Blocking (WP3)
+
+    /// ISO8601 time block start
+    var scheduledStart: String?
+
+    /// ISO8601 time block end
+    var scheduledEnd: String?
+
+    /// Apple Calendar EKEvent identifier for sync
+    var calendarEventId: String?
+
+    // MARK: - Session Tracking (WP2)
+
+    /// Accumulated focus minutes across all sessions
+    var totalFocusMinutes: Int?
+
+    /// Number of deep work sessions spent on this task
+    var sessionCount: Int?
+
+    /// ISO8601 timestamp of last session
+    var lastSessionAt: String?
+
+    // MARK: - Recurrence (WP4)
+
+    /// UUID of the template task this instance was generated from
+    var recurrenceParentUUID: String?
+
+    // MARK: - Recommendation Engine Fields
+
+    /// Estimated focus time in minutes for AI recommendations
+    var estimatedFocusMinutes: Int?
+
+    /// Required energy level: "low", "medium", "high"
+    var energyLevel: String?
+
+    /// Cognitive load requirement: "light", "medium", "deep"
+    var cognitiveLoad: String?
+
+    /// Task type for energy matching: "deepWork", "creative", "communication", "administrative", "physical", "learning"
+    var taskType: String?
+
+    /// Cached recommendation score for sorting (0.0 to 1.0)
+    var recommendationScore: Double?
+
+    /// Number of times user skipped this recommendation
+    var skipCount: Int?
+
+    /// Last time this task was scheduled/recommended
+    var lastScheduledAt: String?
+}
+
+// MARK: - Deep Work Session Metadata (WP2)
+
+/// Metadata for .deepWorkSession atoms — tracks individual focus sessions
+struct DeepWorkSessionMetadata: Codable, Sendable {
+    var taskUUID: String?
+    var startedAt: String               // ISO8601
+    var endedAt: String?                // ISO8601
+    var plannedMinutes: Int
+    var actualMinutes: Int?
+    var focusScore: Double?             // 0-100
+    var distractionCount: Int?
+    var intent: String?                 // TaskIntent raw value
+    var outputAtomUUIDs: [String]?      // Atoms created during session
+    var xpEarned: Int?
+    var notes: String?                  // Post-session reflection
+}
+
+// MARK: - Objective Metadata (WP6)
+
+/// Metadata for .objective atoms — quarter objectives with computed progress
+struct ObjectiveMetadata: Codable, Sendable {
+    var title: String
+    var targetValue: Double             // e.g., 100 for '100 sessions'
+    var currentValue: Double            // Computed from dataSource
+    var unit: String                    // 'sessions', 'posts', 'XP', 'level'
+    var dataSource: String              // ObjectiveDataSource raw value
+    var quarter: Int                    // 1-4
+    var year: Int
+    var totalBlocksInvested: Int?
+    var totalHoursInvested: Double?
+}
+
+/// Data source for computing objective progress
+public enum ObjectiveDataSource: String, Codable, CaseIterable, Sendable {
+    case deepWorkSessionCount = "deepWorkSessionCount"
+    case contentPublishedCount = "contentPublishedCount"
+    case totalXP = "totalXP"
+    case currentLevel = "currentLevel"
+    case tasksCompleted = "tasksCompleted"
+    case customQuery = "customQuery"
+
+    public var displayName: String {
+        switch self {
+        case .deepWorkSessionCount: return "Deep work sessions completed"
+        case .contentPublishedCount: return "Content pieces published"
+        case .totalXP: return "Total XP earned"
+        case .currentLevel: return "Current level reached"
+        case .tasksCompleted: return "Tasks completed"
+        case .customQuery: return "Custom metric"
+        }
+    }
 }
 
 /// Metadata for project atoms
@@ -1267,6 +2171,7 @@ struct ScheduleBlockMetadata: Codable, Sendable {
     var location: String?
     var originType: String?
     var originEntityType: String?
+    var recurrence: String?
 }
 
 /// Metadata for uncommitted item atoms
@@ -1362,6 +2267,130 @@ struct CalendarEventStructured: Codable, Sendable {
 
 // MARK: - HasUUID Protocol Conformance
 extension Atom: HasUUID {}
+
+// MARK: - Idea Accessors
+
+extension Atom {
+    /// Get/set IdeaInsight from structured JSON (mirrors swipeAnalysis pattern)
+    var ideaInsight: IdeaInsight? {
+        get { structuredData(as: IdeaInsight.self) }
+    }
+
+    func withIdeaInsight(_ insight: IdeaInsight) -> Atom {
+        withStructured(insight)
+    }
+
+    /// Convenience: idea status
+    var ideaStatus: IdeaStatus? {
+        ideaMetadata?.ideaStatus
+    }
+
+    /// Convenience: content format
+    var ideaContentFormat: ContentFormat? {
+        ideaMetadata?.contentFormat
+    }
+
+    /// Convenience: platform
+    var ideaPlatform: IdeaPlatform? {
+        ideaMetadata?.platform
+    }
+
+    /// Convenience: client UUID
+    var ideaClientUUID: String? {
+        ideaMetadata?.clientUUID
+    }
+
+    /// Convenience: insight score
+    var ideaInsightScore: Double? {
+        ideaMetadata?.insightScore
+    }
+
+    /// Convenience: matching swipe count
+    var ideaMatchingSwipeCount: Int? {
+        ideaMetadata?.matchingSwipeCount
+    }
+
+    /// Convenience: suggested framework
+    var ideaSuggestedFramework: SwipeFrameworkType? {
+        guard let raw = ideaMetadata?.suggestedFramework else { return nil }
+        return SwipeFrameworkType(rawValue: raw)
+    }
+
+    /// Convenience: suggested hook type
+    var ideaSuggestedHookType: SwipeHookType? {
+        guard let raw = ideaMetadata?.suggestedHookType else { return nil }
+        return SwipeHookType(rawValue: raw)
+    }
+
+    /// Update idea metadata in-place, preserving existing fields
+    func withUpdatedIdeaMetadata(_ update: (inout IdeaMetadata) -> Void) -> Atom {
+        var meta = ideaMetadata ?? IdeaMetadata()
+        update(&meta)
+        return withMetadata(meta)
+    }
+
+    /// Get parsed ClientMetadata (for clientProfile atoms)
+    var clientMetadata: ClientMetadata? {
+        metadataValue(as: ClientMetadata.self)
+    }
+
+    func withClientMetadata(_ meta: ClientMetadata) -> Atom {
+        withMetadata(meta)
+    }
+}
+
+// MARK: - IdeaGalleryItem
+
+/// Lightweight display struct for Command-K Ideas Tab
+struct IdeaGalleryItem: Identifiable, Sendable {
+    let id: String
+    let atomUUID: String
+    let entityId: Int64
+    let title: String
+    let body: String?
+    let status: IdeaStatus
+    let contentFormat: ContentFormat?
+    let platform: IdeaPlatform?
+    let clientName: String?
+    let clientUUID: String?
+    let tags: [String]
+    let insightScore: Double?
+    let matchingSwipeCount: Int?
+    let suggestedFramework: SwipeFrameworkType?
+    let isPinned: Bool
+    let contentCount: Int
+    let createdAt: String
+    let updatedAt: String
+}
+
+extension Atom {
+    /// Convert an idea atom to an IdeaGalleryItem
+    func toIdeaGalleryItem(clientName: String? = nil) -> IdeaGalleryItem? {
+        guard type == .idea else { return nil }
+        let meta = ideaMetadata
+        let ideaToContentCount = linksList.filter { $0.linkType == .ideaToContent }.count
+        return IdeaGalleryItem(
+            id: uuid,
+            atomUUID: uuid,
+            entityId: id ?? -1,
+            title: title ?? "Untitled Idea",
+            body: body,
+            status: meta?.ideaStatus ?? .spark,
+            contentFormat: meta?.contentFormat,
+            platform: meta?.platform,
+            clientName: clientName,
+            clientUUID: meta?.clientUUID,
+            tags: meta?.tags ?? [],
+            insightScore: meta?.insightScore,
+            matchingSwipeCount: meta?.matchingSwipeCount,
+            suggestedFramework: ideaSuggestedFramework,
+            isPinned: meta?.isPinned ?? false,
+            contentCount: ideaToContentCount,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
 
 // MARK: - Assignment Status (for Uncommitted Items)
 

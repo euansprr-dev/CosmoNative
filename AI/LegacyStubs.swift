@@ -566,6 +566,9 @@ public struct ResearchRichContent: Codable, Equatable, Sendable {
     // Transcript sections (grouped segments)
     var transcriptSections: [TranscriptSectionData]?
 
+    // Transcript availability status for retry functionality
+    var transcriptStatus: String?  // "available", "unavailable", "pending"
+
     // Instagram-specific extended data (per PRD)
     var instagramData: InstagramData?
 

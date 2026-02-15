@@ -1,5 +1,5 @@
 // CosmoOS/Voice/VoiceUI/VoicePillWindow.swift
-// Always-visible command bar - voice + text input (top of screen)
+// Command bar - voice + text input (hidden by default, drops down on activation)
 
 import SwiftUI
 import AppKit
@@ -33,11 +33,20 @@ class VoicePillWindowController: NSWindowController, ObservableObject {
     private let typingWidth: CGFloat = 320
     private let typingHeight: CGFloat = 44
     private let topPadding: CGFloat = 32
+    private let slideOffset: CGFloat = 24  // How far above screen the pill hides
 
     private var currentMode: CommandBarMode = .idle
     private var animationToken: Int = 0
     private var keyResignObserver: NSObjectProtocol?
     private var typingActivationObserver: NSObjectProtocol?
+
+    // Visibility & auto-hide
+    @Published var isVisible: Bool = false
+    private var autoHideWorkItem: DispatchWorkItem?
+
+    // Trigger zone (invisible hotspot at top of screen)
+    private var triggerWindow: NSWindow?
+    private var hoverTimer: DispatchWorkItem?
 
     // Shared state for SwiftUI view
     @Published var commandBarMode: CommandBarMode = .idle
@@ -101,7 +110,8 @@ class VoicePillWindowController: NSWindowController, ObservableObject {
         contentView.layer?.masksToBounds = true
         pillWindow.contentView = contentView
 
-        // Start hidden, will be shown via showAlways()
+        // Start hidden - will be revealed on demand via setupTriggerZone()
+        pillWindow.alphaValue = 0
         pillWindow.orderOut(nil)
     }
 
@@ -116,82 +126,250 @@ class VoicePillWindowController: NSWindowController, ObservableObject {
         if let observer = typingActivationObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        autoHideWorkItem?.cancel()
+        hoverTimer?.cancel()
+        triggerWindow?.orderOut(nil)
     }
 
     // MARK: - Handle Key Resign (blur detection)
+    /// Whether a text submit is in flight — suppresses blur-to-dismiss during focus churn
+    var isSubmitting: Bool = false
+
     private func handleKeyResign() {
+        // Don't exit typing mode during a submit — focus briefly churns
+        guard !isSubmitting else { return }
+
         // When panel loses key status while in typing mode, exit typing mode
         if currentMode == .typing {
             resizeToMode(.idle)
-            // Notify SwiftUI view via published property
             commandBarMode = .idle
+            // Schedule dismiss after exiting typing mode
+            scheduleAutoHide(delay: 0.5)
         }
     }
 
-    // MARK: - External Typing Mode Trigger (Option-C)
-    /// Activates typing mode from external keybind (Option-C)
+    // MARK: - External Typing Mode Trigger (Cmd+Shift+C)
+    /// Toggles typing mode from external keybind — opens if closed, dismisses if already typing
     func activateTypingMode() {
-        guard currentMode != .typing else { return }
-        resizeToMode(.typing)
+        if isVisible && currentMode == .typing {
+            // Already in typing mode — toggle off
+            dismissPill()
+            return
+        }
+        revealPill(mode: .typing)
         commandBarMode = .typing
     }
 
-    // MARK: - Always Visible (called on app start)
-    func showAlways() {
+    // MARK: - Setup Trigger Zone (called on app start, pill hidden by default)
+    func setupTriggerZone() {
         let screenFrame = positioningFrame()
 
-        // TOP center position
+        // Position pill off-screen (hidden above viewport)
         let x = screenFrame.midX - (idleWidth / 2)
-        let y = screenFrame.maxY - idleHeight - topPadding
+        let y = screenFrame.maxY - idleHeight - topPadding + slideOffset
 
         pillWindow.setFrameOrigin(NSPoint(x: x, y: y))
-        pillWindow.alphaValue = 1
+        pillWindow.alphaValue = 0
+        pillWindow.level = .floating
+        pillWindow.orderFrontRegardless()
+
+        // Setup invisible trigger zone at top-center of screen
+        setupTriggerWindow(screenFrame: screenFrame)
+
+        // Setup mouse tracking on the pill itself (for hover-extend)
+        setupPillTracking()
+
+        print("📍 Command bar trigger zone active (pill hidden)")
+    }
+
+    // MARK: - Reveal Pill (slide down with animation)
+    func revealPill(mode: CommandBarMode) {
+        // If already visible, just switch mode if needed
+        if isVisible {
+            if mode != currentMode {
+                resizeToMode(mode)
+                commandBarMode = mode
+            }
+            // Cancel pending auto-hide when re-activated
+            autoHideWorkItem?.cancel()
+            if mode == .idle {
+                scheduleAutoHide(delay: 4.0)
+            }
+            return
+        }
+
+        isVisible = true
+        animationToken += 1
+        let token = animationToken
+
+        let screenFrame = positioningFrame()
+        let targetWidth = mode == .typing ? typingWidth : idleWidth
+        let targetHeight = mode == .typing ? typingHeight : idleHeight
+
+        let x = screenFrame.midX - (targetWidth / 2)
+        let finalY = screenFrame.maxY - targetHeight - topPadding
+        let startY = finalY + slideOffset  // Start above screen edge
+
+        // Set starting position (above viewport)
+        pillWindow.setFrame(NSRect(x: x, y: startY, width: targetWidth, height: targetHeight), display: true)
+        pillWindow.alphaValue = 0
+
+        // Update mode
+        currentMode = mode
+        commandBarMode = mode
+
+        // Update corner radius
+        if let contentView = pillWindow.contentView {
+            contentView.layer?.cornerRadius = targetHeight / 2
+        }
 
         pillWindow.level = .floating
         pillWindow.orderFrontRegardless()
 
-        print("📍 Command bar shown at top center (\(x), \(y))")
-    }
-
-    // MARK: - Show (for recording state - animate briefly)
-    func show() {
-        // If already visible, just ensure it's at front
-        if pillWindow.isVisible {
-            pillWindow.orderFrontRegardless()
-            return
+        // Enable keyboard AFTER window is ordered — makeKey() requires the window
+        // to be in the window server (orderOut removes it, so reopen must order first)
+        if mode == .typing {
+            enableKeyboardInput()
+        } else {
+            disableKeyboardInput()
         }
 
-        animationToken += 1
-        let screenFrame = positioningFrame()
+        // Animate slide-down + fade-in
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.35
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1.0, 0.36, 1.0)  // Spring-like ease-out
+            self.pillWindow.animator().setFrameOrigin(NSPoint(x: x, y: finalY))
+            self.pillWindow.animator().alphaValue = 1
+        }, completionHandler: {
+            guard self.animationToken == token else { return }
+            // Start auto-hide for idle mode
+            if mode == .idle {
+                self.scheduleAutoHide(delay: 4.0)
+            }
+        })
+    }
 
-        // TOP center position
+    // MARK: - Dismiss Pill (slide up with animation)
+    func dismissPill() {
+        guard isVisible else { return }
+
+        autoHideWorkItem?.cancel()
+        animationToken += 1
+        let token = animationToken
+
+        let screenFrame = positioningFrame()
         let currentWidth = currentMode == .typing ? typingWidth : idleWidth
         let currentHeight = currentMode == .typing ? typingHeight : idleHeight
 
         let x = screenFrame.midX - (currentWidth / 2)
-        let finalY = screenFrame.maxY - currentHeight - topPadding
-        let startY = finalY + 24  // Start above for slide-down entrance
+        let hiddenY = screenFrame.maxY - currentHeight - topPadding + slideOffset
 
-        pillWindow.setFrameOrigin(NSPoint(x: x, y: startY))
-        pillWindow.alphaValue = 0
-
-        pillWindow.level = .floating
-        pillWindow.orderFrontRegardless()
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1)
-            pillWindow.animator().setFrameOrigin(NSPoint(x: x, y: finalY))
-            pillWindow.animator().alphaValue = 1
+        // Collapse typing mode before dismissing
+        if currentMode == .typing {
+            disableKeyboardInput()
         }
+
+        // Animate slide-up + fade-out
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.pillWindow.animator().setFrameOrigin(NSPoint(x: x, y: hiddenY))
+            self.pillWindow.animator().alphaValue = 0
+        }, completionHandler: {
+            guard self.animationToken == token else { return }
+            self.isVisible = false
+            self.currentMode = .idle
+            self.commandBarMode = .idle
+            self.pillWindow.orderOut(nil)
+        })
     }
 
-    // MARK: - Hide (NO-OP now - bar stays visible)
+    // MARK: - Auto-Hide Timer
+    func scheduleAutoHide(delay: TimeInterval) {
+        autoHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.isVisible else { return }
+            // Only auto-hide if still in idle mode
+            if self.currentMode == .idle {
+                self.dismissPill()
+            }
+        }
+        autoHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    /// Cancel any pending auto-hide (e.g. when mouse hovers over pill)
+    func cancelAutoHide() {
+        autoHideWorkItem?.cancel()
+    }
+
+    // MARK: - Show (for recording state)
+    func show() {
+        revealPill(mode: .listening)
+    }
+
+    // MARK: - Hide (dismiss pill)
     func hide() {
-        // Command bar is always visible - this is now a no-op
-        // Only collapse from typing mode if active
-        if currentMode == .typing {
-            resizeToMode(.idle)
+        dismissPill()
+    }
+
+    // MARK: - Trigger Zone Window (invisible hotspot at top-center)
+    private func setupTriggerWindow(screenFrame: CGRect) {
+        let zoneWidth: CGFloat = 40
+        let zoneHeight: CGFloat = 6
+        let zoneX = screenFrame.midX - (zoneWidth / 2)
+        // Place at the very top of the visible frame
+        let zoneY = screenFrame.maxY - zoneHeight
+
+        let zone = TriggerZoneWindow(
+            contentRect: NSRect(x: zoneX, y: zoneY, width: zoneWidth, height: zoneHeight),
+            onHoverStart: { [weak self] in
+                self?.handleTriggerHoverStart()
+            },
+            onHoverEnd: { [weak self] in
+                self?.handleTriggerHoverEnd()
+            },
+            onClick: { [weak self] in
+                self?.revealPill(mode: .idle)
+            }
+        )
+        zone.orderFrontRegardless()
+        triggerWindow = zone
+    }
+
+    private func handleTriggerHoverStart() {
+        hoverTimer?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.revealPill(mode: .idle)
+        }
+        hoverTimer = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+    }
+
+    private func handleTriggerHoverEnd() {
+        hoverTimer?.cancel()
+    }
+
+    // MARK: - Pill Mouse Tracking (hover-extend auto-hide)
+    private func setupPillTracking() {
+        guard let contentView = pillWindow.contentView else { return }
+
+        // Add an overlay tracking view on top of the content
+        let hoverView = PillHoverTrackingView(frame: contentView.bounds)
+        hoverView.controller = self
+        hoverView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hoverView)
+    }
+
+    func handlePillMouseEntered() {
+        // Mouse is over the pill - cancel auto-hide
+        cancelAutoHide()
+    }
+
+    func handlePillMouseExited() {
+        // Mouse left the pill - restart auto-hide if idle
+        if isVisible && currentMode == .idle {
+            scheduleAutoHide(delay: 4.0)
         }
     }
 
@@ -219,8 +397,13 @@ class VoicePillWindowController: NSWindowController, ObservableObject {
         // Enable/disable keyboard input based on mode
         if mode == .typing {
             enableKeyboardInput()
+            cancelAutoHide()  // Don't auto-hide while typing
+        } else if mode == .listening {
+            disableKeyboardInput()
+            cancelAutoHide()  // Don't auto-hide while listening
         } else {
             disableKeyboardInput()
+            scheduleAutoHide(delay: 4.0)  // Auto-hide when returning to idle
         }
 
         NSAnimationContext.runAnimationGroup { context in
@@ -248,6 +431,101 @@ class VoicePillWindowController: NSWindowController, ObservableObject {
     }
 }
 
+// MARK: - Trigger Zone Window (invisible hotspot at top-center of screen)
+private class TriggerZoneWindow: NSWindow {
+    private var onHoverStart: () -> Void
+    private var onHoverEnd: () -> Void
+    private var onClick: () -> Void
+    private var trackingArea: NSTrackingArea?
+
+    init(contentRect: NSRect, onHoverStart: @escaping () -> Void, onHoverEnd: @escaping () -> Void, onClick: @escaping () -> Void) {
+        self.onHoverStart = onHoverStart
+        self.onHoverEnd = onHoverEnd
+        self.onClick = onClick
+
+        super.init(contentRect: contentRect, styleMask: [.borderless], backing: .buffered, defer: false)
+
+        self.isOpaque = false
+        self.backgroundColor = .clear
+        self.alphaValue = 0.01  // Nearly invisible but still receives events
+        self.level = .statusBar
+        self.ignoresMouseEvents = false
+        self.hasShadow = false
+        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        self.isReleasedWhenClosed = false
+
+        // Create a tracking content view
+        let trackingView = TriggerTrackingView(frame: NSRect(origin: .zero, size: contentRect.size))
+        trackingView.onHoverStart = onHoverStart
+        trackingView.onHoverEnd = onHoverEnd
+        trackingView.onClick = onClick
+        self.contentView = trackingView
+    }
+}
+
+private class TriggerTrackingView: NSView {
+    var onHoverStart: (() -> Void)?
+    var onHoverEnd: (() -> Void)?
+    var onClick: (() -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverStart?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverEnd?()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
+}
+
+// MARK: - Pill Hover Tracking View (forwards mouse enter/exit to controller)
+private class PillHoverTrackingView: NSView {
+    weak var controller: VoicePillWindowController?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        controller?.handlePillMouseEntered()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        controller?.handlePillMouseExited()
+    }
+}
+
 // MARK: - Command Bar View (Voice + Text Input)
 struct CommandBarView: View {
     @EnvironmentObject var voiceEngine: VoiceEngine
@@ -258,6 +536,7 @@ struct CommandBarView: View {
     @State private var isHovering: Bool = false
     @State private var showSuccess = false
     @State private var showError = false
+    @State private var urlDetected = false  // For instant URL recognition flash
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
@@ -303,6 +582,8 @@ struct CommandBarView: View {
                 // Return to idle when recording stops
                 mode = .idle
                 windowController.resizeToMode(.idle)
+                // Schedule dismiss after success/error flash completes (~0.5s)
+                windowController.scheduleAutoHide(delay: 1.0)
             }
         }
         .onChange(of: voiceEngine.error) { _, newValue in
@@ -329,15 +610,21 @@ struct CommandBarView: View {
         }
         .onChange(of: isTextFieldFocused) { _, isFocused in
             // Exit typing mode when text field loses focus (blur)
-            if !isFocused && mode == .typing {
+            // But NOT during a submit — focus briefly churns and will be restored
+            if !isFocused && mode == .typing && !windowController.isSubmitting {
                 exitTypingMode()
             }
         }
         .onChange(of: windowController.commandBarMode) { _, newMode in
-            // Sync with window controller's mode (for blur detection from AppKit)
+            // Sync with window controller's mode (for external triggers like Cmd+Shift+C)
             if mode != newMode {
                 mode = newMode
-                if newMode == .idle {
+                if newMode == .typing {
+                    // Focus text field after the view updates to show the TextField
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        isTextFieldFocused = true
+                    }
+                } else if newMode == .idle {
                     isTextFieldFocused = false
                     textInput = ""
                 }
@@ -451,15 +738,40 @@ struct CommandBarView: View {
                 .frame(height: 20)
 
         case .typing:
-            // Text field - white text for dark glass background
-            TextField("Type a command...", text: $textInput)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
-                .focused($isTextFieldFocused)
-                .onSubmit {
-                    submitTextCommand()
+            // Text field - white text for dark glass background, centered
+            ZStack {
+                // URL detected glow effect (behind text field)
+                if urlDetected {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(CosmoColors.emerald.opacity(0.15))
+                        .transition(.opacity)
                 }
+
+                TextField("Type a command...", text: $textInput)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .focused($isTextFieldFocused)
+                    .onSubmit {
+                        submitTextCommand()
+                    }
+                    .onChange(of: textInput) { _, newValue in
+                        // Auto-submit if URL pasted (instant recognition)
+                        if !newValue.isEmpty && QuickCaptureProcessor.shared.isURL(newValue) {
+                            // Brief visual feedback
+                            withAnimation(.easeIn(duration: 0.1)) {
+                                urlDetected = true
+                            }
+                            // Submit after brief flash (200ms)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                urlDetected = false
+                                submitTextCommand()
+                            }
+                        }
+                    }
+            }
+            .animation(.easeOut(duration: 0.15), value: urlDetected)
         }
     }
 
@@ -523,10 +835,15 @@ struct CommandBarView: View {
         mode = .idle
         windowController.commandBarMode = .idle
         windowController.resizeToMode(.idle)
+        // Schedule dismiss after exiting typing mode
+        windowController.scheduleAutoHide(delay: 0.5)
     }
 
     private func submitTextCommand() {
         guard !textInput.isEmpty else { return }
+
+        // Guard against blur handlers killing typing mode during the submit cycle
+        windowController.isSubmitting = true
 
         let command = textInput
         textInput = ""
@@ -536,8 +853,13 @@ struct CommandBarView: View {
             await VoiceEngine.shared.processTextCommand(command)
         }
 
-        // Stay in typing mode - user can continue typing
-        // Only exit when: blur (click elsewhere), Escape, or voice keybind
+        // Re-focus the text field so typing mode stays alive after submit.
+        // Two-step: first ensure panel is key, then focus the SwiftUI field.
+        windowController.enableKeyboardInput()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.isTextFieldFocused = true
+            self.windowController.isSubmitting = false
+        }
     }
 }
 

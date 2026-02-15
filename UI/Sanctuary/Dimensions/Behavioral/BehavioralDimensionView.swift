@@ -13,15 +13,15 @@ public struct BehavioralDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: BehavioralDimensionViewModel
+    @StateObject private var dataProvider = BehavioralDataProvider()
     @State private var selectedStreak: Streak?
     @State private var showStreakDetail: Bool = false
-
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: BehavioralDimensionData = .preview,
+        data: BehavioralDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: BehavioralDimensionViewModel(data: data))
@@ -109,6 +109,12 @@ public struct BehavioralDimensionView: View {
 
             // Detail overlays
             detailOverlays
+        }
+        .onAppear {
+            Task {
+                await dataProvider.refreshData()
+                viewModel.data = dataProvider.data
+            }
         }
     }
 

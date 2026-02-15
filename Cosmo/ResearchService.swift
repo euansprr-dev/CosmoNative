@@ -10,7 +10,7 @@ final class ResearchService {
 
     // OpenRouter API configuration
     private let openRouterBaseURL = "https://openrouter.ai/api/v1"
-    private let perplexityModel = "perplexity/llama-3.1-sonar-large-128k-online"
+    private let perplexityModel = "perplexity/sonar"
 
     // API key is loaded from Keychain via APIKeys
     private var apiKey: String? {
@@ -160,8 +160,25 @@ final class ResearchService {
         }
     }
 
+    // MARK: - Content Analysis (Claude Sonnet 4.5)
+
+    /// Analyze content with Claude Sonnet 4.5 via OpenRouter — used for deep swipe analysis
+    func analyzeContent(prompt: String) async throws -> String {
+        guard let apiKey = apiKey, !apiKey.isEmpty else {
+            throw ResearchError.noAPIKey
+        }
+
+        let claudeModel = "anthropic/claude-sonnet-4.5"
+        return try await callOpenRouter(
+            prompt: prompt,
+            model: claudeModel,
+            maxTokens: 4000,
+            temperature: 0.2
+        )
+    }
+
     // MARK: - Call OpenRouter API
-    private func callOpenRouter(prompt: String, model: String) async throws -> String {
+    private func callOpenRouter(prompt: String, model: String, maxTokens: Int = 2000, temperature: Double = 0.3) async throws -> String {
         guard let apiKey = apiKey else {
             throw ResearchError.noAPIKey
         }
@@ -179,8 +196,8 @@ final class ResearchService {
             "messages": [
                 ["role": "user", "content": prompt]
             ],
-            "temperature": 0.3,
-            "max_tokens": 2000
+            "temperature": temperature,
+            "max_tokens": maxTokens
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

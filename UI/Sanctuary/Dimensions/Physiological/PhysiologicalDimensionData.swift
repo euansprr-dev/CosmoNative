@@ -869,6 +869,72 @@ public struct PhysiologicalDimensionData: Codable, Sendable {
     }
 }
 
+// MARK: - Empty Factory
+
+extension PhysiologicalDimensionData {
+    public static var empty: PhysiologicalDimensionData {
+        let now = Date()
+        return PhysiologicalDimensionData(
+            currentHRV: 0,
+            hrvVariabilityMs: 0,
+            hrvTrend: [],
+            restingHeartRate: 0,
+            rhrZone: .average,
+            recoveryScore: 0,
+            recoveryFactors: RecoveryBreakdown(
+                sleepContribution: 0,
+                hrvContribution: 0,
+                strainContribution: 0,
+                consistencyBonus: 0
+            ),
+            readinessScore: 0,
+            peakPerformanceWindowStart: now,
+            peakPerformanceWindowEnd: now,
+            workoutRecommendation: nil,
+            lastNightSleep: SleepSession(
+                bedTime: now,
+                wakeTime: now,
+                totalDuration: 0,
+                deepSleep: 0,
+                coreSleep: 0,
+                remSleep: 0,
+                awakeTime: 0,
+                efficiency: 0,
+                score: 0,
+                stages: [],
+                disturbanceCount: 0
+            ),
+            sleepDebt: 0,
+            sleepTrend: [],
+            muscleRecoveryMap: [],
+            bodyZoneStatus: [],
+            stressLevel: 0,
+            cortisolEstimate: .normal,
+            breathingRatePerMin: 0,
+            hourlyActivity: [],
+            dailyRings: ActivityRings(
+                moveCalories: 0,
+                moveGoal: 0,
+                exerciseMinutes: 0,
+                exerciseGoal: 0,
+                standHours: 0,
+                standGoal: 0
+            ),
+            stepCount: 0,
+            activeCalories: 0,
+            workouts: [],
+            weeklyVolumeLoad: 0,
+            recoveryDebt: .none,
+            correlations: [],
+            predictions: []
+        )
+    }
+
+    public var isEmpty: Bool {
+        currentHRV == 0 && recoveryScore == 0 && stepCount == 0
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

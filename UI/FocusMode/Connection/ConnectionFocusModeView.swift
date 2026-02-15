@@ -24,6 +24,8 @@ struct ConnectionFocusModeView: View {
 
     @StateObject private var viewModel: ConnectionFocusModeViewModel
     @StateObject private var panelManager: FloatingPanelManager
+    @StateObject private var focusConnectManager = FocusConnectManager()
+    @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
 
@@ -34,13 +36,14 @@ struct ConnectionFocusModeView: View {
         self.onClose = onClose
         self._viewModel = StateObject(wrappedValue: ConnectionFocusModeViewModel(atom: atom))
         self._panelManager = StateObject(wrappedValue: FloatingPanelManager(focusAtomUUID: atom.uuid))
+        self._floatingBlocksManager = StateObject(wrappedValue: FocusFloatingBlocksManager(ownerAtomUUID: atom.uuid))
     }
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            // Infinite canvas
+            // Infinite canvas with dotted grid background
             InfiniteCanvasView(
                 viewportState: $viewportState,
                 showGrid: true,
@@ -52,21 +55,19 @@ struct ConnectionFocusModeView: View {
                 }
             )
 
+            // Focus connection lines layer (universal linking)
+            FocusConnectionLinesLayer(
+                connectManager: focusConnectManager,
+                focusAtomUUID: atom.uuid
+            )
+
             // Top bar overlay
             VStack {
                 topBar
                 Spacer()
             }
 
-            // Connected sources strip
-            VStack {
-                Spacer()
-                if !viewModel.state.connectedSources.isEmpty {
-                    connectedSourcesStrip
-                }
-            }
-
-            // Radial menu
+            // Radial menu (on right-click)
             if let menuPosition = viewModel.radialMenuPosition {
                 RadialMenuView(
                     position: menuPosition,
@@ -77,18 +78,32 @@ struct ConnectionFocusModeView: View {
                 )
             }
         }
+        .focusBlockContextMenu(
+            manager: floatingBlocksManager,
+            ownerAtomUUID: atom.uuid
+        )
         .onAppear {
             loadState()
+            listenForAtomPicker()
             Task {
                 await viewModel.generateGhostSuggestions()
             }
         }
         .onDisappear {
             saveState()
+            floatingBlocksManager.saveImmediately()
         }
+        // Right-click for radial menu
         .onTapGesture(count: 1) {
             panelManager.deselectAll()
         }
+        .gesture(
+            TapGesture(count: 1)
+                .modifiers(.control)
+                .onEnded { _ in
+                    viewModel.radialMenuPosition = CGPoint(x: 400, y: 300)
+                }
+        )
         // Keyboard shortcuts
         .onKeyPress(.escape) {
             if viewModel.radialMenuPosition != nil {
@@ -115,98 +130,85 @@ struct ConnectionFocusModeView: View {
         }
     }
 
-    // MARK: - Anchored Connection Card
+    // MARK: - Anchored Connection Content
 
+    /// Section cards displayed directly on the canvas (no outer container)
     private var anchoredConnectionCard: some View {
-        VStack(spacing: 0) {
-            // Card header
-            connectionCardHeader
+        VStack(spacing: 16) {
+            // Floating title header (no background container)
+            connectionTitleHeader
+                .padding(.bottom, 8)
 
-            Divider()
-                .background(Color.white.opacity(0.1))
-
-            // Sections scroll
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach($viewModel.state.sections) { $section in
-                        ConnectionSectionView(
-                            section: $section,
-                            onAddItem: { content in
-                                viewModel.addItem(content, toSection: section.type)
-                            },
-                            onEditItem: { item in
-                                viewModel.editItem(item, inSection: section.type)
-                            },
-                            onDeleteItem: { id in
-                                viewModel.deleteItem(id, fromSection: section.type)
-                            },
-                            onSourceTap: { sourceUUID in
-                                openSourceAsPanel(sourceUUID)
-                            },
-                            onAcceptGhost: { ghost in
-                                viewModel.acceptGhost(ghost, inSection: section.type)
-                            },
-                            onDismissGhost: { id in
-                                viewModel.dismissGhost(id, inSection: section.type)
-                            }
-                        )
+            // Section cards - each is its own card directly on canvas
+            ForEach($viewModel.state.sections) { $section in
+                ConnectionSectionView(
+                    section: $section,
+                    onAddItem: { content in
+                        viewModel.addItem(content, toSection: section.type)
+                    },
+                    onEditItem: { item in
+                        viewModel.editItem(item, inSection: section.type)
+                    },
+                    onDeleteItem: { id in
+                        viewModel.deleteItem(id, fromSection: section.type)
+                    },
+                    onSourceTap: { sourceUUID in
+                        openSourceAsPanel(sourceUUID)
+                    },
+                    onAcceptGhost: { ghost in
+                        viewModel.acceptGhost(ghost, inSection: section.type)
+                    },
+                    onDismissGhost: { id in
+                        viewModel.dismissGhost(id, inSection: section.type)
                     }
-                }
-                .padding(16)
+                )
+                .frame(width: 420)
+            }
+
+            // Connected sources (if any)
+            if !viewModel.state.connectedSources.isEmpty {
+                connectedSourcesSection
+                    .frame(width: 420)
             }
         }
-        .frame(width: 500)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.3), radius: 20, y: 10)
     }
 
-    // MARK: - Card Header
+    // MARK: - Title Header
 
-    private var connectionCardHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                // Icon
+    /// Floating title with stats - no container background
+    private var connectionTitleHeader: some View {
+        VStack(spacing: 8) {
+            // Icon and title
+            HStack(spacing: 8) {
                 Image(systemName: "link.circle.fill")
-                    .font(.system(size: 24))
+                    .font(.system(size: 20))
                     .foregroundColor(CosmoColors.blockConnection)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("CONNECTION")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(CosmoColors.blockConnection)
-                        .tracking(1)
+                Text(atom.title ?? "New Connection")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white)
+            }
 
-                    Text(atom.title ?? "Untitled Connection")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
+            // Stats
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Text("\(viewModel.state.totalItemCount)")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("items")
+                        .font(.system(size: 12))
                 }
+                .foregroundColor(.white.opacity(0.5))
 
-                Spacer()
+                Text("·")
+                    .foregroundColor(.white.opacity(0.3))
 
-                // Stats
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("\(viewModel.state.totalItemCount)")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("items")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(.white.opacity(0.7))
-
-                    HStack(spacing: 4) {
-                        Text("\(viewModel.state.completedSectionCount)/8")
-                            .font(.system(size: 11))
-                        Text("sections")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(.white.opacity(0.5))
+                HStack(spacing: 4) {
+                    Text("\(viewModel.state.completedSectionCount)/8")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("sections")
+                        .font(.system(size: 12))
                 }
+                .foregroundColor(.white.opacity(0.5))
             }
 
             // Ghost suggestions indicator
@@ -220,6 +222,7 @@ struct ConnectionFocusModeView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
                 }
+                .padding(.top, 4)
             } else if viewModel.state.totalGhostCount > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
@@ -228,40 +231,7 @@ struct ConnectionFocusModeView: View {
                         .font(.system(size: 11))
                 }
                 .foregroundColor(CosmoColors.blockConnection.opacity(0.7))
-            }
-        }
-        .padding(16)
-        .background(CosmoColors.blockConnection.opacity(0.05))
-    }
-
-    // MARK: - Floating Panels Layer
-
-    private var floatingPanelsLayer: some View {
-        ForEach(panelManager.panels) { panel in
-            if let binding = panelManager.binding(for: panel.id) {
-                FloatingPanelView(
-                    panel: binding,
-                    content: panelManager.content(for: panel.id),
-                    onDoubleTap: {
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Navigation.openBlockInFocusMode,
-                            object: nil,
-                            userInfo: ["atomUUID": panel.atomUUID]
-                        )
-                    },
-                    onRemove: {
-                        panelManager.removePanel(id: panel.id)
-                    },
-                    onDelete: {
-                        Task {
-                            try? await AtomRepository.shared.delete(uuid: panel.atomUUID)
-                            panelManager.removePanel(id: panel.id)
-                        }
-                    },
-                    onPositionChange: { newPosition in
-                        panelManager.updatePosition(panel.id, position: newPosition)
-                    }
-                )
+                .padding(.top, 4)
             }
         }
     }
@@ -306,7 +276,7 @@ struct ConnectionFocusModeView: View {
 
             Spacer()
 
-            // Refresh ghosts button
+            // Refresh suggestions button
             Button {
                 Task {
                     await viewModel.generateGhostSuggestions()
@@ -358,23 +328,22 @@ struct ConnectionFocusModeView: View {
         )
     }
 
-    // MARK: - Connected Sources Strip
+    // MARK: - Connected Sources Section
 
-    private var connectedSourcesStrip: some View {
-        VStack(spacing: 8) {
+    private var connectedSourcesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("CONNECTED SOURCES")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.white.opacity(0.4))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white.opacity(0.3))
                     .tracking(1)
 
                 Spacer()
 
                 Text("\(viewModel.state.connectedSources.count) sources")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(.white.opacity(0.3))
             }
-            .padding(.horizontal, 20)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -387,39 +356,57 @@ struct ConnectionFocusModeView: View {
                         )
                     }
                 }
-                .padding(.horizontal, 20)
             }
         }
-        .padding(.vertical, 12)
+        .padding(16)
         .background(
-            LinearGradient(
-                colors: [
-                    .clear,
-                    CosmoColors.thinkspaceVoid.opacity(0.9),
-                    CosmoColors.thinkspaceVoid
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
         )
     }
 
-    // MARK: - Helpers
+    // MARK: - Floating Panels Layer
 
-    private var cardBackground: some View {
+    private var floatingPanelsLayer: some View {
         ZStack {
-            Color(hex: "#12121A")
+        // Persistent floating blocks (stored in atom metadata)
+        FocusFloatingBlocksLayer(manager: floatingBlocksManager)
 
-            LinearGradient(
-                colors: [
-                    CosmoColors.blockConnection.opacity(0.02),
-                    Color.clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        ForEach(panelManager.panels) { panel in
+            if let binding = panelManager.binding(for: panel.id) {
+                FloatingPanelView(
+                    panel: binding,
+                    content: panelManager.content(for: panel.id),
+                    onDoubleTap: {
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Navigation.openBlockInFocusMode,
+                            object: nil,
+                            userInfo: ["atomUUID": panel.atomUUID]
+                        )
+                    },
+                    onRemove: {
+                        panelManager.removePanel(id: panel.id)
+                    },
+                    onDelete: {
+                        Task {
+                            try? await AtomRepository.shared.delete(uuid: panel.atomUUID)
+                            panelManager.removePanel(id: panel.id)
+                        }
+                    },
+                    onPositionChange: { newPosition in
+                        panelManager.updatePosition(panel.id, position: newPosition)
+                    }
+                )
+            }
         }
+        } // ZStack
     }
+
+    // MARK: - Helpers
 
     private func handleRadialAction(_ action: RadialAction) {
         viewModel.radialMenuPosition = nil
@@ -463,11 +450,40 @@ struct ConnectionFocusModeView: View {
     }
 
     private func addPanelForAtom(_ atom: Atom, at position: CGPoint) {
-        panelManager.addPanel(
-            atomUUID: atom.uuid,
-            atomType: atom.type,
+        // Add as persistent floating block (stored in atom metadata)
+        floatingBlocksManager.addBlock(
+            linkedAtomUUID: atom.uuid,
+            linkedAtomType: atom.type,
+            title: atom.title ?? "Untitled",
             position: position
         )
+    }
+
+    /// Listen for atom picker notifications to add existing atoms as floating blocks
+    private func listenForAtomPicker() {
+        NotificationCenter.default.addObserver(
+            forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let userInfo = notification.userInfo,
+                  let atomUUID = userInfo["atomUUID"] as? String,
+                  let atomTypeRaw = userInfo["atomType"] as? String,
+                  let atomType = AtomType(rawValue: atomTypeRaw),
+                  let title = userInfo["title"] as? String else { return }
+
+            let position = CGPoint(
+                x: 500 + CGFloat.random(in: -60...60),
+                y: 300 + CGFloat.random(in: -60...60)
+            )
+
+            floatingBlocksManager.addBlock(
+                linkedAtomUUID: atomUUID,
+                linkedAtomType: atomType,
+                title: title,
+                position: position
+            )
+        }
     }
 
     private func openSourceAsPanel(_ atomUUID: String) {
@@ -485,14 +501,20 @@ struct ConnectionFocusModeView: View {
     }
 
     private func loadState() {
+        // Load viewport state
         let persistence = CanvasViewportPersistence()
         viewportState = persistence.load(forAtomUUID: atom.uuid)
+
+        // ViewModel loads its own state
         viewModel.loadState()
     }
 
     private func saveState() {
+        // Save viewport state
         let persistence = CanvasViewportPersistence()
         persistence.save(viewportState, forAtomUUID: atom.uuid)
+
+        // Save focus mode state
         viewModel.saveState()
     }
 }

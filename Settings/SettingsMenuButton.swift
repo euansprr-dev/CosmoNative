@@ -101,8 +101,7 @@ struct SettingsDropdownMenu: View {
 
 // MARK: - Top Right Controls (combines settings + other buttons)
 struct TopRightControls: View {
-    @Binding var showSettings: Bool
-    @Binding var showCommandPalette: Bool
+    @Binding var showCommandK: Bool
     @EnvironmentObject var voiceEngine: VoiceEngine
 
     @State private var voiceHovered = false
@@ -117,9 +116,6 @@ struct TopRightControls: View {
                 }
             }
             .help("Hold to speak (\(HotkeyManager.shared.currentHotkey.displayName))")
-
-            // Settings button
-            SettingsMenuButton(showSettings: $showSettings)
         }
     }
 }

@@ -315,11 +315,11 @@ public final class SanctuaryAnimationChoreographer: ObservableObject {
         // Stop any existing timer
         stopContinuousAnimations()
 
-        // PERFORMANCE FIX: Use a much lower refresh rate for phase updates
-        // The actual animations use SwiftUI's animation system, not manual frame updates
-        // This timer only updates the animationPhase for any views that need it
-        // 10fps is sufficient for smooth phase-based effects
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
+        // PERFORMANCE FIX: Use very low refresh rate for phase updates.
+        // The actual animations (breathing, rotation) use SwiftUI's Core Animation system.
+        // This timer only updates animationPhase for subtle ambient glow effects.
+        // 2fps is sufficient — these are slow, ambient effects not user-interactive.
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateContinuousAnimations()
             }
@@ -340,11 +340,11 @@ public final class SanctuaryAnimationChoreographer: ObservableObject {
 
     private func updateContinuousAnimations() {
         // Update master phase (wraps around) - used for any phase-based effects
-        animationPhase += 0.1 // 10fps update rate
+        animationPhase += 0.5 // 2fps update rate, 0.5 increment per tick
 
-        // PERFORMANCE FIX: Only update glow if value changed significantly
+        // Only update glow if value changed significantly to avoid unnecessary publishes
         let newGlow = 0.3 + sin(animationPhase * 0.5) * 0.1
-        if abs(newGlow - connectionGlowIntensity) > 0.01 {
+        if abs(newGlow - connectionGlowIntensity) > 0.02 {
             connectionGlowIntensity = newGlow
         }
     }

@@ -331,9 +331,15 @@ struct ResearchCard: View {
     private let cardWidth: CGFloat = 220
     private let thumbnailHeight: CGFloat = 120
 
+    @State private var isRetrying = false
+
     private var thumbnailUrl: String? {
         let url = entity.metadata["thumbnailUrl"] ?? ""
         return url.isEmpty ? nil : url
+    }
+
+    private var needsTranscriptRetry: Bool {
+        sourceType == "youtube" && entity.metadata["transcriptStatus"] == "unavailable"
     }
 
     var body: some View {
@@ -426,7 +432,7 @@ struct ResearchCard: View {
 
                 Spacer(minLength: 4)
 
-                // Footer: Date + Tag
+                // Footer: Date + Tag + Retry Button
                 HStack {
                     if let date = entity.updatedAt {
                         Text(date, style: .date)
@@ -436,9 +442,35 @@ struct ResearchCard: View {
 
                     Spacer()
 
-                    Text("#research")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(CosmoMentionColors.research)
+                    // Retry transcript button for YouTube without transcript
+                    if needsTranscriptRetry {
+                        Button {
+                            retryTranscript()
+                        } label: {
+                            HStack(spacing: 4) {
+                                if isRetrying {
+                                    ProgressView()
+                                        .scaleEffect(0.5)
+                                        .frame(width: 10, height: 10)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 9))
+                                }
+                                Text("Retry transcript")
+                                    .font(.system(size: 9, weight: .medium))
+                            }
+                            .foregroundColor(CosmoColors.coral)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(CosmoColors.coral.opacity(0.1), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isRetrying)
+                    } else {
+                        Text("#research")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(CosmoMentionColors.research)
+                    }
                 }
             }
             .padding(12)
@@ -509,6 +541,27 @@ struct ResearchCard: View {
         case "twitter": return CosmoColors.skyBlue
         case "pdf": return CosmoColors.coral
         default: return CosmoColors.emerald
+        }
+    }
+
+    private func retryTranscript() {
+        guard let uuid = entity.metadata["uuid"], !uuid.isEmpty else { return }
+        isRetrying = true
+
+        Task {
+            do {
+                try await ResearchProcessor.shared.retryTranscription(uuid: uuid)
+                await MainActor.run {
+                    isRetrying = false
+                    // Post notification to refresh the library
+                    NotificationCenter.default.post(name: .researchProcessingComplete, object: nil)
+                }
+            } catch {
+                print("❌ Retry transcript failed: \(error)")
+                await MainActor.run {
+                    isRetrying = false
+                }
+            }
         }
     }
 }

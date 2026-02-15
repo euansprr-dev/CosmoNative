@@ -17,6 +17,7 @@ struct CosmoApp: App {
     @StateObject private var networkMonitor = NetworkMonitor.shared
     @StateObject private var glassCenter = CosmoGlassCenter.shared
     @StateObject private var swipeFileEngine = SwipeFileEngine.shared
+    @StateObject private var cosmoAgent = CosmoAgentService.shared
 
     @State private var voicePillWindow: VoicePillWindowController?
     @State private var voicePillHideWorkItem: DispatchWorkItem?
@@ -35,6 +36,7 @@ struct CosmoApp: App {
                 .environmentObject(networkMonitor)
                 .environmentObject(glassCenter)
                 .environmentObject(swipeFileEngine)
+                .environmentObject(cosmoAgent)
                 .onAppear {
                     initializeApp()
                 }
@@ -61,6 +63,12 @@ struct CosmoApp: App {
             await semanticSearch.indexAllEntities()
         }
 
+        // Initialize recurring task engine (generate today's instances + schedule midnight refresh)
+        Task {
+            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
+            TaskRecurrenceEngine.shared.scheduleMidnightRefresh()
+        }
+
         // Register Swipe File hotkey (Cmd+Shift+S)
         print("📋 Registering Swipe File hotkey callback...")
         HotkeyManager.shared.registerSwipeFileHotkey { [weak swipeFileEngine] in
@@ -76,9 +84,9 @@ struct CosmoApp: App {
         }
         print("📋 Swipe File hotkey callback registered")
 
-        // Setup command bar (always visible at top of screen)
+        // Setup command bar (hidden by default, revealed on activation)
         voicePillWindow = VoicePillWindowController()
-        voicePillWindow?.showAlways()  // Show immediately on app start
+        voicePillWindow?.setupTriggerZone()
 
         // Register Option-C hotkey to open command bar typing mode
         HotkeyManager.shared.registerCommandBarTypingHotkey {
@@ -87,7 +95,6 @@ struct CosmoApp: App {
         print("⌨️ Option-C hotkey registered for command bar typing")
 
         // Observe voice engine state for recording indicator updates
-        // Note: Command bar stays visible always, this just updates internal state
         NotificationCenter.default.addObserver(
             forName: .voiceRecordingStateChanged,
             object: nil,
@@ -96,9 +103,9 @@ struct CosmoApp: App {
             if let isRecording = notification.userInfo?["isRecording"] as? Bool {
                 print("🎤 Recording state: \(isRecording)")
                 if isRecording {
-                    voicePillWindow?.show()  // Ensure visible (usually already is)
+                    voicePillWindow?.show()  // Reveal pill with listening mode
                 }
-                // hide() is now a no-op - bar stays visible
+                // Dismiss is handled by CommandBarView's onChange after flash
             }
         }
 
@@ -159,6 +166,14 @@ struct CosmoApp: App {
             // State auto-saves on change, but this ensures periodic saves
         }
 
+        // Initialize Cosmo Agent — Telegram bridge + proactive scheduler
+        if APIKeys.hasTelegramBot {
+            Task {
+                await TelegramBridgeService.shared.start()
+            }
+        }
+        AgentProactiveScheduler.shared.scheduleAll()
+
         print("✅ CosmoOS initialized")
         print("   🧠 Cosmo AI: Ready")
         print("   🔍 Semantic Search: Indexing...")
@@ -166,6 +181,7 @@ struct CosmoApp: App {
         print("   🔄 Sync Engine: \(networkMonitor.isConnected ? "Online" : "Offline")")
         print("   💾 State Persistence: Loaded")
         print("   📋 Swipe File: ⌘⇧S Hotkey Registered")
+        print("   🤖 Cosmo Agent: \(APIKeys.hasTelegramBot ? "Telegram Active" : "Configure in Settings")")
     }
 
     private func restoreUIState() {

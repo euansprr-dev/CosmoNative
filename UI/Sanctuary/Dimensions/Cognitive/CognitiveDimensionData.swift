@@ -624,6 +624,43 @@ public struct FocusStabilitySegment: Identifiable, Sendable {
     }
 }
 
+// MARK: - Empty Factory
+
+extension CognitiveDimensionData {
+    public static var empty: CognitiveDimensionData {
+        CognitiveDimensionData(
+            cognitiveIndex: 0,
+            neloScore: 45,
+            neloWaveform: [],
+            neloStatus: .balanced,
+            focusIndex: 0,
+            focusStabilityByHour: [:],
+            cognitiveLoadCurrent: 0,
+            cognitiveLoadHistory: [],
+            deepWorkSessions: [],
+            totalDeepWorkToday: 0,
+            averageQualityToday: 0,
+            predictedCapacityRemaining: 0,
+            predictedOptimalWindows: [],
+            currentWindowStatus: .passed,
+            interruptions: [],
+            totalInterruptionsToday: 0,
+            averageRecoveryTime: 0,
+            focusCostMinutes: 0,
+            topDisruptors: [],
+            topCorrelations: [],
+            journalInsightMarkersToday: 0,
+            reflectionDepthScore: 0,
+            detectedThemes: [],
+            journalExcerpt: nil
+        )
+    }
+
+    public var isEmpty: Bool {
+        deepWorkSessions.isEmpty && totalDeepWorkToday == 0
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

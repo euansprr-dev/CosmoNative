@@ -41,7 +41,7 @@ public struct PhysiologicalCorrelationMap: View {
 
             // Prediction section
             if let prediction = predictions.first {
-                PredictionCard(prediction: prediction)
+                HealthPredictionCard(prediction: prediction)
             }
         }
         .padding(SanctuaryLayout.Spacing.lg)
@@ -208,7 +208,7 @@ fileprivate struct CorrelationCard: View {
 // MARK: - Prediction Card
 
 /// AI-generated health prediction card
-public struct PredictionCard: View {
+public struct HealthPredictionCard: View {
 
     let prediction: HealthPrediction
 

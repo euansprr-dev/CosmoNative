@@ -17,6 +17,10 @@ struct APIKeys {
         case supabaseUrl = "supabase_url"
         case supabaseKey = "supabase_anon_key"
         case instagram = "instagram_api_key"
+        case agentLLM = "agent_llm_api_key"
+        case agentLLMBaseURL = "agent_llm_base_url"
+        case telegramBotToken = "telegram_bot_token"
+        case whisperAPIKey = "whisper_api_key"
     }
 
     // MARK: - OpenRouter (for LLM calls)
@@ -66,6 +70,35 @@ struct APIKeys {
         }
     }
 
+    // MARK: - Cosmo Agent
+    static var agentLLM: String? {
+        get {
+            if let key = loadFromKeychain(.agentLLM) { return key }
+            return ProcessInfo.processInfo.environment["AGENT_LLM_API_KEY"]
+        }
+    }
+
+    static var agentLLMBaseURL: String? {
+        get {
+            if let key = loadFromKeychain(.agentLLMBaseURL) { return key }
+            return ProcessInfo.processInfo.environment["AGENT_LLM_BASE_URL"]
+        }
+    }
+
+    static var telegramBotToken: String? {
+        get {
+            if let key = loadFromKeychain(.telegramBotToken) { return key }
+            return ProcessInfo.processInfo.environment["TELEGRAM_BOT_TOKEN"]
+        }
+    }
+
+    static var whisperAPIKey: String? {
+        get {
+            if let key = loadFromKeychain(.whisperAPIKey) { return key }
+            return ProcessInfo.processInfo.environment["WHISPER_API_KEY"]
+        }
+    }
+
     // MARK: - Supabase (for Sync)
     // Hardcoded for production - all users connect to the same Supabase instance
     static var supabaseUrl: String? {
@@ -96,6 +129,10 @@ struct APIKeys {
         instagram != nil && !instagram!.isEmpty
     }
 
+    static var hasAgentLLM: Bool { agentLLM != nil && !agentLLM!.isEmpty }
+    static var hasTelegramBot: Bool { telegramBotToken != nil && !telegramBotToken!.isEmpty }
+    static var hasWhisper: Bool { whisperAPIKey != nil && !whisperAPIKey!.isEmpty }
+
     static var hasSupabase: Bool {
         supabaseUrl != nil && !supabaseUrl!.isEmpty && supabaseAnonKey != nil && !supabaseAnonKey!.isEmpty
     }
@@ -107,6 +144,9 @@ struct APIKeys {
         print("   YouTube: \(hasYouTube ? "✅ Configured" : "⚪ Optional (configure in Settings)")")
         print("   Perplexity: \(hasPerplexity ? "✅ Configured" : "⚪ Optional (configure in Settings)")")
         print("   Instagram: \(hasInstagram ? "✅ Configured" : "⚪ Optional (for Creative dimension tracking)")")
+        print("   Agent LLM: \(hasAgentLLM ? "✅ Configured" : "⚪ Optional (for Cosmo Agent)")")
+        print("   Telegram: \(hasTelegramBot ? "✅ Configured" : "⚪ Optional (for Telegram bot)")")
+        print("   Whisper: \(hasWhisper ? "✅ Configured" : "⚪ Optional (for voice transcription)")")
         print("   Supabase: \(hasSupabase ? "✅ Configured" : "❌ Not set (Sync Disabled)")")
     }
 
@@ -125,6 +165,14 @@ struct APIKeys {
             keyIdentifier = .perplexity
         case "instagram":
             keyIdentifier = .instagram
+        case "agent_llm":
+            keyIdentifier = .agentLLM
+        case "agent_llm_base_url":
+            keyIdentifier = .agentLLMBaseURL
+        case "telegram_bot_token":
+            keyIdentifier = .telegramBotToken
+        case "whisper_api_key":
+            keyIdentifier = .whisperAPIKey
         case "supabase_url":
             keyIdentifier = .supabaseUrl
         case "supabase_anon_key":
@@ -150,6 +198,14 @@ struct APIKeys {
             keyIdentifier = .perplexity
         case "instagram":
             keyIdentifier = .instagram
+        case "agent_llm":
+            keyIdentifier = .agentLLM
+        case "agent_llm_base_url":
+            keyIdentifier = .agentLLMBaseURL
+        case "telegram_bot_token":
+            keyIdentifier = .telegramBotToken
+        case "whisper_api_key":
+            keyIdentifier = .whisperAPIKey
         case "supabase_url":
             keyIdentifier = .supabaseUrl
         case "supabase_anon_key":

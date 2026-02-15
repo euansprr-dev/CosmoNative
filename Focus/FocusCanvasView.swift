@@ -47,132 +47,143 @@ struct FocusCanvasView: View {
         self.entity = entity
     }
 
+    /// Whether this entity type uses a full-canvas focus mode (no wrapper needed)
+    private var isFullCanvasMode: Bool {
+        entity.type == .connection || entity.type == .research || entity.type == .idea || entity.type == .content || entity.type == .note || entity.type == .cosmoAI
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let screenCenter = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
             let totalHorizontalOffset = canvasOffset.width + panOffset.width
 
-            ZStack {
-                // MARK: - Base Surface
-                CosmoColors.softWhite
-                    .ignoresSafeArea()
+            // Full-canvas modes (Connection, Research) render directly without wrapper
+            if isFullCanvasMode {
+                fullCanvasModeView
+            } else {
+                // Standard focus mode with wrapper
+                ZStack {
+                    // MARK: - Base Surface
+                    CosmoColors.softWhite
+                        .ignoresSafeArea()
 
-                // Subtle ambient glow (moves with canvas for parallax effect)
-                AmbientFocusBackground(geometry: geometry)
-                    .opacity(0.2)
-                    .offset(x: totalHorizontalOffset * 0.1) // Subtle parallax
+                    // Subtle ambient glow (moves with canvas for parallax effect)
+                    AmbientFocusBackground(geometry: geometry)
+                        .opacity(0.2)
+                        .offset(x: totalHorizontalOffset * 0.1) // Subtle parallax
 
-                // MARK: - Full-screen Editor (with horizontal offset for infinite canvas)
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Top padding for header
-                        Spacer()
-                            .frame(height: 72)
+                    // MARK: - Full-screen Editor (with horizontal offset for infinite canvas)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            // Top padding for header
+                            Spacer()
+                                .frame(height: 72)
 
-                        editorView
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .scaleEffect(editorAppeared ? 1.0 : 0.98)
-                            .opacity(editorAppeared ? 1.0 : 0)
+                            editorView
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .scaleEffect(editorAppeared ? 1.0 : 0.98)
+                                .opacity(editorAppeared ? 1.0 : 0)
 
-                        // Minimal bottom padding - text extends to bottom
-                        Spacer()
-                            .frame(height: 20)
-                    }
-                    .frame(minHeight: geometry.size.height, alignment: .top)
-                }
-                .offset(x: totalHorizontalOffset) // Apply horizontal pan offset
-                .background(
-                    // Invisible tap target to blur floating blocks
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            // Blur all floating blocks when clicking in editor area
-                            NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
+                            // Minimal bottom padding - text extends to bottom
+                            Spacer()
+                                .frame(height: 20)
                         }
-                )
-
-                // MARK: - User-Placed Floating Blocks (above editor)
-                // Uses unified DocumentBlocksLayer (same block system as home canvas)
-                // Pinned blocks move with canvas, unpinned blocks stay fixed on viewport
-                DocumentBlocksLayer(
-                    documentType: entity.type.rawValue,
-                    documentId: entity.id,
-                    canvasCenter: screenCenter,
-                    canvasOffset: CGSize(width: totalHorizontalOffset, height: 0)
-                )
-                .environmentObject(database)
-                .offset(x: totalHorizontalOffset) // Apply horizontal pan offset to floating blocks
-                // NOTE: Unpinned blocks subtract this offset internally to stay fixed on screen
-                .zIndex(100) // Ensure floating blocks appear above editor
-
-                // MARK: - Header + Footer Overlays (fixed position, don't move with canvas)
-                VStack {
-                    HStack(alignment: .top) {
-                        FocusCanvasHeader(
-                            entity: entity,
-                            isVoiceActive: isVoiceActive,
-                            voiceStatus: voiceStatus,
-                            onClose: closeFocusMode
-                        )
-
-                        Spacer()
-
-                        // MARK: - Recenter Button (appears when panned far from center)
-                        if distanceFromCenter > 200 {
-                            FocusRecenterButton {
-                                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                                    canvasOffset = .zero
-                                }
+                        .frame(minHeight: geometry.size.height, alignment: .top)
+                    }
+                    .offset(x: totalHorizontalOffset) // Apply horizontal pan offset
+                    .background(
+                        // Invisible tap target to blur floating blocks
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                // Blur all floating blocks when clicking in editor area
+                                NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
                             }
-                            .padding(.top, 20)
-                            .padding(.trailing, 20)
-                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    )
+
+                    // MARK: - User-Placed Floating Blocks (above editor)
+                    // Uses unified DocumentBlocksLayer (same block system as home canvas)
+                    // Pinned blocks move with canvas, unpinned blocks stay fixed on viewport
+                    DocumentBlocksLayer(
+                        documentType: entity.type.rawValue,
+                        documentId: entity.id,
+                        canvasCenter: screenCenter,
+                        canvasOffset: CGSize(width: totalHorizontalOffset, height: 0)
+                    )
+                    .environmentObject(database)
+                    .offset(x: totalHorizontalOffset) // Apply horizontal pan offset to floating blocks
+                    // NOTE: Unpinned blocks subtract this offset internally to stay fixed on screen
+                    .zIndex(100) // Ensure floating blocks appear above editor
+
+                    // MARK: - Header + Footer Overlays (fixed position, don't move with canvas)
+                    VStack {
+                        HStack(alignment: .top) {
+                            FocusCanvasHeader(
+                                entity: entity,
+                                isVoiceActive: isVoiceActive,
+                                voiceStatus: voiceStatus,
+                                onClose: closeFocusMode
+                            )
+
+                            Spacer()
+
+                            // MARK: - Recenter Button (appears when panned far from center)
+                            if distanceFromCenter > 200 {
+                                FocusRecenterButton {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                        canvasOffset = .zero
+                                    }
+                                }
+                                .padding(.top, 20)
+                                .padding(.trailing, 20)
+                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                            }
                         }
+
+                        Spacer()
+
+                        FocusCanvasFooter()
+                    }
+                }
+                // MARK: - Pan Gesture for Infinite Horizontal Scrolling (standard mode only)
+                .gesture(
+                    DragGesture(minimumDistance: 5)
+                        .updating($panOffset) { value, state, _ in
+                            // Only allow horizontal panning (vertical is handled by ScrollView)
+                            state = CGSize(width: value.translation.width, height: 0)
+                        }
+                        .onEnded { value in
+                            // Commit the horizontal pan offset
+                            canvasOffset.width += value.translation.width
+                        }
+                )
+                // Right-click context menu for adding floating blocks (standard mode only)
+                .contextMenu {
+                    Button {
+                        addFocusBlock(type: .note, title: "Note", at: screenCenter.applying(.init(translationX: -200, y: 0)))
+                    } label: {
+                        Label("Add Note", systemImage: "note.text")
                     }
 
-                    Spacer()
-
-                    FocusCanvasFooter()
-                }
-            }
-            // MARK: - Pan Gesture for Infinite Horizontal Scrolling
-            .gesture(
-                DragGesture(minimumDistance: 5)
-                    .updating($panOffset) { value, state, _ in
-                        // Only allow horizontal panning (vertical is handled by ScrollView)
-                        state = CGSize(width: value.translation.width, height: 0)
+                    Button {
+                        addFocusBlock(type: .idea, title: "Idea", at: screenCenter.applying(.init(translationX: 200, y: 0)))
+                    } label: {
+                        Label("Add Idea", systemImage: "lightbulb")
                     }
-                    .onEnded { value in
-                        // Commit the horizontal pan offset
-                        canvasOffset.width += value.translation.width
+
+                    Button {
+                        addFocusBlock(type: .task, title: "Task", at: screenCenter.applying(.init(translationX: 0, y: -150)))
+                    } label: {
+                        Label("Add Task", systemImage: "checkmark.circle")
                     }
-            )
-            // Right-click context menu for adding floating blocks
-            .contextMenu {
-                Button {
-                    addFocusBlock(type: .note, title: "Note", at: screenCenter.applying(.init(translationX: -200, y: 0)))
-                } label: {
-                    Label("Add Note", systemImage: "note.text")
-                }
 
-                Button {
-                    addFocusBlock(type: .idea, title: "Idea", at: screenCenter.applying(.init(translationX: 200, y: 0)))
-                } label: {
-                    Label("Add Idea", systemImage: "lightbulb")
-                }
+                    Divider()
 
-                Button {
-                    addFocusBlock(type: .task, title: "Task", at: screenCenter.applying(.init(translationX: 0, y: -150)))
-                } label: {
-                    Label("Add Task", systemImage: "checkmark.circle")
-                }
-
-                Divider()
-
-                Button {
-                    addCosmoAIBlock(at: screenCenter.applying(.init(translationX: 150, y: 100)))
-                } label: {
-                    Label("Add AI Researcher", systemImage: "brain.head.profile")
+                    Button {
+                        addCosmoAIBlock(at: screenCenter.applying(.init(translationX: 150, y: 100)))
+                    } label: {
+                        Label("Add AI Researcher", systemImage: "brain.head.profile")
+                    }
                 }
             }
         }
@@ -181,6 +192,93 @@ struct FocusCanvasView: View {
         }
         .onDisappear {
             cleanupFocusMode()
+        }
+    }
+
+    // MARK: - Full Canvas Mode View
+    /// Renders full-canvas focus modes (Connection, Research) directly without wrapper
+    @ViewBuilder
+    private var fullCanvasModeView: some View {
+        switch entity.type {
+        case .idea:
+            if let atom = loadedAtom {
+                IdeaFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .research:
+            if let atom = loadedAtom {
+                if atom.isSwipeFileAtom {
+                    SwipeStudyFocusModeView(atom: atom, onClose: closeFocusMode)
+                        .ignoresSafeArea()
+                } else {
+                    ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
+                        .ignoresSafeArea()
+                }
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .connection:
+            if let atom = loadedAtom {
+                ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .content:
+            if let atom = loadedAtom {
+                ContentFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .note:
+            if let atom = loadedAtom {
+                NoteFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        case .cosmoAI:
+            if let atom = loadedAtom {
+                CosmoAIFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
+            } else {
+                ZStack {
+                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
+                    ProgressView("Loading...")
+                        .tint(.white)
+                }
+                .onAppear { loadAtomForFocusMode() }
+            }
+        default:
+            EmptyView()
         }
     }
 
@@ -194,22 +292,9 @@ struct FocusCanvasView: View {
         case .content:
             ContentEditorView(contentId: entity.id)
                 .environmentObject(voiceEngine)
-        case .research:
-            // Use new Research Focus Mode view
-            if let atom = loadedAtom {
-                ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
-            } else {
-                ProgressView("Loading...")
-                    .onAppear { loadAtomForFocusMode() }
-            }
-        case .connection:
-            // Use new Connection Focus Mode view
-            if let atom = loadedAtom {
-                ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
-            } else {
-                ProgressView("Loading...")
-                    .onAppear { loadAtomForFocusMode() }
-            }
+        case .research, .connection, .cosmoAI:
+            // Handled by fullCanvasModeView
+            EmptyView()
         default:
             GenericEntityEditor(entity: entity)
         }
@@ -218,10 +303,21 @@ struct FocusCanvasView: View {
     // MARK: - Atom Loading
     private func loadAtomForFocusMode() {
         Task {
-            if let atom = try? await AtomRepository.shared.fetch(id: entity.id) {
-                await MainActor.run {
-                    loadedAtom = atom
+            do {
+                if entity.id > 0, let atom = try await AtomRepository.shared.fetch(id: entity.id) {
+                    await MainActor.run {
+                        loadedAtom = atom
+                    }
+                } else {
+                    // Entity has no backing atom (id <= 0) — create one
+                    let atomType = AtomType(rawValue: entity.type.rawValue) ?? .idea
+                    let newAtom = try await AtomRepository.shared.create(type: atomType, title: "Untitled \(entity.type.rawValue.capitalized)")
+                    await MainActor.run {
+                        loadedAtom = newAtom
+                    }
                 }
+            } catch {
+                print("❌ loadAtomForFocusMode failed: \(error)")
             }
         }
     }
@@ -389,6 +485,11 @@ struct FocusCanvasView: View {
         }
 
         // DocumentBlocksLayer handles its own loading via .task modifier
+
+        // Eagerly load atom for full canvas modes
+        if isFullCanvasMode && loadedAtom == nil {
+            loadAtomForFocusMode()
+        }
 
         setupVoiceListeners()
     }

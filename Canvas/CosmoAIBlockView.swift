@@ -1,10 +1,76 @@
 // CosmoOS/Canvas/CosmoAIBlockView.swift
 // Premium AI Agent Card - Clean, minimal, powerful
 // States: Idle (ready), Thinking (lavender), Research (coral), Complete (emerald)
-// Now with expansion support and improved contrast
+// Now with 4 intelligent modes: Think, Research, Recall, Act
 
 import SwiftUI
 import AppKit
+
+// MARK: - CosmoMode (4 intelligent modes)
+
+enum CosmoMode: String, CaseIterable {
+    case think = "Think"
+    case research = "Research"
+    case recall = "Recall"
+    case act = "Act"
+
+    var icon: String {
+        switch self {
+        case .think: return "brain"
+        case .research: return "globe"
+        case .recall: return "magnifyingglass"
+        case .act: return "bolt.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .think: return CosmoColors.lavender
+        case .research: return Color(red: 0.91, green: 0.48, blue: 0.36)
+        case .recall: return CosmoColors.skyBlue
+        case .act: return CosmoColors.emerald
+        }
+    }
+
+    static func infer(from query: String) -> CosmoMode {
+        let q = query.lowercased()
+        if q.hasPrefix("research") || q.hasPrefix("search") || q.hasPrefix("find out") || q.contains("latest on") {
+            return .research
+        }
+        if q.hasPrefix("what do i know") || q.hasPrefix("recall") || q.hasPrefix("remember") || q.hasPrefix("find my") || q.contains("related to") {
+            return .recall
+        }
+        if q.hasPrefix("create") || q.hasPrefix("make") || q.hasPrefix("summarize") || q.hasPrefix("analyze") || q.contains("should i work on") {
+            return .act
+        }
+        return .think
+    }
+}
+
+// MARK: - Supporting Types
+
+struct RecallResult: Identifiable {
+    let id = UUID()
+    let atom: Atom
+    let similarity: Float?
+    let source: String // "vector", "keyword", "graph"
+}
+
+struct ActionResult: Identifiable {
+    let id = UUID()
+    let description: String
+    let createdAtomId: Int64?
+    let createdAtomType: EntityType?
+}
+
+struct ContextSource: Identifiable {
+    let id: String
+    let title: String
+    let type: EntityType
+    let bodyPreview: String
+}
+
+// MARK: - CosmoAIBlockView
 
 struct CosmoAIBlockView: View {
     let block: CanvasBlock
@@ -26,12 +92,8 @@ struct CosmoAIBlockView: View {
             isExpanded: $isExpanded,
             onClose: closeBlock
         ) {
-            AgentSurface(
-                accentColor: state.chromeAccentColor,
-                isExpanded: isExpanded
-            ) {
-                contentView
-            }
+            contentView
+                .padding(16)
         }
         .onChange(of: state.uiState) { _, newState in
             // Auto-expand when results arrive
@@ -45,6 +107,16 @@ struct CosmoAIBlockView: View {
         .onAppear {
             // Auto-execute query if provided via voice command
             autoStartIfNeeded()
+            // Load connected context from graph edges and atom links
+            state.loadConnectedContext(entityUuid: block.entityUuid)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.updateBlockContent)) { notification in
+            if let blockId = notification.userInfo?["blockId"] as? String,
+               blockId == block.id,
+               let action = notification.userInfo?["action"] as? String,
+               action == "refreshContext" {
+                state.loadConnectedContext(entityUuid: block.entityUuid)
+            }
         }
         .onChange(of: inputText) { _, _ in
             syncCapturingState()
@@ -95,34 +167,69 @@ struct CosmoAIBlockView: View {
             // Status indicator
             AIStatusBar(state: state)
 
+            // Mode selector pills
+            modeSelectorView
+
+            // Context chips (connected atoms)
+            if !state.contextSources.isEmpty {
+                contextChipsView
+            }
+
             // Query Input or Current Query
             if state.uiState == .idle || state.uiState == .capturing {
                 PremiumIdleInputView(
                     inputText: $inputText,
                     isInputFocused: _isInputFocused,
-                    accentColor: state.routeColor,
+                    accentColor: state.mode.color,
                     inkColor: state.route.ink,
                     onSubmit: startProcessing
                 )
             } else {
                 // Show current query with improved contrast
                 if let query = state.query {
-                    QueryDisplayView(query: query, accentColor: state.routeColor)
+                    QueryDisplayView(query: query, accentColor: state.mode.color)
                 }
             }
 
             // Processing State or Results
             if state.isProcessing {
-                PremiumProcessingView(state: state, isExpanded: isExpanded)
+                switch state.mode {
+                case .research:
+                    PremiumProcessingView(state: state, isExpanded: isExpanded)
+                default:
+                    // Generic thinking view for Think/Recall/Act
+                    if let thought = state.currentThought {
+                        PremiumThinkingStreamView(text: thought, color: state.mode.color)
+                    }
+                }
             } else if state.uiState == .responding {
-                PremiumResultsView(
-                    state: state,
-                    isExpanded: isExpanded,
-                    blockId: block.id,
-                    blockPosition: block.position,
-                    onReset: resetBlock,
-                    onCopy: copyResult
-                )
+                // Mode-specific results
+                switch state.mode {
+                case .recall:
+                    if !state.recallResults.isEmpty {
+                        recallResultsView
+                    } else {
+                        PremiumResultsView(
+                            state: state,
+                            isExpanded: isExpanded,
+                            blockId: block.id,
+                            blockPosition: block.position,
+                            onReset: resetBlock,
+                            onCopy: copyResult
+                        )
+                    }
+                case .act:
+                    actResultsView
+                default:
+                    PremiumResultsView(
+                        state: state,
+                        isExpanded: isExpanded,
+                        blockId: block.id,
+                        blockPosition: block.position,
+                        onReset: resetBlock,
+                        onCopy: copyResult
+                    )
+                }
             } else if state.uiState == .failed {
                 AIErrorView(error: state.error, onRetry: resetBlock)
             }
@@ -130,6 +237,182 @@ struct CosmoAIBlockView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Mode Selector
+
+    private var modeSelectorView: some View {
+        HStack(spacing: 8) {
+            ForEach(CosmoMode.allCases, id: \.rawValue) { mode in
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        state.mode = mode
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 10))
+                        Text(mode.rawValue)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .fixedSize()
+                    .foregroundColor(state.mode == mode ? .white : mode.color)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(state.mode == mode ? mode.color : mode.color.opacity(0.12))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Context Chips
+
+    private var contextChipsView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(state.contextSources) { source in
+                    HStack(spacing: 4) {
+                        Image(systemName: source.type.icon)
+                            .font(.system(size: 9))
+                        Text(source.title)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(CosmoColors.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Recall Results View
+
+    @ViewBuilder
+    private var recallResultsView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Related Knowledge")
+                .font(CosmoTypography.caption)
+                .foregroundColor(CosmoColors.textSecondary)
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(state.recallResults) { result in
+                        RecallResultCard(result: result, onTap: {
+                            let atomType = result.atom.type
+                            let entityType = EntityType(rawValue: atomType.rawValue) ?? .idea
+                            NotificationCenter.default.post(
+                                name: .enterFocusMode,
+                                object: nil,
+                                userInfo: ["type": entityType, "id": result.atom.id ?? 0]
+                            )
+                        })
+                    }
+                }
+            }
+            .frame(maxHeight: isExpanded ? 300 : 180)
+
+            // Summary text
+            if let resultText = state.result {
+                Text(resultText)
+                    .font(CosmoTypography.caption)
+                    .foregroundColor(CosmoColors.textTertiary)
+            }
+
+            // Action pills
+            HStack(spacing: 10) {
+                PremiumAgentActionButton(
+                    label: "Copy",
+                    icon: "doc.on.doc",
+                    color: CosmoColors.textSecondary,
+                    action: copyResult
+                )
+                Spacer()
+                PremiumAgentActionButton(
+                    label: "New Query",
+                    icon: "arrow.counterclockwise",
+                    color: CosmoColors.textTertiary,
+                    action: resetBlock
+                )
+            }
+        }
+    }
+
+    // MARK: - Act Results View
+
+    @ViewBuilder
+    private var actResultsView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Action results cards
+            if !state.actionResults.isEmpty {
+                ForEach(state.actionResults) { actionResult in
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle()
+                                .fill(CosmoColors.emerald.opacity(0.16))
+                                .frame(width: 28, height: 28)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(CosmoColors.emerald)
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(actionResult.description)
+                                .font(CosmoTypography.bodySmall)
+                                .foregroundColor(CosmoColors.textPrimary)
+                            if let type = actionResult.createdAtomType {
+                                Text(type.rawValue.uppercased())
+                                    .font(CosmoTypography.labelSmall)
+                                    .foregroundColor(CosmoColors.emerald.opacity(0.8))
+                            }
+                        }
+
+                        Spacer()
+                    }
+                    .padding(10)
+                    .background(CosmoColors.emerald.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(CosmoColors.emerald.opacity(0.16), lineWidth: 1))
+                }
+            }
+
+            // Fallback to text result
+            if let resultText = state.result, state.actionResults.isEmpty {
+                ResultSummaryCard(
+                    text: resultText,
+                    accentColor: CosmoColors.emerald,
+                    isExpanded: isExpanded
+                )
+            }
+
+            // Action pills
+            HStack(spacing: 10) {
+                PremiumAgentActionButton(
+                    label: "Copy",
+                    icon: "doc.on.doc",
+                    color: CosmoColors.textSecondary,
+                    action: copyResult
+                )
+                Spacer()
+                PremiumAgentActionButton(
+                    label: "New Query",
+                    icon: "arrow.counterclockwise",
+                    color: CosmoColors.textTertiary,
+                    action: resetBlock
+                )
+            }
+        }
     }
 
     // MARK: - Actions
@@ -149,18 +432,70 @@ struct CosmoAIBlockView: View {
         let q = (query ?? inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
 
-        state.beginRequest(query: q, route: forcedRoute ?? AgentRoute.infer(from: q))
+        // Infer mode from query
+        let inferredMode = CosmoMode.infer(from: q)
+        state.mode = inferredMode
+        state.query = q
+
+        // Map mode to existing route for backward compatibility
+        let route: AgentRoute
+        switch inferredMode {
+        case .research: route = .webResearch
+        default: route = .localAI
+        }
+        state.beginRequest(query: q, route: forcedRoute ?? route)
 
         inputText = ""
         isInputFocused = false
 
-        switch state.route {
-        case .webResearch:
-            performResearch(query: q)
-        case .localAI:
-            performThinking(query: q)
+        switch inferredMode {
+        case .think: performThink(query: q)
+        case .research: performResearch(query: q)
+        case .recall: performRecall(query: q)
+        case .act: performAct(query: q)
         }
     }
+
+    // MARK: - Think Mode
+
+    private func performThink(query: String) {
+        state.setThought("Thinking about this...")
+
+        Task {
+            do {
+                // Build context prefix from connected atoms
+                var contextText = ""
+                for source in state.contextSources {
+                    contextText += "[\(source.type.rawValue.uppercased()): \(source.title)]\n\(source.bodyPreview)\n\n"
+                }
+
+                let fullQuery: String
+                if contextText.isEmpty {
+                    fullQuery = "Think step by step about: \(query). Provide a clear, thoughtful analysis."
+                } else {
+                    fullQuery = "Think step by step about: \(query). Provide a clear, thoughtful analysis.\n\nContext from connected knowledge:\n\(contextText)"
+                }
+
+                let result = try await ResearchService.shared.performResearch(
+                    query: fullQuery,
+                    searchType: .web,
+                    maxResults: 3
+                )
+
+                await MainActor.run {
+                    state.result = result.summary
+                    state.sources = result.findings
+                    state.finishSuccess()
+                }
+            } catch {
+                await MainActor.run {
+                    state.finishFailure(error: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    // MARK: - Research Mode
 
     private func performResearch(query: String) {
         // Stage 1: Searching
@@ -207,21 +542,141 @@ struct CosmoAIBlockView: View {
         }
     }
 
-    private func performThinking(query: String) {
-        state.setThought("Processing…")
+    // MARK: - Recall Mode
+
+    private func performRecall(query: String) {
+        state.setThought("Searching knowledge base...")
 
         Task {
-            await MainActor.run {
-                state.setThought("Thinking about this…")
-            }
+            do {
+                // Vector search
+                let vectorResults = try await VectorDatabase.shared.search(
+                    query: query, limit: 10, minSimilarity: 0.3
+                )
 
-            let result = await LocalLLM.shared.generate(prompt: query, maxTokens: 500)
+                // Keyword search
+                let keywordResults = try await AtomRepository.shared.search(query: query, limit: 10)
 
-            await MainActor.run {
-                state.result = result
-                state.finishSuccess()
+                // Merge and deduplicate
+                var seen = Set<String>()
+                var results: [RecallResult] = []
+
+                for vr in vectorResults {
+                    let uuid = vr.entityUUID ?? "\(vr.entityId)"
+                    if !seen.contains(uuid) {
+                        seen.insert(uuid)
+                        if let entityUUID = vr.entityUUID,
+                           let atom = try await AtomRepository.shared.fetch(uuid: entityUUID) {
+                            results.append(RecallResult(atom: atom, similarity: vr.similarity, source: "vector"))
+                        } else if let atom = try await AtomRepository.shared.fetch(id: vr.entityId) {
+                            results.append(RecallResult(atom: atom, similarity: vr.similarity, source: "vector"))
+                        }
+                    }
+                }
+
+                for atom in keywordResults {
+                    if !seen.contains(atom.uuid) {
+                        seen.insert(atom.uuid)
+                        results.append(RecallResult(atom: atom, similarity: nil, source: "keyword"))
+                    }
+                }
+
+                await MainActor.run {
+                    state.recallResults = results
+                    state.result = "Found \(results.count) related items"
+                    state.finishSuccess()
+                }
+            } catch {
+                await MainActor.run {
+                    state.finishFailure(error: error.localizedDescription)
+                }
             }
         }
+    }
+
+    // MARK: - Act Mode
+
+    private func performAct(query: String) {
+        state.setThought("Processing action...")
+        let q = query.lowercased()
+
+        Task {
+            do {
+                if q.contains("create a note") || q.contains("make a note") {
+                    let content = extractContent(from: query, removing: ["create a note about", "make a note about"])
+                    let atom = try await AtomRepository.shared.create(type: .idea, title: content, body: content)
+
+                    // Spawn block on canvas
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Canvas.createEntityAtPosition,
+                            object: nil,
+                            userInfo: [
+                                "type": EntityType.note,
+                                "position": CGPoint(x: block.position.x + 360, y: block.position.y),
+                                "entityId": atom.id ?? 0
+                            ]
+                        )
+                        state.actionResults = [ActionResult(description: "Created note: \(content)", createdAtomId: atom.id, createdAtomType: .note)]
+                        state.result = "Created note: \(content)"
+                        state.finishSuccess()
+                    }
+                } else if q.contains("should i work on") || q.contains("what should i") {
+                    let (primary, alternatives) = try await TaskRecommendationEngine.shared.getRecommendations(
+                        currentEnergy: 50,
+                        currentFocus: 50,
+                        limit: 5
+                    )
+
+                    var recommendationText = ""
+                    if let primary = primary {
+                        recommendationText = "Top recommendation: \(primary.task.title)\n"
+                        recommendationText += "Reason: \(primary.reason.displayMessage)\n"
+                    }
+
+                    if !alternatives.isEmpty {
+                        recommendationText += "\nAlternatives:\n"
+                        for alt in alternatives {
+                            recommendationText += "- \(alt.task.title)\n"
+                        }
+                    }
+
+                    if recommendationText.isEmpty {
+                        recommendationText = "No tasks found. Create some tasks first to get recommendations."
+                    }
+
+                    await MainActor.run {
+                        state.result = recommendationText
+                        state.finishSuccess()
+                    }
+                } else if q.contains("analyze") || q.contains("writing") {
+                    await MainActor.run {
+                        state.result = "Action completed: Analyzed your request. Use specific commands like 'create a note about X' or 'what should I work on?' for targeted actions."
+                        state.finishSuccess()
+                    }
+                } else {
+                    await MainActor.run {
+                        state.result = "Available actions:\n- Create a note about [topic]\n- What should I work on?\n- Summarize my research on [topic]\n- Analyze my writing in [content]"
+                        state.finishSuccess()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    state.finishFailure(error: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func extractContent(from query: String, removing prefixes: [String]) -> String {
+        var result = query
+        for prefix in prefixes {
+            if result.lowercased().hasPrefix(prefix) {
+                result = String(result.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+        }
+        return result.isEmpty ? query : result
     }
 
     private func copyResult() {
@@ -240,6 +695,100 @@ struct CosmoAIBlockView: View {
             state.currentThought = nil
             state.error = nil
             state.researchStage = .searching
+            state.recallResults = []
+            state.actionResults = []
+        }
+    }
+}
+
+// MARK: - Recall Result Card
+
+private struct RecallResultCard: View {
+    let result: RecallResult
+    let onTap: () -> Void
+
+    @State private var isHovered = false
+
+    private var typeColor: Color {
+        switch result.atom.type {
+        case .idea: return CosmoMentionColors.idea
+        case .research: return CosmoMentionColors.research
+        case .task: return CosmoMentionColors.task
+        case .content: return CosmoMentionColors.content
+        case .connection: return CosmoColors.lavender
+        case .project: return CosmoColors.emerald
+        default: return CosmoColors.textSecondary
+        }
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                // Type indicator
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(typeColor.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: iconForType(result.atom.type))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(typeColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.atom.title ?? result.atom.body?.prefix(60).description ?? "Untitled")
+                        .font(CosmoTypography.bodySmall.weight(.medium))
+                        .foregroundColor(CosmoColors.textPrimary)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Text(result.atom.type.rawValue.capitalized)
+                            .font(CosmoTypography.labelSmall)
+                            .foregroundColor(typeColor)
+
+                        if let similarity = result.similarity {
+                            Text("\(Int(similarity * 100))% match")
+                                .font(CosmoTypography.labelSmall)
+                                .foregroundColor(CosmoColors.textTertiary)
+                        }
+
+                        Text(result.source)
+                            .font(CosmoTypography.labelSmall)
+                            .foregroundColor(CosmoColors.textTertiary)
+                    }
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(CosmoColors.textTertiary.opacity(0.6))
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(isHovered ? 0.10 : 0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(typeColor.opacity(isHovered ? 0.26 : 0.12), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private func iconForType(_ type: AtomType) -> String {
+        switch type {
+        case .idea: return "lightbulb.fill"
+        case .research: return "magnifyingglass"
+        case .task: return "checkmark.circle.fill"
+        case .content: return "doc.text.fill"
+        case .connection: return "person.2.fill"
+        case .project: return "folder.fill"
+        case .note: return "note.text"
+        default: return "doc.fill"
         }
     }
 }
@@ -254,12 +803,12 @@ struct AIStatusBar: View {
             // Animated status indicator
             ZStack {
                 Circle()
-                    .fill(state.routeColor.opacity(0.18))
+                    .fill(state.mode.color.opacity(0.18))
                     .frame(width: 8, height: 8)
 
                 if state.isProcessing {
                     Circle()
-                        .fill(state.routeColor)
+                        .fill(state.mode.color)
                         .frame(width: 8, height: 8)
                         .scaleEffect(state.isProcessing ? 1.5 : 1.0)
                         .opacity(state.isProcessing ? 0 : 1)
@@ -267,7 +816,7 @@ struct AIStatusBar: View {
                 }
 
                 Circle()
-                    .fill(state.routeColor)
+                    .fill(state.mode.color)
                     .frame(width: 6, height: 6)
             }
 
@@ -316,23 +865,18 @@ struct PremiumIdleInputView: View {
     let inkColor: Color
     let onSubmit: () -> Void
 
-    private let coralColor = Color(red: 0.91, green: 0.48, blue: 0.36)
-    private let greenColor = Color(red: 0.20, green: 0.65, blue: 0.45)
-
-    @State private var showInput = false
-
     var body: some View {
         VStack(spacing: 16) {
-            // Header: Globe icon + COSMO AI title (always visible)
+            // Header: Brain icon + COSMO AI title
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(greenColor.opacity(0.15))
+                        .fill(CosmoColors.lavender.opacity(0.15))
                         .frame(width: 36, height: 36)
 
-                    Image(systemName: "globe")
+                    Image(systemName: "brain.head.profile")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(greenColor)
+                        .foregroundColor(CosmoColors.lavender)
                 }
 
                 Text("COSMO AI")
@@ -342,73 +886,60 @@ struct PremiumIdleInputView: View {
                 Spacer()
             }
 
-            // Input field - hidden by default, revealed with animation
-            if showInput {
-                HStack(spacing: 10) {
-                    ZStack(alignment: .leading) {
-                        if inputText.isEmpty {
-                            Text("Ask anything...")
-                                .font(CosmoTypography.body)
-                                .foregroundColor(CosmoColors.textTertiary)
-                        }
-
-                        TextField("", text: $inputText)
-                            .textFieldStyle(.plain)
+            // Input field - always visible
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if inputText.isEmpty {
+                        Text("Ask anything...")
                             .font(CosmoTypography.body)
-                            .foregroundColor(CosmoColors.textPrimary)
-                            .focused($isInputFocused)
-                            .onSubmit(onSubmit)
+                            .foregroundColor(CosmoColors.textTertiary)
                     }
-                    if !inputText.isEmpty {
-                        Button(action: onSubmit) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 28))
-                                .foregroundColor(greenColor)
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.scale.combined(with: .opacity))
-                    }
+
+                    TextField("", text: $inputText)
+                        .textFieldStyle(.plain)
+                        .font(CosmoTypography.body)
+                        .foregroundColor(CosmoColors.textPrimary)
+                        .focused($isInputFocused)
+                        .onSubmit(onSubmit)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(isInputFocused ? greenColor.opacity(0.4) : Color.black.opacity(0.08), lineWidth: 1))
-                .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
-                .transition(.asymmetric(
-                    insertion: .scale(scale: 0.85, anchor: .bottom).combined(with: .opacity),
-                    removal: .opacity
-                ))
+                if !inputText.isEmpty {
+                    Button(action: onSubmit) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundColor(CosmoColors.lavender)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(CosmoColors.thinkspaceSecondary))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(isInputFocused ? CosmoColors.lavender.opacity(0.4) : Color.white.opacity(0.08), lineWidth: 1))
 
             Spacer(minLength: 0)
 
-            // Voice / Keyboard toggle buttons (always visible)
+            // Voice / Keyboard buttons
             HStack(spacing: 16) {
                 Spacer()
 
                 // Voice button
                 Button(action: { }) {
                     Circle()
-                        .stroke(Color.black.opacity(0.1), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
                         .frame(width: 48, height: 48)
                         .overlay(Image(systemName: "mic.fill").font(.system(size: 18)).foregroundColor(CosmoColors.textSecondary))
                 }
                 .buttonStyle(.plain)
 
-                // Keyboard button - reveals input with animation
+                // Keyboard button - focuses input
                 Button(action: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        showInput = true
-                    }
-                    // Focus after a tiny delay to let the animation start
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        isInputFocused = true
-                    }
+                    isInputFocused = true
                 }) {
                     ZStack {
-                        Circle().fill(showInput ? greenColor.opacity(0.25) : greenColor.opacity(0.15)).frame(width: 48, height: 48)
-                        Circle().stroke(Color.black.opacity(0.1), lineWidth: 1).frame(width: 48, height: 48)
-                        Image(systemName: "keyboard").font(.system(size: 16)).foregroundColor(greenColor)
+                        Circle().fill(CosmoColors.lavender.opacity(0.15)).frame(width: 48, height: 48)
+                        Circle().stroke(Color.white.opacity(0.1), lineWidth: 1).frame(width: 48, height: 48)
+                        Image(systemName: "keyboard").font(.system(size: 16)).foregroundColor(CosmoColors.lavender)
                     }
                 }
                 .buttonStyle(.plain)
@@ -425,7 +956,6 @@ private struct AgentCoreOrb: View {
     let inkColor: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var rotation: Double = 0
     @State private var pulse: CGFloat = 1.0
@@ -443,9 +973,9 @@ private struct AgentCoreOrb: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            adaptiveCardFill(colorScheme, light: 0.95, dark: 0.25),
+                            Color.white.opacity(0.15),
                             accentColor.opacity(0.22),
-                            adaptiveCardFill(colorScheme, light: 0.75, dark: 0.18)
+                            Color.white.opacity(0.15)
                         ],
                         center: .topLeading,
                         startRadius: 0,
@@ -454,7 +984,7 @@ private struct AgentCoreOrb: View {
                 )
                 .overlay(
                     Circle()
-                        .stroke(adaptiveBorderInk(colorScheme).opacity(0.9), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
                 .shadow(color: accentColor.opacity(0.16), radius: 10, y: 3)
                 .scaleEffect(pulse)
@@ -527,20 +1057,17 @@ struct PremiumProcessingView: View {
     @ObservedObject var state: CosmoAIBlockState
     let isExpanded: Bool
 
-    private let coralColor = Color(red: 0.91, green: 0.48, blue: 0.36)
-    private let greenColor = Color(red: 0.20, green: 0.65, blue: 0.45)
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Pipeline header
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(coralColor.opacity(0.15))
+                        .fill(state.mode.color.opacity(0.15))
                         .frame(width: 36, height: 36)
-                    Image(systemName: "globe")
+                    Image(systemName: state.mode.icon)
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(coralColor)
+                        .foregroundColor(state.mode.color)
                 }
                 Text("Researching...")
                     .font(.system(size: 15, weight: .medium))
@@ -548,10 +1075,10 @@ struct PremiumProcessingView: View {
                 Spacer()
                 Text(state.researchStage.rawValue)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(greenColor)
+                    .foregroundColor(state.mode.color)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(greenColor.opacity(0.12), in: Capsule())
+                    .background(state.mode.color.opacity(0.12), in: Capsule())
             }
 
             // Pipeline stages
@@ -563,22 +1090,22 @@ struct PremiumProcessingView: View {
                         subtitle: stage.subtitle,
                         isActive: state.researchStage == stage,
                         isCompleted: isStageCompleted(stage),
-                        accentColor: coralColor
+                        accentColor: state.mode.color
                     )
                 }
             }
             .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.06), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 12).fill(CosmoColors.thinkspaceSecondary))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.06), lineWidth: 1))
 
             // Source info
             HStack(spacing: 6) {
                 Image(systemName: "globe")
                     .font(.system(size: 11))
-                    .foregroundColor(greenColor)
+                    .foregroundColor(state.mode.color)
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 10))
-                    .foregroundColor(greenColor)
+                    .foregroundColor(state.mode.color)
                 Text("Real-time web search via Perplexity")
                     .font(.system(size: 11))
                     .foregroundColor(CosmoColors.textTertiary)
@@ -592,17 +1119,17 @@ struct PremiumProcessingView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 1.0, green: 0.96, blue: 0.85)))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(state.mode.color.opacity(0.08)))
             }
 
             // Waveform animation
-            WaveformAnimation(color: coralColor)
+            WaveformAnimation(color: state.mode.color)
                 .frame(height: 40)
 
             // Status text
             Text("RESEARCHING...")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundColor(coralColor)
+                .foregroundColor(state.mode.color)
                 .tracking(1.5)
                 .frame(maxWidth: .infinity)
         }
@@ -824,7 +1351,7 @@ struct PremiumAgentProcessingAnimation: View {
         }
         .onAppear {
             guard !reduceMotion else { return }
-            // Keep it calm; “still thinking” slows slightly.
+            // Keep it calm; "still thinking" slows slightly.
             let speedMultiplier: Double = (uiState == .stillThinking) ? 1.35 : 1.0
             withAnimation(.linear(duration: 1.5 * speedMultiplier).repeatForever(autoreverses: false)) { rotation = 360 }
             withAnimation(.linear(duration: 2.0 * speedMultiplier).repeatForever(autoreverses: false)) { innerRotation = 360 }
@@ -963,7 +1490,6 @@ private struct ArtifactStackView: View {
     let blockId: String
     let blockPosition: CGPoint
 
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showFullBody = false
 
@@ -1093,7 +1619,7 @@ private struct ArtifactStackView: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(adaptiveCardFill(colorScheme, light: 0.75, dark: 0.18))
+                .fill(Color.white.opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -1144,7 +1670,7 @@ private struct ArtifactPlaceButton: View {
                 Spacer()
 
                 // Keyboard shortcut hint
-                Text("⌘↩")
+                Text("\u{2318}\u{21A9}")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.6))
                     .padding(.horizontal, 6)
@@ -1199,8 +1725,6 @@ private struct ResultSummaryCard: View {
     let accentColor: Color
     let isExpanded: Bool
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -1236,7 +1760,7 @@ private struct ResultSummaryCard: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(adaptiveCardFill(colorScheme, light: 0.72, dark: 0.18))
+                .fill(Color.white.opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -1290,8 +1814,6 @@ private struct SourceCard: View {
     let finding: ResearchFinding
     let accentColor: Color
 
-    @Environment(\.colorScheme) private var colorScheme
-
     @State private var isHovered = false
 
     var body: some View {
@@ -1336,7 +1858,7 @@ private struct SourceCard: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(adaptiveCardFill(colorScheme, light: isHovered ? 0.78 : 0.70, dark: isHovered ? 0.22 : 0.18))
+                    .fill(Color.white.opacity(isHovered ? 0.10 : 0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -1368,15 +1890,13 @@ private struct ConfidencePill: View {
     let label: String
     let color: Color
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         Text(label)
             .font(CosmoTypography.labelSmall)
             .foregroundColor(color.opacity(0.95))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(color.opacity(colorScheme == .dark ? 0.20 : 0.12), in: Capsule())
+            .background(color.opacity(0.20), in: Capsule())
             .overlay(
                 Capsule()
                     .stroke(color.opacity(0.22), lineWidth: 1)
@@ -1389,12 +1909,10 @@ private struct FaviconView: View {
     let urlString: String?
     let fallbackColor: Color
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(fallbackColor.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                .fill(fallbackColor.opacity(0.22))
 
             if let faviconURL = faviconURL {
                 AsyncImage(url: faviconURL) { phase in
@@ -1415,7 +1933,7 @@ private struct FaviconView: View {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(adaptiveBorderInk(colorScheme), lineWidth: 1)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -1549,7 +2067,7 @@ private struct StillThinkingCallout: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(CosmoColors.textSecondary)
 
-            Text("Still thinking… this is taking longer than usual.")
+            Text("Still thinking\u{2026} this is taking longer than usual.")
                 .font(CosmoTypography.caption)
                 .foregroundColor(CosmoColors.textSecondary)
 
@@ -1661,6 +2179,11 @@ final class CosmoAIBlockState: ObservableObject {
     @Published var currentThought: String?
     @Published var error: String?
     @Published var researchStage: ResearchStage = .searching
+    @Published var mode: CosmoMode = .think
+    @Published var recallResults: [RecallResult] = []
+    @Published var actionResults: [ActionResult] = []
+    @Published var connectedAtomUUIDs: [String] = []
+    @Published var contextSources: [ContextSource] = []
 
     private var stillThinkingTask: Task<Void, Never>?
 
@@ -1675,7 +2198,7 @@ final class CosmoAIBlockState: ObservableObject {
         switch uiState {
         case .responding: return CosmoColors.emerald
         case .failed: return CosmoColors.softRed
-        default: return route.color
+        default: return mode.color
         }
     }
 
@@ -1684,12 +2207,12 @@ final class CosmoAIBlockState: ObservableObject {
         switch uiState {
         case .responding: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
-        default: return route == .localAI ? "brain.head.profile" : "magnifyingglass"
+        default: return mode.icon
         }
     }
 
     /// Pastel accent for inner surfaces.
-    var routeColor: Color { route.color }
+    var routeColor: Color { mode.color }
 
     /// High-contrast ink color for status labels.
     var statusInkColor: Color {
@@ -1703,9 +2226,15 @@ final class CosmoAIBlockState: ObservableObject {
     var statusText: String {
         switch uiState {
         case .idle: return "Ready"
-        case .capturing: return "Capturing…"
-        case .thinking: return route == .webResearch ? "Searching…" : "Thinking…"
-        case .stillThinking: return "Still thinking…"
+        case .capturing: return "Capturing\u{2026}"
+        case .thinking:
+            switch mode {
+            case .think: return "Thinking\u{2026}"
+            case .research: return "Searching\u{2026}"
+            case .recall: return "Recalling\u{2026}"
+            case .act: return "Acting\u{2026}"
+            }
+        case .stillThinking: return "Still thinking\u{2026}"
         case .responding: return "Done"
         case .failed: return "Failed"
         }
@@ -1722,6 +2251,8 @@ final class CosmoAIBlockState: ObservableObject {
         self.sources = []
         self.error = nil
         self.currentThought = nil
+        self.recallResults = []
+        self.actionResults = []
         self.uiState = .thinking
 
         scheduleStillThinkingFlip()
@@ -1749,6 +2280,7 @@ final class CosmoAIBlockState: ObservableObject {
         stillThinkingTask?.cancel()
         uiState = .idle
         route = .localAI
+        mode = .think
     }
 
     private func scheduleStillThinkingFlip() {
@@ -1763,127 +2295,65 @@ final class CosmoAIBlockState: ObservableObject {
             }
         }
     }
-}
 
-// MARK: - Agent Surface (Ambient + Glass)
-/// A lightweight “agent surface” layer inside the block chrome.
-/// This is intentionally subtle (CosmoBible: calm power) but creates separation
-/// so the inner UI doesn’t feel like raw controls on a flat card.
-struct AgentSurface<Content: View>: View {
-    let accentColor: Color
-    let isExpanded: Bool
-    @ViewBuilder let content: () -> Content
+    // MARK: - Connected Context Loading
 
-    var body: some View {
-        ZStack {
-            AgentAmbientBackground(accentColor: accentColor, isExpanded: isExpanded)
+    /// Load connected atoms from graph edges and direct atom links
+    func loadConnectedContext(entityUuid: String) {
+        Task {
+            do {
+                var sources: [ContextSource] = []
+                var uuids: [String] = []
 
-            content()
-                .padding(16)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // NOTE: Removed .drawingGroup() - could interfere with async content rendering
-    }
-}
-
-private struct AgentAmbientBackground: View {
-    let accentColor: Color
-    let isExpanded: Bool
-
-    var body: some View {
-        ZStack {
-            // Always use light cream background (ignore system dark mode)
-            Color(red: 0.98, green: 0.98, blue: 0.97) // #FAFAF8
-
-            // Subtle top-left coral/green accent glow (like reference)
-            RadialGradient(
-                colors: [
-                    Color(red: 0.91, green: 0.48, blue: 0.36).opacity(0.10), // coral
-                    Color(red: 0.20, green: 0.65, blue: 0.45).opacity(0.05), // green
-                    Color.clear
-                ],
-                center: .topLeading,
-                startRadius: 0,
-                endRadius: 180
-            )
-
-            // Subtle bottom accent
-            RadialGradient(
-                colors: [
-                    Color(red: 0.20, green: 0.65, blue: 0.45).opacity(0.06),
-                    Color.clear
-                ],
-                center: .bottomTrailing,
-                startRadius: 0,
-                endRadius: 120
-            )
-        }
-        .clipped()
-    }
-}
-
-/// Static grain texture to prevent banding and add “analog warmth”.
-/// Uses Canvas once; does not animate (keeps it cheap).
-private struct AgentNoiseOverlay: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        // Keep grain static; if reduce motion is enabled, skip entirely.
-        if reduceMotion {
-            Color.clear
-        } else {
-            Canvas { context, size in
-                let count = Int((size.width * size.height) / 1200)
-                var rng = SeededRandomNumberGenerator(seed: 0xC05C0A1) // deterministic
-
-                for _ in 0..<max(150, min(count, 1200)) {
-                    let x = CGFloat.random(in: 0...size.width, using: &rng)
-                    let y = CGFloat.random(in: 0...size.height, using: &rng)
-                    let w: CGFloat = CGFloat.random(in: 0.6...1.4, using: &rng)
-                    let a: Double = Double.random(in: 0.08...0.22, using: &rng)
-
-                    let rect = CGRect(x: x, y: y, width: w, height: w)
-                    context.fill(Path(ellipseIn: rect), with: .color(.black.opacity(a)))
+                // Check atom's direct links
+                if let atom = try await AtomRepository.shared.fetch(uuid: entityUuid) {
+                    for link in atom.linksList {
+                        if let linkedAtom = try await AtomRepository.shared.fetch(uuid: link.uuid) {
+                            let entityType = EntityType(rawValue: linkedAtom.type.rawValue) ?? .idea
+                            if !uuids.contains(linkedAtom.uuid) {
+                                sources.append(ContextSource(
+                                    id: linkedAtom.uuid,
+                                    title: linkedAtom.title ?? "Untitled",
+                                    type: entityType,
+                                    bodyPreview: String((linkedAtom.body ?? "").prefix(300))
+                                ))
+                                uuids.append(linkedAtom.uuid)
+                            }
+                        }
+                    }
                 }
+
+                // Also from graph edges
+                let edges = try await GraphQueryEngine().getEdges(for: entityUuid)
+                for edge in edges.prefix(10) {
+                    let connectedUUID = edge.sourceUUID == entityUuid ? edge.targetUUID : edge.sourceUUID
+                    if !uuids.contains(connectedUUID) {
+                        if let connectedAtom = try await AtomRepository.shared.fetch(uuid: connectedUUID) {
+                            let entityType = EntityType(rawValue: connectedAtom.type.rawValue) ?? .idea
+                            sources.append(ContextSource(
+                                id: connectedAtom.uuid,
+                                title: connectedAtom.title ?? "Untitled",
+                                type: entityType,
+                                bodyPreview: String((connectedAtom.body ?? "").prefix(300))
+                            ))
+                            uuids.append(connectedUUID)
+                        }
+                    }
+                }
+
+                await MainActor.run {
+                    self.contextSources = sources
+                    self.connectedAtomUUIDs = uuids
+                }
+            } catch {
+                print("Failed to load connected context: \(error)")
             }
         }
     }
 }
 
-/// Minimal deterministic RNG so the grain is stable (no shimmer).
-private struct SeededRandomNumberGenerator: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) {
-        self.state = seed == 0 ? 0xDEADBEEF : seed
-    }
-
-    mutating func next() -> UInt64 {
-        // xorshift64*
-        state &+= 0x9E3779B97F4A7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
-        return z ^ (z >> 31)
-    }
-}
-
-// MARK: - Adaptive surfaces (light/dark)
-private func adaptiveBaseFill(_ scheme: ColorScheme) -> Color {
-    // Clean light background - matches app theme
-    scheme == .dark ? Color(white: 0.12) : Color(red: 0.98, green: 0.98, blue: 0.97)
-}
-
-private func adaptiveCardFill(_ scheme: ColorScheme, light: Double, dark: Double) -> Color {
-    scheme == .dark ? Color.white.opacity(dark) : Color.white.opacity(light)
-}
-
-private func adaptiveBorderInk(_ scheme: ColorScheme) -> Color {
-    scheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.08)
-}
-
 // MARK: - Artifact Model (UI-only for now)
-/// A structured “OS object” representation of a Cosmo output.
+/// A structured "OS object" representation of a Cosmo output.
 /// This is intentionally UI-only initially; persistence + canvas placement is handled later.
 struct AgentArtifact: Equatable {
     enum Kind: String {
@@ -1976,7 +2446,7 @@ struct AgentArtifact: Equatable {
 private extension String {
     func truncated(_ max: Int) -> String {
         guard count > max else { return self }
-        return String(prefix(max - 1)) + "…"
+        return String(prefix(max - 1)) + "\u{2026}"
     }
 
     func firstNonEmptyLineStrippingMarkdownHeading() -> String? {
@@ -2004,7 +2474,7 @@ private extension String {
         var out: [String] = []
         for rawLine in split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.hasPrefix("- ") || line.hasPrefix("• ") || line.hasPrefix("* ") {
+            if line.hasPrefix("- ") || line.hasPrefix("\u{2022} ") || line.hasPrefix("* ") {
                 let cleaned = line.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !cleaned.isEmpty {
                     out.append(String(cleaned).truncated(120))

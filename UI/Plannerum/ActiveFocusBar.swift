@@ -355,8 +355,58 @@ public class ActiveFocusBarViewModel: ObservableObject {
     @Published public var elapsedTime: TimeInterval?
     @Published public var potentialXP: Int = 0
 
+    // Session timer integration
+    @Published public var activeSession: ActiveSession?
+    @Published public var sessionState: SessionState = .idle
+
     private var timerCancellable: AnyCancellable?
     private var focusStartTime: Date?
+    private var cancellables = Set<AnyCancellable>()
+
+    private let sessionManager = ActiveSessionTimerManager.shared
+
+    init() {
+        setupSessionManagerBindings()
+    }
+
+    private func setupSessionManagerBindings() {
+        // Bind to session manager state
+        sessionManager.$currentSession
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] session in
+                self?.activeSession = session
+                self?.updateFromSession(session)
+            }
+            .store(in: &cancellables)
+
+        sessionManager.$state
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$sessionState)
+
+        sessionManager.$elapsedSeconds
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] elapsed in
+                if self?.activeSession != nil {
+                    self?.elapsedTime = elapsed
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateFromSession(_ session: ActiveSession?) {
+        guard let session = session else {
+            // No active session - check for block-based focus
+            return
+        }
+
+        // Update state based on active session
+        isInFocus = session.state == .running
+        elapsedTime = session.elapsedActiveSeconds
+
+        // Calculate potential XP for session
+        let baseXP = Int(Double(session.elapsedActiveMinutes) * session.sessionType.baseXPPerMinute)
+        potentialXP = max(baseXP, Int(Double(session.targetMinutes) * session.sessionType.baseXPPerMinute))
+    }
 
     public func loadActiveFocus() async {
         do {
@@ -430,26 +480,63 @@ public class ActiveFocusBarViewModel: ObservableObject {
     }
 
     public func startFocus() {
+        // Check if there's an active session from Plannerum
+        if let session = activeSession, session.state == .paused {
+            sessionManager.resumeSession()
+            return
+        }
+
+        // Otherwise, start from a block
         guard let next = nextBlock else { return }
+
+        // Start session via manager
+        let sessionType: SessionType
+        switch next.blockType {
+        case .deepWork: sessionType = .deepWork
+        case .creative: sessionType = .creative
+        case .training: sessionType = .training
+        case .rest: sessionType = .meditation
+        default: sessionType = .deepWork
+        }
+
+        let durationMinutes = Int(next.duration / 60)
+        sessionManager.startSession(
+            taskId: next.id,
+            taskTitle: next.title,
+            sessionType: sessionType,
+            targetMinutes: durationMinutes
+        )
 
         activeBlock = next
         nextBlock = nil
         isInFocus = true
         focusStartTime = Date()
         startTimer()
-
-        NotificationCenter.default.post(name: .focusSessionStarted, object: activeBlock)
     }
 
     public func pauseFocus() {
+        // Use session manager if there's an active session
+        if activeSession != nil {
+            sessionManager.pauseSession()
+        }
+
         isInFocus = false
         timerCancellable?.cancel()
         timerCancellable = nil
-
-        NotificationCenter.default.post(name: .focusSessionPaused, object: activeBlock)
     }
 
     public func completeFocus() {
+        // Use session manager if there's an active session
+        if activeSession != nil {
+            sessionManager.endSession(completed: true)
+            activeBlock = nil
+            elapsedTime = nil
+            Task {
+                await loadActiveFocus()
+            }
+            return
+        }
+
         guard let block = activeBlock else { return }
 
         isInFocus = false
@@ -489,6 +576,30 @@ public class ActiveFocusBarViewModel: ObservableObject {
         potentialXP = PlannerumXP.estimateXP(blockType: block.blockType, durationMinutes: durationMinutes)
 
         NotificationCenter.default.post(name: .focusSessionExtended, object: block)
+    }
+
+    /// Start a focus session from FocusNowCard
+    public func startSessionFromTask(
+        taskId: String,
+        taskTitle: String,
+        estimatedMinutes: Int,
+        taskType: TaskCategoryType?
+    ) {
+        let sessionType: SessionType
+        switch taskType {
+        case .deepWork: sessionType = .deepWork
+        case .creative: sessionType = .creative
+        case .learning: sessionType = .training
+        case .physical: sessionType = .exercise
+        default: sessionType = .deepWork
+        }
+
+        sessionManager.startSession(
+            taskId: taskId,
+            taskTitle: taskTitle,
+            sessionType: sessionType,
+            targetMinutes: estimatedMinutes
+        )
     }
 
     private func startTimer() {

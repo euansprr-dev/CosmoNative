@@ -13,19 +13,21 @@ public struct CreativeDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: CreativeDimensionViewModel
+    @StateObject private var dataProvider = CreativeDimensionDataProvider()
     @State private var selectedPost: ContentPost?
     @State private var selectedPostingDay: PostingDay?
     @State private var selectedPlatform: PlatformMetrics?
     @State private var showPostDetail: Bool = false
     @State private var showDayDetail: Bool = false
     @State private var showPlatformDetail: Bool = false
+    @State private var showSettings: Bool = false
 
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: CreativeDimensionData = .preview,
+        data: CreativeDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: CreativeDimensionViewModel(data: data))
@@ -39,114 +41,165 @@ public struct CreativeDimensionView: View {
             // Background
             backgroundLayer
 
-            // Main content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SanctuaryLayout.Spacing.xxl) {
-                    // Header with back button
+            if viewModel.data.isEmpty {
+                // Empty state
+                VStack {
                     headerSection
-
-                    // Hero Metrics (full width)
-                    CreativeHeroMetrics(data: viewModel.data)
-
-                    // Performance Graph (full width)
-                    CreativePerformanceGraph(
-                        data: viewModel.data.performanceTimeSeries,
-                        selectedRange: $viewModel.selectedTimeRange,
-                        onPointTap: { point in
-                            // Handle point tap - could show detail
-                        }
+                        .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                        .padding(.top, SanctuaryLayout.Spacing.lg)
+                    Spacer()
+                    PlaceholderCard(
+                        state: .notConnected(
+                            source: "Social Accounts",
+                            description: "Social platform integration (Instagram, YouTube, TikTok, X) is coming soon. This will track your creative output and audience growth.",
+                            connectAction: { }
+                        ),
+                        accentColor: SanctuaryColors.Dimensions.creative
                     )
+                    .padding(.horizontal, 40)
+                    Spacer()
+                }
+            } else {
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: SanctuaryLayout.Spacing.xxl) {
+                        // Header with back button
+                        headerSection
 
-                    // Middle section: Calendar + Streak
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
-                        // Posting Calendar
-                        CreativePostingCalendar(
-                            postingDays: Array(viewModel.data.postingHistory.values),
-                            currentStreak: viewModel.data.currentStreak,
-                            bestPostingTime: viewModel.data.formattedBestTime,
-                            mostActiveDay: viewModel.data.mostActiveDay,
-                            averagePostsPerWeek: viewModel.data.averagePostsPerWeek,
-                            onDayTap: { day in
-                                selectedPostingDay = day
-                                showDayDetail = true
+                        // Profile selector (if profiles exist)
+                        if !dataProvider.clientProfiles.isEmpty {
+                            profileSelector
+                        }
+
+                        // Hero Metrics (full width)
+                        CreativeHeroMetrics(data: viewModel.data)
+
+                        // Performance Graph (full width)
+                        CreativePerformanceGraph(
+                            data: viewModel.data.performanceTimeSeries,
+                            selectedRange: $viewModel.selectedTimeRange,
+                            onPointTap: { point in
+                                // Handle point tap - could show detail
                             }
                         )
-                        .frame(maxWidth: .infinity)
 
-                        // Streak and scheduling
-                        VStack(spacing: SanctuaryLayout.Spacing.lg) {
-                            CreativeStreakIndicator(
+                        // Pipeline Funnel
+                        if !dataProvider.funnelData.isEmpty {
+                            PipelineFunnelView(funnelData: dataProvider.funnelData)
+                        }
+
+                        // Middle section: Calendar + Streak
+                        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
+                            // Posting Calendar
+                            CreativePostingCalendar(
+                                postingDays: Array(viewModel.data.postingHistory.values),
                                 currentStreak: viewModel.data.currentStreak,
-                                longestStreak: viewModel.data.longestStreak,
-                                isActive: true
-                            )
-
-                            // Next scheduled posts
-                            scheduledPostsCard
-
-                            // Optimal windows
-                            optimalWindowsCard
-                        }
-                        .frame(maxWidth: 320)
-                    }
-
-                    // Recent Posts carousel (full width)
-                    CreativeRecentPosts(
-                        posts: viewModel.data.recentPosts,
-                        onPostTap: { post in
-                            selectedPost = post
-                            showPostDetail = true
-                        }
-                    )
-
-                    // Bottom section: Platform Breakdown + Top Posts
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
-                        // Platform Breakdown
-                        CreativePlatformBreakdown(
-                            platforms: viewModel.data.platformMetrics,
-                            onPlatformTap: { platform in
-                                selectedPlatform = platform
-                                showPlatformDetail = true
-                            }
-                        )
-                        .frame(maxWidth: .infinity)
-
-                        // Top performers
-                        VStack(spacing: SanctuaryLayout.Spacing.lg) {
-                            CreativeTopPostsGrid(
-                                posts: viewModel.data.topPerformers,
-                                onPostTap: { post in
-                                    selectedPost = post
-                                    showPostDetail = true
+                                bestPostingTime: viewModel.data.formattedBestTime,
+                                mostActiveDay: viewModel.data.mostActiveDay,
+                                averagePostsPerWeek: viewModel.data.averagePostsPerWeek,
+                                postsForDate: { date in
+                                    viewModel.data.recentPosts.filter {
+                                        Calendar.current.isDate($0.postedAt, inSameDayAs: date)
+                                    }
                                 }
                             )
-                            .padding(SanctuaryLayout.Spacing.lg)
-                            .background(
-                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                                    .fill(SanctuaryColors.Glass.background)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                                            .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
-                                    )
-                            )
+                            .frame(maxWidth: .infinity)
 
-                            // Growth timeline
-                            PlatformGrowthTimeline(
-                                platforms: viewModel.data.platformMetrics
-                            )
+                            // Streak and scheduling
+                            VStack(spacing: SanctuaryLayout.Spacing.lg) {
+                                CreativeStreakIndicator(
+                                    currentStreak: viewModel.data.currentStreak,
+                                    longestStreak: viewModel.data.longestStreak,
+                                    isActive: true
+                                )
+
+                                // Next scheduled posts
+                                scheduledPostsCard
+
+                                // Optimal windows
+                                optimalWindowsCard
+                            }
+                            .frame(maxWidth: 320)
                         }
-                        .frame(maxWidth: 400)
-                    }
 
-                    // Bottom spacer for safe area
-                    Spacer(minLength: 40)
+                        // Recent Posts carousel (full width)
+                        CreativeRecentPosts(
+                            posts: viewModel.data.recentPosts,
+                            onPostTap: { post in
+                                selectedPost = post
+                                showPostDetail = true
+                            }
+                        )
+
+                        // Bottom section: Platform Breakdown + Top Posts
+                        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
+                            // Platform Breakdown
+                            CreativePlatformBreakdown(
+                                platforms: viewModel.data.platformMetrics,
+                                onPlatformTap: { platform in
+                                    selectedPlatform = platform
+                                    showPlatformDetail = true
+                                }
+                            )
+                            .frame(maxWidth: .infinity)
+
+                            // Top performers
+                            VStack(spacing: SanctuaryLayout.Spacing.lg) {
+                                CreativeTopPostsGrid(
+                                    posts: viewModel.data.topPerformers,
+                                    onPostTap: { post in
+                                        selectedPost = post
+                                        showPostDetail = true
+                                    }
+                                )
+                                .padding(SanctuaryLayout.Spacing.lg)
+                                .background(
+                                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                                        .fill(SanctuaryColors.Glass.background)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                                                .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                                        )
+                                )
+
+                                // Growth timeline
+                                PlatformGrowthTimeline(
+                                    platforms: viewModel.data.platformMetrics
+                                )
+                            }
+                            .frame(maxWidth: 400)
+                        }
+
+                        // Bottom spacer for safe area
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                    .padding(.top, SanctuaryLayout.Spacing.lg)
                 }
-                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
-                .padding(.top, SanctuaryLayout.Spacing.lg)
             }
 
             // Detail overlays
             detailOverlays
+        }
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+        }
+        .onAppear {
+            Task {
+                await dataProvider.loadClientProfiles()
+                await dataProvider.refreshData()
+                if dataProvider.data.totalReach > 0 || !dataProvider.data.recentPosts.isEmpty {
+                    viewModel.data = dataProvider.data
+                }
+            }
+        }
+        .onChange(of: dataProvider.selectedProfileUUID) { _, _ in
+            Task {
+                await dataProvider.refreshData()
+                if dataProvider.data.totalReach > 0 || !dataProvider.data.recentPosts.isEmpty {
+                    viewModel.data = dataProvider.data
+                }
+            }
         }
     }
 
@@ -259,6 +312,64 @@ public struct CreativeDimensionView: View {
                         .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Profile Selector
+
+    private var profileSelector: some View {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
+            Image(systemName: "person.crop.circle")
+                .font(.system(size: 14))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+
+            Menu {
+                Button(action: { dataProvider.selectedProfileUUID = nil }) {
+                    Label("All Profiles", systemImage: dataProvider.selectedProfileUUID == nil ? "checkmark" : "")
+                }
+                Divider()
+                ForEach(dataProvider.clientProfiles, id: \.uuid) { profile in
+                    Button(action: { dataProvider.selectedProfileUUID = profile.uuid }) {
+                        Label(profile.name, systemImage: dataProvider.selectedProfileUUID == profile.uuid ? "checkmark" : "")
+                    }
+                }
+            } label: {
+                profileSelectorLabel
+            }
+            .menuStyle(BorderlessButtonMenuStyle())
+
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var profileSelectorLabel: some View {
+        HStack(spacing: 6) {
+            Text(selectedProfileName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(SanctuaryColors.Text.primary)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
+        )
+    }
+
+    private var selectedProfileName: String {
+        if let uuid = dataProvider.selectedProfileUUID,
+           let profile = dataProvider.clientProfiles.first(where: { $0.uuid == uuid }) {
+            return profile.name
+        }
+        return "All Profiles"
     }
 
     // MARK: - Scheduled Posts Card

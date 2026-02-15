@@ -19,6 +19,13 @@ struct YouTubeData {
     let publishedAt: String?
     let formattedTranscript: String?            // AI-formatted markdown version
     let transcriptSections: [TranscriptSectionData]?  // Chapter breakdown
+    let transcriptStatus: TranscriptStatus      // Track transcript availability
+
+    enum TranscriptStatus: String, Codable {
+        case available = "available"
+        case unavailable = "unavailable"
+        case pending = "pending"
+    }
 }
 
 // MARK: - YouTube Processor
@@ -50,23 +57,35 @@ final class YouTubeProcessor {
         // Step 2: Try fast caption fetching first (< 2 seconds)
         progressHandler?(.fetchingCaptions)
         var transcript: [TranscriptSegment] = []
+        var transcriptStatus: YouTubeData.TranscriptStatus = .unavailable
 
         if let captions = await fetchCaptions(videoId: videoId) {
             transcript = captions
+            transcriptStatus = .available
             print("   ✅ Captions fetched: \(transcript.count) segments (fast path)")
         } else {
             // Step 2b: Fallback to audio download + transcription (slow path)
             print("   ⚠️ No captions available, falling back to audio transcription...")
             progressHandler?(.downloadingAudio)
-            let audioPath = try await downloadAudio(videoId: videoId)
-            print("   Audio downloaded: \(audioPath.lastPathComponent)")
 
-            progressHandler?(.transcribing)
-            transcript = try await transcribeAudio(at: audioPath)
-            print("   Transcribed: \(transcript.count) segments (slow path)")
+            do {
+                let audioPath = try await downloadAudio(videoId: videoId)
+                print("   Audio downloaded: \(audioPath.lastPathComponent)")
 
-            // Cleanup temp audio
-            try? fileManager.removeItem(at: audioPath)
+                progressHandler?(.transcribing)
+                transcript = try await transcribeAudio(at: audioPath)
+                transcriptStatus = .available
+                print("   Transcribed: \(transcript.count) segments (slow path)")
+
+                // Cleanup temp audio
+                try? fileManager.removeItem(at: audioPath)
+            } catch {
+                // Audio transcription failed - continue without transcript
+                // Video embed + metadata still works, user can retry later
+                print("   ⚠️ Audio transcription failed: \(error.localizedDescription)")
+                print("   ℹ️ Saving video without transcript (embed + metadata available)")
+                transcriptStatus = .unavailable
+            }
         }
 
         // Step 3: Generate summary
@@ -96,7 +115,8 @@ final class YouTubeProcessor {
             summary: summary,
             publishedAt: metadata.publishedAt,
             formattedTranscript: formattedTranscript,
-            transcriptSections: sections
+            transcriptSections: sections,
+            transcriptStatus: transcriptStatus
         )
     }
 
@@ -146,15 +166,26 @@ final class YouTubeProcessor {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: ytdlp)
                 process.arguments = [
-                    "--write-auto-subs",           // Download auto-generated captions
-                    "--sub-langs", "en.*,en",      // English captions (any variant)
+                    "--write-subs",                // Download manual subtitles (higher quality)
+                    "--write-auto-subs",           // Also download auto-generated captions as fallback
+                    "--sub-langs", "en,en-US,en-orig,en.*",  // English captions (prefer en, then en-US)
                     "--sub-format", "json3",       // JSON3 format with timestamps
                     "--skip-download",             // Don't download video/audio
                     "--no-warnings",               // Suppress warnings (like impersonation)
-                    "--extractor-args", "youtube:player_client=web", // Use web client to avoid bot detection
+                    "--ignore-errors",             // Continue even if some subtitle variants fail
                     "-o", outputTemplate,          // Output path template
                     "https://www.youtube.com/watch?v=\(videoId)"
                 ]
+
+                // Set PATH to include Homebrew locations
+                var env = ProcessInfo.processInfo.environment
+                let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+                if let existingPath = env["PATH"] {
+                    env["PATH"] = "\(homebrewPaths):\(existingPath)"
+                } else {
+                    env["PATH"] = homebrewPaths
+                }
+                process.environment = env
 
                 let errorPipe = Pipe()
                 let outputPipe = Pipe()
@@ -165,29 +196,28 @@ final class YouTubeProcessor {
                     try process.run()
                     process.waitUntilExit()
 
-                    // Check if caption file was created (success even with warnings)
-                    let possibleFiles = [".en.json3", ".en-orig.json3", ".en-US.json3"]
+                    // Always check if any caption file was created (regardless of exit code)
+                    // yt-dlp may exit with non-zero code if ONE variant fails, but others succeed
+                    let possibleFiles = [".en.json3", ".en-US.json3", ".en-orig.json3"]
                     var captionFileExists = false
                     for ext in possibleFiles {
-                        if FileManager.default.fileExists(atPath: outputTemplate + ext) {
+                        let path = outputTemplate + ext
+                        if FileManager.default.fileExists(atPath: path) {
+                            print("   ✅ Found caption file: \(ext)")
                             captionFileExists = true
                             break
                         }
                     }
 
-                    if process.terminationStatus == 0 || captionFileExists {
+                    if captionFileExists {
                         continuation.resume(returning: true)
                     } else {
                         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                         let errorMessage = String(data: errorData, encoding: .utf8) ?? ""
-                        // Check if it's just "no subtitles" error (expected for some videos)
                         if errorMessage.contains("no subtitles") || errorMessage.contains("Subtitles are disabled") {
                             print("   ℹ️ Video has no captions available")
-                        } else if errorMessage.contains("impersonat") {
-                            // Impersonation warning - try anyway, might still work
-                            print("   ℹ️ Impersonation warning (captions may still work)")
-                        } else if !errorMessage.isEmpty {
-                            print("   ⚠️ yt-dlp caption error: \(errorMessage)")
+                        } else if !errorMessage.isEmpty && !errorMessage.contains("impersonat") {
+                            print("   ⚠️ yt-dlp caption error: \(errorMessage.prefix(200))")
                         }
                         continuation.resume(returning: false)
                     }
@@ -201,11 +231,13 @@ final class YouTubeProcessor {
 
     private func findCaptionFile(basePath: String) -> String? {
         // yt-dlp creates files like: VIDEO_ID.en.json3 or VIDEO_ID.en-orig.json3
-        let possibleExtensions = [".en.json3", ".en-orig.json3", ".en-US.json3", ".a]en.json3"]
+        // Prefer manual captions (en, en-US) over auto-generated (en-orig)
+        let possibleExtensions = [".en.json3", ".en-US.json3", ".en-orig.json3"]
 
         for ext in possibleExtensions {
             let path = basePath + ext
             if fileManager.fileExists(atPath: path) {
+                print("   📝 Using caption file: \(ext)")
                 return path
             }
         }
@@ -213,10 +245,9 @@ final class YouTubeProcessor {
         // Try to find any .json3 file in the temp directory matching the video ID
         let videoId = (basePath as NSString).lastPathComponent
         if let contents = try? fileManager.contentsOfDirectory(atPath: tempDirectory.path) {
-            for file in contents {
-                if file.hasPrefix(videoId) && file.hasSuffix(".json3") {
-                    return tempDirectory.appendingPathComponent(file).path
-                }
+            for file in contents where file.hasPrefix(videoId) && file.hasSuffix(".json3") {
+                print("   📝 Found caption file: \(file)")
+                return tempDirectory.appendingPathComponent(file).path
             }
         }
 
@@ -399,6 +430,16 @@ final class YouTubeProcessor {
                     "https://www.youtube.com/watch?v=\(videoId)"
                 ]
 
+                // Set PATH to include Homebrew locations so yt-dlp can find ffmpeg
+                var env = ProcessInfo.processInfo.environment
+                let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+                if let existingPath = env["PATH"] {
+                    env["PATH"] = "\(homebrewPaths):\(existingPath)"
+                } else {
+                    env["PATH"] = homebrewPaths
+                }
+                process.environment = env
+
                 let errorPipe = Pipe()
                 process.standardError = errorPipe
 
@@ -422,8 +463,20 @@ final class YouTubeProcessor {
     }
 
     // MARK: - Transcribe Audio
-    /// Transcribe audio file using Apple Speech Framework
+    /// Transcribe audio file using Apple Speech Framework with timeout
+    /// Note: Apple Speech has ~1 minute limit for on-device recognition
     func transcribeAudio(at url: URL) async throws -> [TranscriptSegment] {
+        // Check audio duration first - Apple Speech fails on long files
+        let asset = AVURLAsset(url: url)
+        let duration = try? await asset.load(.duration)
+        let durationSeconds = duration.map { CMTimeGetSeconds($0) } ?? 0
+
+        if durationSeconds > 120 {
+            print("   ⚠️ Audio too long for Speech framework (\(Int(durationSeconds))s > 120s limit)")
+            print("   ℹ️ Apple Speech has ~1 minute limit for on-device recognition")
+            throw YouTubeError.transcriptionFailed
+        }
+
         // Request authorization
         let authorized = await requestSpeechAuthorization()
         guard authorized else {
@@ -444,31 +497,75 @@ final class YouTubeProcessor {
             request.addsPunctuation = true
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            recognizer.recognitionTask(with: request) { result, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+        print("   🎤 Starting speech recognition for \(Int(durationSeconds))s audio...")
 
-                guard let result = result, result.isFinal else { return }
+        // Use withTaskGroup to implement timeout (2 minutes for short audio)
+        let timeoutSeconds: UInt64 = 120
 
-                // Apple Speech returns word-by-word segments - consolidate into sentences/paragraphs
-                let wordSegments = result.bestTranscription.segments
-                let consolidatedSegments = self.consolidateIntoSentences(wordSegments: wordSegments)
+        // Pre-capture consolidation function to avoid self capture in async closure
+        let consolidate = { (wordSegments: [SFTranscriptionSegment]) -> [TranscriptSegment] in
+            self.consolidateIntoSentences(wordSegments: wordSegments)
+        }
 
-                // If no segments, create one from full text
-                if consolidatedSegments.isEmpty && !result.bestTranscription.formattedString.isEmpty {
-                    let lastTimestamp = wordSegments.last.map { $0.timestamp + $0.duration } ?? 0
-                    continuation.resume(returning: [TranscriptSegment(
-                        start: 0,
-                        end: lastTimestamp,
-                        text: result.bestTranscription.formattedString
-                    )])
-                } else {
-                    continuation.resume(returning: consolidatedSegments)
+        return try await withThrowingTaskGroup(of: [TranscriptSegment].self) { group in
+            // Timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+                print("   ⏰ Transcription timeout after 2 minutes")
+                throw YouTubeError.transcriptionFailed
+            }
+
+            // Actual transcription task
+            group.addTask { [recognizer, request, consolidate] in
+                try await withCheckedThrowingContinuation { continuation in
+                    var hasResumed = false
+                    let task = recognizer.recognitionTask(with: request) { result, error in
+                        guard !hasResumed else { return }
+
+                        if let error = error {
+                            hasResumed = true
+                            print("   ❌ Speech recognition error: \(error.localizedDescription)")
+                            continuation.resume(throwing: error)
+                            return
+                        }
+
+                        guard let result = result, result.isFinal else { return }
+                        hasResumed = true
+                        print("   ✅ Speech recognition completed")
+
+                        // Apple Speech returns word-by-word segments - consolidate into sentences/paragraphs
+                        let wordSegments = result.bestTranscription.segments
+                        let consolidatedSegments = consolidate(wordSegments)
+
+                        // If no segments, create one from full text
+                        if consolidatedSegments.isEmpty && !result.bestTranscription.formattedString.isEmpty {
+                            let lastTimestamp = wordSegments.last.map { $0.timestamp + $0.duration } ?? 0
+                            continuation.resume(returning: [TranscriptSegment(
+                                start: 0,
+                                end: lastTimestamp,
+                                text: result.bestTranscription.formattedString
+                            )])
+                        } else {
+                            continuation.resume(returning: consolidatedSegments)
+                        }
+                    }
+
+                    // If task is nil (shouldn't happen), resume with empty
+                    if task == nil {
+                        hasResumed = true
+                        print("   ⚠️ Recognition task was nil")
+                        continuation.resume(returning: [])
+                    }
                 }
             }
+
+            // Return first result (either success or timeout)
+            if let result = try await group.next() {
+                group.cancelAll()
+                return result
+            }
+
+            throw YouTubeError.transcriptionFailed
         }
     }
 

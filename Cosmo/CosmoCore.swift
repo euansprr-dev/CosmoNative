@@ -75,14 +75,18 @@ class CosmoCore: ObservableObject {
             }
 
             let incompleteTasks = try await database.asyncRead { db in
+                // Note: status/priority are in metadata JSON, not table columns
+                // Fetch tasks and filter in-memory using wrapper properties
                 try Atom
                     .filter(Column("type") == AtomType.task.rawValue)
                     .filter(Column("is_deleted") == false)
-                    .filter(Column("status") != "completed")
-                    .order(Column("priority").desc)
-                    .limit(5)
+                    .order(Column("updated_at").desc)
+                    .limit(20)
                     .fetchAll(db)
                     .map { TaskWrapper(atom: $0) }
+                    .filter { $0.status != "completed" }
+                    .prefix(5)
+                    .map { $0 }
             }
 
             var suggestions: [ProactiveSuggestion] = []

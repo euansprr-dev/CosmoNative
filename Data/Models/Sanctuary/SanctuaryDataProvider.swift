@@ -301,13 +301,15 @@ public final class SanctuaryDataProvider: ObservableObject {
                 )
             }
 
-            let xpForNextLevel = self.xpForLevel(levelState.cosmoIndex + 1)
-            let xpForCurrentLevel = self.xpForLevel(levelState.cosmoIndex)
-            let currentLevelXP = levelState.totalXPEarned - xpForCurrentLevel
-            let xpNeeded = xpForNextLevel - xpForCurrentLevel
+            // Recompute level from totalXP to fix stale cosmoIndex
+            let computedLevel = max(1, XPCalculationEngine.levelForXP(levelState.totalXPEarned))
+            let xpForNextLevel = XPCalculationEngine.xpRequiredForLevel(computedLevel + 1)
+            let xpForCurrentLevel = XPCalculationEngine.xpRequiredForLevel(computedLevel)
+            let currentLevelXP = max(0, levelState.totalXPEarned - xpForCurrentLevel)
+            let xpNeeded = max(1, xpForNextLevel - xpForCurrentLevel)
 
             return CosmoIndexState(
-                level: levelState.cosmoIndex,
+                level: computedLevel,
                 currentXP: Int64(currentLevelXP),
                 xpToNextLevel: Int64(xpNeeded),
                 xpProgress: Double(currentLevelXP) / Double(max(xpNeeded, 1)),
@@ -347,10 +349,11 @@ public final class SanctuaryDataProvider: ObservableObject {
             return LevelDimension.allCases.map { dimension in
                 let (level, xp, nelo) = self.extractDimensionData(from: levelState, dimension: dimension)
 
-                let xpForNext = self.xpForLevel(level + 1)
-                let xpForCurrent = self.xpForLevel(level)
-                let currentLevelXP = xp - xpForCurrent
-                let xpNeeded = xpForNext - xpForCurrent
+                let computedDimLevel = max(1, XPCalculationEngine.levelForXP(xp))
+                let xpForNext = XPCalculationEngine.xpRequiredForLevel(computedDimLevel + 1)
+                let xpForCurrent = XPCalculationEngine.xpRequiredForLevel(computedDimLevel)
+                let currentLevelXP = max(0, xp - xpForCurrent)
+                let xpNeeded = max(1, xpForNext - xpForCurrent)
 
                 // Check for activity in last 24 hours
                 let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
@@ -358,7 +361,7 @@ public final class SanctuaryDataProvider: ObservableObject {
 
                 return SanctuaryDimensionState(
                     dimension: dimension,
-                    level: level,
+                    level: computedDimLevel,
                     nelo: nelo,
                     currentXP: Int64(currentLevelXP),
                     xpToNextLevel: Int64(xpNeeded),

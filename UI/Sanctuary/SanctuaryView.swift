@@ -37,6 +37,9 @@ public struct SanctuaryView: View {
     @StateObject private var choreographer = SanctuaryAnimationChoreographer()
     @StateObject private var transitionManager = SanctuaryTransitionManager()
 
+    // DI-based glow: observe the shared DimensionIndexEngine for live scores
+    @ObservedObject private var dimensionIndexEngine = DimensionIndexEngine.shared
+
     @State private var mode: SanctuaryMode = .overview
     @State private var selectedDimension: LevelDimension?
     @State private var selectedInsight: CorrelationInsight?
@@ -52,6 +55,12 @@ public struct SanctuaryView: View {
     @State private var plannerumHovered = false
     @State private var thinkspaceHovered = false
     @State private var showingPlannerum = false
+
+    // Settings
+    @State private var showingSanctuarySettings = false
+
+    // Bottom summary hover
+    @State private var summaryHovered = false
 
     // Notification subscriptions
     @State private var cancellables = Set<AnyCancellable>()
@@ -127,7 +136,6 @@ public struct SanctuaryView: View {
                         animationPhase: choreographer.animationPhase
                     )
                     .opacity(choreographer.backgroundOpacity * 0.7)  // Recessed depth
-                    .blur(radius: 1)  // Subtle depth blur
                 }
                 .allowsHitTesting(false)
 
@@ -153,8 +161,7 @@ public struct SanctuaryView: View {
                         x: nodeGeometry.size.width * SanctuaryLayout.plannerumPositionX,
                         y: nodeGeometry.size.height * SanctuaryLayout.satellitePositionY
                     )
-                    .opacity(choreographer.backgroundOpacity * 0.85)  // Slightly recessed
-                    .blur(radius: 0.5)  // Very subtle depth blur
+                    .opacity(choreographer.backgroundOpacity * 0.85 * transitionManager.otherOrbsOpacity)
                     .scaleEffect(0.92)  // Slightly smaller for depth
 
                     // Thinkspace node (right)
@@ -176,13 +183,13 @@ public struct SanctuaryView: View {
                         x: nodeGeometry.size.width * SanctuaryLayout.thinkspacePositionX,
                         y: nodeGeometry.size.height * SanctuaryLayout.satellitePositionY
                     )
-                    .opacity(choreographer.backgroundOpacity * 0.85)  // Slightly recessed
-                    .blur(radius: 0.5)  // Very subtle depth blur
+                    .opacity(choreographer.backgroundOpacity * 0.85 * transitionManager.otherOrbsOpacity)
                     .scaleEffect(0.92)  // Slightly smaller for depth
                 }
-                .allowsHitTesting(true)  // Ensure hit testing is enabled for satellite nodes
+                .allowsHitTesting(transitionManager.state == .home)  // Disable satellite hit testing when dimension is active
 
                 // Main content container
+                // Disable hit testing when dimension detail is active to prevent tap-through
                 VStack(spacing: 0) {
                     // HEADER ZONE (Top 120pt) - Phase 2 component
                     SanctuaryHeaderView(
@@ -232,19 +239,24 @@ public struct SanctuaryView: View {
                     }
                     .frame(width: Layout.orbAreaSize, height: Layout.orbAreaSize)
 
-                    Spacer(minLength: SanctuaryLayout.Spacing.lg)  // Reduced from 64pt to 24pt to move insight stream higher
+                    Spacer(minLength: SanctuaryLayout.Spacing.sm)
 
-                    // INSIGHT STREAM (Bottom 140pt) - Phase 2 component
-                    insightStreamView
-                        .frame(maxWidth: .infinity)  // PERFORMANCE FIX: Ensure full width for GeometryReader
+                    // THIS WEEK SUMMARY - Hidden by default, hover to reveal
+                    thisWeekSummaryHoverView
                         .opacity(choreographer.dimensionsOpacity)
                         .sanctuaryTransitionInsights(manager: transitionManager)
+
+                    Spacer(minLength: SanctuaryLayout.Spacing.sm)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(transitionManager.state == .home || transitionManager.state == .returning)
 
                 // Dimension detail view (shown during/after transition)
+                // contentShape + background prevent taps from falling through to constellation
                 if case .dimension(let dimension) = transitionManager.state {
                     dimensionDetailView(for: dimension)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
                         .sanctuaryTransitionContent(manager: transitionManager)
                 }
             }
@@ -328,6 +340,31 @@ public struct SanctuaryView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showingDimensionDetail)
+        .overlay(alignment: .topTrailing) {
+            // Sanctuary settings gear — only visible on home
+            if transitionManager.state == .home && !showingPlannerum {
+                Button(action: { showingSanctuarySettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(SanctuaryColors.Glass.primary)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, SanctuaryLayout.Spacing.lg)
+                .padding(.top, SanctuaryLayout.Spacing.lg)
+                .transition(.opacity)
+            }
+        }
+        .sheet(isPresented: $showingSanctuarySettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
+        }
         .preferredColorScheme(.dark)
     }
 
@@ -393,9 +430,9 @@ public struct SanctuaryView: View {
         let x: CGFloat = center.x + radius * cos(angle)
         let y: CGFloat = center.y + radius * sin(angle)
 
-        return DimensionOrbView(
+        return DimensionOrbGlowWrapper(
             dimension: dimension,
-            state: dimensionStream.state(for: dimension),
+            dimensionState: dimensionStream.state(for: dimension),
             isSelected: selectedDimension == dimension,
             animationPhase: choreographer.animationPhase
         )
@@ -404,7 +441,6 @@ public struct SanctuaryView: View {
         .onTapGesture {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 if selectedDimension == dimension {
-                    // Second tap - trigger dimension zoom transition
                     let normalizedPosition = CGPoint(x: x / Layout.orbAreaSize, y: y / Layout.orbAreaSize)
                     handleDimensionTap(dimension, position: normalizedPosition)
                 } else {
@@ -469,7 +505,7 @@ public struct SanctuaryView: View {
 
                 // XP progress ring
                 SanctuaryProgressRingMetalView(
-                    progress: CGFloat(state.xpProgress),
+                    progress: min(1.0, CGFloat(state.xpProgress)),
                     progressColor: SanctuaryColors.XP.primary,
                     trackColor: SanctuaryColors.XP.track,
                     ringWidth: 0.08,
@@ -574,6 +610,120 @@ public struct SanctuaryView: View {
         dimensionOrbs(orbAreaSize: Layout.orbAreaSize)
     }
 
+    // MARK: - This Week Summary
+
+    /// Hover-to-reveal summary — shows subtle hint by default, full card on hover
+    private var thisWeekSummaryHoverView: some View {
+        VStack(spacing: 0) {
+            if summaryHovered {
+                thisWeekSummaryCard
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                // Subtle hint pill
+                HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 9))
+                    Text("Hover for correlations")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(SanctuaryColors.Text.tertiary.opacity(0.5))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, SanctuaryLayout.Spacing.xxl)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                summaryHovered = hovering
+            }
+        }
+    }
+
+    /// Full "This Week" summary card (shown on hover)
+    private var thisWeekSummaryCard: some View {
+        let overallDI = dimensionIndexEngine.sanctuaryLevel
+        let trend = dimensionIndexEngine.overallTrend
+        let indices = dimensionIndexEngine.dimensionIndices
+        let topDimension = indices.max(by: { $0.value.score < $1.value.score })
+
+        return SanctuaryCard(size: .quarter, title: "THIS WEEK") {
+            HStack(spacing: SanctuaryLayout.Spacing.lg) {
+                HStack(alignment: .firstTextBaseline, spacing: SanctuaryLayout.Spacing.xs) {
+                    Text("\(Int(overallDI))")
+                        .font(SanctuaryTypography.metricLarge)
+                        .foregroundColor(SanctuaryColors.Text.primary)
+
+                    Image(systemName: trend.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(trend.color)
+                }
+
+                Rectangle()
+                    .fill(SanctuaryColors.Glass.borderSubtle)
+                    .frame(width: 1, height: 40)
+
+                VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+                    if let top = topDimension {
+                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            Circle()
+                                .fill(SanctuaryColors.color(for: top.key))
+                                .frame(width: 6, height: 6)
+
+                            Text(top.key.displayName)
+                                .font(SanctuaryTypography.labelSmall)
+                                .foregroundColor(SanctuaryColors.Text.secondary)
+
+                            Text("leading")
+                                .font(SanctuaryTypography.labelSmall)
+                                .foregroundColor(SanctuaryColors.Text.tertiary)
+                        }
+                    }
+
+                    Text(thisWeekInsightText)
+                        .font(SanctuaryTypography.caption)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Generate a one-line insight based on current DI data
+    private var thisWeekInsightText: String {
+        let overallDI = dimensionIndexEngine.sanctuaryLevel
+        let trend = dimensionIndexEngine.overallTrend
+        let indices = dimensionIndexEngine.dimensionIndices
+
+        // Find weakest dimension with data
+        let weakest = indices
+            .filter { $0.value.confidence >= 0.3 }
+            .min(by: { $0.value.score < $1.value.score })
+
+        if overallDI < 1 {
+            return "Gathering data across dimensions..."
+        }
+
+        switch trend {
+        case .rising:
+            return "Momentum building across your dimensions"
+        case .falling:
+            if let weak = weakest {
+                return "\(weak.key.displayName) needs attention this week"
+            }
+            return "Consider rebalancing your focus areas"
+        case .stable:
+            if overallDI > 70 {
+                return "Strong consistency across all dimensions"
+            } else if let weak = weakest {
+                return "Boost \(weak.key.displayName) to raise your index"
+            }
+            return "Steady rhythm — small gains compound"
+        }
+    }
+
     /// Insight stream carousel (Phase 2+10 with Living Intelligence)
     private var insightStreamView: some View {
         Group {
@@ -657,40 +807,22 @@ public struct SanctuaryView: View {
     private func dimensionDetailView(for dimension: LevelDimension) -> some View {
         switch dimension {
         case .cognitive:
-            CognitiveDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            CognitiveDimensionView(onBack: handleDimensionBack)
 
         case .creative:
-            CreativeDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            CreativeDimensionView(onBack: handleDimensionBack)
 
         case .physiological:
-            PhysiologicalDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            PhysiologicalDimensionView(onBack: handleDimensionBack)
 
         case .behavioral:
-            BehavioralDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            BehavioralDimensionView(onBack: handleDimensionBack)
 
         case .knowledge:
-            KnowledgeDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            KnowledgeDimensionView(onBack: handleDimensionBack)
 
         case .reflection:
-            ReflectionDimensionView(
-                data: .preview,  // TODO: Load from SanctuaryDataProvider
-                onBack: handleDimensionBack
-            )
+            ReflectionDimensionView(onBack: handleDimensionBack)
         }
     }
 
@@ -862,6 +994,33 @@ public struct SanctuaryView: View {
             name: .sanctuaryThinkspaceRequested,
             object: nil
         )
+    }
+}
+
+// MARK: - Dimension Orb Glow Wrapper (isolated re-render boundary)
+
+/// Wraps DimensionOrbView with its own observation of DimensionIndexEngine.
+/// Only re-renders when THIS dimension's score changes, not when other dimensions update.
+private struct DimensionOrbGlowWrapper: View {
+    let dimension: LevelDimension
+    let dimensionState: SanctuaryDimensionState?
+    let isSelected: Bool
+    let animationPhase: Double
+
+    @ObservedObject private var engine = DimensionIndexEngine.shared
+
+    var body: some View {
+        let diScore = engine.index(for: dimension).score
+        let glowRadius: CGFloat = diScore < 30 ? 4 : (diScore > 80 ? 15 : 4 + CGFloat((diScore - 30) / 50) * 11)
+        let glowColor = SanctuaryColors.color(for: dimension)
+
+        DimensionOrbView(
+            dimension: dimension,
+            state: dimensionState,
+            isSelected: isSelected,
+            animationPhase: animationPhase
+        )
+        .shadow(color: glowColor.opacity(0.5), radius: glowRadius, x: 0, y: 0)
     }
 }
 

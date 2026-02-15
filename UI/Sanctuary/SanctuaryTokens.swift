@@ -402,6 +402,13 @@ public struct SanctuaryColors {
         }
     }
 
+    /// Card surface colors namespace
+    public struct Card {
+        public static let background = Color(hex: "1C1C2E")
+        public static let border = Color.white.opacity(0.08)
+        public static let titleText = Color(hex: "8888AA")
+    }
+
     /// Glass effect colors namespace
     public struct Glass {
         public static let primary = SanctuaryColors.glassPrimary
@@ -659,6 +666,16 @@ public struct SanctuaryTypography {
 
     /// Metric unit label
     public static let metricUnit = Font.system(size: 14, weight: .medium, design: .rounded)
+
+    /// Metric typography namespace (PRD precision metrics)
+    public struct Metric {
+        /// Hero metric — 48pt light, SF Pro Display
+        public static let hero = Font.system(size: 48, weight: .light, design: .default)
+        /// Secondary metric — 28pt medium, SF Pro Display
+        public static let secondary = Font.system(size: 28, weight: .medium, design: .default)
+        /// Card title — 11pt semibold, uppercase with tracking
+        public static let cardTitle = Font.system(size: 11, weight: .semibold)
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // BODY - Content text

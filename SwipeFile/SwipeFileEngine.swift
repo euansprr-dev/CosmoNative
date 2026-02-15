@@ -52,14 +52,21 @@ final class SwipeFileEngine: ObservableObject {
                 print("SwipeFile: Notification permission granted")
             }
         }
+
+        // Register notification categories with "Open" action
+        registerNotificationCategories()
+
+        // Set up delegate for handling notification actions
+        UNUserNotificationCenter.current().delegate = CaptureNotificationDelegate.shared
     }
 
     // MARK: - Main Entry Point: Clipboard Capture
 
-    /// Called when Cmd+Shift+S is pressed
-    /// Reads clipboard, classifies content, and initiates ingestion
-    func captureFromClipboard() async {
-        print("📋 SwipeFileEngine.captureFromClipboard() called!")
+    /// Capture content from the clipboard
+    /// - Parameter asSwipe: If true, saves as swipe file. If false, saves as regular research.
+    func captureFromClipboard(asSwipe: Bool = true) async {
+        let captureType = asSwipe ? "swipe" : "research"
+        print("📋 SwipeFileEngine.captureFromClipboard(asSwipe: \(asSwipe)) called!")
 
         guard !isProcessing else {
             print("SwipeFile: Already processing, ignoring capture request")
@@ -71,7 +78,12 @@ final class SwipeFileEngine: ObservableObject {
 
         // Read clipboard
         guard let clipboardContent = readClipboard() else {
-            await showNotification(title: "Cosmo", body: "Nothing to save", isError: true)
+            await showCaptureNotification(
+                title: "Cosmo",
+                body: "Nothing in clipboard to capture",
+                atomUUID: nil,
+                isError: true
+            )
             processingStatus = .idle
             isProcessing = false
             return
@@ -86,7 +98,7 @@ final class SwipeFileEngine: ObservableObject {
         print("SwipeFile: Classified as \(classification.sourceType.displayName)")
 
         // Handle based on classification
-        await processClassifiedContent(clipboardContent, classification: classification)
+        await processClassifiedContent(clipboardContent, classification: classification, asSwipe: asSwipe)
 
         isProcessing = false
     }
@@ -111,7 +123,7 @@ final class SwipeFileEngine: ObservableObject {
 
     // MARK: - Content Processing
 
-    private func processClassifiedContent(_ content: String, classification: SwipeURLClassifier.Classification) async {
+    private func processClassifiedContent(_ content: String, classification: SwipeURLClassifier.Classification, asSwipe: Bool = true) async {
         switch classification.sourceType {
         case .instagramReel, .instagramPost, .instagramCarousel:
             // Instagram requires manual entry - show modal
@@ -119,27 +131,27 @@ final class SwipeFileEngine: ObservableObject {
 
         case .youtube, .youtubeShort:
             // YouTube - auto-fetch transcript
-            await handleYouTubeContent(content, classification: classification)
+            await handleYouTubeContent(content, classification: classification, asSwipe: asSwipe)
 
         case .xPost, .twitter:
             // X/Twitter - auto-fetch embed
-            await handleXContent(content, classification: classification)
+            await handleXContent(content, classification: classification, asSwipe: asSwipe)
 
         case .threads:
             // Threads - similar to X
-            await handleThreadsContent(content, classification: classification)
+            await handleThreadsContent(content, classification: classification, asSwipe: asSwipe)
 
         case .rawNote:
             // Raw text - direct save
-            await handleRawTextContent(content)
+            await handleRawTextContent(content, asSwipe: asSwipe)
 
         default:
             // Website or unknown URL
-            await handleWebsiteContent(content, classification: classification)
+            await handleWebsiteContent(content, classification: classification, asSwipe: asSwipe)
         }
     }
 
-    // MARK: - Instagram Handling (Manual Entry Required)
+    // MARK: - Instagram Handling (Instant Save + Deferred Transcription)
 
     private func handleInstagramContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
         // Determine Instagram content type
@@ -150,23 +162,51 @@ final class SwipeFileEngine: ObservableObject {
         default: igType = .post
         }
 
-        // Create pending item for modal
-        let item = Research.swipeFromInstagram(
+        processingStatus = .fetching(source: "Instagram")
+
+        // Create atom immediately — no modal blocking
+        var item = Research.swipeFromInstagram(
             instagramId: classification.contentId ?? UUID().uuidString,
             url: url,
             hook: nil,
             type: igType
         )
 
-        // Show Instagram modal for manual entry
-        pendingInstagramItem = item
-        showInstagramModal = true
-        processingStatus = .idle
+        // Mark as needing manual transcription (Instagram has no auto-transcript API)
+        item.processingStatus = "pending"
 
-        // Notification will be shown after modal completion
+        // Attempt oEmbed metadata fetch (title, author) — non-fatal
+        do {
+            let oEmbedUrl = "https://api.instagram.com/oembed/?url=\(url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? url)"
+            if let oEmbedURL = URL(string: oEmbedUrl) {
+                let (data, _) = try await URLSession.shared.data(from: oEmbedURL)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let title = json["title"] as? String, !title.isEmpty {
+                        item.title = title
+                        item.hook = String(title.prefix(200))
+                    }
+                    if let authorName = json["author_name"] as? String {
+                        var richContent = item.richContent ?? ResearchRichContent()
+                        richContent.author = authorName
+                        item.setRichContent(richContent)
+                    }
+                    if let thumbnailUrl = json["thumbnail_url"] as? String {
+                        item.thumbnailUrl = thumbnailUrl
+                        var richContent = item.richContent ?? ResearchRichContent()
+                        richContent.thumbnailUrl = thumbnailUrl
+                        item.setRichContent(richContent)
+                    }
+                }
+            }
+        } catch {
+            print("SwipeFile: Instagram oEmbed fetch failed (non-fatal): \(error)")
+        }
+
+        // Save immediately — transcript will be entered later in SwipeStudyFocusModeView
+        await saveItem(item, asSwipe: true)
     }
 
-    /// Called from Instagram modal when user saves
+    /// Called from Instagram modal when user saves (legacy support)
     func completeInstagramSave(hook: String, transcript: String?) async {
         guard var item = pendingInstagramItem else { return }
 
@@ -182,14 +222,14 @@ final class SwipeFileEngine: ObservableObject {
             item.summary = transcript.prefix(500).description
         }
 
-        // Save to database
-        await saveSwipeItem(item)
+        // Save to database (Instagram is always swipe)
+        await saveItem(item, asSwipe: true)
 
         pendingInstagramItem = nil
         showInstagramModal = false
     }
 
-    /// Called from Instagram modal when user cancels
+    /// Called from Instagram modal when user cancels (legacy support)
     func cancelInstagramSave() {
         pendingInstagramItem = nil
         showInstagramModal = false
@@ -198,9 +238,9 @@ final class SwipeFileEngine: ObservableObject {
 
     // MARK: - YouTube Handling
 
-    private func handleYouTubeContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
+    private func handleYouTubeContent(_ url: String, classification: SwipeURLClassifier.Classification, asSwipe: Bool = true) async {
         guard let videoId = classification.contentId else {
-            await handleWebsiteContent(url, classification: classification)
+            await handleWebsiteContent(url, classification: classification, asSwipe: asSwipe)
             return
         }
 
@@ -213,38 +253,60 @@ final class SwipeFileEngine: ObservableObject {
             isShort: classification.sourceType == .youtubeShort
         )
 
+        // Pre-enrich with thumbnail and oEmbed metadata before transcript fetch
+        let thumbnailUrl = "https://img.youtube.com/vi/\(videoId)/maxresdefault.jpg"
+        item.thumbnailUrl = thumbnailUrl
+
+        var richContent = item.richContent ?? ResearchRichContent()
+        richContent.thumbnailUrl = thumbnailUrl
+
+        // Fetch oEmbed metadata (title, author) — non-fatal if it fails
+        do {
+            let metadata = try await YouTubeProcessor.shared.fetchMetadata(videoId: videoId)
+            item.title = metadata.title
+            richContent.title = metadata.title
+            richContent.author = metadata.channelName
+        } catch {
+            print("SwipeFile: oEmbed metadata fetch failed (non-fatal): \(error)")
+        }
+
+        item.setRichContent(richContent)
+
         // Try to fetch transcript
         do {
-            let transcriptResult = try await YouTubeTranscriptFetcher.shared.fetchTranscript(videoId: videoId)
-
-            var richContent = item.richContent ?? ResearchRichContent()
-            richContent.transcript = transcriptResult.fullText
-            richContent.duration = transcriptResult.duration
-            richContent.author = transcriptResult.author
-            item.setRichContent(richContent)
-
-            // Use first line of transcript as hook if we got one
-            if let firstLine = transcriptResult.fullText.components(separatedBy: .newlines).first {
-                item.hook = String(firstLine.prefix(200))
-                item.title = item.hook ?? "YouTube Video"
+            let segments = await YouTubeProcessor.shared.fetchCaptions(videoId: videoId)
+            guard let segments = segments, !segments.isEmpty else {
+                throw SwipeFileError.transcriptUnavailable
             }
 
-            item.summary = transcriptResult.fullText.prefix(500).description
+            let fullText = segments.map(\.text).joined(separator: " ")
+            var updatedRichContent = item.richContent ?? richContent
+            updatedRichContent.transcript = fullText
+            updatedRichContent.transcriptStatus = "available"
+            item.setRichContent(updatedRichContent)
+
+            // Use first line of transcript as hook if we got one
+            if let firstLine = fullText.components(separatedBy: .newlines).first {
+                item.hook = String(firstLine.prefix(200))
+            }
+
+            item.summary = fullText.prefix(500).description
+            item.body = segments.jsonString
             item.processingStatus = "complete"
         } catch {
             print("SwipeFile: Failed to fetch YouTube transcript: \(error)")
             item.processingStatus = "pending"
-            // Still save without transcript
+            // Pre-enriched data (title, thumbnail, author) survives
         }
 
-        await saveSwipeItem(item)
+        await saveItem(item, asSwipe: asSwipe)
     }
 
     // MARK: - X/Twitter Handling
 
-    private func handleXContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
+    private func handleXContent(_ url: String, classification: SwipeURLClassifier.Classification, asSwipe: Bool = true) async {
         guard let tweetId = classification.contentId else {
-            await handleWebsiteContent(url, classification: classification)
+            await handleWebsiteContent(url, classification: classification, asSwipe: asSwipe)
             return
         }
 
@@ -274,12 +336,12 @@ final class SwipeFileEngine: ObservableObject {
             item.processingStatus = "pending"
         }
 
-        await saveSwipeItem(item)
+        await saveItem(item, asSwipe: asSwipe)
     }
 
     // MARK: - Threads Handling
 
-    private func handleThreadsContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
+    private func handleThreadsContent(_ url: String, classification: SwipeURLClassifier.Classification, asSwipe: Bool = true) async {
         processingStatus = .fetching(source: "Threads")
 
         var item = Research.swipeFromThreads(
@@ -292,24 +354,24 @@ final class SwipeFileEngine: ObservableObject {
         item.title = "Threads Post"
         item.processingStatus = "pending"
 
-        await saveSwipeItem(item)
+        await saveItem(item, asSwipe: asSwipe)
     }
 
     // MARK: - Raw Text Handling
 
-    private func handleRawTextContent(_ text: String) async {
+    private func handleRawTextContent(_ text: String, asSwipe: Bool = true) async {
         processingStatus = .saving
 
         // Extract potential hook from first sentence or line
         let hook = extractHook(from: text)
         let item = Research.swipeFromRawText(text: text, hook: hook)
 
-        await saveSwipeItem(item)
+        await saveItem(item, asSwipe: asSwipe)
     }
 
     // MARK: - Website Handling
 
-    private func handleWebsiteContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
+    private func handleWebsiteContent(_ url: String, classification: SwipeURLClassifier.Classification, asSwipe: Bool = true) async {
         processingStatus = .fetching(source: "Website")
 
         var item = Research.newSwipeFile(
@@ -322,17 +384,19 @@ final class SwipeFileEngine: ObservableObject {
         item.title = url
         item.processingStatus = "pending"
 
-        await saveSwipeItem(item)
+        await saveItem(item, asSwipe: asSwipe)
     }
 
     // MARK: - Database Operations
 
-    private func saveSwipeItem(_ item: Research) async {
+    private func saveItem(_ item: Research, asSwipe: Bool = true) async {
         processingStatus = .saving
 
         do {
             var mutableItem = item
-            mutableItem.isSwipeFile = true
+            if asSwipe {
+                mutableItem.isSwipeFile = true
+            }
             mutableItem.contentSource = SwipeContentSource.clipboard.rawValue
             mutableItem.updatedAt = ISO8601DateFormatter().string(from: Date())
 
@@ -347,25 +411,46 @@ final class SwipeFileEngine: ObservableObject {
             lastSavedItem = mutableItem
             processingStatus = .complete
 
-            // Show success notification
+            // Show success notification with "Open" action
             let sourceType = item.richContent?.sourceType?.displayName ?? "Content"
-            await showNotification(
-                title: "Saved to Swipe File",
-                body: item.hook ?? sourceType,
+            let captureLabel = asSwipe ? "Captured Swipe" : "Captured Research"
+            await showCaptureNotification(
+                title: captureLabel,
+                body: item.hook ?? item.title ?? sourceType,
+                atomUUID: mutableItem.uuid,
                 isError: false
             )
 
-            print("SwipeFile: Saved item with ID: \(mutableItem.id ?? -1)")
+            print("SwipeFile: Saved \(asSwipe ? "swipe" : "research") with ID: \(mutableItem.id ?? -1)")
 
             // Trigger semantic embedding in background
             Task {
                 await generateEmbedding(for: mutableItem)
             }
 
+            // Auto-link to matching ideas (IdeaForge integration)
+            if asSwipe, let savedAtom = try? await AtomRepository.shared.fetch(uuid: mutableItem.uuid) {
+                Task {
+                    await IdeaInsightEngine.shared.findIdeasForSwipe(swipeAtom: savedAtom)
+                }
+            }
+
+            // Post notification for UI updates
+            NotificationCenter.default.post(
+                name: .researchCreated,
+                object: nil,
+                userInfo: ["research": mutableItem, "uuid": mutableItem.uuid]
+            )
+
         } catch {
             print("SwipeFile: Failed to save item: \(error)")
             processingStatus = .error(error.localizedDescription)
-            await showNotification(title: "Cosmo", body: "Failed to save", isError: true)
+            await showCaptureNotification(
+                title: "Cosmo",
+                body: "Failed to save",
+                atomUUID: nil,
+                isError: true
+            )
         }
 
         // Reset status after delay
@@ -428,13 +513,44 @@ final class SwipeFileEngine: ObservableObject {
 
     // MARK: - macOS Notifications
 
-    private func showNotification(title: String, body: String, isError: Bool) async {
+    /// Notification category identifier for capture notifications with "Open" action
+    static let captureNotificationCategory = "cosmo_capture"
+
+    /// Register notification categories with "Open" action button
+    func registerNotificationCategories() {
+        let openAction = UNNotificationAction(
+            identifier: "open_capture",
+            title: "Open",
+            options: [.foreground]
+        )
+
+        let captureCategory = UNNotificationCategory(
+            identifier: Self.captureNotificationCategory,
+            actions: [openAction],
+            intentIdentifiers: []
+        )
+
+        // Merge with existing categories
+        UNUserNotificationCenter.current().getNotificationCategories { existing in
+            var categories = existing
+            categories.insert(captureCategory)
+            UNUserNotificationCenter.current().setNotificationCategories(categories)
+        }
+    }
+
+    private func showCaptureNotification(title: String, body: String, atomUUID: String?, isError: Bool) async {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
 
         if !isError {
             content.sound = .default
+            content.categoryIdentifier = Self.captureNotificationCategory
+
+            // Store atom UUID so "Open" action can navigate to it
+            if let uuid = atomUUID {
+                content.userInfo = ["atomUUID": uuid]
+            }
         }
 
         let request = UNNotificationRequest(
@@ -487,6 +603,63 @@ final class SwipeFileEngine: ObservableObject {
         }
     }
 
+    /// Delete a swipe file and clean up all references app-wide
+    func deleteSwipe(atomUUID: String) async throws {
+        // 1. Look up the atom's row ID before soft-deleting (needed for vector cleanup)
+        let entityId: Int64? = try await database.asyncRead { db in
+            try Int64.fetchOne(db, sql: "SELECT id FROM atoms WHERE uuid = ?", arguments: [atomUUID])
+        }
+
+        // 2. Soft-delete the atom in the database
+        try await database.asyncWrite { db in
+            try db.execute(
+                sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                arguments: [ISO8601DateFormatter().string(from: Date()), atomUUID]
+            )
+        }
+
+        // 3. Remove from canvas — soft-delete all canvas blocks referencing this entity UUID
+        let removedBlockIds: [String] = try await database.asyncRead { db in
+            try String.fetchAll(db, sql: """
+                SELECT id FROM canvas_blocks WHERE entity_uuid = ? AND is_deleted = 0
+            """, arguments: [atomUUID])
+        }
+
+        if !removedBlockIds.isEmpty {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE entity_uuid = ?",
+                    arguments: [atomUUID]
+                )
+            }
+
+            // Notify canvas to refresh and remove the blocks from memory
+            for blockId in removedBlockIds {
+                NotificationCenter.default.post(
+                    name: .removeBlock,
+                    object: nil,
+                    userInfo: ["blockId": blockId]
+                )
+            }
+        }
+
+        // 4. Remove vector embedding
+        if let entityId = entityId {
+            Task {
+                try? await VectorDatabase.shared.deleteEntity(entityType: "research", entityId: entityId)
+            }
+        }
+
+        // 5. Post notification for UI refresh (gallery, search results, etc.)
+        NotificationCenter.default.post(
+            name: Notification.Name("swipeDeleted"),
+            object: nil,
+            userInfo: ["uuid": atomUUID]
+        )
+
+        print("SwipeFile: Deleted swipe \(atomUUID) and cleaned up references")
+    }
+
     /// Search swipe files by text query
     func searchSwipeFiles(query: String, limit: Int = 20) async throws -> [Research] {
         try await database.asyncRead { db in
@@ -515,6 +688,19 @@ final class SwipeFileEngine: ObservableObject {
     }
 }
 
+// MARK: - SwipeFile Errors
+
+enum SwipeFileError: LocalizedError {
+    case transcriptUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .transcriptUnavailable:
+            return "Could not fetch transcript for this video"
+        }
+    }
+}
+
 // MARK: - Filter Model
 
 struct SwipeFileFilter {
@@ -526,5 +712,49 @@ struct SwipeFileFilter {
     enum SortOption {
         case recent
         case oldest
+    }
+}
+
+// MARK: - Notification Delegate
+
+/// Handles "Open" action from capture notifications
+final class CaptureNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = CaptureNotificationDelegate()
+
+    /// Called when user taps the notification or an action button
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+
+        switch response.actionIdentifier {
+        case "open_capture", UNNotificationDefaultActionIdentifier:
+            // User tapped "Open" or the notification itself — navigate to the atom
+            if let uuid = userInfo["atomUUID"] as? String {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                        object: nil,
+                        userInfo: ["atomUUID": uuid]
+                    )
+                }
+            }
+
+        default:
+            break
+        }
+
+        completionHandler()
+    }
+
+    /// Allow notifications to show even when app is in foreground
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 }

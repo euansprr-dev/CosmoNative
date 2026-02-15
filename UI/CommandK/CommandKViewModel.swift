@@ -56,6 +56,55 @@ public final class CommandKViewModel: ObservableObject {
     /// Error message (if any)
     @Published public var errorMessage: String?
 
+    // MARK: - Swipe Gallery State
+
+    /// Swipe gallery items loaded from research atoms
+    @Published public var swipeGalleryItems: [SwipeGalleryItem] = []
+
+    /// Current grouping mode for swipe gallery
+    @Published public var swipeGrouping: SwipeGrouping = .narrativeStyle
+
+    /// Current sort mode for swipe gallery
+    @Published public var swipeSortMode: SwipeSortMode = .score
+
+    /// Platform filter for swipe gallery (nil = all)
+    @Published public var swipePlatformFilter: String?
+
+    /// Hook type filter for swipe gallery (nil = all)
+    @Published public var swipeHookTypeFilter: SwipeHookType?
+
+    /// Narrative style filters for swipe gallery (multi-select)
+    @Published var swipeNarrativeFilters: Set<NarrativeStyle> = []
+
+    /// Content format filters for swipe gallery (multi-select)
+    @Published var swipeContentFormatFilters: Set<ContentFormat> = []
+
+    /// Niche filter for swipe gallery (nil = all)
+    @Published var swipeNicheFilter: String?
+
+    /// Creator filter for swipe gallery (nil = all)
+    @Published var swipeCreatorFilter: String?
+
+    /// Available niches extracted from swipe gallery items
+    @Published var availableNiches: [String] = []
+
+    /// Available creators extracted from swipe gallery items
+    @Published var availableCreators: [(name: String, uuid: String)] = []
+
+    /// Creator search query for autocomplete
+    @Published var creatorSearchQuery: String = ""
+
+    /// Whether swipe gallery has been loaded
+    private var swipeGalleryLoaded = false
+
+    // MARK: - Idea Gallery State
+
+    /// Idea gallery items loaded from idea atoms
+    @Published var ideaGalleryItems: [IdeaGalleryItem] = []
+
+    /// Whether idea gallery has been loaded
+    private var ideaGalleryLoaded = false
+
     // MARK: - Configuration
 
     /// Debounce delay for search queries
@@ -115,6 +164,13 @@ public final class CommandKViewModel: ObservableObject {
         // Handle empty query - show hot context
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
             await showHotContext()
+            return
+        }
+
+        // Skip search in task creation mode
+        if isTaskCreationMode {
+            results = []
+            currentPhase = .idle
             return
         }
 
@@ -205,34 +261,26 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
-    /// Fallback to graph-based search if HybridSearchEngine fails
+    /// Fallback to direct atom search if HybridSearchEngine fails
     private func fallbackToGraphSearch(query: String) async {
         do {
-            let nodes = try await queryEngine.topKRelevant(
-                limit: maxResults * 2,
-                typeFilter: nil,
-                excludeUUIDs: nil
-            )
+            // Search atoms directly by title/body containing query
+            let atoms = try await AtomRepository.shared.search(query: query, limit: maxResults * 2)
 
-            let atomUUIDs = nodes.map { $0.atomUUID }
-            let atomData = await fetchAtomData(uuids: atomUUIDs)
-
-            var rankedResults = nodes.compactMap { node -> RankedResult? in
-                guard let type = node.type else { return nil }
-                let atomInfo = atomData[node.atomUUID]
-
-                return RankedResult(
-                    atomUUID: node.atomUUID,
-                    atomType: type,
-                    title: atomInfo?.title ?? "Untitled",
-                    snippet: atomInfo?.snippet,
+            var rankedResults: [RankedResult] = []
+            for atom in atoms {
+                rankedResults.append(RankedResult(
+                    atomUUID: atom.uuid,
+                    atomType: atom.type,
+                    title: atom.title ?? "Untitled",
+                    snippet: atom.body?.prefix(100).description,
                     semanticWeight: 0.0,
-                    structuralWeight: node.pageRank,
-                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: node.atomUpdatedAt),
-                    usageWeight: WeightCalculator.usageWeight(accessCount: node.accessCount),
-                    updatedAt: node.updatedAt,
-                    accessCount: node.accessCount
-                )
+                    structuralWeight: 0.5,
+                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
+                    usageWeight: 0.5,
+                    updatedAt: atom.updatedAt ?? "",
+                    accessCount: 0
+                ))
             }
 
             rankedResults.sort()
@@ -314,57 +362,28 @@ public final class CommandKViewModel: ObservableObject {
         let snippet: String?
     }
 
-    /// Show hot context when query is empty
+    /// Show hot context when query is empty - queries atoms table directly
     private func showHotContext() async {
         currentPhase = .searching
 
         do {
-            // Get recently accessed nodes
-            let recentNodes = try await queryEngine.recentlyAccessed(limit: 15)
+            // Query atoms directly from the database (not graph_nodes)
+            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 25)
 
-            // Get focus neighborhood if we have a focus
-            var neighborhoodNodes: [GraphNode] = []
-            if let focusUUID = FocusContextDetector.shared.currentContext.focusAtomUUID {
-                if let cached = await HotContextCache.shared.get(for: focusUUID) {
-                    neighborhoodNodes = cached.allNodes
-                } else {
-                    let neighborhood = try await queryEngine.getNeighborhood(of: focusUUID, depth: 1)
-                    neighborhoodNodes = neighborhood.allNodes
-                    await HotContextCache.shared.set(neighborhood, for: focusUUID)
-                }
-            }
-
-            // Combine and deduplicate nodes
-            var seen = Set<String>()
-            var allNodes: [GraphNode] = []
-
-            for node in recentNodes + neighborhoodNodes {
-                guard !seen.contains(node.atomUUID), node.type != nil else { continue }
-                seen.insert(node.atomUUID)
-                allNodes.append(node)
-            }
-
-            // Fetch atom data for real titles
-            let atomUUIDs = allNodes.map { $0.atomUUID }
-            let atomData = await fetchAtomData(uuids: atomUUIDs)
-
-            // Build results with real titles
+            // Build results from actual atoms
             var combinedResults: [RankedResult] = []
-            for node in allNodes {
-                guard let type = node.type else { continue }
-                let atomInfo = atomData[node.atomUUID]
-
+            for atom in recentAtoms {
                 combinedResults.append(RankedResult(
-                    atomUUID: node.atomUUID,
-                    atomType: type,
-                    title: atomInfo?.title ?? "Untitled",
-                    snippet: atomInfo?.snippet,
+                    atomUUID: atom.uuid,
+                    atomType: atom.type,
+                    title: atom.title ?? "Untitled",
+                    snippet: atom.body?.prefix(100).description,
                     semanticWeight: 0.0,
-                    structuralWeight: node.pageRank,
-                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: node.atomUpdatedAt),
-                    usageWeight: WeightCalculator.usageWeight(accessCount: node.accessCount),
-                    updatedAt: node.updatedAt,
-                    accessCount: node.accessCount
+                    structuralWeight: 0.5,
+                    recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
+                    usageWeight: 0.5,
+                    updatedAt: atom.updatedAt ?? "",
+                    accessCount: 0
                 ))
             }
 
@@ -495,8 +514,59 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Task Quick-Create
+
+    /// Whether the current query is a "task:" creation command
+    public var isTaskCreationMode: Bool {
+        query.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("task:")
+    }
+
+    /// Extract task name from "task: [name]" query
+    private var taskNameFromQuery: String {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard let colonIndex = trimmed.firstIndex(of: ":") else { return "" }
+        let afterColon = trimmed[trimmed.index(after: colonIndex)...]
+        return afterColon.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Create a task atom from the "task:" query and close Command-K
+    public func createTaskFromQuery() {
+        let name = taskNameFromQuery
+        guard !name.isEmpty else { return }
+
+        Task {
+            var taskMeta = TaskMetadata()
+            taskMeta.intent = TaskIntent.general.rawValue
+
+            var metadataString: String?
+            if let data = try? JSONEncoder().encode(taskMeta),
+               let json = String(data: data, encoding: .utf8) {
+                metadataString = json
+            }
+
+            let atom = Atom.new(
+                type: .task,
+                title: name,
+                body: nil,
+                metadata: metadataString
+            )
+
+            let _ = try? await AtomRepository.shared.create(atom)
+        }
+
+        // Clear query and close
+        query = ""
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
     /// Open the selected result
     public func openSelected() {
+        // Intercept task creation mode
+        if isTaskCreationMode {
+            createTaskFromQuery()
+            return
+        }
+
         guard let uuid = selectedNodeId else { return }
 
         // Record access
@@ -604,6 +674,107 @@ public final class CommandKViewModel: ObservableObject {
         return edge.sourceUUID == hoveredId || edge.targetUUID == hoveredId
     }
 
+    // MARK: - Swipe Gallery
+
+    /// Load all swipe file atoms into gallery items
+    public func loadSwipeGallery() async {
+        guard !swipeGalleryLoaded else { return }
+
+        do {
+            // Fetch all research atoms
+            let researchAtoms = try await AtomRepository.shared.search(query: "", types: [.research])
+
+            // Filter to swipe files and convert
+            var items: [SwipeGalleryItem] = []
+            for atom in researchAtoms {
+                if atom.isSwipeFileAtom, let galleryItem = atom.toSwipeGalleryItem() {
+                    items.append(galleryItem)
+                }
+            }
+
+            // Sort by score descending
+            items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
+
+            swipeGalleryItems = items
+            swipeGalleryLoaded = true
+
+            // Extract available niches
+            let niches = Set(items.compactMap(\.niche)).sorted()
+            availableNiches = niches
+
+            // Extract available creators from gallery items
+            var creatorSet: [String: String] = [:] // name -> atomUUID (deduplicate)
+            for item in items {
+                if let name = item.creatorName, !name.isEmpty {
+                    if creatorSet[name] == nil {
+                        creatorSet[name] = item.atomUUID
+                    }
+                }
+            }
+            // Also fetch from creator atoms
+            if let creators = try? await AtomRepository.shared.fetchCreators() {
+                for creator in creators {
+                    let name = creator.title ?? "Unknown"
+                    creatorSet[name] = creator.uuid
+                }
+            }
+            availableCreators = creatorSet.map { (name: $0.key, uuid: $0.value) }.sorted { $0.name < $1.name }
+        } catch {
+            errorMessage = "Failed to load swipe gallery: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Idea Gallery
+
+    /// Load all idea atoms into gallery items
+    /// - Parameter forceReload: If true, reloads even if already loaded (for after quick capture)
+    public func loadIdeaGallery(forceReload: Bool = false) async {
+        guard !ideaGalleryLoaded || forceReload else { return }
+
+        do {
+            // Fetch all idea atoms
+            let ideaAtoms = try await AtomRepository.shared.search(query: "", types: [.idea])
+
+            // Build a client name cache for display
+            var clientNameCache: [String: String] = [:]
+            let clientUUIDs = Set(ideaAtoms.compactMap { $0.ideaClientUUID })
+            for clientUUID in clientUUIDs {
+                if let clientAtom = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
+                    clientNameCache[clientUUID] = clientAtom.title ?? "Unknown Client"
+                }
+            }
+
+            // Convert to gallery items
+            var items: [IdeaGalleryItem] = []
+            for atom in ideaAtoms {
+                let clientName = atom.ideaClientUUID.flatMap { clientNameCache[$0] }
+                if let galleryItem = atom.toIdeaGalleryItem(clientName: clientName) {
+                    items.append(galleryItem)
+                }
+            }
+
+            // Sort by updated date descending
+            items.sort { $0.updatedAt > $1.updatedAt }
+
+            ideaGalleryItems = items
+            ideaGalleryLoaded = true
+        } catch {
+            errorMessage = "Failed to load idea gallery: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Idea Quick Actions
+
+    /// Quick-analyze an idea from the gallery card hover bar
+    func quickAnalyzeIdea(_ item: IdeaGalleryItem) {
+        Task {
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: item.atomUUID) else { return }
+            let ideaText = [atom.title, atom.body].compactMap { $0 }.joined(separator: "\n")
+            let _ = IdeaInsightEngine.shared.quickInsight(ideaText: ideaText)
+            await loadIdeaGallery(forceReload: true)
+        }
+    }
+
     // MARK: - Cleanup
 
     /// Clear search state
@@ -619,5 +790,58 @@ public final class CommandKViewModel: ObservableObject {
         constellationEdges = []
         errorMessage = nil
         selectedTypeFilters.removeAll()
+        swipeGalleryItems = []
+        swipeGalleryLoaded = false
+        swipePlatformFilter = nil
+        swipeHookTypeFilter = nil
+        swipeNarrativeFilters = []
+        swipeContentFormatFilters = []
+        swipeNicheFilter = nil
+        swipeCreatorFilter = nil
+        swipeSortMode = .score
+        ideaGalleryItems = []
+        ideaGalleryLoaded = false
+    }
+}
+
+// MARK: - Swipe Gallery Enums
+
+/// Grouping mode for the swipe gallery
+public enum SwipeGrouping: String, CaseIterable {
+    case narrativeStyle
+    case contentType
+    case hookType
+    case platform
+    case creator
+    case niche
+    case recent
+    case score
+
+    public var displayName: String {
+        switch self {
+        case .narrativeStyle: return "Narrative"
+        case .contentType: return "Format"
+        case .hookType: return "Hook Type"
+        case .platform: return "Platform"
+        case .creator: return "Creator"
+        case .niche: return "Niche"
+        case .recent: return "Recent"
+        case .score: return "Score"
+        }
+    }
+}
+
+/// Sort mode for the swipe gallery
+public enum SwipeSortMode: String, CaseIterable {
+    case score
+    case recent
+    case oldest
+
+    public var displayName: String {
+        switch self {
+        case .score: return "Score \u{25BC}"
+        case .recent: return "Recent"
+        case .oldest: return "Oldest"
+        }
     }
 }

@@ -120,6 +120,7 @@ public struct SanctuaryConnectionThread: View {
             // Waypoint diamonds along the path
             waypointMarkers
         }
+        .drawingGroup()  // Rasterize glow blur + gradient to GPU texture
         .animation(SanctuarySprings.smooth, value: isActive)
     }
 
@@ -204,53 +205,35 @@ struct Diamond: Shape {
 // MARK: - Satellite Connection View
 
 /// Container view that renders both satellite connections
-/// PERFORMANCE FIX: Uses TimelineView for native 120fps animation instead of 10fps choreographer
+/// Uses choreographer's animationPhase for subtle ambient motion (2fps — no TimelineView overhead)
 public struct SatelliteConnectionsView: View {
 
-    /// Center point of the hero orb (typically center of constellation)
     let heroCenter: CGPoint
-
-    /// Position of Plannerum satellite
     let plannerumPosition: CGPoint
-
-    /// Position of Thinkspace satellite
     let thinkspacePosition: CGPoint
-
-    /// Whether Plannerum is hovered/active
     let plannerumActive: Bool
-
-    /// Whether Thinkspace is hovered/active
     let thinkspaceActive: Bool
-
-    /// Animation phase for continuous animations (kept for API compatibility but ignored)
     let animationPhase: Double
 
     public var body: some View {
-        // PERFORMANCE FIX: TimelineView provides 120fps animation on ProMotion displays
-        // This replaces the 10fps choreographer-driven animationPhase
-        TimelineView(.animation) { context in
-            let smoothPhase = context.date.timeIntervalSinceReferenceDate
+        ZStack {
+            SanctuaryConnectionThread(
+                from: plannerumPosition,
+                to: heroCenter,
+                color: SanctuaryColors.plannerumPrimary,
+                isActive: plannerumActive,
+                animationPhase: animationPhase
+            )
 
-            ZStack {
-                // Plannerum → Hero connection
-                SanctuaryConnectionThread(
-                    from: plannerumPosition,
-                    to: heroCenter,
-                    color: SanctuaryColors.plannerumPrimary,
-                    isActive: plannerumActive,
-                    animationPhase: smoothPhase
-                )
-
-                // Thinkspace → Hero connection
-                SanctuaryConnectionThread(
-                    from: thinkspacePosition,
-                    to: heroCenter,
-                    color: SanctuaryColors.thinkspacePrimary,
-                    isActive: thinkspaceActive,
-                    animationPhase: smoothPhase
-                )
-            }
+            SanctuaryConnectionThread(
+                from: thinkspacePosition,
+                to: heroCenter,
+                color: SanctuaryColors.thinkspacePrimary,
+                isActive: thinkspaceActive,
+                animationPhase: animationPhase
+            )
         }
+        .drawingGroup()  // Rasterize connection lines + glow blur to GPU texture
     }
 }
 

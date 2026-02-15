@@ -17,10 +17,12 @@ public struct CreativePostingCalendar: View {
     let mostActiveDay: Weekday
     let averagePostsPerWeek: Double
     let onDayTap: ((PostingDay) -> Void)?
+    let postsForDate: ((Date) -> [ContentPost])?
 
     @State private var isVisible: Bool = false
     @State private var selectedMonth: Date = Date()
     @State private var hoveredDay: Date?
+    @State private var popoverDay: PostingDay?
 
     private let calendar = Calendar.current
     private let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"]
@@ -33,7 +35,8 @@ public struct CreativePostingCalendar: View {
         bestPostingTime: String,
         mostActiveDay: Weekday,
         averagePostsPerWeek: Double,
-        onDayTap: ((PostingDay) -> Void)? = nil
+        onDayTap: ((PostingDay) -> Void)? = nil,
+        postsForDate: ((Date) -> [ContentPost])? = nil
     ) {
         self.postingDays = postingDays
         self.currentStreak = currentStreak
@@ -41,6 +44,7 @@ public struct CreativePostingCalendar: View {
         self.mostActiveDay = mostActiveDay
         self.averagePostsPerWeek = averagePostsPerWeek
         self.onDayTap = onDayTap
+        self.postsForDate = postsForDate
     }
 
     // MARK: - Body
@@ -209,6 +213,10 @@ public struct CreativePostingCalendar: View {
         let isToday = calendar.isDateInToday(dayInfo.date)
         let postingDay = postingDays.first { calendar.isDate($0.date, inSameDayAs: dayInfo.date) }
         let isHovered = hoveredDay == postingDay?.id
+        let showPopover = Binding<Bool>(
+            get: { postingDay != nil && popoverDay?.id == postingDay?.id },
+            set: { if !$0 { popoverDay = nil } }
+        )
 
         return ZStack {
             // Background
@@ -243,7 +251,19 @@ public struct CreativePostingCalendar: View {
         }
         .onTapGesture {
             if let day = postingDay {
-                onDayTap?(day)
+                if postsForDate != nil {
+                    popoverDay = day
+                } else {
+                    onDayTap?(day)
+                }
+            }
+        }
+        .popover(isPresented: showPopover, arrowEdge: .bottom) {
+            if let day = postingDay {
+                CalendarDayPopover(
+                    day: day,
+                    posts: postsForDate?(day.date) ?? []
+                )
             }
         }
     }
@@ -611,6 +631,150 @@ public struct CreativeCalendarCompact: View {
 
     private var viralCount: Int {
         postingDays.filter { $0.status == .viral }.count
+    }
+}
+
+// MARK: - Calendar Day Popover
+
+/// Popover shown when clicking a date in the Posting Calendar
+struct CalendarDayPopover: View {
+    let day: PostingDay
+    let posts: [ContentPost]
+
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d"
+        return formatter.string(from: day.date)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack(spacing: 8) {
+                Text(formattedDate)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+
+                Spacer()
+
+                dayStatusBadge
+            }
+
+            if posts.isEmpty {
+                emptyState
+            } else {
+                postsList
+            }
+        }
+        .padding(14)
+        .frame(width: 280)
+        .background(SanctuaryColors.Glass.background)
+    }
+
+    // MARK: - Status Badge
+
+    private var dayStatusBadge: some View {
+        Text(day.status.displaySymbol + " " + statusLabel)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(statusColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(statusColor.opacity(0.15))
+            )
+    }
+
+    private var statusLabel: String {
+        switch day.status {
+        case .posted: return "Posted"
+        case .viral: return "Viral"
+        case .skipped: return "Skipped"
+        case .scheduled: return "Scheduled"
+        case .rest: return "Rest"
+        case .future: return "Upcoming"
+        }
+    }
+
+    private var statusColor: Color {
+        switch day.status {
+        case .posted: return SanctuaryColors.Dimensions.creative
+        case .viral: return SanctuaryColors.XP.primary
+        case .skipped: return SanctuaryColors.Semantic.error
+        case .scheduled: return SanctuaryColors.Semantic.info
+        case .rest: return SanctuaryColors.Text.tertiary
+        case .future: return SanctuaryColors.Text.secondary
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 14))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+            Text("No content for this day")
+                .font(.system(size: 12))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+        }
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Posts List
+
+    private var postsList: some View {
+        VStack(spacing: 6) {
+            ForEach(posts) { post in
+                popoverPostRow(post)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func popoverPostRow(_ post: ContentPost) -> some View {
+        HStack(spacing: 8) {
+            // Platform badge
+            platformBadge(post.platform)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(post.title ?? "Untitled")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .lineLimit(1)
+
+                Text(post.formattedReach + " reach")
+                    .font(.system(size: 9))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+            }
+
+            Spacer()
+
+            Text(String(format: "%.1f%%", post.engagement))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(SanctuaryColors.Semantic.success)
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(SanctuaryColors.Glass.highlight)
+        )
+    }
+
+    private func platformBadge(_ platform: ContentPlatform) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: platform.iconName)
+                .font(.system(size: 9))
+            Text(platform.shortName)
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundColor(platform.color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(platform.color.opacity(0.12))
+        )
     }
 }
 

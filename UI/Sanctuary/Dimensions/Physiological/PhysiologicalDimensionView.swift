@@ -13,17 +13,19 @@ public struct PhysiologicalDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: PhysiologicalDimensionViewModel
+    @StateObject private var dataProvider = PhysiologicalDataProvider()
     @State private var selectedMuscle: MuscleStatus?
     @State private var selectedWorkout: WorkoutSession?
     @State private var showMuscleDetail: Bool = false
     @State private var showWorkoutDetail: Bool = false
+    @State private var showSettings: Bool = false
 
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: PhysiologicalDimensionData = .preview,
+        data: PhysiologicalDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: PhysiologicalDimensionViewModel(data: data))
@@ -37,86 +39,184 @@ public struct PhysiologicalDimensionView: View {
             // Background
             backgroundLayer
 
-            // Main content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SanctuaryLayout.Spacing.lg) {
-                    // Header with back button
+            if viewModel.data.isEmpty {
+                // Empty state
+                VStack {
                     headerSection
-
-                    // Top section: Body Scanner + Vital Signs (side by side)
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
-                        // Body Scanner
-                        PhysiologicalBodyScanner(
-                            muscleMap: viewModel.data.muscleRecoveryMap,
-                            stressLevel: viewModel.data.stressLevel,
-                            cortisolEstimate: viewModel.data.cortisolEstimate,
-                            breathingRate: viewModel.data.breathingRatePerMin,
-                            currentHRV: viewModel.data.currentHRV,
-                            onMuscleTap: { muscle in
-                                selectedMuscle = muscle
-                                showMuscleDetail = true
-                            }
-                        )
-                        .frame(maxWidth: 500)
-
-                        // Vital Signs panel (right side)
-                        PhysiologicalVitalSigns(data: viewModel.data)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    // Second row: Sleep Analysis + HRV Trend (side by side to fill dead space)
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
-                        // Sleep Analysis (compact, left side)
-                        PhysiologicalSleepAnalysis(
-                            sleep: viewModel.data.lastNightSleep,
-                            sleepDebt: viewModel.data.sleepDebt,
-                            sleepTrend: viewModel.data.sleepTrend
-                        )
-                        .frame(maxWidth: .infinity)
-
-                        // HRV Trend (right side)
-                        HRVTrendChart(
-                            trend: viewModel.data.hrvTrend,
-                            currentHRV: viewModel.data.currentHRV
-                        )
-                        .frame(maxWidth: 380)
-                    }
-
-                    // Third row: Activity Rings + Workout Log (side by side)
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
-                        PhysiologicalActivityRings(
-                            rings: viewModel.data.dailyRings,
-                            stepCount: viewModel.data.stepCount
-                        )
-                        .frame(maxWidth: 450)
-
-                        PhysiologicalWorkoutLog(
-                            workouts: viewModel.data.workouts,
-                            weeklyVolumeLoad: viewModel.data.weeklyVolumeLoad,
-                            recoveryDebt: viewModel.data.recoveryDebt
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
-
-                    // Correlation Map + Predictions (full width)
-                    PhysiologicalCorrelationMap(
-                        correlations: viewModel.data.correlations,
-                        predictions: viewModel.data.predictions
+                        .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                        .padding(.top, SanctuaryLayout.Spacing.lg)
+                    Spacer()
+                    PlaceholderCard(
+                        state: .notConnected(
+                            source: "Apple Health",
+                            description: "Enable Apple Health in Settings to track HRV, sleep, recovery, and activity data from your Apple Watch.",
+                            connectAction: { showSettings = true }
+                        ),
+                        accentColor: SanctuaryColors.Dimensions.physiological
                     )
-
-                    // Sleep Trend Chart
-                    SleepTrendChart(scores: viewModel.data.sleepTrend)
-
-                    // Bottom spacer for safe area
-                    Spacer(minLength: 40)
+                    .padding(.horizontal, 40)
+                    Spacer()
                 }
-                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
-                .padding(.top, SanctuaryLayout.Spacing.lg)
+            } else {
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: SanctuaryLayout.Spacing.lg) {
+                        // Header with back button
+                        headerSection
+
+                        // HealthKit connection banner (shown when not connected)
+                        if !dataProvider.isConnected {
+                            healthConnectBanner
+                        }
+
+                        // Top section: Body Scanner + Vital Signs (side by side)
+                        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
+                            // Body Scanner
+                            PhysiologicalBodyScanner(
+                                muscleMap: viewModel.data.muscleRecoveryMap,
+                                stressLevel: viewModel.data.stressLevel,
+                                cortisolEstimate: viewModel.data.cortisolEstimate,
+                                breathingRate: viewModel.data.breathingRatePerMin,
+                                currentHRV: viewModel.data.currentHRV,
+                                onMuscleTap: { muscle in
+                                    selectedMuscle = muscle
+                                    showMuscleDetail = true
+                                }
+                            )
+                            .frame(maxWidth: 500)
+
+                            // Vital Signs panel (right side)
+                            PhysiologicalVitalSigns(data: viewModel.data)
+                                .frame(maxWidth: .infinity)
+                        }
+
+                        // Second row: Sleep Analysis + HRV Trend (side by side to fill dead space)
+                        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
+                            // Sleep Analysis (compact, left side)
+                            PhysiologicalSleepAnalysis(
+                                sleep: viewModel.data.lastNightSleep,
+                                sleepDebt: viewModel.data.sleepDebt,
+                                sleepTrend: viewModel.data.sleepTrend
+                            )
+                            .frame(maxWidth: .infinity)
+
+                            // HRV Trend (right side)
+                            HRVTrendChart(
+                                trend: viewModel.data.hrvTrend,
+                                currentHRV: viewModel.data.currentHRV
+                            )
+                            .frame(maxWidth: 380)
+                        }
+
+                        // Third row: Activity Rings + Workout Log (side by side)
+                        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
+                            PhysiologicalActivityRings(
+                                rings: viewModel.data.dailyRings,
+                                stepCount: viewModel.data.stepCount
+                            )
+                            .frame(maxWidth: 450)
+
+                            PhysiologicalWorkoutLog(
+                                workouts: viewModel.data.workouts,
+                                weeklyVolumeLoad: viewModel.data.weeklyVolumeLoad,
+                                recoveryDebt: viewModel.data.recoveryDebt
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+
+                        // Correlation Map + Predictions (full width)
+                        PhysiologicalCorrelationMap(
+                            correlations: viewModel.data.correlations,
+                            predictions: viewModel.data.predictions
+                        )
+
+                        // Sleep Trend Chart
+                        SleepTrendChart(scores: viewModel.data.sleepTrend)
+
+                        // Bottom spacer for safe area
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                    .padding(.top, SanctuaryLayout.Spacing.lg)
+                }
+            }
+
+            // Loading overlay
+            if dataProvider.isLoading {
+                ProgressView()
+                    .scaleEffect(0.8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
 
             // Detail overlays
             detailOverlays
         }
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+        }
+        .task {
+            await loadHealthData()
+        }
+        .onReceive(dataProvider.$data) { newData in
+            viewModel.data = newData
+        }
+    }
+
+    // MARK: - Health Data Loading
+
+    private func loadHealthData() async {
+        await dataProvider.connect()
+        if dataProvider.isConnected {
+            await dataProvider.refreshData()
+        }
+    }
+
+    // MARK: - Health Connect Banner
+
+    private var healthConnectBanner: some View {
+        VStack(spacing: SanctuaryLayout.Spacing.md) {
+            Image(systemName: "heart.text.square")
+                .font(.system(size: 32))
+                .foregroundColor(SanctuaryColors.Dimensions.physiological.opacity(0.6))
+
+            Text("Connect Apple Health")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(SanctuaryColors.Text.primary)
+
+            Text("Unlock real-time body data from your iPhone and Apple Watch. HRV, sleep analysis, activity rings, and recovery scores will replace preview data.")
+                .font(.system(size: 12))
+                .foregroundColor(SanctuaryColors.Text.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
+
+            Button(action: {
+                Task { await loadHealthData() }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 12))
+                    Text("Connect Health")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(SanctuaryColors.Dimensions.physiological)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(SanctuaryLayout.Spacing.xl)
+        .background(
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(SanctuaryColors.Dimensions.physiological.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Background Layer

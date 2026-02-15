@@ -7,8 +7,10 @@ import GRDB
 struct CanvasView: View {
     @StateObject private var spatialEngine = SpatialEngine()
     @StateObject private var expansionManager = BlockExpansionManager()
+    @StateObject private var connectManager = DragToConnectManager()
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
 
     @State private var canvasSize: CGSize = .zero
     @State private var selectedBlockId: String?
@@ -62,12 +64,31 @@ struct CanvasView: View {
                 ZStack {
                     blocksLayer
                     inboxBlocksLayer
+
+                    // Connection lines render ON TOP of blocks so they're visible.
+                    // Blocks have opaque backgrounds that would completely hide lines
+                    // drawn behind them. allowsHitTesting(false) prevents interaction interference.
+                    CanvasConnectionLinesLayer(
+                        blocks: spatialEngine.blocks,
+                        canvasOffset: canvasOffset,
+                        scaledPanOffset: scaledPanOffset,
+                        effectiveScale: effectiveScale
+                    )
                 }
                 .scaleEffect(effectiveScale, anchor: UnitPoint(
                     x: screenCenter.x / geo.size.width,
                     y: screenCenter.y / geo.size.height
                 ))
                 .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.85), value: effectiveScale)
+
+                // Drag-to-connect overlay (screen coordinates, outside scaled container)
+                DragToConnectOverlay(
+                    connectManager: connectManager,
+                    blocks: spatialEngine.blocks,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale
+                )
             }
             .environmentObject(expansionManager)
             .overlay(alignment: .topLeading) {
@@ -91,6 +112,34 @@ struct CanvasView: View {
                 )
                 .padding(.leading, 16)
                 .padding(.top, 60)  // Below command bar
+            }
+            // Update block frame tracker for right-click hit-testing
+            .onChange(of: spatialEngine.blocks.count) { _, _ in
+                blockFrameTracker.updateFrames(
+                    blocks: spatialEngine.blocks,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale,
+                    screenCenter: screenCenter
+                )
+            }
+            .onChange(of: canvasOffset) { _, _ in
+                blockFrameTracker.updateFrames(
+                    blocks: spatialEngine.blocks,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale,
+                    screenCenter: screenCenter
+                )
+            }
+            .onChange(of: canvasScale) { _, _ in
+                blockFrameTracker.updateFrames(
+                    blocks: spatialEngine.blocks,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale,
+                    screenCenter: screenCenter
+                )
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -257,16 +306,53 @@ struct CanvasView: View {
         .gesture(
             DragGesture(minimumDistance: 2) // Small threshold to avoid accidental drags
                 .onChanged { gesture in
-                    handleDragOptimized(blockId: block.id, translation: gesture.translation)
+                    if NSEvent.modifierFlags.contains(.option) {
+                        // Option+drag: connection mode
+                        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                        if !connectManager.isActive {
+                            let blockX = block.position.x + canvasOffset.width + scaledPanOffset.width
+                            let blockY = block.position.y + canvasOffset.height + scaledPanOffset.height
+                            let scaledX = screenCenter.x + (blockX - screenCenter.x) * effectiveScale
+                            let scaledY = screenCenter.y + (blockY - screenCenter.y) * effectiveScale
+                            connectManager.beginConnection(from: block, center: CGPoint(x: scaledX, y: scaledY))
+                        }
+                        // Update drag point (gesture location is relative to block)
+                        let blockScreenX = screenCenter.x + (block.position.x + canvasOffset.width + scaledPanOffset.width - screenCenter.x) * effectiveScale
+                        let blockScreenY = screenCenter.y + (block.position.y + canvasOffset.height + scaledPanOffset.height - screenCenter.y) * effectiveScale
+                        connectManager.updateDrag(to: CGPoint(
+                            x: blockScreenX + gesture.translation.width,
+                            y: blockScreenY + gesture.translation.height
+                        ))
+                        connectManager.checkTarget(
+                            blocks: spatialEngine.blocks,
+                            canvasOffset: canvasOffset,
+                            scaledPanOffset: scaledPanOffset,
+                            effectiveScale: effectiveScale,
+                            screenCenter: screenCenter
+                        )
+                    } else {
+                        // Normal drag: move block
+                        handleDragOptimized(blockId: block.id, translation: gesture.translation)
+                    }
                 }
                 .onEnded { gesture in
-                    handleDragEndOptimized(blockId: block.id, translation: gesture.translation)
+                    if connectManager.isActive {
+                        // Complete or cancel connection
+                        if let targetId = connectManager.hoveredTargetBlockId,
+                           let targetBlock = spatialEngine.blocks.first(where: { $0.id == targetId }) {
+                            connectManager.completeConnection(targetBlock: targetBlock)
+                        } else {
+                            connectManager.cancel()
+                        }
+                    } else {
+                        handleDragEndOptimized(blockId: block.id, translation: gesture.translation)
+                    }
                 }
         )
         // NOTE: Single tap is handled by CosmoBlockWrapper via notification
         // Double tap for focus mode (only for entity types that support it)
         .onTapGesture(count: 2) {
-            if [.idea, .content, .research, .connection].contains(block.entityType) {
+            if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
                 NotificationCenter.default.post(
                     name: .enterFocusMode,
                     object: nil,
@@ -320,8 +406,8 @@ struct CanvasView: View {
                     NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
                 }
             }
-            .gesture(
-                // Simultaneous pan and magnification gestures for smooth experience
+            .simultaneousGesture(
+                // Pan gesture — simultaneous so it doesn't block tap-to-deselect
                 // minimumDistance: 10 gives taps room to register before becoming drags
                 DragGesture(minimumDistance: 10)
                     .updating($panOffset) { value, state, _ in
@@ -335,7 +421,7 @@ struct CanvasView: View {
                         canvasOffset.height += value.translation.height / effectiveScale
                     }
             )
-            .gesture(
+            .simultaneousGesture(
                 // Trackpad pinch-to-zoom gesture
                 MagnifyGesture()
                     .updating($magnificationState) { value, state, _ in
@@ -1278,6 +1364,16 @@ struct CanvasView: View {
         // Clear local drag state
         blockDragOffsets.removeValue(forKey: blockId)
         draggingBlockId = nil
+
+        // Update frame tracker after position change
+        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        blockFrameTracker.updateFrames(
+            blocks: spatialEngine.blocks,
+            canvasOffset: canvasOffset,
+            scaledPanOffset: scaledPanOffset,
+            effectiveScale: effectiveScale,
+            screenCenter: screenCenter
+        )
     }
 
     // Legacy handlers (kept for compatibility with other callers)
@@ -2490,4 +2586,5 @@ extension Notification.Name {
     static let openEntityOnCanvas = Notification.Name("openEntityOnCanvas")
     static let createEntityInFocusMode = Notification.Name("createEntityInFocusMode")
     static let switchToThinkspace = Notification.Name("switchToThinkspace")
+    static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
 }

@@ -6,6 +6,7 @@
 import SwiftUI
 import AVKit
 import WebKit
+import Combine
 
 // MARK: - Research Core View
 
@@ -215,42 +216,56 @@ struct ResearchCoreView: View {
 
     private var videoContent: some View {
         ZStack {
-            // Video player or thumbnail
-            if let url = videoURL {
-                // For now, show thumbnail with play overlay
-                // Full AVPlayer integration would go here
-                AsyncImage(url: URL(string: source?.thumbnailURL ?? "")) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(16/9, contentMode: .fill)
-                    case .failure, .empty:
-                        videoPlaceholder
-                    @unknown default:
-                        videoPlaceholder
-                    }
-                }
-                .frame(height: 240)
+            if let videoId = extractYouTubeVideoId(from: source?.url) {
+                // YouTube video with interactive player
+                YouTubeFocusModePlayer(
+                    videoId: videoId,
+                    currentTime: $currentTimestamp,
+                    onDurationLoaded: { loadedDuration in
+                        // Duration is communicated back from the player
+                        print("📹 Video duration loaded: \(loadedDuration)s")
+                    },
+                    onSeek: onSeek
+                )
+                .frame(height: 280)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    // Play button overlay
-                    Button(action: {
-                        // Play video action
-                        print("▶️ Play video: \(url)")
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.black.opacity(0.5))
-                                .frame(width: 64, height: 64)
+            } else if let thumbnailURL = source?.thumbnailURL, let url = URL(string: thumbnailURL) {
+                // Fallback: Show thumbnail with open button for non-YouTube videos
+                ZStack {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(16/9, contentMode: .fill)
+                        case .failure, .empty:
+                            videoPlaceholder
+                        @unknown default:
+                            videoPlaceholder
+                        }
+                    }
+                    .frame(height: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white)
+                    // Open externally button
+                    Button(action: onOpenInBrowser) {
+                        VStack(spacing: 8) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.black.opacity(0.6))
+                                    .frame(width: 64, height: 64)
+
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                            }
+                            Text("Open Video")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
                         }
                     }
                     .buttonStyle(.plain)
-                )
+                }
             } else {
                 videoPlaceholder
             }
@@ -272,6 +287,37 @@ struct ResearchCoreView: View {
                         .foregroundColor(Color.white.opacity(0.4))
                 }
             )
+    }
+
+    /// Extract YouTube video ID from various URL formats
+    private func extractYouTubeVideoId(from urlString: String?) -> String? {
+        guard let urlString = urlString else { return nil }
+
+        // Pattern 1: youtube.com/watch?v=VIDEO_ID
+        if let range = urlString.range(of: "v=") {
+            let startIndex = range.upperBound
+            let endIndex = urlString[startIndex...].firstIndex(of: "&") ?? urlString.endIndex
+            return String(urlString[startIndex..<endIndex])
+        }
+
+        // Pattern 2: youtu.be/VIDEO_ID
+        if urlString.contains("youtu.be/") {
+            let components = urlString.components(separatedBy: "youtu.be/")
+            if components.count > 1 {
+                let idPart = components[1]
+                let endIndex = idPart.firstIndex(of: "?") ?? idPart.firstIndex(of: "&") ?? idPart.endIndex
+                return String(idPart[..<endIndex])
+            }
+        }
+
+        // Pattern 3: youtube.com/embed/VIDEO_ID
+        if let range = urlString.range(of: "/embed/") {
+            let startIndex = range.upperBound
+            let endIndex = urlString[startIndex...].firstIndex(of: "?") ?? urlString.endIndex
+            return String(urlString[startIndex..<endIndex])
+        }
+
+        return nil
     }
 
     // MARK: - Article Content
@@ -576,6 +622,191 @@ struct TimelineMarkerView: View {
                     isHovered = hovering
                 }
             }
+    }
+}
+
+// MARK: - YouTube Focus Mode Player
+
+/// YouTube player with bidirectional communication for Focus Mode
+/// Supports playback control, seeking, and time synchronization
+struct YouTubeFocusModePlayer: NSViewRepresentable {
+    let videoId: String
+    @Binding var currentTime: TimeInterval
+    let onDurationLoaded: (TimeInterval) -> Void
+    let onSeek: (TimeInterval) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.mediaTypesRequiringUserActionForPlayback = []
+
+        // Set up JavaScript message handling
+        let contentController = config.userContentController
+        contentController.add(context.coordinator, name: "playerReady")
+        contentController.add(context.coordinator, name: "timeUpdate")
+        contentController.add(context.coordinator, name: "durationLoaded")
+        contentController.add(context.coordinator, name: "stateChange")
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.navigationDelegate = context.coordinator
+
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        // Only load once
+        guard !context.coordinator.hasLoaded else { return }
+        context.coordinator.hasLoaded = true
+
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                html, body {
+                    width: 100%;
+                    height: 100%;
+                    background: #000;
+                    overflow: hidden;
+                }
+                #player {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="player"></div>
+
+            <script>
+                var tag = document.createElement('script');
+                tag.src = "https://www.youtube.com/iframe_api";
+                var firstScriptTag = document.getElementsByTagName('script')[0];
+                firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+                var player;
+                var timeUpdateInterval;
+
+                function onYouTubeIframeAPIReady() {
+                    player = new YT.Player('player', {
+                        videoId: '\(videoId)',
+                        playerVars: {
+                            'playsinline': 1,
+                            'rel': 0,
+                            'modestbranding': 1,
+                            'enablejsapi': 1,
+                            'origin': 'https://cosmoos.local'
+                        },
+                        events: {
+                            'onReady': onPlayerReady,
+                            'onStateChange': onPlayerStateChange
+                        }
+                    });
+                }
+
+                function onPlayerReady(event) {
+                    var duration = player.getDuration();
+                    window.webkit.messageHandlers.playerReady.postMessage({});
+                    window.webkit.messageHandlers.durationLoaded.postMessage({ duration: duration });
+
+                    // Start time update interval
+                    timeUpdateInterval = setInterval(function() {
+                        if (player && player.getCurrentTime) {
+                            var currentTime = player.getCurrentTime();
+                            window.webkit.messageHandlers.timeUpdate.postMessage({ time: currentTime });
+                        }
+                    }, 250);
+                }
+
+                function onPlayerStateChange(event) {
+                    window.webkit.messageHandlers.stateChange.postMessage({ state: event.data });
+                }
+
+                function seekTo(time) {
+                    if (player && player.seekTo) {
+                        player.seekTo(time, true);
+                    }
+                }
+
+                function playVideo() {
+                    if (player && player.playVideo) {
+                        player.playVideo();
+                    }
+                }
+
+                function pauseVideo() {
+                    if (player && player.pauseVideo) {
+                        player.pauseVideo();
+                    }
+                }
+            </script>
+        </body>
+        </html>
+        """
+        nsView.loadHTMLString(html, baseURL: URL(string: "https://cosmoos.local"))
+    }
+
+    class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        var parent: YouTubeFocusModePlayer
+        var hasLoaded = false
+        var webView: WKWebView?
+
+        init(parent: YouTubeFocusModePlayer) {
+            self.parent = parent
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+
+            switch message.name {
+            case "playerReady":
+                print("📹 YouTube player ready")
+
+            case "durationLoaded":
+                if let duration = body["duration"] as? Double {
+                    DispatchQueue.main.async {
+                        self.parent.onDurationLoaded(duration)
+                    }
+                }
+
+            case "timeUpdate":
+                if let time = body["time"] as? Double {
+                    DispatchQueue.main.async {
+                        self.parent.currentTime = time
+                    }
+                }
+
+            case "stateChange":
+                if let state = body["state"] as? Int {
+                    // YT.PlayerState: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (cued)
+                    print("📹 Player state: \(state)")
+                }
+
+            default:
+                break
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            self.webView = webView
+        }
+
+        func seek(to time: TimeInterval) {
+            webView?.evaluateJavaScript("seekTo(\(time))") { _, error in
+                if let error = error {
+                    print("⚠️ Seek error: \(error)")
+                }
+            }
+        }
     }
 }
 

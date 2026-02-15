@@ -9,10 +9,18 @@ import SwiftUI
 /// Features: glass material, constellation view, results list, preview drawer
 public struct CommandKView: View {
 
+    // MARK: - Tab Enum
+    private enum CommandKTab: CaseIterable {
+        case search
+        case swipeGallery
+        case ideas
+    }
+
     // MARK: - State
     @StateObject private var viewModel = CommandKViewModel()
     @FocusState private var isSearchFocused: Bool
     @State private var showPreview: Bool = false
+    @State private var activeTab: CommandKTab = .search
 
     // MARK: - Layout Constants
     private let overlayWidthPercent: CGFloat = 0.75
@@ -60,10 +68,14 @@ public struct CommandKView: View {
             viewModel.openSelected()
             return .handled
         }
-        // Tab key to toggle preview
+        // Tab key to cycle through tabs
         .onKeyPress(.tab) {
             withAnimation(ProMotionSprings.snappy) {
-                showPreview.toggle()
+                switch activeTab {
+                case .search: activeTab = .swipeGallery
+                case .swipeGallery: activeTab = .ideas
+                case .ideas: activeTab = .search
+                }
             }
             return .handled
         }
@@ -109,32 +121,48 @@ public struct CommandKView: View {
             Divider()
                 .background(Color.white.opacity(0.15))
 
-            // Filter chips
-            filterChipsSection
+            // Tab bar
+            tabBar
 
             Divider()
                 .background(Color.white.opacity(0.15))
 
-            // Main content area
-            HStack(spacing: 0) {
-                // Constellation view (60%)
-                constellationSection
-                    .frame(width: width * 0.6)
+            // Tab-specific content
+            switch activeTab {
+            case .search:
+                // Filter chips
+                filterChipsSection
 
                 Divider()
                     .background(Color.white.opacity(0.15))
 
-                // Results list (40%)
-                resultsSection
-                    .frame(width: width * 0.4)
-            }
+                // Main content area
+                HStack(spacing: 0) {
+                    // Constellation view (60%)
+                    constellationSection
+                        .frame(width: width * 0.6)
 
-            // Preview drawer (if item selected)
-            if showPreview, viewModel.selectedNodeId != nil {
-                Divider()
-                    .background(Color.white.opacity(0.15))
+                    Divider()
+                        .background(Color.white.opacity(0.15))
 
-                previewDrawer
+                    // Results list (40%)
+                    resultsSection
+                        .frame(width: width * 0.4)
+                }
+
+                // Preview drawer (if item selected)
+                if showPreview, viewModel.selectedNodeId != nil {
+                    Divider()
+                        .background(Color.white.opacity(0.15))
+
+                    previewDrawer
+                }
+
+            case .swipeGallery:
+                SwipeGalleryTab(viewModel: viewModel, searchQuery: viewModel.query)
+
+            case .ideas:
+                IdeasTab(viewModel: viewModel, searchQuery: viewModel.query)
             }
         }
         .frame(width: width, height: height)
@@ -172,13 +200,13 @@ public struct CommandKView: View {
     // MARK: - Search Bar Section
     private var searchBarSection: some View {
         HStack(spacing: 16) {
-            // Search icon
-            Image(systemName: "magnifyingglass")
+            // Search icon (changes for task creation mode)
+            Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
                 .font(.system(size: 20, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(viewModel.isTaskCreationMode ? PlannerumColors.primary : .white.opacity(0.5))
 
             // Text field
-            TextField("Search your knowledge...", text: $viewModel.query)
+            TextField(activeTab == .swipeGallery ? "Search your swipes..." : (activeTab == .ideas ? "Search your ideas..." : "Search your knowledge... (task: to create)"), text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 18))
                 .foregroundColor(.white)
@@ -188,6 +216,17 @@ public struct CommandKView: View {
                 }
 
             Spacer()
+
+            // Task creation hint
+            if viewModel.isTaskCreationMode {
+                Text("Enter to create task")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(PlannerumColors.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(PlannerumColors.primary.opacity(0.15))
+                    .clipShape(Capsule())
+            }
 
             // Voice toggle
             Button {
@@ -377,6 +416,53 @@ public struct CommandKView: View {
         .padding(24)
         .frame(height: showPreview ? 160 : 0)
         .clipped()
+    }
+
+    // MARK: - Tab Bar
+
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            CommandKTabButton(
+                title: "Search",
+                icon: "magnifyingglass",
+                isActive: activeTab == .search
+            ) {
+                withAnimation(ProMotionSprings.snappy) {
+                    activeTab = .search
+                }
+            }
+
+            CommandKTabButton(
+                title: "Swipe Gallery",
+                icon: "bolt.fill",
+                isActive: activeTab == .swipeGallery,
+                accentColor: Color(hex: "#FFD700")
+            ) {
+                withAnimation(ProMotionSprings.snappy) {
+                    activeTab = .swipeGallery
+                }
+            }
+
+            CommandKTabButton(
+                title: "Ideas",
+                icon: "lightbulb.fill",
+                isActive: activeTab == .ideas,
+                accentColor: Color(hex: "#818CF8")
+            ) {
+                withAnimation(ProMotionSprings.snappy) {
+                    activeTab = .ideas
+                }
+            }
+
+            Spacer()
+
+            Text("\u{21E5} Tab")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(0.25))
+                .padding(.trailing, 4)
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 40)
     }
 
     // MARK: - Helpers
@@ -635,5 +721,39 @@ private struct ConstellationEdgeView: View {
             style: StrokeStyle(lineWidth: effectiveLineWidth, lineCap: .round)
         )
         .animation(.easeInOut(duration: 0.15), value: isHighlighted)
+    }
+}
+
+// MARK: - Command-K Tab Button
+
+private struct CommandKTabButton: View {
+    let title: String
+    let icon: String
+    let isActive: Bool
+    var accentColor: Color = Color(hex: "#6366F1")
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(isActive ? .white : .white.opacity(0.5))
+
+                // Active underline
+                Rectangle()
+                    .fill(isActive ? accentColor : Color.clear)
+                    .frame(height: 2)
+                    .cornerRadius(1)
+            }
+            .frame(height: 36)
+            .padding(.horizontal, 12)
+        }
+        .buttonStyle(.plain)
+        .animation(ProMotionSprings.snappy, value: isActive)
     }
 }

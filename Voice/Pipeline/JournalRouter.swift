@@ -102,7 +102,7 @@ enum MoodCategory: String, Codable, Sendable {
     }
 }
 
-enum EnergyLevel: String, Codable, Sendable {
+public enum EnergyLevel: String, Codable, Sendable {
     case high = "high"
     case medium = "medium"
     case low = "low"

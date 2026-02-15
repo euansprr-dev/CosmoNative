@@ -941,12 +941,7 @@ struct ProjectTreeItem: View {
                                 .buttonStyle(.plain)
                             }
 
-                            // Delete button
-                            if onDeleteProject != nil {
-                                AnimatedTrashButton {
-                                    showDeleteConfirm = true
-                                }
-                            }
+                            // Delete available via right-click context menu
                         }
                         .transition(.opacity)
                     }
@@ -1237,13 +1232,7 @@ struct ThinkspaceCard: View {
                         .help("Add sub-ThinkSpace")
                     }
 
-                    // Delete
-                    if let _ = onDelete {
-                        AnimatedTrashButton {
-                            showDeleteConfirm = true
-                        }
-                        .help("Delete ThinkSpace")
-                    }
+                    // Delete available via right-click context menu
                 }
                 .transition(.opacity)
             }

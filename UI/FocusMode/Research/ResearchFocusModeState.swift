@@ -117,6 +117,43 @@ struct ResearchSource: Codable, Equatable {
     }
 }
 
+// MARK: - Text Highlight
+
+/// A highlighted range within transcript text, linked to an annotation
+struct TextHighlight: Identifiable, Codable, Equatable {
+    let id: UUID
+    let annotationID: UUID
+    let startCharIndex: Int
+    let endCharIndex: Int
+    let annotationType: AnnotationType
+    /// The original highlighted text for stale-detection after transcript re-processing
+    let highlightedText: String
+
+    init(
+        id: UUID = UUID(),
+        annotationID: UUID,
+        startCharIndex: Int,
+        endCharIndex: Int,
+        annotationType: AnnotationType,
+        highlightedText: String
+    ) {
+        self.id = id
+        self.annotationID = annotationID
+        self.startCharIndex = startCharIndex
+        self.endCharIndex = endCharIndex
+        self.annotationType = annotationType
+        self.highlightedText = highlightedText
+    }
+
+    /// Check if this highlight is still valid against the current section text
+    func isValid(in sectionText: String) -> Bool {
+        let nsString = sectionText as NSString
+        let range = NSRange(location: startCharIndex, length: endCharIndex - startCharIndex)
+        guard range.location + range.length <= nsString.length else { return false }
+        return nsString.substring(with: range) == highlightedText
+    }
+}
+
 // MARK: - Transcript Section
 
 /// A section of transcript with timestamp and associated annotations
@@ -127,6 +164,7 @@ struct TranscriptSection: Identifiable, Codable, Equatable {
     let text: String
     let speakerName: String?
     var annotations: [ResearchAnnotation]
+    var highlights: [TextHighlight]
 
     init(
         id: UUID = UUID(),
@@ -134,7 +172,8 @@ struct TranscriptSection: Identifiable, Codable, Equatable {
         endTime: TimeInterval,
         text: String,
         speakerName: String? = nil,
-        annotations: [ResearchAnnotation] = []
+        annotations: [ResearchAnnotation] = [],
+        highlights: [TextHighlight] = []
     ) {
         self.id = id
         self.startTime = startTime
@@ -142,6 +181,7 @@ struct TranscriptSection: Identifiable, Codable, Equatable {
         self.text = text
         self.speakerName = speakerName
         self.annotations = annotations
+        self.highlights = highlights
     }
 
     /// Formatted start time string
@@ -172,13 +212,22 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
     let createdAt: Date
     var updatedAt: Date
     var linkedAtomUUIDs: [String]
+    /// Custom offset from default position (nil = auto-positioned in column)
+    var customOffset: CGPoint?
+    /// The transcript text that was highlighted to create this annotation (if any)
+    var highlightedText: String?
+    /// The section this annotation's highlight belongs to
+    var sectionID: UUID?
 
     init(
         id: UUID = UUID(),
         type: AnnotationType,
         content: String,
         timestamp: TimeInterval,
-        linkedAtomUUIDs: [String] = []
+        linkedAtomUUIDs: [String] = [],
+        customOffset: CGPoint? = nil,
+        highlightedText: String? = nil,
+        sectionID: UUID? = nil
     ) {
         self.id = id
         self.type = type
@@ -187,6 +236,9 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
         self.createdAt = Date()
         self.updatedAt = Date()
         self.linkedAtomUUIDs = linkedAtomUUIDs
+        self.customOffset = customOffset
+        self.highlightedText = highlightedText
+        self.sectionID = sectionID
     }
 
     /// Formatted timestamp string
@@ -194,6 +246,12 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
         let minutes = Int(timestamp) / 60
         let seconds = Int(timestamp) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    /// Whether this annotation has been dragged from its default position
+    var hasCustomPosition: Bool {
+        guard let offset = customOffset else { return false }
+        return abs(offset.x) > 5 || abs(offset.y) > 5
     }
 }
 
@@ -226,6 +284,15 @@ enum AnnotationType: String, Codable, CaseIterable {
         case .note: return Color(hex: "#22C55E")      // Green
         case .question: return Color(hex: "#F59E0B") // Orange/Amber
         case .insight: return Color(hex: "#8B5CF6")  // Purple
+        }
+    }
+
+    /// NSColor equivalent for use with NSAttributedString
+    var nsColor: NSColor {
+        switch self {
+        case .note: return NSColor(red: 0.133, green: 0.773, blue: 0.369, alpha: 1.0)
+        case .question: return NSColor(red: 0.961, green: 0.620, blue: 0.043, alpha: 1.0)
+        case .insight: return NSColor(red: 0.545, green: 0.361, blue: 0.965, alpha: 1.0)
         }
     }
 
@@ -355,6 +422,8 @@ struct ResearchFocusModeState: Codable {
         transcriptSections.first { $0.id == sectionID }?.annotations ?? []
     }
 
+    // MARK: - Annotation Mutations
+
     mutating func addAnnotation(_ annotation: ResearchAnnotation, toSection sectionID: UUID) {
         if let index = transcriptSections.firstIndex(where: { $0.id == sectionID }) {
             transcriptSections[index].annotations.append(annotation)
@@ -367,7 +436,41 @@ struct ResearchFocusModeState: Codable {
         lastModified = Date()
     }
 
+    mutating func updateAnnotationContent(id: UUID, content: String) {
+        for i in transcriptSections.indices {
+            if let j = transcriptSections[i].annotations.firstIndex(where: { $0.id == id }) {
+                transcriptSections[i].annotations[j].content = content
+                transcriptSections[i].annotations[j].updatedAt = Date()
+                lastModified = Date()
+                return
+            }
+        }
+        if let idx = annotations.firstIndex(where: { $0.id == id }) {
+            annotations[idx].content = content
+            annotations[idx].updatedAt = Date()
+            lastModified = Date()
+        }
+    }
+
+    mutating func updateAnnotationPosition(id: UUID, offset: CGPoint) {
+        for i in transcriptSections.indices {
+            if let j = transcriptSections[i].annotations.firstIndex(where: { $0.id == id }) {
+                transcriptSections[i].annotations[j].customOffset = offset
+                transcriptSections[i].annotations[j].updatedAt = Date()
+                lastModified = Date()
+                return
+            }
+        }
+        if let idx = annotations.firstIndex(where: { $0.id == id }) {
+            annotations[idx].customOffset = offset
+            annotations[idx].updatedAt = Date()
+            lastModified = Date()
+        }
+    }
+
     mutating func removeAnnotation(id: UUID) {
+        // Remove highlights linked to this annotation
+        removeHighlightsForAnnotation(annotationID: id)
         // Remove from transcript sections
         for i in transcriptSections.indices {
             transcriptSections[i].annotations.removeAll { $0.id == id }
@@ -375,6 +478,21 @@ struct ResearchFocusModeState: Codable {
         // Remove from standalone annotations
         annotations.removeAll { $0.id == id }
         lastModified = Date()
+    }
+
+    // MARK: - Highlight Mutations
+
+    mutating func addHighlight(_ highlight: TextHighlight, toSection sectionID: UUID) {
+        if let index = transcriptSections.firstIndex(where: { $0.id == sectionID }) {
+            transcriptSections[index].highlights.append(highlight)
+            lastModified = Date()
+        }
+    }
+
+    mutating func removeHighlightsForAnnotation(annotationID: UUID) {
+        for i in transcriptSections.indices {
+            transcriptSections[i].highlights.removeAll { $0.annotationID == annotationID }
+        }
     }
 }
 

@@ -14,24 +14,35 @@ struct MainView: View {
     // Observe ThinkspaceManager for sidebar visibility changes
     @ObservedObject private var thinkspaceManager = ThinkspaceManager.shared
 
-    @State private var showCommandPalette = false
-    @State private var showSettings = false
+    // Settings removed from Thinkspace — access via Sanctuary gear icon
     @State private var showRadialMenu = false
     @State private var radialMenuPosition: CGPoint = .zero
     @State private var rightClickMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var inAppVoiceHotkeyActive = false
 
-    // NodeGraph Command-K (new constellation-based search)
-    @State private var showNodeGraphCommandK = false
+    // Command-K (constellation-based search)
+    @State private var showCommandK = false
     @StateObject private var commandKViewModel = CommandKViewModel()
 
-    // Feature flag for new Command-K (set to true to use NodeGraph constellation)
-    private let useNodeGraphCommandK = true
+    // Block context menu (right-click on block)
+    @StateObject private var blockFrameTracker = CanvasBlockFrameTracker()
+    @State private var rightClickedBlockId: String?
+    @State private var showBlockContextMenu = false
+    @State private var blockContextMenuPosition: CGPoint = .zero
 
     // Sanctuary state - NOW THE DEFAULT HOME VIEW
     @State private var showingSanctuary = true  // Changed: Sanctuary is now the default entry point
     @StateObject private var sanctuaryChoreographer = AnimationChoreographer()
+
+    // Activation loading overlay (shown during idea→content navigation)
+    @State private var showActivationLoading = false
+    @State private var activationLoadingMessage = ""
+
+    // Creator database overlay
+    @State private var showCreatorDatabase = false
+    @State private var showCreatorProfile = false
+    @State private var creatorProfileAtom: Atom?
 
     // Satellite navigation state
     @State private var showingPlannerum = false
@@ -45,6 +56,7 @@ struct MainView: View {
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
+                .environmentObject(blockFrameTracker)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(showingSanctuary ? 0.3 : 1.0)
                 .blur(radius: showingSanctuary ? 15 : 0)
@@ -75,8 +87,7 @@ struct MainView: View {
                 HStack {
                     Spacer()
                     TopRightControls(
-                        showSettings: $showSettings,
-                        showCommandPalette: $showCommandPalette
+                        showCommandK: $showCommandK
                     )
                     .environmentObject(voiceEngine)
                     .padding(.top, 12)
@@ -123,38 +134,13 @@ struct MainView: View {
 
             // Command-K - The Cognition Hub
             // Revolutionary spatial command center that replaces Finder and sidebars
-            if useNodeGraphCommandK {
-                // NodeGraph OS Command-K (new constellation-based search)
-                if showNodeGraphCommandK {
-                    CommandKView()
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                        .zIndex(200)
-                }
-            } else {
-                // Legacy Command Hub
-                if showCommandPalette {
-                    CommandHubView(isPresented: $showCommandPalette)
-                        .environmentObject(voiceEngine)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                        .zIndex(200)
-                }
-            }
-
-            // Settings Panel
-            if showSettings {
-                // Backdrop
-                Color.black.opacity(0.2)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.2)) {
-                            showSettings = false
-                        }
-                    }
-
-                SettingsView(isPresented: $showSettings)
+            if showCommandK {
+                CommandKView()
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(250)
+                    .zIndex(200)
             }
+
+            // Settings accessible via Sanctuary gear icon
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
             if swipeFileEngine.showInstagramModal {
@@ -246,9 +232,132 @@ struct MainView: View {
                 .zIndex(150)
             }
 
+            // Block Context Menu (right-click on block)
+            if showBlockContextMenu, let blockId = rightClickedBlockId {
+                // Dismiss backdrop
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.2)) {
+                            showBlockContextMenu = false
+                            rightClickedBlockId = nil
+                        }
+                    }
+                    .zIndex(149)
+
+                BlockContextMenu(
+                    blockId: blockId,
+                    block: blockFrameTracker.trackedBlocks.first(where: { $0.id == blockId }) ?? CanvasBlock.placeholder,
+                    position: blockContextMenuPosition,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.2)) {
+                            showBlockContextMenu = false
+                            rightClickedBlockId = nil
+                        }
+                    }
+                )
+                .zIndex(150)
+            }
+
             // Gemini thinking indicator (Apple Intelligence-style edge glow)
             GeminiThinkingOverlay()
                 .zIndex(280)
+
+            // Creator Database overlay
+            if showCreatorDatabase {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorDatabase = false
+                            }
+                        }
+
+                    CreatorListView(
+                        onSelectCreator: { creatorAtom in
+                            creatorProfileAtom = creatorAtom
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorProfile = true
+                            }
+                        },
+                        onCompare: { _ in },
+                        onClose: {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorDatabase = false
+                            }
+                        }
+                    )
+                    .frame(maxWidth: 960, maxHeight: 700)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.5), radius: 30)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(285)
+            }
+
+            // Creator Profile overlay
+            if showCreatorProfile, let profileAtom = creatorProfileAtom {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorProfile = false
+                                creatorProfileAtom = nil
+                            }
+                        }
+
+                    CreatorProfileView(
+                        creatorAtom: profileAtom,
+                        onClose: {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorProfile = false
+                                creatorProfileAtom = nil
+                            }
+                        },
+                        onCompare: { _ in },
+                        onOpenSwipe: { entityId in
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                showCreatorProfile = false
+                                showCreatorDatabase = false
+                                creatorProfileAtom = nil
+                            }
+                            withAnimation(.spring(response: 0.3)) {
+                                appState.focusedEntity = EntitySelection(id: entityId, type: .research)
+                            }
+                        }
+                    )
+                    .frame(maxWidth: 1000, maxHeight: 750)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.5), radius: 30)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(286)
+            }
+
+            // Activation loading overlay (idea → content transition)
+            if showActivationLoading {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.3)
+                            .tint(.white)
+
+                        Text(activationLoadingMessage)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .padding(32)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                }
+                .transition(.opacity)
+                .zIndex(290)
+            }
 
             // Loading overlay
             if !database.isReady {
@@ -260,21 +369,18 @@ struct MainView: View {
             }
         }
         // Global keyboard shortcuts handled via NSEvent monitor (doesn't steal focus from text fields)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandPalette)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showNodeGraphCommandK)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
+        .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
+        .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: showingSanctuary)
         .animation(.spring(response: 0.5, dampingFraction: 0.78), value: showingPlannerum)
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
-                if useNodeGraphCommandK {
-                    showNodeGraphCommandK = true
-                } else {
-                    showCommandPalette = true
-                }
+                showCommandK = true
             }
         }
         // NodeGraph Command-K atom opening handler
@@ -282,16 +388,18 @@ struct MainView: View {
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
             handleOpenAtomFromCommandK(atomUUID: atomUUID)
         }
-        // NodeGraph Command-K close handler (from background tap or escape in CommandKView)
+        // Command-K close handler (from background tap or escape in CommandKView)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
             withAnimation(.spring(response: 0.2)) {
-                showNodeGraphCommandK = false
+                showCommandK = false
                 commandKViewModel.clear()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
-            withAnimation(.spring(response: 0.2)) {
-                showSettings = true
+            // Settings now live in Sanctuary — navigate there
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                showingSanctuary = true
+                showingThinkspace = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .enterFocusMode)) { notification in
@@ -305,6 +413,42 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
             withAnimation(.spring(response: 0.3)) {
                 appState.focusedEntity = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+
+            // Close Command-K first
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKViewModel.clear()
+            }
+
+            // Add to canvas after a brief delay for animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                NotificationCenter.default.post(
+                    name: .openEntityOnCanvas,
+                    object: nil,
+                    userInfo: ["atomUUID": atomUUID]
+                )
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaToCanvas"))) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+
+            // Close Command-K first
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKViewModel.clear()
+            }
+
+            // Add to canvas after a brief delay for animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                NotificationCenter.default.post(
+                    name: .openEntityOnCanvas,
+                    object: nil,
+                    userInfo: ["atomUUID": atomUUID]
+                )
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
@@ -321,6 +465,24 @@ struct MainView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorDatabase"))) { _ in
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                showCreatorDatabase = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorProfile"))) { notification in
+            guard let creatorUUID = notification.userInfo?["creatorUUID"] as? String else { return }
+            Task { @MainActor in
+                if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID) {
+                    creatorProfileAtom = atom
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                        showCreatorProfile = true
+                    }
+                }
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorProfile)
         .onAppear {
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
@@ -344,6 +506,11 @@ struct MainView: View {
             guard let destination = notification.userInfo?["destination"] as? String else { return }
             handleVoiceNavigation(to: destination)
         }
+        // Open block in focus mode by UUID (used by promoteToContent, context panels, etc.)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+            handleOpenBlockInFocusMode(atomUUID: atomUUID)
+        }
     }
 
     /// Handle voice navigation to Plannerum, Thinkspace, or Sanctuary
@@ -359,6 +526,60 @@ struct MainView: View {
         default:
             // For other destinations, keep existing behavior
             break
+        }
+    }
+
+    // MARK: - Open Block in Focus Mode by UUID
+
+    /// Handles the openBlockInFocusMode notification (from promoteToContent, context panels, etc.)
+    /// Fetches the atom by UUID, determines its type, and navigates to the appropriate focus mode.
+    private func handleOpenBlockInFocusMode(atomUUID: String) {
+        // Show loading overlay
+        withAnimation(.easeOut(duration: 0.2)) {
+            activationLoadingMessage = "Opening content..."
+            showActivationLoading = true
+        }
+
+        // Close any overlays that might be open
+        withAnimation(.spring(response: 0.2)) {
+            showCommandK = false
+            showingSanctuary = false
+            showingPlannerum = false
+        }
+
+        Task { @MainActor in
+            do {
+                if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    let entityType = mapAtomTypeToEntityType(atom.type)
+                    let entityId = atom.id ?? 0
+
+                    // Brief delay for the loading overlay to be visible
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+
+                    // Dismiss current focus mode if one is open, then navigate
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        appState.focusedEntity = nil
+                    }
+
+                    // Small delay to allow the previous focus mode to close
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        appState.focusedEntity = EntitySelection(id: entityId, type: entityType)
+                        showActivationLoading = false
+                    }
+                } else {
+                    print("MainView: handleOpenBlockInFocusMode — atom not found: \(atomUUID)")
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showActivationLoading = false
+                    }
+                }
+            } catch {
+                print("MainView: handleOpenBlockInFocusMode failed: \(error)")
+                withAnimation(.easeOut(duration: 0.2)) {
+                    showActivationLoading = false
+                }
+            }
         }
     }
 
@@ -426,15 +647,34 @@ struct MainView: View {
                     return nil  // Consume event
                 }
 
-                if showSettings || showCommandPalette || showNodeGraphCommandK || showRadialMenu || appState.focusedEntity != nil {
+                if showBlockContextMenu {
                     withAnimation(.spring(response: 0.2)) {
-                        if showSettings {
-                            showSettings = false
-                        } else if showNodeGraphCommandK {
-                            showNodeGraphCommandK = false
+                        showBlockContextMenu = false
+                        rightClickedBlockId = nil
+                    }
+                    return nil  // Consume event
+                }
+
+                if showCreatorProfile {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                        showCreatorProfile = false
+                        creatorProfileAtom = nil
+                    }
+                    return nil
+                }
+
+                if showCreatorDatabase {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                        showCreatorDatabase = false
+                    }
+                    return nil
+                }
+
+                if showCommandK || showRadialMenu || appState.focusedEntity != nil {
+                    withAnimation(.spring(response: 0.2)) {
+                        if showCommandK {
+                            showCommandK = false
                             commandKViewModel.clear()
-                        } else if showCommandPalette {
-                            showCommandPalette = false
                         } else if showRadialMenu {
                             showRadialMenu = false
                         } else if appState.focusedEntity != nil {
@@ -618,13 +858,32 @@ struct MainView: View {
             let windowHeight = window.frame.height
 
             // Convert to SwiftUI coordinates (flip Y)
-            radialMenuPosition = CGPoint(
+            let screenPoint = CGPoint(
                 x: windowPoint.x,
                 y: windowHeight - windowPoint.y
             )
 
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                showRadialMenu = true
+            // Don't show menus when overlays are active
+            guard !showingSanctuary, !showingPlannerum, !showCommandK, appState.focusedEntity == nil else {
+                return event
+            }
+
+            // Hit-test against tracked block frames
+            if let hitBlockId = blockFrameTracker.hitTest(at: screenPoint) {
+                // Show block context menu
+                rightClickedBlockId = hitBlockId
+                blockContextMenuPosition = screenPoint
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.75)) {
+                    showBlockContextMenu = true
+                    showRadialMenu = false
+                }
+            } else {
+                // Show radial menu on empty canvas (existing behavior)
+                radialMenuPosition = screenPoint
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    showRadialMenu = true
+                    showBlockContextMenu = false
+                }
             }
 
             return nil // Consume the event
@@ -650,8 +909,7 @@ struct MainView: View {
         case .createConnection:
             createNewEntity(type: .connection, at: radialMenuPosition)
         case .researchAgent:
-            // Research Agent is handled in Focus Mode views
-            break
+            createCosmoAIBlock(at: radialMenuPosition)
         case .fromDatabase:
             // From Database opens Command-K, handled in Focus Mode views
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openCommandK, object: nil)
@@ -723,7 +981,7 @@ struct MainView: View {
     private func handleOpenAtomFromCommandK(atomUUID: String) {
         // Close Command-K first
         withAnimation(.spring(response: 0.2)) {
-            showNodeGraphCommandK = false
+            showCommandK = false
             commandKViewModel.clear()
         }
 
@@ -737,7 +995,14 @@ struct MainView: View {
 
                     // Route to canvas or focus mode based on type
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        if [EntityType.idea, .content, .research, .connection].contains(entityType) {
+                        // Swipe files always open in focus mode
+                        if atom.isSwipeFileAtom {
+                            NotificationCenter.default.post(
+                                name: .enterFocusMode,
+                                object: nil,
+                                userInfo: ["type": entityType, "id": atom.id ?? 0]
+                            )
+                        } else if [EntityType.idea, .content, .research, .connection].contains(entityType) {
                             // Open as floating block on canvas
                             NotificationCenter.default.post(
                                 name: .openEntityOnCanvas,

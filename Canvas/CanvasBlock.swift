@@ -70,6 +70,16 @@ struct CanvasBlock: Identifiable, Codable {
         self.velocity = .zero
     }
 
+    /// Placeholder block used when a block reference cannot be resolved
+    static let placeholder = CanvasBlock(
+        id: "placeholder",
+        position: .zero,
+        entityType: .note,
+        entityId: -1,
+        entityUuid: "",
+        title: ""
+    )
+
     // MARK: - Factory Methods (Atom-based)
 
     /// Create a CanvasBlock from any Atom type
@@ -81,6 +91,16 @@ struct CanvasBlock: Identifiable, Codable {
             size = CGSize(width: 280, height: 120)
         case .project:
             size = CGSize(width: 320, height: 240)
+        case .research:
+            if atom.isSwipeFileAtom {
+                size = CGSize(width: 340, height: 380)
+            } else {
+                size = CGSize(width: 320, height: 340)
+            }
+        case .content:
+            size = CGSize(width: 300, height: 220)
+        case .connection:
+            size = CGSize(width: 340, height: 400)
         default:
             size = CGSize(width: 280, height: 180)
         }
@@ -105,10 +125,23 @@ struct CanvasBlock: Identifiable, Codable {
         case .content:
             let contentWrapper = ContentWrapper(atom: atom)
             metadata["status"] = contentWrapper.status
+            // Include focus mode step info from atom metadata
+            if let state = ContentFocusModeState.from(atom: atom) {
+                metadata["currentStep"] = state.currentStep.rawValue
+            }
         case .research:
             let researchWrapper = ResearchWrapper(atom: atom)
             metadata["type"] = researchWrapper.researchType ?? ""
             metadata["url"] = researchWrapper.url ?? ""
+            if atom.isSwipeFileAtom {
+                metadata["isSwipeFile"] = "true"
+                if let hookType = atom.swipeAnalysis?.hookType?.rawValue {
+                    metadata["hookType"] = hookType
+                }
+                if let score = atom.swipeAnalysis?.hookScore {
+                    metadata["hookScore"] = String(format: "%.1f", score)
+                }
+            }
         case .connection:
             metadata["type"] = "connection"
         case .project:

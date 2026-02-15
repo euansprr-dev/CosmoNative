@@ -200,6 +200,7 @@ class ResearchProcessor: ObservableObject {
             richContent.publishedAt = data.publishedAt
             richContent.formattedTranscript = data.formattedTranscript
             richContent.transcriptSections = data.transcriptSections
+            richContent.transcriptStatus = data.transcriptStatus.rawValue
             research.setRichContent(richContent)
 
             try research.update(db)
@@ -423,6 +424,97 @@ class ResearchProcessor: ObservableObject {
                 "progress": progress
             ]
         )
+    }
+
+    // MARK: - Retry Transcript
+    /// Retry fetching transcript for a YouTube video that previously failed
+    @MainActor
+    func retryTranscription(uuid: String) async throws {
+        // Fetch the existing research
+        guard let research = try await database.asyncRead({ db in
+            try Atom
+                .filter(Column("type") == AtomType.research.rawValue)
+                .filter(Column("uuid") == uuid)
+                .fetchOne(db)
+                .map { ResearchWrapper(atom: $0) }
+        }) else {
+            throw ProcessingError.saveFailed
+        }
+
+        guard let richContent = research.richContent,
+              let videoId = richContent.videoId else {
+            throw ProcessingError.processingFailed("Not a YouTube video or missing video ID")
+        }
+
+        print("🔄 Retrying transcript for video: \(videoId)")
+
+        // Try to fetch transcript
+        var transcript: [TranscriptSegment] = []
+        var transcriptStatus: YouTubeData.TranscriptStatus = .unavailable
+
+        if let captions = await youtubeProcessor.fetchCaptions(videoId: videoId) {
+            transcript = captions
+            transcriptStatus = .available
+            print("   ✅ Captions fetched on retry: \(transcript.count) segments")
+        } else {
+            // Try audio transcription
+            do {
+                let audioPath = try await youtubeProcessor.downloadAudio(videoId: videoId)
+                transcript = try await youtubeProcessor.transcribeAudio(at: audioPath)
+                transcriptStatus = .available
+                print("   ✅ Audio transcribed on retry: \(transcript.count) segments")
+                try? FileManager.default.removeItem(at: audioPath)
+            } catch {
+                print("   ⚠️ Retry transcription failed: \(error.localizedDescription)")
+                throw ProcessingError.processingFailed("Transcription still unavailable. Install ffmpeg for audio extraction.")
+            }
+        }
+
+        // Generate formatted transcript if we got content
+        var formattedTranscript: String?
+        var sections: [TranscriptSectionData]?
+        if !transcript.isEmpty {
+            let result = await youtubeProcessor.generateFormattedTranscript(
+                segments: transcript,
+                title: research.title ?? "YouTube Video"
+            )
+            formattedTranscript = result.0
+            sections = result.1
+        }
+
+        // Update the research atom
+        guard let researchId = research.id else {
+            throw ProcessingError.saveFailed
+        }
+
+        let capturedFormattedTranscript = formattedTranscript
+        let capturedSections = sections
+        let capturedTranscript = transcript
+        let capturedTranscriptStatus = transcriptStatus
+
+        try await database.asyncWrite { db in
+            guard let atom = try Atom
+                .filter(Column("id") == researchId)
+                .fetchOne(db)
+            else {
+                throw ProcessingError.saveFailed
+            }
+            var updated = ResearchWrapper(atom: atom)
+            updated.body = capturedTranscript.jsonString
+
+            var rich = updated.richContent ?? ResearchRichContent()
+            rich.formattedTranscript = capturedFormattedTranscript
+            rich.transcriptSections = capturedSections
+            rich.transcriptStatus = capturedTranscriptStatus.rawValue
+            updated.setRichContent(rich)
+
+            updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+            updated.localVersion += 1
+
+            try updated.update(db)
+        }
+
+        print("✅ Transcript retry successful for video: \(videoId)")
     }
 }
 

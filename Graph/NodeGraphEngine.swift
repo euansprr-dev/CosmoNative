@@ -55,6 +55,9 @@ public final class NodeGraphEngine: ObservableObject {
         guard !isInitialized else { return }
 
         do {
+            // Ensure graph_nodes is populated from atoms
+            try await ensureGraphInitialized()
+
             // Load current graph statistics
             try await refreshStats()
             isInitialized = true
@@ -146,7 +149,24 @@ public final class NodeGraphEngine: ObservableObject {
         defer { isUpdating = false }
 
         try await database.asyncWrite { db in
-            // 1. Update graph node metadata
+            // 1. Ensure graph node exists (upsert) — INSERT OR IGNORE handles the
+            //    case where the node was never created (e.g., atom predates graph sync).
+            //    Without this, the FK constraint on graph_edges prevents edge creation.
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO graph_nodes
+                        (atom_uuid, atom_type, atom_category, atom_updated_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+                """,
+                arguments: [
+                    atom.uuid,
+                    atom.type.rawValue,
+                    atom.type.category.rawValue,
+                    atom.updatedAt
+                ]
+            )
+
+            // 2. Update graph node metadata
             try db.execute(
                 sql: """
                     UPDATE graph_nodes
@@ -164,7 +184,7 @@ public final class NodeGraphEngine: ObservableObject {
                 ]
             )
 
-            // 2. Reconcile explicit edges if links changed
+            // 3. Reconcile explicit edges if links changed
             if changedFields.contains("links") {
                 try self.reconcileExplicitEdges(for: atom, in: db)
             }
@@ -266,14 +286,30 @@ public final class NodeGraphEngine: ObservableObject {
 
             let targetUUID = String(parts[0])
 
-            // Only create edge if target exists
+            // Ensure target graph_node exists — create from atoms table if missing.
+            // Without a graph_nodes row, the FK constraint on graph_edges blocks insertion.
             let targetExists = try Bool.fetchOne(
                 db,
                 sql: "SELECT EXISTS(SELECT 1 FROM graph_nodes WHERE atom_uuid = ?)",
                 arguments: [targetUUID]
             ) ?? false
 
-            if targetExists {
+            if !targetExists {
+                // Try to backfill from atoms table
+                if let targetAtom = try Atom.fetchOne(db, sql: "SELECT * FROM atoms WHERE uuid = ? AND is_deleted = 0", arguments: [targetUUID]) {
+                    var node = GraphNode.from(atom: targetAtom)
+                    try node.insert(db)
+                }
+            }
+
+            // Re-check after potential backfill
+            let canCreateEdge = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM graph_nodes WHERE atom_uuid = ?)",
+                arguments: [targetUUID]
+            ) ?? false
+
+            if canCreateEdge {
                 var newEdge = GraphEdge.explicit(from: atom.uuid, to: targetUUID, linkType: linkType)
                 try newEdge.insert(db)
                 newEdge.id = db.lastInsertedRowID
@@ -462,6 +498,73 @@ public final class NodeGraphEngine: ObservableObject {
         print("✅ Explicit edges rebuilt")
     }
 
+    /// Sync all existing atoms to graph_nodes (for initial migration or repair)
+    /// Call this when graph_nodes is empty but atoms exist
+    public func syncAllAtomsToGraph() async throws {
+        isUpdating = true
+        defer { isUpdating = false }
+
+        print("🔨 Syncing all atoms to graph_nodes...")
+
+        // Fetch all non-deleted atoms
+        let atoms = try await database.asyncRead { db in
+            try Atom
+                .filter(Column("is_deleted") == false)
+                .fetchAll(db)
+        }
+
+        guard !atoms.isEmpty else {
+            print("📭 No atoms to sync")
+            return
+        }
+
+        print("   Found \(atoms.count) atoms to sync")
+
+        // Insert nodes in batches
+        var synced = 0
+        for batch in atoms.chunked(into: batchSize) {
+            try await database.asyncWrite { db in
+                for atom in batch {
+                    // Check if node already exists
+                    let exists = try Bool.fetchOne(
+                        db,
+                        sql: "SELECT EXISTS(SELECT 1 FROM graph_nodes WHERE atom_uuid = ?)",
+                        arguments: [atom.uuid]
+                    ) ?? false
+
+                    if !exists {
+                        var node = GraphNode.from(atom: atom)
+                        try node.insert(db)
+                    }
+                }
+            }
+            synced += batch.count
+            if synced % 100 == 0 {
+                print("   Synced \(synced)/\(atoms.count) atoms")
+            }
+        }
+
+        try await refreshStats()
+        lastUpdateAt = Date()
+
+        print("✅ Synced \(atoms.count) atoms to graph_nodes (total nodes: \(nodeCount))")
+    }
+
+    /// Check if graph needs initial sync and perform it if needed
+    public func ensureGraphInitialized() async throws {
+        // Check if graph_nodes is empty but atoms exist
+        let stats = try await database.asyncRead { db -> (nodes: Int, atoms: Int) in
+            let nodes = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM graph_nodes") ?? 0
+            let atoms = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM atoms WHERE is_deleted = 0") ?? 0
+            return (nodes, atoms)
+        }
+
+        if stats.nodes == 0 && stats.atoms > 0 {
+            print("📊 Graph empty but \(stats.atoms) atoms exist - syncing...")
+            try await syncAllAtomsToGraph()
+        }
+    }
+
     /// Decay recency weights on all edges (run periodically)
     public func decayRecencyWeights() async throws {
         try await database.asyncWrite { db in
@@ -548,5 +651,14 @@ public enum AccessType: String, Sendable {
     case edit = "edit"          // Weight: 1.0
     case search = "search"      // Weight: 0.3
     case reference = "reference" // Weight: 0.7
+}
+
+// MARK: - Array Extension for Chunking
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
+    }
 }
 

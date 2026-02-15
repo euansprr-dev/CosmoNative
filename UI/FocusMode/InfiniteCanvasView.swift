@@ -159,7 +159,7 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
             }
         }
         .background(CosmoColors.thinkspaceVoid)
-        .clipped()
+        // Note: No .clipped() to allow transcript content to overflow visually
         .gesture(panGesture)
         .gesture(zoomGesture)
         .onKeyPress(.space) {
@@ -221,12 +221,11 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
                 state = value.translation
             }
             .onEnded { value in
-                withAnimation(viewportAnimation) {
-                    viewportState.offset = CGPoint(
-                        x: viewportState.offset.x + value.translation.width,
-                        y: viewportState.offset.y + value.translation.height
-                    )
-                }
+                // No animation to prevent jitter when releasing pan
+                viewportState.offset = CGPoint(
+                    x: viewportState.offset.x + value.translation.width,
+                    y: viewportState.offset.y + value.translation.height
+                )
             }
     }
 
@@ -237,10 +236,9 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
                 state = value.magnification
             }
             .onEnded { value in
+                // No animation to prevent jitter when releasing zoom
                 let newScale = viewportState.zoomScale * value.magnification
-                withAnimation(viewportAnimation) {
-                    viewportState.zoomScale = min(max(newScale, CanvasViewportState.minZoom), CanvasViewportState.maxZoom)
-                }
+                viewportState.zoomScale = min(max(newScale, CanvasViewportState.minZoom), CanvasViewportState.maxZoom)
             }
     }
 

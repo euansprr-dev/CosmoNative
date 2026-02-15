@@ -2,8 +2,11 @@
 // Blue-accented Content block for Thinkspace canvas
 // Dark glass design matching Sanctuary aesthetic
 // December 2025 - Thinkspace revamp
+// February 2026 - Workflow card redesign with step indicators + GRDB observation
 
 import SwiftUI
+import GRDB
+import Combine
 
 struct ContentBlockView: View {
     let block: CanvasBlock
@@ -11,16 +14,27 @@ struct ContentBlockView: View {
     @State private var contentTitle: String = ""
     @State private var contentBody: String = ""
     @State private var isExpanded = false
-    @FocusState private var isTitleFocused: Bool
-    @FocusState private var isBodyFocused: Bool
 
-    // Auto-save debouncing
-    @State private var autoSaveTask: Task<Void, Never>?
+    // Workflow state from ContentFocusModeState
+    @State private var currentStep: ContentStep = .brainstorm
+    @State private var currentContentPhase: ContentPhase = .ideation
+    @State private var coreIdea: String = ""
+    @State private var draftContent: String = ""
+    @State private var outlineItems: [String] = []
+    @State private var wordCount: Int = 0
+    @State private var polishAnalysis: PolishAnalysis?
+    @State private var lastModified: Date?
+
+    // GRDB observation
+    @State private var observationCancellable: AnyCancellable?
 
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Blue accent for content
     private let accentColor = CosmoMentionColors.content
+
+    // Step colors
+    private let completedColor = Color(hex: "#22C55E")
 
     var body: some View {
         CosmoBlockWrapper(
@@ -31,158 +45,485 @@ struct ContentBlockView: View {
             isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
-            contentView
+            workflowCardView
         }
         .onAppear {
             loadContent()
+            startObservingAtom()
+        }
+        .onDisappear {
+            observationCancellable?.cancel()
+        }
+        .onChange(of: block.entityId) { _, newId in
+            // Restart GRDB observation when backing atom is linked (e.g. after first focus mode open)
+            if newId > 0 {
+                observationCancellable?.cancel()
+                startObservingAtom()
+                reloadFocusState()
+            }
+        }
+        // Listen for direct state change notifications from focus mode
+        .onReceive(NotificationCenter.default.publisher(for: .contentFocusStateDidChange)) { notification in
+            if let uuid = notification.userInfo?["atomUUID"] as? String,
+               uuid == block.entityUuid {
+                reloadFocusState()
+            }
         }
     }
 
     // MARK: - Display Title
 
     private var displayTitle: String {
-        // Use title field, or fall back to first line of content
         if !contentTitle.isEmpty {
             return String(contentTitle.prefix(40))
-        }
-        if let firstLine = contentBody.components(separatedBy: .newlines).first,
-           !firstLine.isEmpty {
-            return String(firstLine.prefix(40))
         }
         return "Untitled Content"
     }
 
-    // MARK: - Content View
+    // MARK: - Workflow Card View
+
+    private var workflowCardView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Clickable step indicator
+            stepIndicator
+                .padding(.top, 14)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+
+            // Thin separator
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+
+            // Content preview based on current step
+            stepPreview
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+
+            Spacer(minLength: 0)
+
+            // Bottom info bar
+            bottomInfoBar
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Phase Indicator (8-Phase Pipeline)
+
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(ContentPhase.allCases.enumerated()), id: \.element) { index, phase in
+                if index > 0 {
+                    // Connecting line
+                    Rectangle()
+                        .fill(phaseLineColor(beforePhase: phase))
+                        .frame(height: 1)
+                        .frame(maxWidth: .infinity)
+                }
+
+                // Phase dot (clickable only for creation phases)
+                Button {
+                    if let step = ContentFocusModeState.stepForPhase(phase) {
+                        switchStep(to: step)
+                    }
+                } label: {
+                    phaseDot(for: phase)
+                }
+                .buttonStyle(.plain)
+                .disabled(ContentFocusModeState.stepForPhase(phase) == nil)
+            }
+        }
+    }
 
     @ViewBuilder
-    private var contentView: some View {
-        // Always use editableContentView for canvas blocks
-        // Content is stored in metadata like Note blocks
-        editableContentView
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func phaseDot(for phase: ContentPhase) -> some View {
+        let currentIdx = ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0
+        let phaseIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
+
+        if phaseIdx < currentIdx {
+            // Completed: green dot
+            Circle()
+                .fill(completedColor)
+                .frame(width: 6, height: 6)
+        } else if phase == currentContentPhase {
+            // Current: filled accent
+            Circle()
+                .fill(accentColor)
+                .frame(width: 8, height: 8)
+        } else {
+            // Future: stroke, dimmed for post-creation
+            let isCreation = ContentFocusModeState.stepForPhase(phase) != nil
+            Circle()
+                .stroke(Color.white.opacity(isCreation ? 0.25 : 0.1), lineWidth: 1)
+                .frame(width: 6, height: 6)
+        }
     }
 
-    // MARK: - Editable Content View (for new blocks)
+    private func phaseLineColor(beforePhase phase: ContentPhase) -> Color {
+        let currentIdx = ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0
+        let phaseIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
+        if phaseIdx <= currentIdx {
+            return completedColor.opacity(0.5)
+        }
+        return Color.white.opacity(0.08)
+    }
 
-    private var editableContentView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Title field
-            ZStack(alignment: .topLeading) {
-                // Placeholder
-                if contentTitle.isEmpty {
-                    Text("Heading")
-                        .font(.system(size: 24, weight: .regular, design: .serif))
-                        .italic()
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .allowsHitTesting(false)
+    // MARK: - Step Preview
+
+    @ViewBuilder
+    private var stepPreview: some View {
+        switch currentStep {
+        case .brainstorm:
+            brainstormPreview
+        case .draft:
+            draftPreview
+        case .polish:
+            polishPreview
+        }
+    }
+
+    private var brainstormPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Core idea
+            if !coreIdea.isEmpty {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 9))
+                        .foregroundColor(accentColor)
+                    Text(String(coreIdea.prefix(60)))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
                 }
+            }
 
-                // Title text field
-                TextField("", text: $contentTitle)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 24, weight: .regular, design: .serif))
-                    .foregroundColor(.white)
-                    .focused($isTitleFocused)
-                    .onSubmit {
-                        isBodyFocused = true
+            // Outline items (mini list)
+            if !outlineItems.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(outlineItems.prefix(3).enumerated()), id: \.offset) { index, item in
+                        HStack(spacing: 6) {
+                            Text("\(index + 1).")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(accentColor.opacity(0.7))
+                                .frame(width: 14, alignment: .trailing)
+                            Text(String(item.prefix(35)))
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.7))
+                                .lineLimit(1)
+                        }
                     }
-            }
-
-            // Body text editor
-            ZStack(alignment: .topLeading) {
-                // Placeholder
-                if contentBody.isEmpty && !isBodyFocused {
-                    Text("Press / for commands...")
-                        .font(.system(size: 15))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .allowsHitTesting(false)
+                    if outlineItems.count > 3 {
+                        Text("+\(outlineItems.count - 3) more")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.3))
+                            .padding(.leading, 20)
+                    }
                 }
-
-                // Body text editor
-                TextEditor(text: $contentBody)
-                    .font(.system(size: 15))
-                    .foregroundColor(.white)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .focused($isBodyFocused)
             }
-            .frame(maxHeight: .infinity)
 
-            // Timestamp at bottom
-            if let timestamp = block.metadata["created"] {
-                HStack {
-                    Spacer()
-                    Text(formatTimestamp(timestamp))
+            if coreIdea.isEmpty && outlineItems.isEmpty {
+                HStack(spacing: 5) {
+                    Image(systemName: "lightbulb.max.fill")
                         .font(.system(size: 10))
+                        .foregroundColor(accentColor.opacity(0.5))
+                    Text("Open to brainstorm...")
+                        .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.3))
-                }
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: contentTitle) { _, _ in
-            scheduleAutoSave()
-        }
-        .onChange(of: contentBody) { _, _ in
-            scheduleAutoSave()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
-            isTitleFocused = false
-            isBodyFocused = false
-        }
-    }
-
-    // MARK: - Auto-save
-
-    private func scheduleAutoSave() {
-        autoSaveTask?.cancel()
-
-        autoSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if !Task.isCancelled {
-                await MainActor.run {
-                    saveContent()
+                        .italic()
                 }
             }
         }
     }
 
-    private func saveContent() {
-        NotificationCenter.default.post(
-            name: .updateBlockContent,
-            object: nil,
-            userInfo: [
-                "blockId": block.id,
-                "title": contentTitle,
-                "content": contentBody
-            ]
-        )
+    private var draftPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if draftContent.isEmpty {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(accentColor.opacity(0.5))
+                    Text("Open to start drafting...")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color.white.opacity(0.3))
+                        .italic()
+                }
+            } else {
+                // Draft excerpt
+                Text(String(draftContent.prefix(120)))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.7))
+                    .lineLimit(4)
+
+                // Word count badge
+                if wordCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.word.spacing")
+                            .font(.system(size: 9))
+                        Text("\(wordCount) words")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(accentColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(accentColor.opacity(0.1), in: Capsule())
+                }
+            }
+        }
+    }
+
+    private var polishPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let analysis = polishAnalysis {
+                // Readability score bar
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(accentColor)
+                    Text(analysis.readabilityLabel)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                }
+
+                // Stats row
+                HStack(spacing: 10) {
+                    Label("Grade \(String(format: "%.0f", analysis.fleschKincaidGrade))", systemImage: "graduationcap")
+                    Label("\(analysis.wordCount)w", systemImage: "text.word.spacing")
+                    Label("\(analysis.sentenceCount)s", systemImage: "text.alignleft")
+                }
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.4))
+            } else if wordCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10))
+                        .foregroundColor(accentColor.opacity(0.6))
+                    Text("Ready to polish")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+
+                if wordCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.word.spacing")
+                            .font(.system(size: 9))
+                        Text("\(wordCount) words")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(accentColor.opacity(0.7))
+                }
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.3))
+                    Text("Draft first, then polish")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.3))
+                        .italic()
+                }
+            }
+        }
+    }
+
+    // MARK: - Bottom Info Bar
+
+    private var bottomInfoBar: some View {
+        HStack(spacing: 6) {
+            // Phase badge
+            HStack(spacing: 3) {
+                Image(systemName: currentContentPhase.iconName)
+                    .font(.system(size: 8))
+                Text("Phase \((ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0) + 1)/8")
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundColor(accentColor.opacity(0.6))
+
+            Spacer()
+
+            // Last modified
+            if let modified = lastModified {
+                Text(formatRelativeDate(modified))
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.25))
+            } else if let timestamp = block.metadata["updated"] {
+                Text(formatTimestamp(timestamp))
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.25))
+            }
+        }
+    }
+
+    // MARK: - Step Switching
+
+    private func switchStep(to step: ContentStep) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            currentStep = step
+        }
+        // Write step change directly to atom metadata
+        let entityUuid = block.entityUuid
+        guard !entityUuid.isEmpty else { return }
+        Task {
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [entityUuid]),
+                       let existing: String = row["metadata"],
+                       let data = existing.data(using: .utf8),
+                       var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        dict["currentStep"] = step.rawValue
+                        if let metadataData = try? JSONSerialization.data(withJSONObject: dict),
+                           let str = String(data: metadataData, encoding: .utf8) {
+                            try db.execute(
+                                sql: "UPDATE atoms SET metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                                arguments: [str, ISO8601DateFormatter().string(from: Date()), entityUuid]
+                            )
+                        }
+                    }
+                }
+            } catch {
+                print("ContentBlockView: Failed to update step: \(error)")
+            }
+        }
+    }
+
+    // MARK: - GRDB Observation
+
+    private func startObservingAtom() {
+        guard block.entityId > 0 else { return }
+        let id = block.entityId
+        let observation = ValueObservation.tracking { db in
+            try Atom
+                .filter(Column("id") == id)
+                .fetchOne(db)
+        }
+        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { _ in },
+                receiveValue: { [self] atom in
+                    guard let atom else { return }
+                    contentTitle = atom.title ?? ""
+                    contentBody = atom.body ?? ""
+                    // Read focus state directly from atom metadata (not UserDefaults)
+                    parseAtomState(atom)
+                }
+            )
     }
 
     // MARK: - Load Content
 
     private func loadContent() {
-        if let title = block.metadata["title"] {
-            contentTitle = title
+        contentTitle = block.title
+        reloadFocusState()
+
+        // Load atom from database for title/body
+        if block.entityId > 0 {
+            Task {
+                if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                    await MainActor.run {
+                        if let title = atom.title, !title.isEmpty {
+                            contentTitle = title
+                        }
+                        if let body = atom.body {
+                            contentBody = body
+                        }
+                    }
+                }
+            }
         }
-        if let content = block.metadata["content"] {
-            contentBody = content
+    }
+
+    /// Reload workflow state from the atom in the database
+    private func reloadFocusState() {
+        guard block.entityId > 0 else { return }
+        Task {
+            if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                await MainActor.run {
+                    parseAtomState(atom)
+                }
+            }
+        }
+    }
+
+    /// Extract focus state fields from atom metadata
+    private func parseAtomState(_ atom: Atom) {
+        // Read pipeline phase from ContentAtomMetadata
+        if let metadata = atom.metadataValue(as: ContentAtomMetadata.self) {
+            currentContentPhase = metadata.phase
+        }
+
+        if let state = ContentFocusModeState.from(atom: atom) {
+            print("🔄 ContentBlock parseAtomState: step=\(state.currentStep.rawValue), coreIdea=\(state.coreIdea.prefix(20)), outline=\(state.outline.count), draft=\(state.draftContent.count)chars")
+            currentStep = state.currentStep
+            coreIdea = state.coreIdea
+            draftContent = state.draftContent
+            outlineItems = state.sortedOutline.map { $0.text }
+            wordCount = state.draftContent.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+            polishAnalysis = state.polishAnalysis
+            lastModified = state.lastModified
+        } else {
+            print("🔄 ContentBlock parseAtomState: from(atom:) returned nil — metadata: \(atom.metadata?.prefix(100) ?? "nil")")
         }
     }
 
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        NotificationCenter.default.post(
-            name: .enterFocusMode,
-            object: nil,
-            userInfo: [
-                "type": EntityType.content,
-                "id": block.entityId,
-                "blockId": block.id,
-                "content": contentBody
-            ]
-        )
+        print("📂 ContentBlockView.openFocusMode: entityId=\(block.entityId), entityUuid=\(block.entityUuid), blockId=\(block.id)")
+        if block.entityId > 0 {
+            // Has backing atom — open directly
+            NotificationCenter.default.post(
+                name: .enterFocusMode,
+                object: nil,
+                userInfo: [
+                    "type": EntityType.content,
+                    "id": block.entityId
+                ]
+            )
+        } else {
+            // No backing atom — create one first (like NoteBlockView does)
+            Task {
+                do {
+                    let newAtom = try await AtomRepository.shared.createContent(
+                        title: contentTitle.isEmpty ? "Untitled Content" : contentTitle,
+                        body: contentBody.isEmpty ? nil : contentBody
+                    )
+                    let atomId = newAtom.id ?? Int64(-1)
+
+                    // Link the canvas block to the new atom
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: """
+                            UPDATE canvas_blocks
+                            SET entity_id = ?, entity_uuid = ?
+                            WHERE id = ?
+                            """,
+                            arguments: [atomId, newAtom.uuid, block.id]
+                        )
+                    }
+
+                    await MainActor.run {
+                        // Notify canvas to reload blocks so entityId is updated in memory
+                        NotificationCenter.default.post(
+                            name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                            object: nil
+                        )
+
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: [
+                                "type": EntityType.content,
+                                "id": atomId
+                            ]
+                        )
+                    }
+                } catch {
+                    print("ContentBlockView: Failed to create backing atom: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -194,6 +535,12 @@ struct ContentBlockView: View {
             return formatter.localizedString(for: date, relativeTo: Date())
         }
         return timestamp
+    }
+
+    private func formatRelativeDate(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

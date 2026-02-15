@@ -568,6 +568,19 @@ class VoiceEngine: ObservableObject {
     }
 
     private func routeCommand(_ transcript: String) async {
+        // Clipboard capture commands — intercept before pipeline routing
+        let normalized = transcript.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "swipe" || normalized == "swipe file" || normalized == "swipe this" {
+            print("📋 Voice command: clipboard capture as swipe")
+            await SwipeFileEngine.shared.captureFromClipboard(asSwipe: true)
+            return
+        }
+        if normalized == "research" || normalized == "research this" || normalized == "save research" {
+            print("📋 Voice command: clipboard capture as research")
+            await SwipeFileEngine.shared.captureFromClipboard(asSwipe: false)
+            return
+        }
+
         // Convert NavigationSection to AppSection
         let section: AppSection = {
             switch contextSnapshot?.selectedSection {
@@ -615,6 +628,21 @@ class VoiceEngine: ObservableObject {
 
         print("⌨️ Processing text command: \"\(text)\"")
         isProcessing = true
+
+        // Clipboard capture commands — "swipe" or "research" grabs clipboard
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "swipe" || normalized == "swipe file" || normalized == "swipe this" {
+            print("📋 Text command: clipboard capture as swipe")
+            await SwipeFileEngine.shared.captureFromClipboard(asSwipe: true)
+            isProcessing = false
+            return
+        }
+        if normalized == "research" || normalized == "research this" || normalized == "save research" {
+            print("📋 Text command: clipboard capture as research")
+            await SwipeFileEngine.shared.captureFromClipboard(asSwipe: false)
+            isProcessing = false
+            return
+        }
 
         // Check if input is a URL - if so, process as quick capture (research atom)
         if QuickCaptureProcessor.shared.isURL(text) {

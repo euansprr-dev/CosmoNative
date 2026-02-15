@@ -8,8 +8,7 @@ import Foundation
 
 /// Phases in the content creation pipeline
 public enum ContentPhase: String, Codable, CaseIterable, Sendable {
-    case ideation           // Initial concept
-    case outline            // Structure defined
+    case ideation           // Initial concept + outline building
     case draft              // First draft
     case polish             // Editing/refining
     case scheduled          // Ready for publish
@@ -20,7 +19,6 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .ideation: return "Ideation"
-        case .outline: return "Outline"
         case .draft: return "Draft"
         case .polish: return "Polish"
         case .scheduled: return "Scheduled"
@@ -33,7 +31,6 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
     var iconName: String {
         switch self {
         case .ideation: return "lightbulb"
-        case .outline: return "list.bullet"
         case .draft: return "doc.text"
         case .polish: return "sparkles"
         case .scheduled: return "calendar.badge.clock"
@@ -43,11 +40,23 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Previous phase in the pipeline
+    var previousPhase: ContentPhase? {
+        switch self {
+        case .ideation: return nil
+        case .draft: return .ideation
+        case .polish: return .draft
+        case .scheduled: return .polish
+        case .published: return .scheduled
+        case .analyzing: return .published
+        case .archived: return .analyzing
+        }
+    }
+
     /// Next phase in the pipeline
     var nextPhase: ContentPhase? {
         switch self {
-        case .ideation: return .outline
-        case .outline: return .draft
+        case .ideation: return .draft
         case .draft: return .polish
         case .polish: return .scheduled
         case .scheduled: return .published
@@ -60,8 +69,7 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
     /// XP earned for completing this phase
     var completionXP: Int {
         switch self {
-        case .ideation: return 5
-        case .outline: return 10
+        case .ideation: return 15
         case .draft: return 25
         case .polish: return 15
         case .scheduled: return 5
@@ -495,6 +503,53 @@ struct ClientProfileMetadata: Codable, Sendable {
     /// Target audience description
     let targetAudience: String?
 
+    // MARK: - Brand Context (WP3 extension)
+
+    /// The client's origin story / brand narrative
+    var brandStory: String?
+
+    /// The client's long-term vision or mission
+    var brandVision: String?
+
+    /// Core beliefs or values that drive content
+    var coreBeliefs: [String]?
+
+    /// Notes about the client's voice, tone, and style
+    var voiceNotes: String?
+
+    /// What makes this client's perspective unique
+    var uniqueAngle: String?
+
+    // MARK: - Performance Context
+
+    /// UUIDs of top-performing posts for reference
+    var topPerformingPostIds: [String]?
+
+    /// Transcripts or text of top-performing content
+    var topPerformingTranscripts: [String]?
+
+    /// Content formats that perform best for this client (raw ContentFormat values)
+    var bestFormats: [String]?
+
+    // MARK: - Posting Context
+
+    /// Posting frequency description (e.g., "3x/week", "daily")
+    var postingFrequency: String?
+
+    /// Preferred posting times (e.g., ["9:00 AM EST", "6:00 PM EST"])
+    var preferredPostTimes: [String]?
+
+    // MARK: - Identity (merged from ClientMetadata)
+
+    /// Primary social handle (e.g., "@creator")
+    var handle: String?
+
+    /// Client's niche / content vertical
+    var niche: String?
+
+    /// Whether this is a personal brand (vs. company/agency)
+    var isPersonalBrand: Bool?
+
     init(
         clientId: String,
         clientName: String,
@@ -508,7 +563,20 @@ struct ClientProfileMetadata: Codable, Sendable {
         lastContentDate: Date? = nil,
         notes: String? = nil,
         industry: String? = nil,
-        targetAudience: String? = nil
+        targetAudience: String? = nil,
+        brandStory: String? = nil,
+        brandVision: String? = nil,
+        coreBeliefs: [String]? = nil,
+        voiceNotes: String? = nil,
+        uniqueAngle: String? = nil,
+        topPerformingPostIds: [String]? = nil,
+        topPerformingTranscripts: [String]? = nil,
+        bestFormats: [String]? = nil,
+        postingFrequency: String? = nil,
+        preferredPostTimes: [String]? = nil,
+        handle: String? = nil,
+        niche: String? = nil,
+        isPersonalBrand: Bool? = nil
     ) {
         self.clientId = clientId
         self.clientName = clientName
@@ -523,6 +591,19 @@ struct ClientProfileMetadata: Codable, Sendable {
         self.notes = notes
         self.industry = industry
         self.targetAudience = targetAudience
+        self.brandStory = brandStory
+        self.brandVision = brandVision
+        self.coreBeliefs = coreBeliefs
+        self.voiceNotes = voiceNotes
+        self.uniqueAngle = uniqueAngle
+        self.topPerformingPostIds = topPerformingPostIds
+        self.topPerformingTranscripts = topPerformingTranscripts
+        self.bestFormats = bestFormats
+        self.postingFrequency = postingFrequency
+        self.preferredPostTimes = preferredPostTimes
+        self.handle = handle
+        self.niche = niche
+        self.isPersonalBrand = isPersonalBrand
     }
 }
 

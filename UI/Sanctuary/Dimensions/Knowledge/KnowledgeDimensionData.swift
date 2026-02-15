@@ -581,6 +581,14 @@ public struct KnowledgeDimensionData: Codable, Sendable {
     }
 }
 
+// MARK: - Empty Check
+
+extension KnowledgeDimensionData {
+    public var isEmpty: Bool {
+        nodes.isEmpty && capturesToday == 0 && totalResearchToday == 0
+    }
+}
+
 // MARK: - Preview Data
 
 #if DEBUG

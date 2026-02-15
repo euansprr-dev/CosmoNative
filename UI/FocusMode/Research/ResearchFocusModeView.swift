@@ -23,6 +23,8 @@ struct ResearchFocusModeView: View {
 
     @StateObject private var viewModel: ResearchFocusModeViewModel
     @StateObject private var panelManager: FloatingPanelManager
+    @StateObject private var focusConnectManager = FocusConnectManager()
+    @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
     @State private var showResearchAgentSheet = false
@@ -34,6 +36,7 @@ struct ResearchFocusModeView: View {
         self.onClose = onClose
         self._viewModel = StateObject(wrappedValue: ResearchFocusModeViewModel(atom: atom))
         self._panelManager = StateObject(wrappedValue: FloatingPanelManager(focusAtomUUID: atom.uuid))
+        self._floatingBlocksManager = StateObject(wrappedValue: FocusFloatingBlocksManager(ownerAtomUUID: atom.uuid))
     }
 
     // MARK: - Body
@@ -50,6 +53,12 @@ struct ResearchFocusModeView: View {
                 floatingContent: {
                     floatingPanelsLayer
                 }
+            )
+
+            // Focus connection lines layer (universal linking)
+            FocusConnectionLinesLayer(
+                connectManager: focusConnectManager,
+                focusAtomUUID: atom.uuid
             )
 
             // Top bar overlay
@@ -69,11 +78,17 @@ struct ResearchFocusModeView: View {
                 )
             }
         }
+        .focusBlockContextMenu(
+            manager: floatingBlocksManager,
+            ownerAtomUUID: atom.uuid
+        )
         .onAppear {
             loadState()
+            listenForAtomPicker()
         }
         .onDisappear {
             saveState()
+            floatingBlocksManager.saveImmediately()
         }
         // Right-click for radial menu
         .onTapGesture(count: 1) {
@@ -263,14 +278,20 @@ struct ResearchFocusModeView: View {
                     onAnnotationTap: { annotation in
                         viewModel.selectAnnotation(annotation.id)
                     },
-                    onAnnotationEdit: { annotation in
-                        viewModel.editAnnotation(annotation)
+                    onAnnotationEdit: { annotation, newContent in
+                        viewModel.editAnnotation(annotation, newContent: newContent)
                     },
                     onAnnotationDelete: { annotation in
                         viewModel.deleteAnnotation(annotation.id)
+                    },
+                    onAnnotationPositionChange: { annotation, offset in
+                        viewModel.updateAnnotationPosition(annotation, offset: offset)
+                    },
+                    onCreateHighlightAnnotation: { sectionID, type, selectedText, range in
+                        viewModel.createHighlightAnnotation(sectionID: sectionID, type: type, selectedText: selectedText, range: range)
                     }
                 )
-                .frame(width: 600)
+                .frame(width: 520) // Narrower now that annotations only go right
             }
         }
     }
@@ -279,29 +300,34 @@ struct ResearchFocusModeView: View {
 
     @ViewBuilder
     private var floatingPanelsLayer: some View {
-        // Floating panels from database
-        ForEach(panelManager.panels) { panel in
-            FloatingPanelWrapper(
-                panelManager: panelManager,
-                panelID: panel.id,
-                atomUUID: panel.atomUUID
-            )
-        }
+        ZStack {
+            // Persistent floating blocks (stored in atom metadata)
+            FocusFloatingBlocksLayer(manager: floatingBlocksManager)
 
-        // Research Agent results
-        ForEach(viewModel.state.agentResults) { result in
-            ResearchAgentPanelView(
-                result: result,
-                position: agentResultPosition(for: result),
-                onConvertToAtom: {
-                    Task {
-                        await viewModel.convertAgentToAtom(result)
+            // Floating panels from database (legacy UserDefaults-based)
+            ForEach(panelManager.panels) { panel in
+                FloatingPanelWrapper(
+                    panelManager: panelManager,
+                    panelID: panel.id,
+                    atomUUID: panel.atomUUID
+                )
+            }
+
+            // Research Agent results
+            ForEach(viewModel.state.agentResults) { result in
+                ResearchAgentPanelView(
+                    result: result,
+                    position: agentResultPosition(for: result),
+                    onConvertToAtom: {
+                        Task {
+                            await viewModel.convertAgentToAtom(result)
+                        }
+                    },
+                    onDismiss: {
+                        viewModel.removeAgentResult(result.id)
                     }
-                },
-                onDismiss: {
-                    viewModel.removeAgentResult(result.id)
-                }
-            )
+                )
+            }
         }
     }
 
@@ -447,11 +473,40 @@ struct ResearchFocusModeView: View {
     }
 
     private func addPanelForAtom(_ atom: Atom, at position: CGPoint) {
-        panelManager.addPanel(
-            atomUUID: atom.uuid,
-            atomType: atom.type,
+        // Add as persistent floating block (stored in atom metadata)
+        floatingBlocksManager.addBlock(
+            linkedAtomUUID: atom.uuid,
+            linkedAtomType: atom.type,
+            title: atom.title ?? "Untitled",
             position: position
         )
+    }
+
+    /// Listen for atom picker notifications to add existing atoms as floating blocks
+    private func listenForAtomPicker() {
+        NotificationCenter.default.addObserver(
+            forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let userInfo = notification.userInfo,
+                  let atomUUID = userInfo["atomUUID"] as? String,
+                  let atomTypeRaw = userInfo["atomType"] as? String,
+                  let atomType = AtomType(rawValue: atomTypeRaw),
+                  let title = userInfo["title"] as? String else { return }
+
+            let position = CGPoint(
+                x: 500 + CGFloat.random(in: -60...60),
+                y: 300 + CGFloat.random(in: -60...60)
+            )
+
+            floatingBlocksManager.addBlock(
+                linkedAtomUUID: atomUUID,
+                linkedAtomType: atomType,
+                title: title,
+                position: position
+            )
+        }
     }
 
     private func agentResultPosition(for result: ResearchAgentResult) -> CGPoint {
@@ -582,44 +637,90 @@ class ResearchFocusModeViewModel: ObservableObject {
     // MARK: - Metadata Parsing
 
     private func parseAtomMetadata() {
-        // Parse structured data from atom
-        guard let structuredJSON = atom.structured,
-              let data = structuredJSON.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return
+        // Use wrapper properties to access research data
+        // The data is stored in structured.autoMetadata as ResearchRichContent
+        let richContent = atom.richContent
+
+        // Get URL from multiple possible sources
+        var url = atom.url ?? extractURLFromStructured()
+
+        // If no URL found, try to construct from videoId
+        if url == nil, let videoId = richContent?.videoId {
+            url = "https://www.youtube.com/watch?v=\(videoId)"
+            print("🔧 Constructed YouTube URL from videoId: \(videoId)")
         }
 
-        // Extract source info
-        if let url = json["url"] as? String ?? json["source_url"] as? String {
+        print("📊 ResearchFocusMode parsing: url=\(url ?? "nil"), richContent=\(richContent != nil ? "present" : "nil")")
+        print("   atom.url=\(atom.url ?? "nil"), thumbnailUrl=\(atom.thumbnailUrl ?? "nil")")
+        print("   richContent.sourceType=\(richContent?.sourceType?.rawValue ?? "nil")")
+        print("   richContent.videoId=\(richContent?.videoId ?? "nil")")
+        print("   richContent.author=\(richContent?.author ?? "nil")")
+        print("   richContent.duration=\(richContent?.duration.map(String.init) ?? "nil")")
+
+        if let url = url {
             state.contentType = ResearchSource.detectContentType(from: url)
+
+            // Parse publishedAt string to Date if available
+            let publishedDate: Date? = richContent?.publishedAt.flatMap { ISO8601DateFormatter().date(from: $0) }
 
             state.source = ResearchSource(
                 url: url,
-                platform: json["platform"] as? String ?? ResearchSource.detectPlatform(from: url),
-                author: json["author"] as? String,
-                channelName: json["channel"] as? String ?? json["channel_name"] as? String,
-                publishedAt: nil, // Would parse from json["published_at"]
-                duration: json["duration"] as? TimeInterval ?? parseDuration(json["duration_string"] as? String),
-                thumbnailURL: json["thumbnail_url"] as? String ?? json["thumbnail"] as? String
+                platform: richContent?.sourceType?.displayName ?? ResearchSource.detectPlatform(from: url),
+                author: richContent?.author,
+                channelName: richContent?.author,
+                publishedAt: publishedDate,
+                duration: richContent?.duration.map { TimeInterval($0) },
+                thumbnailURL: atom.thumbnailUrl ?? richContent?.thumbnailUrl
             )
+            print("   ✅ Detected contentType: \(state.contentType), platform: \(state.source?.platform ?? "nil")")
+        } else {
+            print("   ⚠️ No URL found - will show generic content")
         }
 
-        // Parse transcript if available
-        if let transcriptData = json["transcript"] as? [[String: Any]] {
-            state.transcriptSections = transcriptData.compactMap { segmentData -> TranscriptSection? in
-                guard let start = segmentData["start"] as? TimeInterval,
-                      let end = segmentData["end"] as? TimeInterval,
-                      let text = segmentData["text"] as? String else {
-                    return nil
-                }
-
-                return TranscriptSection(
-                    startTime: start,
-                    endTime: end,
-                    text: text,
-                    speakerName: segmentData["speaker"] as? String
+        // Parse transcript from body field (stored as JSON string) or richContent
+        if let transcriptSegments = richContent?.transcriptSegments, !transcriptSegments.isEmpty {
+            state.transcriptSections = transcriptSegments.map { segment in
+                TranscriptSection(
+                    startTime: segment.start,
+                    endTime: segment.end,
+                    text: segment.text,
+                    speakerName: nil
                 )
             }
+            print("   ✅ Loaded \(state.transcriptSections.count) transcript sections from richContent")
+        } else if let bodyJSON = atom.body, !bodyJSON.isEmpty {
+            // Try to parse transcript from body field
+            parseTranscriptFromBody(bodyJSON)
+            print("   ✅ Parsed \(state.transcriptSections.count) transcript sections from body")
+        } else {
+            print("   ⚠️ No transcript data found")
+        }
+    }
+
+    /// Extract URL from structured JSON if not in metadata
+    private func extractURLFromStructured() -> String? {
+        guard let structuredJSON = atom.structured,
+              let data = structuredJSON.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json["url"] as? String ?? json["source_url"] as? String
+    }
+
+    /// Parse transcript from body JSON string
+    private func parseTranscriptFromBody(_ bodyJSON: String) {
+        guard let data = bodyJSON.data(using: .utf8),
+              let segments = try? JSONDecoder().decode([TranscriptSegment].self, from: data) else {
+            return
+        }
+
+        state.transcriptSections = segments.map { segment in
+            TranscriptSection(
+                startTime: segment.start,
+                endTime: segment.end,
+                text: segment.text,
+                speakerName: nil
+            )
         }
     }
 
@@ -675,9 +776,36 @@ class ResearchFocusModeViewModel: ObservableObject {
         selectedAnnotationID = id
     }
 
-    func editAnnotation(_ annotation: ResearchAnnotation) {
-        // Would open edit sheet
-        print("Edit annotation: \(annotation.content)")
+    func editAnnotation(_ annotation: ResearchAnnotation, newContent: String) {
+        state.updateAnnotationContent(id: annotation.id, content: newContent)
+        saveState()
+    }
+
+    func updateAnnotationPosition(_ annotation: ResearchAnnotation, offset: CGPoint) {
+        state.updateAnnotationPosition(id: annotation.id, offset: offset)
+        saveState()
+    }
+
+    func createHighlightAnnotation(sectionID: UUID, type: AnnotationType, selectedText: String, range: NSRange) {
+        let annotation = ResearchAnnotation(
+            type: type,
+            content: "",
+            timestamp: currentTimestamp,
+            highlightedText: selectedText,
+            sectionID: sectionID
+        )
+
+        let highlight = TextHighlight(
+            annotationID: annotation.id,
+            startCharIndex: range.location,
+            endCharIndex: range.location + range.length,
+            annotationType: type,
+            highlightedText: selectedText
+        )
+
+        state.addAnnotation(annotation, toSection: sectionID)
+        state.addHighlight(highlight, toSection: sectionID)
+        saveState()
     }
 
     func deleteAnnotation(_ id: UUID) {

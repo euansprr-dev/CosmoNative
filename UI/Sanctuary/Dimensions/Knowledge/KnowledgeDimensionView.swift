@@ -13,17 +13,17 @@ public struct KnowledgeDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: KnowledgeDimensionViewModel
+    @StateObject private var dataProvider = KnowledgeDataProvider()
     @State private var selectedNode: KnowledgeNode?
     @State private var selectedCapture: KnowledgeCapture?
     @State private var showNodeDetail: Bool = false
     @State private var showCaptureDetail: Bool = false
-
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: KnowledgeDimensionData = .preview,
+        data: KnowledgeDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: KnowledgeDimensionViewModel(data: data))
@@ -113,6 +113,13 @@ public struct KnowledgeDimensionView: View {
 
             // Detail overlays
             detailOverlays
+        }
+        .task {
+            await dataProvider.refreshData()
+            viewModel.data = dataProvider.data
+        }
+        .onChange(of: dataProvider.data.capturesToday) { _ in
+            viewModel.data = dataProvider.data
         }
     }
 

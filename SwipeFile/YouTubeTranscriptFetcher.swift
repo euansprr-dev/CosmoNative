@@ -1,11 +1,11 @@
 // CosmoOS/SwipeFile/YouTubeTranscriptFetcher.swift
-// Fetches YouTube video transcripts using YouTube's internal API
-// Falls back to video metadata if transcript unavailable
+// Fetches YouTube video transcripts via page-scraping
+// Extracts ytInitialPlayerResponse from watch page HTML — no API key required
 
 import Foundation
 
 /// Fetches YouTube video transcripts and metadata
-/// Uses YouTube's Innertube API (same as official apps)
+/// Uses page-scraping to extract captions (same approach as youtube-transcript-api)
 actor YouTubeTranscriptFetcher {
     static let shared = YouTubeTranscriptFetcher()
 
@@ -25,61 +25,45 @@ actor YouTubeTranscriptFetcher {
         }
     }
 
-    // MARK: - Innertube API Constants
-
-    private let innertubeApiKey = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-    private let innertubeClientVersion = "2.20231219.04.00"
-
     // MARK: - Fetch Transcript
 
     func fetchTranscript(videoId: String) async throws -> TranscriptResult {
-        // First, get video page to extract necessary tokens
-        let playerResponse = try await fetchPlayerResponse(videoId: videoId)
+        // 1. Fetch the watch page HTML
+        let playerResponse = try await fetchPlayerResponseFromPage(videoId: videoId)
 
-        // Extract video details
+        // 2. Extract video details
         let title = playerResponse.videoDetails?.title
         let author = playerResponse.videoDetails?.author
         let duration = Int(playerResponse.videoDetails?.lengthSeconds ?? "0")
 
-        // Try to get transcript
-        if let captionTracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks,
-           let track = captionTracks.first {
-            let transcript = try await fetchTranscriptFromTrack(track.baseUrl)
-            return TranscriptResult(
-                fullText: transcript.fullText,
-                segments: transcript.segments,
-                duration: duration,
-                author: author,
-                title: title
-            )
+        // 3. Find best caption track
+        guard let captionTracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks,
+              !captionTracks.isEmpty else {
+            throw TranscriptError.noCaptionsAvailable
         }
 
-        // No captions available - return empty transcript with metadata
-        throw TranscriptError.noCaptionsAvailable
+        let track = chooseBestTrack(captionTracks)
+
+        // 4. Fetch transcript from caption track
+        let transcript = try await fetchTranscriptFromTrack(track.baseUrl)
+        return TranscriptResult(
+            fullText: transcript.fullText,
+            segments: transcript.segments,
+            duration: duration,
+            author: author,
+            title: title
+        )
     }
 
-    // MARK: - Player Response
+    // MARK: - Page Scraping
 
-    private func fetchPlayerResponse(videoId: String) async throws -> InnertubePlayerResponse {
-        let url = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(innertubeApiKey)")!
+    /// Fetch the YouTube watch page and extract ytInitialPlayerResponse JSON
+    private func fetchPlayerResponseFromPage(videoId: String) async throws -> InnertubePlayerResponse {
+        let watchUrl = URL(string: "https://www.youtube.com/watch?v=\(videoId)")!
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = [
-            "context": [
-                "client": [
-                    "clientName": "WEB",
-                    "clientVersion": innertubeClientVersion,
-                    "hl": "en",
-                    "gl": "US"
-                ]
-            ],
-            "videoId": videoId
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var request = URLRequest(url: watchUrl)
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("en", forHTTPHeaderField: "Accept-Language")
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -88,7 +72,127 @@ actor YouTubeTranscriptFetcher {
             throw TranscriptError.apiError
         }
 
-        return try JSONDecoder().decode(InnertubePlayerResponse.self, from: data)
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw TranscriptError.parseError
+        }
+
+        // Extract ytInitialPlayerResponse JSON from the page
+        guard let json = extractPlayerResponseJSON(from: html) else {
+            throw TranscriptError.parseError
+        }
+
+        guard let jsonData = json.data(using: .utf8) else {
+            throw TranscriptError.parseError
+        }
+
+        return try JSONDecoder().decode(InnertubePlayerResponse.self, from: jsonData)
+    }
+
+    /// Extract the balanced JSON object after `var ytInitialPlayerResponse = `
+    private func extractPlayerResponseJSON(from html: String) -> String? {
+        // Look for the assignment pattern
+        let markers = [
+            "var ytInitialPlayerResponse = ",
+            "ytInitialPlayerResponse = "
+        ]
+
+        for marker in markers {
+            guard let markerRange = html.range(of: marker) else { continue }
+            let jsonStart = markerRange.upperBound
+
+            // Extract balanced JSON by counting braces
+            if let json = extractBalancedJSON(from: html, startingAt: jsonStart) {
+                return json
+            }
+        }
+
+        // Fallback: try regex for the pattern in a script tag
+        // Some pages embed it differently
+        let scriptPattern = #"ytInitialPlayerResponse\s*=\s*(\{.+?\});"#
+        if let regex = try? NSRegularExpression(pattern: scriptPattern, options: [.dotMatchesLineSeparators]),
+           let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+           let captureRange = Range(match.range(at: 1), in: html) {
+            let candidate = String(html[captureRange])
+            // Validate it's parseable JSON
+            if let data = candidate.data(using: .utf8),
+               (try? JSONSerialization.jsonObject(with: data)) != nil {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    /// Extract a balanced JSON object from the string starting at the given index
+    private func extractBalancedJSON(from string: String, startingAt start: String.Index) -> String? {
+        guard start < string.endIndex, string[start] == "{" else { return nil }
+
+        var depth = 0
+        var inString = false
+        var escape = false
+        var index = start
+
+        while index < string.endIndex {
+            let char = string[index]
+
+            if escape {
+                escape = false
+                index = string.index(after: index)
+                continue
+            }
+
+            if char == "\\" && inString {
+                escape = true
+                index = string.index(after: index)
+                continue
+            }
+
+            if char == "\"" {
+                inString.toggle()
+                index = string.index(after: index)
+                continue
+            }
+
+            if !inString {
+                if char == "{" {
+                    depth += 1
+                } else if char == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        let end = string.index(after: index)
+                        return String(string[start..<end])
+                    }
+                }
+            }
+
+            index = string.index(after: index)
+        }
+
+        return nil
+    }
+
+    // MARK: - Track Selection
+
+    /// Choose the best caption track: prefer English manual, then English auto, then any
+    private func chooseBestTrack(_ tracks: [InnertubePlayerResponse.CaptionTrack]) -> InnertubePlayerResponse.CaptionTrack {
+        // Prefer English manual captions
+        if let manual = tracks.first(where: { $0.languageCode == "en" && $0.kind != "asr" }) {
+            return manual
+        }
+        // Fall back to English auto-generated
+        if let auto = tracks.first(where: { $0.languageCode == "en" && $0.kind == "asr" }) {
+            return auto
+        }
+        // Fall back to any English variant
+        if let english = tracks.first(where: { $0.languageCode?.hasPrefix("en") == true }) {
+            return english
+        }
+        // Fall back to any manual
+        if let manual = tracks.first(where: { $0.kind != "asr" }) {
+            return manual
+        }
+        // Last resort: first available
+        return tracks[0]
     }
 
     // MARK: - Transcript Track Fetching
@@ -206,7 +310,7 @@ actor YouTubeTranscriptFetcher {
         let numericPattern = #"&#(\d+);"#
         if let regex = try? NSRegularExpression(pattern: numericPattern) {
             let range = NSRange(result.startIndex..., in: result)
-            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "") // Simplified
+            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "")
         }
 
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -225,11 +329,11 @@ actor YouTubeTranscriptFetcher {
             case .noCaptionsAvailable:
                 return "No captions available for this video"
             case .apiError:
-                return "YouTube API request failed"
+                return "YouTube page request failed"
             case .invalidUrl:
                 return "Invalid transcript URL"
             case .parseError:
-                return "Failed to parse transcript"
+                return "Failed to parse transcript from page"
             }
         }
     }

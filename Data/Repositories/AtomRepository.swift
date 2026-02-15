@@ -116,6 +116,43 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Fetch recent atoms (for Command-K hot context)
+    /// Returns most recently updated atoms across all user-facing types
+    func fetchRecent(limit: Int = 25) async throws -> [Atom] {
+        // Only include user-facing atom types (exclude system types)
+        let userTypes: [AtomType] = [.idea, .task, .research, .content, .connection, .project, .journalEntry]
+        let typeStrings = userTypes.map { $0.rawValue }
+
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(typeStrings.contains(Column("type")))
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Search atoms by title or body content (basic keyword search)
+    func search(query: String, limit: Int = 50) async throws -> [Atom] {
+        let userTypes: [AtomType] = [.idea, .task, .research, .content, .connection, .project, .journalEntry]
+        let typeStrings = userTypes.map { $0.rawValue }
+        let searchPattern = "%\(query)%"
+
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(typeStrings.contains(Column("type")))
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(
+                    sql: "(title LIKE ? COLLATE NOCASE OR body LIKE ? COLLATE NOCASE)",
+                    arguments: [searchPattern, searchPattern]
+                )
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     // MARK: - Create Operations
 
     /// Create a new atom
@@ -136,6 +173,9 @@ class AtomRepository: ObservableObject {
 
         // Track for sync
         await changeTracker.trackInsert(table: Atom.databaseTableName, entity: savedAtom)
+
+        // Sync to NodeGraph
+        try? await NodeGraphEngine.shared.handleAtomCreated(savedAtom)
 
         return savedAtom
     }
@@ -179,6 +219,9 @@ class AtomRepository: ObservableObject {
         // Track for sync
         await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom)
 
+        // Sync to NodeGraph
+        try? await NodeGraphEngine.shared.handleAtomUpdated(updatedAtom, changedFields: ["title", "body", "links", "metadata"])
+
         return updatedAtom
     }
 
@@ -206,6 +249,9 @@ class AtomRepository: ObservableObject {
 
         // Track for sync
         await changeTracker.trackDelete(table: Atom.databaseTableName, uuid: uuid, rowId: nil)
+
+        // Sync to NodeGraph
+        try? await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)
     }
 
     /// Soft delete an atom
@@ -657,6 +703,22 @@ extension AtomRepository {
         try await fetchAll(types: types)
     }
 
+    /// Fuzzy find client profile by name or handle
+    func fuzzyFindClient(query: String) async throws -> Atom? {
+        let pattern = "%\(query)%"
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.clientProfile.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(
+                    Column("title").like(pattern) ||
+                    Column("metadata").like(pattern)
+                )
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchOne(db)
+        }
+    }
+
     /// Fuzzy find project by name (for voice command routing)
     func fuzzyFindProject(query: String) async throws -> Atom? {
         let pattern = "%\(query)%"
@@ -1053,5 +1115,236 @@ extension AtomRepository {
             title: title,
             metadata: metadataString
         )
+    }
+}
+
+// MARK: - IdeaForge Convenience Methods
+
+extension AtomRepository {
+
+    /// Create an enriched idea with optional format, client, and capture source
+    @discardableResult
+    func createEnrichedIdea(
+        title: String?,
+        content: String,
+        tags: [String] = [],
+        contentFormat: ContentFormat? = nil,
+        platform: IdeaPlatform? = nil,
+        clientQuery: String? = nil,
+        captureSource: String? = nil,
+        originSwipeUUID: String? = nil,
+        projectUuid: String? = nil
+    ) async throws -> Atom {
+        var metadata = IdeaMetadata(
+            tags: tags,
+            priority: "Medium",
+            isPinned: false,
+            ideaStatus: .spark,
+            contentFormat: contentFormat,
+            platform: platform,
+            captureSource: captureSource,
+            originSwipeUUID: originSwipeUUID
+        )
+
+        var links: [AtomLink] = []
+        if let projectUuid = projectUuid {
+            links.append(.project(projectUuid))
+        }
+
+        // Auto-link to client if query provided
+        if let clientQuery = clientQuery {
+            if let client = try await fuzzyFindClient(query: clientQuery) {
+                metadata.clientUUID = client.uuid
+                links.append(.ideaToClient(client.uuid))
+            }
+        }
+
+        // Auto-link to origin swipe
+        if let swipeUUID = originSwipeUUID {
+            links.append(.ideaToSwipe(swipeUUID))
+        }
+
+        let idea = try await create(
+            type: .idea,
+            title: title,
+            body: content,
+            metadata: try? String(data: JSONEncoder().encode(metadata), encoding: .utf8),
+            links: links.isEmpty ? nil : links
+        )
+
+        // Run quick insight in background (on-device, fast)
+        Task {
+            await IdeaInsightEngine.shared.quickEnrich(atom: idea)
+        }
+
+        return idea
+    }
+
+    /// Get all client profile atoms
+    func clientProfiles() async throws -> [Atom] {
+        try await fetchAll(type: .clientProfile)
+    }
+
+    /// Create a client profile atom
+    @discardableResult
+    func createClientProfile(
+        name: String,
+        handles: [String: String]? = nil,
+        niche: String? = nil,
+        color: String? = nil
+    ) async throws -> Atom {
+        let metadata = ClientMetadata(
+            handles: handles,
+            niche: niche,
+            color: color,
+            isActive: true
+        )
+
+        return try await create(
+            type: .clientProfile,
+            title: name,
+            metadata: try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+    }
+}
+
+// MARK: - Swipe Intelligence Taxonomy Methods
+
+extension AtomRepository {
+
+    /// Create a content creator atom
+    @discardableResult
+    func createCreator(name: String, handle: String, platform: String) async throws -> Atom {
+        let metadata = CreatorMetadata(
+            handle: handle,
+            platform: platform,
+            swipeCount: 0,
+            isActive: true
+        )
+
+        return try await create(
+            type: .creator,
+            title: name,
+            metadata: try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+    }
+
+    /// Fetch creator atoms with optional platform/niche filters
+    func fetchCreators(platform: String? = nil, niche: String? = nil) async throws -> [Atom] {
+        return try await database.asyncRead { db in
+            var request = Atom
+                .filter(Atom.CodingKeys.type == AtomType.creator.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+
+            if let platform = platform {
+                request = request.filter(
+                    sql: "metadata LIKE ?",
+                    arguments: ["%\"platform\":\"\(platform)\"%"]
+                )
+            }
+
+            if let niche = niche {
+                request = request.filter(
+                    sql: "metadata LIKE ?",
+                    arguments: ["%\"niche\":\"\(niche)\"%"]
+                )
+            }
+
+            return try request
+                .order(Column("title").asc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Fetch taxonomy value atoms for a specific dimension
+    func fetchTaxonomyValues(dimension: String) async throws -> [Atom] {
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.taxonomyValue.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(
+                    sql: "metadata LIKE ?",
+                    arguments: ["%\"dimension\":\"\(dimension)\"%"]
+                )
+                .order(sql: "json_extract(metadata, '$.sortOrder') ASC")
+                .fetchAll(db)
+        }
+    }
+
+    /// Create a taxonomy value atom
+    @discardableResult
+    func createTaxonomyValue(dimension: String, value: String, sortOrder: Int = 0, isDefault: Bool = false) async throws -> Atom {
+        let metadata = TaxonomyValueMetadata(
+            dimension: dimension,
+            value: value,
+            sortOrder: sortOrder,
+            isDefault: isDefault
+        )
+
+        return try await create(
+            type: .taxonomyValue,
+            title: value,
+            metadata: try? String(data: JSONEncoder().encode(metadata), encoding: .utf8)
+        )
+    }
+
+    /// Query swipe files by taxonomy dimensions. All parameters are optional;
+    /// nil parameters are ignored (partial matching). Results ordered by hookScore descending.
+    func fetchSwipesByTaxonomy(
+        contentType: ContentFormat? = nil,
+        narrative: NarrativeStyle? = nil,
+        niche: String? = nil,
+        creatorUUID: String? = nil
+    ) async throws -> [Atom] {
+        // Fetch all swipe file atoms, then filter in-memory by swipeAnalysis fields
+        let allSwipes = try await database.asyncRead { db in
+            var request = Atom
+                .filter(Atom.CodingKeys.type == AtomType.research.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE '%\"isSwipeFile\":true%'")
+
+            // Pre-filter by creatorUUID in structured JSON if provided
+            if let creatorUUID = creatorUUID {
+                request = request.filter(
+                    sql: "structured LIKE ?",
+                    arguments: ["%\"creatorUUID\":\"\(creatorUUID)\"%"]
+                )
+            }
+
+            // Pre-filter by niche in structured JSON if provided
+            if let niche = niche {
+                request = request.filter(
+                    sql: "structured LIKE ?",
+                    arguments: ["%\"niche\":\"\(niche)\"%"]
+                )
+            }
+
+            // Pre-filter by narrative in structured JSON if provided
+            if let narrative = narrative {
+                request = request.filter(
+                    sql: "structured LIKE ?",
+                    arguments: ["%\"primaryNarrative\":\"\(narrative.rawValue)\"%"]
+                )
+            }
+
+            // Pre-filter by content format in structured JSON if provided
+            if let contentType = contentType {
+                request = request.filter(
+                    sql: "structured LIKE ?",
+                    arguments: ["%\"swipeContentFormat\":\"\(contentType.rawValue)\"%"]
+                )
+            }
+
+            return try request.fetchAll(db)
+        }
+
+        // Sort by hookScore descending (from swipeAnalysis)
+        let sorted = allSwipes.sorted { a, b in
+            let scoreA = a.swipeAnalysis?.hookScore ?? 0
+            let scoreB = b.swipeAnalysis?.hookScore ?? 0
+            return scoreA > scoreB
+        }
+
+        return sorted
     }
 }

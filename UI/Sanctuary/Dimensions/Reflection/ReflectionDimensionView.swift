@@ -13,17 +13,19 @@ public struct ReflectionDimensionView: View {
     // MARK: - Properties
 
     @StateObject private var viewModel: ReflectionDimensionViewModel
+    @StateObject private var dataProvider = ReflectionDataProvider()
     @State private var selectedTheme: ReflectionTheme?
     @State private var selectedInsight: GrailInsight?
     @State private var showThemeDetail: Bool = false
     @State private var showInsightDetail: Bool = false
-
+    @State private var showMoodCheckIn: Bool = false
+    @State private var showJournalSheet: Bool = false
     let onBack: () -> Void
 
     // MARK: - Initialization
 
     public init(
-        data: ReflectionDimensionData = .preview,
+        data: ReflectionDimensionData = .empty,
         onBack: @escaping () -> Void
     ) {
         _viewModel = StateObject(wrappedValue: ReflectionDimensionViewModel(data: data))
@@ -110,6 +112,43 @@ public struct ReflectionDimensionView: View {
 
             // Detail overlays
             detailOverlays
+
+            // Mood Check-In overlay
+            if showMoodCheckIn {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture { showMoodCheckIn = false }
+
+                MoodCheckInView(isPresented: $showMoodCheckIn) { valence, energy, note in
+                    Task {
+                        await dataProvider.recordMood(valence: valence, energy: energy, note: note)
+                    }
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            // Journal Entry overlay
+            if showJournalSheet {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture { showJournalSheet = false }
+
+                JournalEntrySheet(isPresented: $showJournalSheet) { text, prompt in
+                    Task {
+                        await dataProvider.createJournalEntry(text: text, prompt: prompt)
+                    }
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .onAppear {
+            Task {
+                await dataProvider.refreshData()
+                viewModel.data = dataProvider.data
+            }
+        }
+        .onChange(of: dataProvider.data.journalStreak) { _ in
+            viewModel.data = dataProvider.data
         }
     }
 
@@ -226,9 +265,39 @@ public struct ReflectionDimensionView: View {
 
             Spacer()
 
+            // Quick actions
+            HStack(spacing: 8) {
+                quickActionButton(icon: "face.smiling", label: "Mood", action: { showMoodCheckIn = true })
+                quickActionButton(icon: "book", label: "Journal", action: { showJournalSheet = true })
+            }
+
             // Status indicator
             statusIndicator
         }
+    }
+
+    @ViewBuilder
+    private func quickActionButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(SanctuaryColors.Dimensions.reflection)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(SanctuaryColors.Dimensions.reflection.opacity(0.1))
+                    .overlay(
+                        Capsule()
+                            .stroke(SanctuaryColors.Dimensions.reflection.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var statusIndicator: some View {

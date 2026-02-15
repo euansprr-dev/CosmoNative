@@ -4,6 +4,8 @@
 // December 2025 - Thinkspace revamp
 
 import SwiftUI
+import GRDB
+import Combine
 
 struct NoteBlockView: View {
     let block: CanvasBlock
@@ -16,6 +18,9 @@ struct NoteBlockView: View {
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
+
+    // GRDB observation
+    @State private var observationCancellable: AnyCancellable?
 
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
@@ -35,6 +40,22 @@ struct NoteBlockView: View {
         }
         .onAppear {
             loadNote()
+            startObservingAtom()
+        }
+        .onDisappear {
+            observationCancellable?.cancel()
+        }
+        // Listen for direct state change notifications from focus mode
+        .onReceive(NotificationCenter.default.publisher(for: .noteFocusStateDidChange)) { notification in
+            if let uuid = notification.userInfo?["atomUUID"] as? String,
+               uuid == block.entityUuid {
+                if let title = notification.userInfo?["title"] as? String {
+                    noteTitle = title
+                }
+                if let body = notification.userInfo?["body"] as? String {
+                    noteText = body
+                }
+            }
         }
     }
 
@@ -125,12 +146,66 @@ struct NoteBlockView: View {
     // MARK: - Load Note
 
     private func loadNote() {
+        // First try block.metadata (for freeform blocks)
         if let title = block.metadata["title"] {
             noteTitle = title
         }
         if let content = block.metadata["content"] {
             noteText = content
         }
+
+        // Fall back to block.title / block.subtitle (for atom-backed blocks via fromAtom())
+        if noteTitle.isEmpty {
+            let blockTitle = block.title
+            if blockTitle != "Note" && blockTitle != "Untitled" {
+                noteTitle = blockTitle
+            }
+        }
+        if noteText.isEmpty, let subtitle = block.subtitle {
+            noteText = subtitle
+        }
+
+        // If linked to an atom, load freshest data from database
+        if block.entityId > 0 {
+            Task {
+                do {
+                    if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
+                        await MainActor.run {
+                            noteTitle = atom.title ?? ""
+                            noteText = atom.body ?? ""
+                        }
+                    }
+                } catch {
+                    print("NoteBlock: Failed to load atom: \(error)")
+                }
+            }
+        }
+    }
+
+    // MARK: - GRDB Observation
+
+    private func startObservingAtom() {
+        let uuid = block.entityUuid
+        // Only observe if we have a real UUID (not empty)
+        guard !uuid.isEmpty else { return }
+
+        let observation = ValueObservation.tracking { db in
+            try Atom
+                .filter(Column("uuid") == uuid)
+                .fetchOne(db)
+        }
+        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { _ in },
+                receiveValue: { fetchedAtom in
+                    guard let atom = fetchedAtom else { return }
+                    if atom.title != noteTitle || atom.body != noteText {
+                        noteTitle = atom.title ?? ""
+                        noteText = atom.body ?? ""
+                    }
+                }
+            )
     }
 
     // MARK: - Auto-save
@@ -149,6 +224,7 @@ struct NoteBlockView: View {
     }
 
     private func saveNote() {
+        // Update block metadata (for SpatialEngine persistence)
         NotificationCenter.default.post(
             name: .updateBlockContent,
             object: nil,
@@ -158,21 +234,89 @@ struct NoteBlockView: View {
                 "content": noteText
             ]
         )
+
+        // Also update the atom in the database (for blocks linked to entities)
+        let uuid = block.entityUuid
+        if !uuid.isEmpty {
+            Task {
+                do {
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: """
+                            UPDATE atoms
+                            SET title = ?,
+                                body = ?,
+                                updated_at = ?,
+                                _local_version = _local_version + 1
+                            WHERE uuid = ?
+                            """,
+                            arguments: [
+                                noteTitle.isEmpty ? nil : noteTitle,
+                                noteText,
+                                ISO8601DateFormatter().string(from: Date()),
+                                uuid
+                            ]
+                        )
+                    }
+                } catch {
+                    print("NoteBlock: Failed to save to atom: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        NotificationCenter.default.post(
-            name: .enterFocusMode,
-            object: nil,
-            userInfo: [
-                "type": EntityType.note,
-                "id": block.entityId,
-                "blockId": block.id,
-                "content": noteText
-            ]
-        )
+        if block.entityId > 0 {
+            // Has backing atom, open directly
+            NotificationCenter.default.post(
+                name: .enterFocusMode,
+                object: nil,
+                userInfo: [
+                    "type": EntityType.note,
+                    "id": block.entityId
+                ]
+            )
+        } else {
+            // Create backing atom from current note data, then open
+            Task {
+                do {
+                    var newAtom = Atom.new(
+                        type: .note,
+                        title: noteTitle.isEmpty ? nil : noteTitle,
+                        body: noteText
+                    )
+                    let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                        try newAtom.insert(db)
+                        return db.lastInsertedRowID
+                    }
+                    // Update canvas block record to link to new atom
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: """
+                            UPDATE canvas_blocks
+                            SET entity_id = ?, entity_uuid = ?
+                            WHERE id = ?
+                            """,
+                            arguments: [atomId, newAtom.uuid, block.id]
+                        )
+                    }
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: [
+                                "type": EntityType.note,
+                                "id": atomId
+                            ]
+                        )
+                    }
+                } catch {
+                    print("NoteBlock: Failed to create backing atom: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -195,6 +339,10 @@ extension Notification.Name {
     static let updateBlockSize = Notification.Name("updateBlockSize")
     static let saveBlockSize = Notification.Name("saveBlockSize")
     static let blurAllBlocks = Notification.Name("blurAllBlocks")
+    static let contentFocusStateDidChange = Notification.Name("contentFocusStateDidChange")
+    static let contentFocusStateSaved = Notification.Name("contentFocusStateSaved")
+    static let contentPhaseChanged = Notification.Name("contentPhaseChanged")
+    static let noteFocusStateDidChange = Notification.Name("noteFocusStateDidChange")
 }
 
 // MARK: - Preview

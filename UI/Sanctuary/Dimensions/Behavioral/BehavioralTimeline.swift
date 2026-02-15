@@ -29,8 +29,8 @@ public struct BehavioralTimeline: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                Text("TODAY'S TIMELINE")
-                    .font(SanctuaryTypography.label)
+                Text("Today's Timeline")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -148,7 +148,7 @@ public struct BehavioralTimeline: View {
                     .font(.system(size: 12))
                     .foregroundColor(SanctuaryColors.Semantic.error)
 
-                Text("VIOLATIONS")
+                Text("Violations")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Semantic.error)
                     .tracking(1)
@@ -214,7 +214,7 @@ public struct TimelineEventRow: View {
                         .foregroundColor(SanctuaryColors.Text.primary)
 
                     if event.status == .violation {
-                        Text("VIOLATION")
+                        Text("Violation")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(SanctuaryColors.Semantic.error)
                             .padding(.horizontal, 4)
@@ -305,7 +305,7 @@ public struct TimelineCompact: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("TIMELINE")
+                Text("Timeline")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -382,7 +382,7 @@ public struct LevelUpPathCard: View {
                         .font(.system(size: 14))
                         .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("LEVEL UP PATH")
+                    Text("Level Up Path")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(SanctuaryColors.XP.primary)
                         .tracking(1)
@@ -399,7 +399,7 @@ public struct LevelUpPathCard: View {
             HStack(alignment: .center, spacing: SanctuaryLayout.Spacing.md) {
                 // Current level
                 VStack(spacing: 2) {
-                    Text("LVL")
+                    Text("Lvl")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
 
@@ -433,7 +433,7 @@ public struct LevelUpPathCard: View {
 
                 // Next level
                 VStack(spacing: 2) {
-                    Text("LVL")
+                    Text("Lvl")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
 
@@ -460,7 +460,7 @@ public struct LevelUpPathCard: View {
             // Fastest actions
             if !levelUpPath.fastestActions.isEmpty {
                 VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                    Text("FASTEST PATH")
+                    Text("Fastest Path")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
                         .tracking(1)
@@ -529,7 +529,7 @@ public struct BehavioralPredictionCard: View {
                         .font(.system(size: 12))
                         .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("PREDICTION")
+                    Text("Prediction")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(SanctuaryColors.XP.primary)
                         .tracking(1)

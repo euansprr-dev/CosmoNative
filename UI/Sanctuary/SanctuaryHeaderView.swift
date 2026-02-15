@@ -1,12 +1,12 @@
 // CosmoOS/UI/Sanctuary/SanctuaryHeaderView.swift
-// Sanctuary Header - Top navigation with level, XP progress, and live metrics
-// Phase 2: Home Sanctuary implementation following SANCTUARY_UI_SPEC_V2.md
+// Sanctuary Header - Top navigation with tier, progress, and live metrics
+// Onyx Design System: sentence case, thin progress line, Roman numeral tiers
 
 import SwiftUI
 
 // MARK: - Sanctuary Header View
 
-/// Top header zone for Sanctuary - displays level, rank, XP progress, and live metrics
+/// Top header zone for Sanctuary - displays tier (Roman numeral), rank, progress, and live metrics
 public struct SanctuaryHeaderView: View {
 
     // MARK: - Properties
@@ -17,8 +17,23 @@ public struct SanctuaryHeaderView: View {
     let onBack: (() -> Void)?
 
     @State private var xpBarAnimationProgress: CGFloat = 0
-    @State private var shimmerOffset: CGFloat = 0
     @State private var isHoveringBack: Bool = false
+
+    // MARK: - Roman Numeral Conversion
+
+    static func romanNumeral(for number: Int) -> String {
+        let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+        let symbols = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"]
+        var result = ""
+        var remaining = max(1, number)
+        for (i, value) in values.enumerated() {
+            while remaining >= value {
+                result += symbols[i]
+                remaining -= value
+            }
+        }
+        return result
+    }
 
     // MARK: - Initialization
 
@@ -38,7 +53,7 @@ public struct SanctuaryHeaderView: View {
 
     public var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Left side - Title and level info
+            // Left side - Title and tier info
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
                 // Back button + Title row
                 HStack(spacing: SanctuaryLayout.Spacing.md) {
@@ -46,16 +61,16 @@ public struct SanctuaryHeaderView: View {
                         backButton
                     }
 
-                    Text("SANCTUARY")
-                        .font(SanctuaryTypography.displayMedium)
-                        .foregroundColor(SanctuaryColors.Text.primary)
-                        .tracking(4)
+                    Text("Sanctuary")
+                        .font(OnyxTypography.viewTitle)
+                        .foregroundColor(OnyxColors.Text.primary)
+                        .tracking(OnyxTypography.viewTitleTracking)
                 }
 
-                // Level badge and XP progress
+                // Tier badge and progress
                 if let state = cosmoIndex {
-                    levelBadge(state: state)
-                    xpProgressBar(state: state)
+                    tierBadge(state: state)
+                    progressLine(state: state)
                 }
             }
 
@@ -70,7 +85,7 @@ public struct SanctuaryHeaderView: View {
         .padding(.top, SanctuaryLayout.Spacing.xl)
         .padding(.bottom, SanctuaryLayout.Spacing.lg)
         .onAppear {
-            animateXPBar()
+            animateProgressBar()
         }
     }
 
@@ -83,9 +98,9 @@ public struct SanctuaryHeaderView: View {
                     .font(.system(size: 14, weight: .semibold))
 
                 Text("Back")
-                    .font(SanctuaryTypography.body)
+                    .font(OnyxTypography.body)
             }
-            .foregroundColor(SanctuaryColors.Text.secondary)
+            .foregroundColor(OnyxColors.Text.secondary)
             .padding(.horizontal, SanctuaryLayout.Spacing.md)
             .padding(.vertical, SanctuaryLayout.Spacing.sm)
             .background(
@@ -98,126 +113,56 @@ public struct SanctuaryHeaderView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(SanctuarySprings.hover) {
+            withAnimation(OnyxSpring.hover) {
                 isHoveringBack = hovering
             }
         }
     }
 
-    // MARK: - Level Badge
+    // MARK: - Tier Badge
 
-    private func levelBadge(state: CosmoIndexState) -> some View {
+    private func tierBadge(state: CosmoIndexState) -> some View {
         HStack(spacing: SanctuaryLayout.Spacing.sm) {
-            Text("Level \(state.level)")
-                .font(SanctuaryTypography.body)
-                .foregroundColor(SanctuaryColors.Text.primary)
+            Text("Tier \(Self.romanNumeral(for: state.level))")
+                .font(OnyxTypography.label)
+                .tracking(OnyxTypography.labelTracking)
+                .foregroundColor(OnyxColors.Text.primary)
 
-            Text("•")
-                .foregroundColor(SanctuaryColors.Text.tertiary)
-
-            Text(state.rank)
-                .font(SanctuaryTypography.body)
-                .foregroundColor(rankColor(for: state.rank))
+            Text("\u{00B7} \(state.rank)")
+                .font(OnyxTypography.label)
+                .tracking(OnyxTypography.labelTracking)
+                .foregroundColor(OnyxColors.Text.secondary)
         }
     }
 
-    // MARK: - XP Progress Bar
+    // MARK: - Progress Line (thin 2pt OnyxProgressLine)
 
-    private func xpProgressBar(state: CosmoIndexState) -> some View {
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-            // Progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    // Track
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs)
-                        .fill(SanctuaryColors.XP.track)
-                        .frame(height: 8)
-
-                    // Fill
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs)
-                        .fill(
-                            LinearGradient(
-                                colors: [SanctuaryColors.XP.primary, SanctuaryColors.XP.secondary],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(
-                            width: geometry.size.width * min(xpBarAnimationProgress * CGFloat(state.xpProgress), 1.0),
-                            height: 8
-                        )
-                        .shadow(color: SanctuaryColors.XP.primary.opacity(0.5), radius: 4, x: 0, y: 0)
-
-                    // Shimmer effect
-                    if state.xpProgress > 0 {
-                        shimmerEffect(width: geometry.size.width, progress: state.xpProgress)
-                    }
-                }
-            }
-            .frame(height: 8)
+    private func progressLine(state: CosmoIndexState) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            OnyxProgressLine(
+                progress: xpBarAnimationProgress * state.xpProgress,
+                color: OnyxColors.Accent.iris
+            )
             .frame(maxWidth: 400)
 
-            // XP text
-            HStack {
-                Text("XP: \(formatNumber(Int(state.currentXP))) / \(formatNumber(Int(state.xpToNextLevel))) to Level \(state.level + 1)")
-                    .font(SanctuaryTypography.label)
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
-
-                Spacer()
-
-                Text("\(Int(state.xpProgress * 100))%")
-                    .font(SanctuaryTypography.metric)
-                    .foregroundColor(SanctuaryColors.XP.primary)
-            }
-            .frame(maxWidth: 400)
+            // Progress text — no "XP:" prefix, no percentage
+            let xpRemaining = max(0, Int(state.xpToNextLevel) - Int(state.currentXP))
+            Text("\(formatNumber(xpRemaining)) to Tier \(Self.romanNumeral(for: state.level + 1))")
+                .font(OnyxTypography.micro)
+                .foregroundColor(OnyxColors.Text.muted)
+                .frame(maxWidth: 400, alignment: .leading)
         }
-    }
-
-    // MARK: - Shimmer Effect
-
-    private func shimmerEffect(width: CGFloat, progress: Double) -> some View {
-        // Core Animation-driven shimmer — no TimelineView CPU overhead
-        let fillWidth = width * CGFloat(progress)
-        return Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0),
-                        Color.white.opacity(0.3),
-                        Color.white.opacity(0)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(width: 60, height: 8)
-            .offset(x: -30 + (fillWidth + 60) * shimmerOffset)
-            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs))
-            .mask(
-                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xs)
-                    .frame(width: fillWidth, height: 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            )
-            .onAppear {
-                withAnimation(.linear(duration: 2.0).repeatForever(autoreverses: false)) {
-                    shimmerOffset = 1.0
-                }
-            }
     }
 
     // MARK: - Animation
 
-    private func animateXPBar() {
+    private func animateProgressBar() {
         withAnimation(.easeOut(duration: SanctuaryDurations.slow)) {
             xpBarAnimationProgress = 1.0
         }
     }
 
     // MARK: - Helpers
-
-    private func rankColor(for rank: String) -> Color {
-        SanctuaryRanks.color(for: rank)
-    }
 
     private static let _numberFormatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -247,18 +192,19 @@ public struct SanctuaryLiveMetricsPanel: View {
             HStack(spacing: SanctuaryLayout.Spacing.sm) {
                 // Pulsing live dot
                 Circle()
-                    .fill(SanctuaryColors.Semantic.success)
-                    .frame(width: 8, height: 8)
+                    .fill(OnyxColors.Accent.sage)
+                    .frame(width: 6, height: 6)
                     .overlay(
                         Circle()
-                            .stroke(SanctuaryColors.Semantic.success.opacity(0.5), lineWidth: 2)
+                            .stroke(OnyxColors.Accent.sage.opacity(0.5), lineWidth: 1.5)
                             .scaleEffect(livePulse ? 2.0 : 1.0)
                             .opacity(livePulse ? 0 : 0.5)
                     )
 
-                Text("LIVE")
-                    .font(SanctuaryTypography.label)
-                    .foregroundColor(SanctuaryColors.Semantic.success)
+                Text("Live")
+                    .font(OnyxTypography.label)
+                    .tracking(OnyxTypography.labelTracking)
+                    .foregroundColor(OnyxColors.Accent.sage)
             }
 
             // Metrics

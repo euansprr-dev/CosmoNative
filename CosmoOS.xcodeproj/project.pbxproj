@@ -465,6 +465,12 @@
 		FEA6B39496A84EB6C266BB0D /* ResearchFocusModeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B4691B303FB8CF1A98FE172 /* ResearchFocusModeState.swift */; };
 		FF249D70AD70A1CFB609DC4E /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2915DFE138DE79A9661CC653 /* AudioCapture.swift */; };
 		FF73A64DABE9C06E526B3256 /* ReadinessCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DBA73BF41F6AC4ED4B6CE10 /* ReadinessCalculator.swift */; };
+		73A4B02E1C5D68F7E9A32B41 /* OnyxDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7A3B91E2C4D58A6E0F13B72 /* OnyxDesignSystem.swift */; };
+		84B5C13F2D6E79A8F0B43C52 /* OnyxCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8B4CA2F3D5E69B7F1A24C83 /* OnyxCard.swift */; };
+		95C6D2403E7F8AB901C54D63 /* OnyxMetric.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C5DB304E6F7AC802B35D94 /* OnyxMetric.swift */; };
+		06D7E3514F809BC012D65E74 /* OnyxProgressLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D6EC415F708BD913C46EA5 /* OnyxProgressLine.swift */; };
+		17E8F4625A91ACE123E76F85 /* OnyxWeekGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E7FD526081ACE024D57FB6 /* OnyxWeekGrid.swift */; };
+		28F905736BA2BDF234F87096 /* OnyxSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F80E637192BDF135E680C7 /* OnyxSectionHeader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -932,6 +938,12 @@
 		5EB0E83D2D7C89C63AF5B8E0 /* LiveBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveBadge.swift; sourceTree = "<group>"; };
 		6FC1F94E3E8DA0D74BA6C9F1 /* SanctuaryChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SanctuaryChartView.swift; sourceTree = "<group>"; };
 		8AD2A05F4F9EB1E85CB7DA02 /* PredictionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionCard.swift; sourceTree = "<group>"; };
+		F7A3B91E2C4D58A6E0F13B72 /* OnyxDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxDesignSystem.swift; sourceTree = "<group>"; };
+		D8B4CA2F3D5E69B7F1A24C83 /* OnyxCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxCard.swift; sourceTree = "<group>"; };
+		E9C5DB304E6F7AC802B35D94 /* OnyxMetric.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxMetric.swift; sourceTree = "<group>"; };
+		A0D6EC415F708BD913C46EA5 /* OnyxProgressLine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxProgressLine.swift; sourceTree = "<group>"; };
+		B1E7FD526081ACE024D57FB6 /* OnyxWeekGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxWeekGrid.swift; sourceTree = "<group>"; };
+		C2F80E637192BDF135E680C7 /* OnyxSectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnyxSectionHeader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1746,6 +1758,19 @@
 			path = Search;
 			sourceTree = "<group>";
 		};
+		39A0167847B3CEA345A981A7 /* Onyx */ = {
+			isa = PBXGroup;
+			children = (
+				F7A3B91E2C4D58A6E0F13B72 /* OnyxDesignSystem.swift */,
+				D8B4CA2F3D5E69B7F1A24C83 /* OnyxCard.swift */,
+				E9C5DB304E6F7AC802B35D94 /* OnyxMetric.swift */,
+				A0D6EC415F708BD913C46EA5 /* OnyxProgressLine.swift */,
+				B1E7FD526081ACE024D57FB6 /* OnyxWeekGrid.swift */,
+				C2F80E637192BDF135E680C7 /* OnyxSectionHeader.swift */,
+			);
+			path = Onyx;
+			sourceTree = "<group>";
+		};
 		ACB38E79FE95A20CD3D034F6 /* Core */ = {
 			isa = PBXGroup;
 			children = (
@@ -1756,6 +1781,7 @@
 				2592701606783E9FDCA1CC31 /* DateFormatters.swift */,
 				D6AC930FD36314607F7EC94D /* Theme.swift */,
 				895698084DB7263B37CC43C5 /* Components */,
+				39A0167847B3CEA345A981A7 /* Onyx */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -2686,6 +2712,12 @@
 				B4C3A05B4D8F9BC632B5D901 /* SanctuaryChartView.swift in Sources */,
 				D5E4B16C5FAA0CD843C6EA12 /* PredictionCard.swift in Sources */,
 				8235853AE7823AF47887C2D1 /* WeeklyBriefEngine.swift in Sources */,
+				73A4B02E1C5D68F7E9A32B41 /* OnyxDesignSystem.swift in Sources */,
+				84B5C13F2D6E79A8F0B43C52 /* OnyxCard.swift in Sources */,
+				95C6D2403E7F8AB901C54D63 /* OnyxMetric.swift in Sources */,
+				06D7E3514F809BC012D65E74 /* OnyxProgressLine.swift in Sources */,
+				17E8F4625A91ACE123E76F85 /* OnyxWeekGrid.swift in Sources */,
+				28F905736BA2BDF234F87096 /* OnyxSectionHeader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -265,10 +265,10 @@ public struct PlannerumView: View {
             // Left side - Title and level info
             VStack(alignment: .leading, spacing: PlannerumLayout.spacingSM) {
                 // Title - matches Sanctuary exactly
-                Text("PLANNERUM")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(PlannerumColors.textPrimary)
-                    .tracking(4)
+                Text("Plannerum")
+                    .font(OnyxTypography.viewTitle)
+                    .foregroundColor(OnyxColors.Text.primary)
+                    .tracking(OnyxTypography.viewTitleTracking)
 
                 // Level badge
                 levelBadge
@@ -291,9 +291,9 @@ public struct PlannerumView: View {
 
     private var levelBadge: some View {
         HStack(spacing: PlannerumLayout.spacingSM) {
-            Text("Level \(xpViewModel.level)")
+            Text("Tier \(xpViewModel.level)")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(PlannerumColors.textPrimary)
+                .foregroundColor(OnyxColors.Text.primary)
 
             Text("•")
                 .foregroundColor(PlannerumColors.textTertiary)
@@ -342,9 +342,9 @@ public struct PlannerumView: View {
 
             // XP text
             HStack {
-                Text("XP: \(formatNumber(xpViewModel.xpForCurrentLevel)) / \(formatNumber(xpViewModel.xpRequiredForNextLevel)) to Level \(xpViewModel.level + 1)")
+                Text("\(formatNumber(xpViewModel.xpForCurrentLevel)) / \(formatNumber(xpViewModel.xpRequiredForNextLevel)) to Tier \(xpViewModel.level + 1)")
                     .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(PlannerumColors.textTertiary)
+                    .foregroundColor(OnyxColors.Text.tertiary)
 
                 Spacer()
 
@@ -398,11 +398,11 @@ public struct PlannerumView: View {
                     .overlay(
                         Circle()
                             .stroke(PlannerumColors.nowMarker.opacity(0.5), lineWidth: 2)
-                            .scaleEffect(livePulse ? 2.0 : 1.0)
+                            .scaleEffect(livePulse ? 1.3 : 1.0)
                             .opacity(livePulse ? 0 : 0.5)
                     )
 
-                Text("LIVE")
+                Text("Live")
                     .font(.system(size: 10, weight: .heavy))
                     .foregroundColor(PlannerumColors.nowMarker)
             }
@@ -426,11 +426,11 @@ public struct PlannerumView: View {
         HStack(spacing: PlannerumLayout.spacingMD) {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(PlannerumColors.textTertiary)
+                .foregroundColor(OnyxColors.Text.tertiary)
 
             Text(value)
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(color)
+                .foregroundColor(OnyxColors.Text.secondary)
         }
     }
 
@@ -448,18 +448,18 @@ public struct PlannerumView: View {
                         Image(systemName: mode.icon)
                             .font(.system(size: 11))
                         Text(mode.rawValue)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(
                         viewMode == mode
-                            ? PlannerumColors.textPrimary
-                            : PlannerumColors.textMuted
+                            ? OnyxColors.Text.primary
+                            : OnyxColors.Text.muted
                     )
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(
                         viewMode == mode
-                            ? PlannerumColors.primary.opacity(0.2)
+                            ? OnyxColors.Accent.iris.opacity(0.12)
                             : Color.clear
                     )
                     .clipShape(Capsule())
@@ -729,7 +729,7 @@ public struct PlannerumView: View {
 
         let allocations = DimensionXPRouter.routeXP(intent: intent, baseXP: 1)
         let dims = allocations.map { DimensionXPRouter.dimensionDisplayName($0.dimension) }
-        let label = "XP \u{2192} " + dims.joined(separator: " & ")
+        let label = dims.joined(separator: " & ")
         let rgb = DimensionXPRouter.dimensionColor(intent.dimension)
         let dimColor = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
 
@@ -921,10 +921,10 @@ public struct PlannerumView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(sessionTypeColor(type))
-                Text("RELEVANT RESOURCES")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(PlannerumColors.textMuted)
-                    .tracking(2)
+                Text("Relevant Resources")
+                    .font(OnyxTypography.label)
+                    .foregroundColor(OnyxColors.Text.tertiary)
+                    .tracking(OnyxTypography.labelTracking)
                 Spacer()
             }
             .padding(.horizontal, 4)
@@ -1036,10 +1036,10 @@ public struct PlannerumView: View {
                 Image(systemName: "clock")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(PlannerumColors.textTertiary)
-                Text("UP NEXT")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(PlannerumColors.textMuted)
-                    .tracking(2)
+                Text("Up Next")
+                    .font(OnyxTypography.label)
+                    .foregroundColor(OnyxColors.Text.tertiary)
+                    .tracking(OnyxTypography.labelTracking)
                 Spacer()
             }
             .padding(.horizontal, 4)

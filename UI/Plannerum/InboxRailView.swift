@@ -144,10 +144,10 @@ public struct InboxRailView: View {
 
     private var floatingTitle: some View {
         HStack {
-            Text("INBOXES")
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted)
-                .tracking(2)
+            Text("Inboxes")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.tertiary)
+                .tracking(OnyxTypography.labelTracking)
 
             Spacer()
 
@@ -165,10 +165,10 @@ public struct InboxRailView: View {
     // MARK: - Projects Title (floating)
 
     private var projectsTitle: some View {
-        Text("PROJECTS")
-            .font(.system(size: 9, weight: .heavy))
-            .foregroundColor(PlannerumColors.textMuted.opacity(0.6))
-            .tracking(1.5)
+        Text("Projects")
+            .font(OnyxTypography.label)
+            .foregroundColor(OnyxColors.Text.muted)
+            .tracking(OnyxTypography.labelTracking)
             .padding(.top, 8)
             .padding(.horizontal, 4)
     }
@@ -219,7 +219,7 @@ public struct InboxRailView: View {
     private var sectionHeader: some View {
         HStack {
             // Title with subtle tracking
-            Text("I N B O X E S")
+            Text("Inboxes")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(PlannerumColors.textSecondary)
                 .tracking(3)
@@ -442,10 +442,10 @@ public struct InboxRailView: View {
             )
             .frame(height: 1)
 
-            Text("PROJECTS")
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted.opacity(0.8))
-                .tracking(1)
+            Text("Projects")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.muted)
+                .tracking(OnyxTypography.labelTracking)
 
             LinearGradient(
                 colors: [Color.clear, PlannerumColors.glassBorder.opacity(0.5), Color.clear],

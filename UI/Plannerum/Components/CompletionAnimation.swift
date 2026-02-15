@@ -170,10 +170,10 @@ public struct CompletionAnimationView: View {
         HStack(spacing: 4) {
             Text("+\(xpAmount)")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
-            Text("XP")
-                .font(.system(size: 18, weight: .semibold))
+            Image(systemName: "sparkles")
+                .font(.system(size: 14, weight: .semibold))
         }
-        .foregroundColor(PlannerumColors.xpGold)
+        .foregroundColor(OnyxColors.Accent.amber)
         .scaleEffect(xpScale)
         .opacity(xpOpacity)
         .offset(y: xpOffset)

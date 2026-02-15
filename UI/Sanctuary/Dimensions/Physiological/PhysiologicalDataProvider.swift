@@ -51,6 +51,7 @@ class PhysiologicalDataProvider: ObservableObject {
         async let hrvTrendResult = healthService.fetchHRVTrend(days: 7)
         async let sleepTrendResult = healthService.fetchSleepTrend(days: 7)
         async let workoutsResult = healthService.fetchRecentWorkouts(days: 7)
+        async let hourlyResult = healthService.fetchHourlyActivity()
 
         let steps = await stepsResult
         let activity = await activityResult
@@ -61,6 +62,7 @@ class PhysiologicalDataProvider: ObservableObject {
         let hrvTrend = await hrvTrendResult
         let sleepTrend = await sleepTrendResult
         let hkWorkouts = await workoutsResult
+        let hourlyRaw = await hourlyResult
 
         // Build PhysiologicalDimensionData from real values
         let currentHRV = hrv ?? 0
@@ -134,6 +136,16 @@ class PhysiologicalDataProvider: ObservableObject {
         let peakStart = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: now) ?? now
         let peakEnd = calendar.date(bySettingHour: 14, minute: 0, second: 0, of: now) ?? now
 
+        // Hourly activity from HealthKit
+        let hourlyActivity = hourlyRaw.map { entry in
+            HourlyActivity(
+                hour: entry.hour,
+                steps: entry.steps,
+                activeCalories: entry.calories,
+                standMinutes: entry.standMinutes
+            )
+        }
+
         // Workout recommendation based on recovery
         let workoutRec: DisplayWorkoutType? = {
             if recoveryScore >= 80 { return .hiit }
@@ -202,7 +214,7 @@ class PhysiologicalDataProvider: ObservableObject {
             stressLevel: stressLevel,
             cortisolEstimate: cortisolEstimate,
             breathingRatePerMin: breathingRate,
-            hourlyActivity: [],
+            hourlyActivity: hourlyActivity,
             dailyRings: rings,
             stepCount: steps,
             activeCalories: Int(activity.activeCalories),

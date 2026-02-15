@@ -29,10 +29,10 @@ struct IdeaFocusModeView: View {
 
     // MARK: - Constants
 
-    private let accentIndigo = Color(hex: "#818CF8")
-    private let panelBackground = Color(hex: "#12121A")
+    private let accentIndigo = OnyxColors.Accent.iris
+    private let panelBackground = OnyxColors.Elevation.base
     private let cardBackground = Color.white.opacity(0.06)
-    private let ideaGold = Color(hex: "#FBBF24")
+    private let ideaGold = OnyxColors.Accent.amber
 
     // MARK: - Initialization
 
@@ -111,14 +111,14 @@ struct IdeaFocusModeView: View {
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 10))
-                Text("IDEA")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
+                Text("Idea")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(OnyxTypography.labelTracking)
             }
             .foregroundColor(ideaGold)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(ideaGold.opacity(0.15), in: Capsule())
+            .background(ideaGold.opacity(0.12), in: Capsule())
 
             // Status badge
             if viewModel.selectedStatus != .spark {
@@ -186,12 +186,15 @@ struct IdeaFocusModeView: View {
                 colors: [
                     CosmoColors.thinkspaceVoid.opacity(0.95),
                     CosmoColors.thinkspaceVoid.opacity(0.8),
+                    CosmoColors.thinkspaceVoid.opacity(0.4),
                     .clear
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        )
+            .frame(height: 120)
+            .allowsHitTesting(false)
+        , alignment: .top)
     }
 
     // MARK: - Left Column
@@ -757,7 +760,7 @@ struct IdeaFocusModeView: View {
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.white.opacity(0.1))
-                        .frame(height: 4)
+                        .frame(height: OnyxLayout.progressLineHeight)
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(
@@ -770,10 +773,10 @@ struct IdeaFocusModeView: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: geo.size.width * swipe.similarityScore, height: 4)
+                        .frame(width: geo.size.width * swipe.similarityScore, height: OnyxLayout.progressLineHeight)
                 }
             }
-            .frame(height: 4)
+            .frame(height: OnyxLayout.progressLineHeight)
 
             // Badges
             HStack(spacing: 6) {
@@ -880,22 +883,16 @@ struct IdeaFocusModeView: View {
 
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
+                        RoundedRectangle(cornerRadius: 1)
                             .fill(Color.white.opacity(0.1))
-                            .frame(height: 4)
+                            .frame(height: OnyxLayout.progressLineHeight)
 
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(
-                                LinearGradient(
-                                    colors: [accentIndigo, accentIndigo.opacity(0.6)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geo.size.width * rec.confidence, height: 4)
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(accentIndigo)
+                            .frame(width: geo.size.width * rec.confidence, height: OnyxLayout.progressLineHeight)
                     }
                 }
-                .frame(height: 4)
+                .frame(height: OnyxLayout.progressLineHeight)
             }
 
             // Rationale
@@ -1193,16 +1190,16 @@ struct IdeaFocusModeView: View {
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: 1)
                         .fill(Color.white.opacity(0.1))
-                        .frame(height: 6)
+                        .frame(height: OnyxLayout.progressLineHeight)
 
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: 1)
                         .fill(formatColor.opacity(0.8))
-                        .frame(width: geo.size.width * score, height: 6)
+                        .frame(width: geo.size.width * score, height: OnyxLayout.progressLineHeight)
                 }
             }
-            .frame(height: 6)
+            .frame(height: OnyxLayout.progressLineHeight)
 
             Text("\(Int(score * 100))%")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))

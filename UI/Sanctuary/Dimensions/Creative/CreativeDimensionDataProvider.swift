@@ -138,11 +138,60 @@ class CreativeDimensionDataProvider: ObservableObject, DimensionScoring {
             )
         }
 
+        // Merge social platform data from SocialSyncService
+        let socialService = SocialSyncService.shared
+        let hasSocialData = socialService.hasAnyConnection && !socialService.lastSyncResults.isEmpty
+
+        let mergedReach = hasSocialData ? reach + socialService.totalReach : reach
+        let mergedEngagement = hasSocialData && socialService.averageEngagementRate > 0
+            ? (engagement + socialService.averageEngagementRate) / 2.0
+            : engagement
+        let mergedFollowers = hasSocialData ? socialService.totalFollowerCount : 0
+        let mergedPlatformMetrics = hasSocialData ? socialService.platformMetrics : []
+
+        // Merge social posts with internal content posts
+        var mergedPosts = contentPosts
+        if hasSocialData {
+            let socialPosts = socialService.allRecentPosts.prefix(10).map { syncedPost -> ContentPost in
+                let platform: ContentPlatform = {
+                    switch syncedPost.platform {
+                    case .youtube: return .youtube
+                    case .instagram: return .instagram
+                    case .tiktok: return .tiktok
+                    case .x: return .twitter
+                    }
+                }()
+                return ContentPost(
+                    id: syncedPost.postId,
+                    platform: platform,
+                    type: .post,
+                    thumbnailURL: syncedPost.thumbnailURL.flatMap { URL(string: $0) },
+                    postedAt: syncedPost.publishedAt,
+                    caption: syncedPost.caption,
+                    reach: syncedPost.reach,
+                    impressions: syncedPost.impressions,
+                    likes: syncedPost.likes,
+                    comments: syncedPost.comments,
+                    shares: syncedPost.shares,
+                    saves: syncedPost.saves,
+                    engagementRate: syncedPost.engagementRate,
+                    performanceVsAverage: 0,
+                    peakTime: 0
+                )
+            }
+            mergedPosts = (contentPosts + socialPosts)
+                .sorted { $0.postedAt > $1.postedAt }
+                .prefix(15)
+                .map { $0 }
+        }
+
         data = CreativeDimensionData(
-            totalReach: reach,
-            engagementRate: engagement,
+            totalReach: mergedReach,
+            engagementRate: mergedEngagement,
+            followerCount: mergedFollowers,
             performanceTimeSeries: timeSeries,
-            recentPosts: contentPosts
+            recentPosts: mergedPosts,
+            platformMetrics: mergedPlatformMetrics
         )
         funnelData = funnel
     }

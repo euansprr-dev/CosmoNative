@@ -30,30 +30,19 @@ struct KnowledgePulseLineView: View {
     private enum Layout {
         static let baseWidth: CGFloat = 1.5
         static let maxWidth: CGFloat = 3.5
-        static let glowBlur: CGFloat = 8
+        static let glowBlur: CGFloat = 4         // Reduced 50% from 8
         static let glowWidthMultiplier: CGFloat = 3.0
         static let curveOffsetFactor: CGFloat = 0.15
-        static let pulseSpeed: Double = 0.25
-        static let widthModulationSpeed: Double = 0.4
+        static let pulseSpeed: Double = 0.192     // 30% slower (0.25 / 1.3)
+        static let widthModulationSpeed: Double = 0.308 // 30% slower (0.4 / 1.3)
         static let widthModulationAmount: CGFloat = 0.15
     }
 
     // MARK: - Computed Properties
 
-    /// Color based on edge type
+    /// Unified Onyx iris color for all connection types
     private var lineColor: Color {
-        switch edgeType {
-        case .explicit, .reference:
-            return CosmoColors.thinkspacePurple
-        case .semantic:
-            return Color(hex: "60A5FA") // Blue
-        case .conceptual:
-            return Color(hex: "5EEAD4") // Teal
-        case .contextual:
-            return Color.white
-        case .transitive:
-            return Color(hex: "818CF8") // Indigo
-        }
+        OnyxColors.Accent.iris
     }
 
     /// Line width scaled by weight
@@ -63,9 +52,9 @@ struct KnowledgePulseLineView: View {
         return base + modulation
     }
 
-    /// Base opacity scaled by weight (0.35 - 0.70)
+    /// Base opacity scaled by weight — reduced for Onyx subtlety (0.20 - 0.45)
     private var baseOpacity: Double {
-        0.35 + weight * 0.35
+        0.20 + weight * 0.25
     }
 
     /// Control point for quadratic bezier — perpendicular offset from midpoint

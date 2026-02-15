@@ -18,6 +18,8 @@ struct CosmoAgentSettingsTab: View {
     @State private var isTestingConnection = false
     @State private var connectionResult: (success: Bool, message: String)?
     @State private var showTelegramInstructions = false
+    @State private var isTestingTelegram = false
+    @State private var telegramTestResult: (success: Bool, message: String)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -264,7 +266,8 @@ struct CosmoAgentSettingsTab: View {
                     Text(result.message)
                         .font(.system(size: 12))
                         .foregroundColor(result.success ? .green : .red)
-                        .lineLimit(1)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -290,9 +293,7 @@ struct CosmoAgentSettingsTab: View {
                         .foregroundColor(SanctuaryColors.Text.primary)
 
                     if !telegramToken.isEmpty && !telegramToken.allSatisfy({ $0 == "\u{2022}" }) {
-                        Button(action: {
-                            APIKeys.save(telegramToken, identifier: "telegram_bot_token")
-                        }) {
+                        Button(action: saveTelegramToken) {
                             Image(systemName: "arrow.right.circle.fill")
                                 .font(.system(size: 16))
                                 .foregroundColor(CosmoColors.cosmoAI)
@@ -305,7 +306,7 @@ struct CosmoAgentSettingsTab: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
 
-                // Start/Stop + Status
+                // Start/Stop + Test + Status
                 telegramControlRow
 
                 // Setup instructions
@@ -343,37 +344,72 @@ struct CosmoAgentSettingsTab: View {
 
     @ViewBuilder
     private var telegramControlRow: some View {
-        HStack {
-            Button(action: {
-                if telegramBridge.isConnected {
-                    telegramBridge.stop()
-                } else {
-                    Task { await telegramBridge.start() }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button(action: {
+                    if telegramBridge.isConnected {
+                        telegramBridge.stop()
+                    } else {
+                        Task { await telegramBridge.start() }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: telegramBridge.isConnected ? "stop.fill" : "play.fill")
+                            .font(.system(size: 12))
+                        Text(telegramBridge.isConnected ? "Stop Polling" : "Start Polling")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(
+                        telegramBridge.isConnected ? CosmoColors.coral.opacity(0.2) : CosmoColors.cosmoAI.opacity(0.2)
+                    ))
+                    .foregroundColor(telegramBridge.isConnected ? CosmoColors.coral : CosmoColors.cosmoAI)
                 }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: telegramBridge.isConnected ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12))
-                    Text(telegramBridge.isConnected ? "Stop Polling" : "Start Polling")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(
-                    telegramBridge.isConnected ? CosmoColors.coral.opacity(0.2) : CosmoColors.cosmoAI.opacity(0.2)
-                ))
-                .foregroundColor(telegramBridge.isConnected ? CosmoColors.coral : CosmoColors.cosmoAI)
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(.plain)
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(telegramBridge.isConnected ? Color.green : (telegramBridge.lastError != nil ? Color.red : Color.gray))
-                    .frame(width: 8, height: 8)
-
-                Text(telegramStatusText)
-                    .font(.system(size: 12))
+                Button(action: testTelegramBot) {
+                    HStack(spacing: 6) {
+                        if isTestingTelegram {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 12))
+                        }
+                        Text("Test Bot")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
                     .foregroundColor(SanctuaryColors.Text.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isTestingTelegram)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(telegramBridge.isConnected ? Color.green : (telegramBridge.lastError != nil ? Color.red : Color.gray))
+                        .frame(width: 8, height: 8)
+
+                    Text(telegramStatusText)
+                        .font(.system(size: 12))
+                        .foregroundColor(SanctuaryColors.Text.secondary)
+                }
+            }
+
+            if let result = telegramTestResult {
+                HStack(spacing: 4) {
+                    Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(result.success ? .green : .red)
+                    Text(result.message)
+                        .font(.system(size: 12))
+                        .foregroundColor(result.success ? .green : .red)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -580,6 +616,27 @@ struct CosmoAgentSettingsTab: View {
         agentService.setProvider(selectedProvider)
         agentService.setModel(currentModel)
         agentModel = currentModel
+    }
+
+    private func saveTelegramToken() {
+        let input = telegramToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let token = TelegramBridgeService.sanitizeToken(input) else {
+            telegramTestResult = (false, "Invalid token format. Paste only the BotFather token.")
+            return
+        }
+        APIKeys.save(token, identifier: "telegram_bot_token")
+        telegramToken = String(repeating: "\u{2022}", count: 30)
+        telegramTestResult = nil
+    }
+
+    private func testTelegramBot() {
+        isTestingTelegram = true
+        telegramTestResult = nil
+        Task {
+            let result = await telegramBridge.testBot()
+            isTestingTelegram = false
+            telegramTestResult = result
+        }
     }
 
     private func testConnection() {

@@ -49,8 +49,8 @@ public struct BehavioralDailyOperations: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("TODAY'S OPERATIONS")
-                .font(SanctuaryTypography.label)
+            Text("Today's Operations")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -136,7 +136,7 @@ public struct DopamineDelayCard: View {
                     .font(.system(size: 14))
                     .foregroundColor(SanctuaryColors.Dimensions.behavioral)
 
-                Text("DOPAMINE DELAY")
+                Text("Dopamine Delay")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -255,7 +255,7 @@ public struct DailyWalksCard: View {
                     .font(.system(size: 14))
                     .foregroundColor(SanctuaryColors.Semantic.success)
 
-                Text("DAILY WALKS")
+                Text("Daily Walks")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -283,7 +283,7 @@ public struct DailyWalksCard: View {
                 Spacer()
 
                 if completed >= goal {
-                    Text("COMPLETE")
+                    Text("Complete")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Semantic.success)
                 } else {
@@ -404,7 +404,7 @@ public struct ScreenTimeCard: View {
     }
 
     private var violationBadge: some View {
-        Text("VIOLATION")
+        Text("Violation")
             .font(.system(size: 8, weight: .bold))
             .foregroundColor(SanctuaryColors.Semantic.error)
             .padding(.horizontal, 6)
@@ -469,7 +469,7 @@ public struct TaskZeroCard: View {
                     .font(.system(size: 14))
                     .foregroundColor(completed >= total ? SanctuaryColors.Semantic.success : SanctuaryColors.Dimensions.behavioral)
 
-                Text("TASK ZERO")
+                Text("Task Zero")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -477,7 +477,7 @@ public struct TaskZeroCard: View {
                 Spacer()
 
                 if completed >= total {
-                    Text("ACHIEVED")
+                    Text("Achieved")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(SanctuaryColors.Semantic.success)
                         .padding(.horizontal, 6)

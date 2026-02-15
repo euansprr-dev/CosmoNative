@@ -28,148 +28,165 @@ public struct DimensionOrbView: View {
         return min(100, max(0, Double(state.nelo - 800) / 12))
     }
 
+    /// Luminosity-based orb opacity: 0.65 base + (level * 0.05), capped at 1.0
+    private var luminosityOpacity: Double {
+        guard let state = state else { return 0.65 }
+        return min(1.0, 0.65 + Double(state.level) * 0.05)
+    }
+
+    /// Glow intensity scales with level
+    private var levelGlowRadius: CGFloat {
+        guard let state = state else { return 4 }
+        return 4 + CGFloat(min(state.level, 20)) * 0.8
+    }
+
+    /// Desaturated dimension color (Onyx hub palette)
+    private var onyxDimensionColor: Color {
+        OnyxColors.Dimension.color(for: dimension)
+    }
+
+    /// Blended orb color: mix desaturated + vivid for richer appearance
+    private var enrichedOrbColor: Color {
+        // 60% desaturated + 40% vivid via overlay approach — we use vivid directly in gradient
+        OnyxColors.DimensionVivid.color(for: dimension)
+    }
+
     public var body: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.sm) {
+        ZStack {
+            // Layer 1: Ambient Glow (luminosity-based) — rendered behind, doesn't affect layout
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            onyxDimensionColor.opacity(luminosityOpacity * 0.3),
+                            onyxDimensionColor.opacity(luminosityOpacity * 0.1),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: (baseSize + 48) / 2
+                    )
+                )
+                .frame(width: baseSize + 80, height: baseSize + 80)
+                .allowsHitTesting(false)
+
+            // Layer 2: Status Ring (health indicator)
+            statusRing
+
+            // Activity ring (animated when active)
+            if let state = state, state.isActive {
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            colors: [onyxDimensionColor, onyxDimensionColor.opacity(0.3), onyxDimensionColor],
+                            center: .center
+                        ),
+                        lineWidth: 2
+                    )
+                    .frame(width: baseSize + 10, height: baseSize + 10)
+                    .rotationEffect(.degrees(animationPhase * 30))
+            }
+
+            // Layer 3: Orb Body — luminosity-based, no level number
             ZStack {
-                // Layer 1: Ambient Glow (health-based opacity)
-                // Using RadialGradient instead of blur(radius:30) — visually identical, far cheaper
+                // Base gradient (blended dimension color, opacity driven by level)
                 Circle()
                     .fill(
                         RadialGradient(
                             colors: [
-                                dimensionColor.opacity(healthScore * 0.004),
-                                dimensionColor.opacity(healthScore * 0.002),
-                                Color.clear
+                                Color.white.opacity(0.15),
+                                enrichedOrbColor.opacity(luminosityOpacity * 0.5),
+                                onyxDimensionColor.opacity(luminosityOpacity * 0.9),
+                                onyxDimensionColor.opacity(luminosityOpacity * 0.4)
                             ],
-                            center: .center,
+                            center: .topLeading,
                             startRadius: 0,
-                            endRadius: (baseSize + 48) / 2
+                            endRadius: baseSize
                         )
                     )
-                    .frame(width: baseSize + 80, height: baseSize + 80)
 
-                // Layer 2: Status Ring (health indicator)
-                statusRing
-
-                // Activity ring (animated when active)
-                if let state = state, state.isActive {
-                    Circle()
-                        .stroke(
-                            AngularGradient(
-                                colors: [dimensionColor, dimensionColor.opacity(0.3), dimensionColor],
-                                center: .center
-                            ),
-                            lineWidth: 2
+                // Inner highlight (glass-like)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.3),
+                                Color.clear
+                            ],
+                            center: .topLeading,
+                            startRadius: 0,
+                            endRadius: baseSize * 0.4
                         )
-                        .frame(width: baseSize + 10, height: baseSize + 10)
-                        .rotationEffect(.degrees(animationPhase * 30))
-                }
+                    )
 
-                // Layer 3: Orb Body
-                ZStack {
-                    // Base gradient (dimension color)
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color.white.opacity(0.15),
-                                    dimensionColor.opacity(0.9),
-                                    dimensionColor.opacity(0.3)
-                                ],
-                                center: .topLeading,
-                                startRadius: 0,
-                                endRadius: baseSize
-                            )
-                        )
+                // Border: desaturated color at reduced opacity
+                Circle()
+                    .stroke(onyxDimensionColor.opacity(0.35), lineWidth: 1)
 
-                    // Inner highlight (glass-like)
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color.white.opacity(0.4),
-                                    Color.clear
-                                ],
-                                center: .topLeading,
-                                startRadius: 0,
-                                endRadius: baseSize * 0.4
-                            )
-                        )
-
-                    // Border per spec: 1.5px dimension_color @ 50%
-                    Circle()
-                        .stroke(dimensionColor.opacity(0.5), lineWidth: 1.5)
-
-                    // Layer 4: Inner Icon + Level
-                    VStack(spacing: SanctuaryLayout.Spacing.xxs) {
-                        Image(systemName: SanctuaryIcons.Dimensions.icon(for: dimension))
-                            .font(.system(size: 28, weight: .medium))
-                            .foregroundColor(SanctuaryColors.Text.primary)
-
-                        if let state = state {
-                            Text("\(state.level)")
-                                .font(SanctuaryTypography.title)
-                                .foregroundColor(SanctuaryColors.Text.primary)
-                        }
-                    }
-                }
-                .frame(width: baseSize, height: baseSize)
-                .clipShape(Circle())
-                .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: isHovered ? 12 : 8)
-                .shadow(color: dimensionColor.opacity(isHovered ? 0.5 : 0.4), radius: isSelected ? 15 : (isHovered ? 12 : 8), x: 0, y: 0)
-                .scaleEffect(pulseScale * (isSelected ? 1.15 : 1.0) * (isHovered ? 1.05 : 1.0))
-                .offset(y: isHovered ? -4 : 0)  // Gentle hover lift effect
-                .animation(SanctuarySprings.hover, value: isHovered)
-
-                // Selection ring
-                if isSelected {
-                    Circle()
-                        .stroke(SanctuaryColors.Text.primary, lineWidth: 2)
-                        .frame(width: baseSize + 4, height: baseSize + 4)
-                }
-
-                // Accent seam for dimension identity
-                SanctuaryAccentSeam(color: dimensionColor, position: .bottom)
-                    .frame(width: baseSize, height: 3)
-                    .offset(y: baseSize / 2 - 1)
-                    .opacity(isSelected ? 1.0 : 0.6)
-
-                // Streak badge (using glass material)
-                if let state = state, state.streak >= 3 {
-                    HStack(spacing: SanctuaryLayout.Spacing.xxs) {
-                        Image(systemName: "flame.fill")
-                            .font(.system(size: 8))
-
-                        Text("\(state.streak)")
-                            .font(SanctuaryTypography.label)
-                    }
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, SanctuaryLayout.Spacing.sm)
-                    .padding(.vertical, SanctuaryLayout.Spacing.xxs)
-                    .background(SanctuaryColors.Glass.background)
-                    .clipShape(Capsule())
-                    .offset(x: baseSize * 0.3, y: -baseSize * 0.35)
-                }
-
-                // Trend indicator
-                if let state = state, state.trend != .stable {
-                    Image(systemName: state.trend == .up ? "arrow.up.right" : "arrow.down.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(state.trend == .up ? SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.error)
-                        .padding(SanctuaryLayout.Spacing.xs)
-                        .background(SanctuaryColors.Glass.background)
-                        .clipShape(Circle())
-                        .offset(x: -baseSize * 0.3, y: -baseSize * 0.35)
-                }
+                // Icon only — no level number
+                Image(systemName: SanctuaryIcons.Dimensions.icon(for: dimension))
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(OnyxColors.Text.primary)
             }
-            .onHover { hovering in
-                isHovered = hovering
+            .frame(width: baseSize, height: baseSize)
+            .clipShape(Circle())
+            .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: isHovered ? 10 : 6)
+            .shadow(color: onyxDimensionColor.opacity(isHovered ? 0.4 : 0.2), radius: levelGlowRadius, x: 0, y: 0)
+            .scaleEffect(pulseScale * (isSelected ? 1.15 : 1.0) * (isHovered ? 1.05 : 1.0))
+            .offset(y: isHovered ? -4 : 0)
+            .animation(OnyxSpring.hover, value: isHovered)
+
+            // Selection ring
+            if isSelected {
+                Circle()
+                    .stroke(OnyxColors.Text.primary, lineWidth: 2)
+                    .frame(width: baseSize + 4, height: baseSize + 4)
             }
 
-            // Dimension label
+            // Streak badge (using glass material)
+            if let state = state, state.streak >= 3 {
+                HStack(spacing: SanctuaryLayout.Spacing.xxs) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 8))
+
+                    Text("\(state.streak)")
+                        .font(OnyxTypography.label)
+                }
+                .foregroundColor(OnyxColors.Accent.amber)
+                .padding(.horizontal, SanctuaryLayout.Spacing.sm)
+                .padding(.vertical, SanctuaryLayout.Spacing.xxs)
+                .background(OnyxColors.Elevation.raised)
+                .clipShape(Capsule())
+                .offset(x: baseSize * 0.3, y: -baseSize * 0.35)
+            }
+
+            // Trend indicator
+            if let state = state, state.trend != .stable {
+                Image(systemName: state.trend == .up ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(state.trend == .up ? OnyxColors.Accent.sage : OnyxColors.Accent.rose)
+                    .padding(SanctuaryLayout.Spacing.xs)
+                    .background(OnyxColors.Elevation.raised)
+                    .clipShape(Circle())
+                    .offset(x: -baseSize * 0.3, y: -baseSize * 0.35)
+            }
+
+            // Dimension label — positioned just below the orb circle, not below the glow
             Text(dimension.displayName)
-                .font(SanctuaryTypography.label)
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .font(.system(size: 11, design: .serif))
+                .foregroundColor(OnyxColors.Text.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(OnyxColors.Elevation.void.opacity(0.85))
+                )
+                .shadow(color: OnyxColors.Elevation.void, radius: 4, x: 0, y: 0)
+                .offset(y: baseSize / 2 + 22)
+        }
+        .frame(width: baseSize + 80, height: baseSize + 80)
+        .onHover { hovering in
+            isHovered = hovering
         }
         .onAppear {
             startAnimations()
@@ -184,8 +201,8 @@ public struct DimensionOrbView: View {
             // Track
             Circle()
                 .stroke(
-                    dimensionColor.opacity(0.2),
-                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    onyxDimensionColor.opacity(0.15),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
                 )
                 .frame(width: baseSize + 16, height: baseSize + 16)
 
@@ -193,12 +210,12 @@ public struct DimensionOrbView: View {
             Circle()
                 .trim(from: 0, to: statusRingProgress * CGFloat(healthScore / 100))
                 .stroke(
-                    dimensionColor,
-                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    onyxDimensionColor.opacity(0.6),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
                 )
                 .frame(width: baseSize + 16, height: baseSize + 16)
                 .rotationEffect(.degrees(-90))
-                .shadow(color: dimensionColor.opacity(0.5), radius: 4, x: 0, y: 0)
+                .shadow(color: onyxDimensionColor.opacity(0.3), radius: 3, x: 0, y: 0)
         }
     }
 

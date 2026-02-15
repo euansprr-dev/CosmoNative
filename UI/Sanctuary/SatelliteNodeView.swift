@@ -50,13 +50,13 @@ public struct SatelliteNodeView: View {
     // MARK: - Layout Constants
 
     private enum Layout {
-        static let orbSize: CGFloat = SanctuaryLayout.satelliteOrbSize
-        static let iconSize: CGFloat = 24
-        static let labelSpacing: CGFloat = 8
-        static let glowBlur: CGFloat = 12
+        static let orbSize: CGFloat = 56  // Reduced from 72pt per Onyx spec
+        static let iconSize: CGFloat = 20
+        static let labelSpacing: CGFloat = 6
+        static let glowBlur: CGFloat = 10
         static let orbitalRingSize: CGFloat = orbSize * 1.3
         static let orbitalRingWidth: CGFloat = 0.5
-        static let badgeSize: CGFloat = 18
+        static let badgeSize: CGFloat = 16
     }
 
     // MARK: - Animation
@@ -170,15 +170,15 @@ public struct SatelliteNodeView: View {
             .scaleEffect(breathingScale * hoverScale * (isPressed ? 0.95 : 1.0))
             .offset(y: hoverOffset)
 
-            // Label
+            // Label — 10pt, tertiary
             Text(type.displayName)
-                .font(SanctuaryTypography.labelSmall)
+                .font(.system(size: 10, weight: .regular))
                 .foregroundColor(
                     isHovered
-                        ? SanctuaryColors.Text.primary
-                        : SanctuaryColors.Text.tertiary
+                        ? OnyxColors.Text.primary
+                        : OnyxColors.Text.secondary
                 )
-                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
         }
         // FIX: Use Circle contentShape to match orb visual + limit hover/tap to actual content
         .contentShape(Circle().scale(1.3))  // Slightly larger than orb for easier targeting

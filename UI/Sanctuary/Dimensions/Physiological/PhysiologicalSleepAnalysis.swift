@@ -23,8 +23,8 @@ public struct PhysiologicalSleepAnalysis: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("SLEEP ANALYSIS (LAST NIGHT)")
-                .font(SanctuaryTypography.label)
+            Text("Sleep Analysis (Last Night)")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -98,7 +98,7 @@ public struct PhysiologicalSleepAnalysis: View {
                 .font(.system(size: 16, weight: .bold, design: .rounded))
                 .foregroundColor(SanctuaryColors.Text.primary)
 
-            Text("TOTAL")
+            Text("Total")
                 .font(.system(size: 9))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
         }
@@ -114,7 +114,7 @@ public struct PhysiologicalSleepAnalysis: View {
 
     private var sleepStagesBar: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("SLEEP STAGES")
+            Text("Sleep Stages")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -317,8 +317,8 @@ public struct SleepTrendChart: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("SLEEP TREND (7 DAYS)")
-                .font(SanctuaryTypography.label)
+            Text("Sleep Trend (7 Days)")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -419,7 +419,7 @@ public struct SleepDebtIndicator: View {
                 .foregroundColor(debtColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("SLEEP DEBT")
+                Text("Sleep Debt")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

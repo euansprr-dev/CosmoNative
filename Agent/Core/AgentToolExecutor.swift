@@ -36,6 +36,9 @@ class AgentToolExecutor {
         case "get_swipe_analysis": return try await getSwipeAnalysis(arguments)
         case "find_similar_swipes": return try await findSimilarSwipes(arguments)
         case "get_swipe_stats": return try await getSwipeStats(arguments)
+        // Capture
+        case "capture_swipe": return try await captureSwipe(arguments)
+        case "capture_research": return try await captureResearch(arguments)
         // Content
         case "get_content_pipeline": return try await getContentPipeline(arguments)
         case "advance_pipeline_phase": return try await advancePipelinePhase(arguments)
@@ -317,6 +320,290 @@ class AgentToolExecutor {
             "totalSwipes": swipes.count,
             "topHooks": topHooks,
             "topFrameworks": topFrameworks
+        ] as [String: Any])
+    }
+
+    // MARK: - Capture
+
+    private func captureSwipe(_ args: [String: Any]) async throws -> String {
+        guard let input = args["url"] as? String else {
+            return jsonError("Missing required parameter: url")
+        }
+        let userHook = args["hook"] as? String
+        let notes = args["notes"] as? String
+
+        let classifier = SwipeURLClassifier()
+        let classification = classifier.classify(input)
+
+        var item: Atom
+        var sourceLabel = classification.sourceType.displayName
+
+        switch classification.sourceType {
+        case .youtube, .youtubeShort:
+            guard let videoId = classification.contentId else {
+                return jsonError("Could not extract YouTube video ID from URL")
+            }
+            item = Research.swipeFromYouTube(
+                videoId: videoId,
+                url: input,
+                hook: userHook,
+                isShort: classification.sourceType == .youtubeShort
+            )
+            item.thumbnailUrl = "https://img.youtube.com/vi/\(videoId)/maxresdefault.jpg"
+
+            // Fetch metadata via oEmbed
+            do {
+                let metadata = try await YouTubeProcessor.shared.fetchMetadata(videoId: videoId)
+                item.title = metadata.title
+                var richContent = item.richContent ?? ResearchRichContent()
+                richContent.title = metadata.title
+                richContent.author = metadata.channelName
+                richContent.thumbnailUrl = item.thumbnailUrl
+                item.setRichContent(richContent)
+            } catch {
+                print("Agent: YouTube oEmbed failed (non-fatal): \(error)")
+            }
+
+            // Fetch transcript
+            do {
+                let segments = await YouTubeProcessor.shared.fetchCaptions(videoId: videoId)
+                if let segments = segments, !segments.isEmpty {
+                    let fullText = segments.map(\.text).joined(separator: " ")
+                    var richContent = item.richContent ?? ResearchRichContent()
+                    richContent.transcript = fullText
+                    richContent.transcriptStatus = "available"
+                    item.setRichContent(richContent)
+                    if userHook == nil, let firstLine = fullText.components(separatedBy: .newlines).first {
+                        item.hook = String(firstLine.prefix(200))
+                    }
+                    item.summary = String(fullText.prefix(500))
+                    item.body = segments.jsonString
+                    item.processingStatus = "complete"
+                }
+            } catch {
+                print("Agent: YouTube transcript fetch failed: \(error)")
+                item.processingStatus = "pending"
+            }
+            sourceLabel = "YouTube"
+
+        case .instagramReel, .instagramPost, .instagramCarousel:
+            let igType: ResearchRichContent.InstagramContentType
+            switch classification.sourceType {
+            case .instagramReel: igType = .reel
+            case .instagramCarousel: igType = .carousel
+            default: igType = .post
+            }
+            item = Research.swipeFromInstagram(
+                instagramId: classification.contentId ?? UUID().uuidString,
+                url: input,
+                hook: userHook,
+                type: igType
+            )
+            // Attempt oEmbed metadata
+            let encoded = input.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? input
+            if let oEmbedURL = URL(string: "https://api.instagram.com/oembed/?url=\(encoded)") {
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: oEmbedURL)
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let title = json["title"] as? String, !title.isEmpty {
+                            item.title = title
+                            if userHook == nil { item.hook = String(title.prefix(200)) }
+                        }
+                        if let authorName = json["author_name"] as? String {
+                            var richContent = item.richContent ?? ResearchRichContent()
+                            richContent.author = authorName
+                            item.setRichContent(richContent)
+                        }
+                    }
+                } catch {
+                    print("Agent: Instagram oEmbed failed (non-fatal): \(error)")
+                }
+            }
+            item.processingStatus = "pending"
+            sourceLabel = "Instagram"
+
+        case .xPost, .twitter:
+            guard let tweetId = classification.contentId else {
+                return jsonError("Could not extract tweet ID from URL")
+            }
+            item = Research.swipeFromXPost(tweetId: tweetId, url: input, hook: userHook)
+            do {
+                let embedResult = try await XEmbedFetcher.shared.fetchEmbed(url: input)
+                var richContent = item.richContent ?? ResearchRichContent()
+                richContent.embedHtml = embedResult.html
+                richContent.author = embedResult.authorName
+                item.setRichContent(richContent)
+                if let tweetText = embedResult.text {
+                    if userHook == nil { item.hook = String(tweetText.prefix(280)) }
+                    item.title = item.hook ?? "X Post"
+                    item.summary = tweetText
+                }
+                item.processingStatus = "complete"
+            } catch {
+                print("Agent: X embed fetch failed: \(error)")
+                item.processingStatus = "pending"
+            }
+            sourceLabel = "X"
+
+        case .threads:
+            item = Research.swipeFromThreads(
+                threadId: classification.contentId ?? UUID().uuidString,
+                url: input,
+                hook: userHook
+            )
+            item.title = userHook ?? "Threads Post"
+            item.processingStatus = "pending"
+            sourceLabel = "Threads"
+
+        case .rawNote:
+            item = Research.swipeFromRawText(text: input, hook: userHook)
+            sourceLabel = "Raw Text"
+
+        default:
+            // Website or unknown URL
+            item = Research.newSwipeFile(
+                url: input,
+                hook: userHook,
+                sourceType: .website,
+                contentSource: .clipboard
+            )
+            item.title = userHook ?? input
+            item.processingStatus = "pending"
+            sourceLabel = "Website"
+        }
+
+        // Apply user hook override if provided
+        if let userHook = userHook, !userHook.isEmpty {
+            item.hook = userHook
+            if (item.title ?? "").isEmpty { item.title = userHook }
+        }
+
+        // Apply notes to body if no body exists
+        if let notes = notes, !notes.isEmpty {
+            if (item.body ?? "").isEmpty {
+                item.body = notes
+            } else {
+                item.body = (item.body ?? "") + "\n\n--- Agent Notes ---\n" + notes
+            }
+        }
+
+        // Mark as swipe file
+        item.isSwipeFile = true
+        item.contentSource = SwipeContentSource.clipboard.rawValue
+        item.updatedAt = ISO8601DateFormatter().string(from: Date())
+
+        // Save to GRDB
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                var dbItem = item
+                try dbItem.insert(db)
+                dbItem.id = db.lastInsertedRowID
+                item.id = dbItem.id
+            }
+        } catch {
+            return jsonError("Failed to save swipe: \(error.localizedDescription)")
+        }
+
+        // Generate embedding in background
+        Task {
+            var textToEmbed = ""
+            if let hook = item.hook { textToEmbed += hook + " " }
+            if let summary = item.summary { textToEmbed += summary }
+            if !textToEmbed.isEmpty {
+                try? await VectorDatabase.shared.index(
+                    text: textToEmbed,
+                    entityType: "research",
+                    entityId: item.id ?? 0,
+                    entityUUID: item.uuid
+                )
+            }
+        }
+
+        // Auto-link to matching ideas in background
+        if let savedAtom = try? await atomRepo.fetch(uuid: item.uuid) {
+            Task {
+                await IdeaInsightEngine.shared.findIdeasForSwipe(swipeAtom: savedAtom)
+            }
+        }
+
+        // Post notification for UI updates
+        NotificationCenter.default.post(
+            name: .researchCreated,
+            object: nil,
+            userInfo: ["research": item, "uuid": item.uuid]
+        )
+
+        return jsonEncode([
+            "success": true,
+            "uuid": item.uuid,
+            "title": item.title ?? sourceLabel,
+            "source": sourceLabel,
+            "hook": item.hook ?? "",
+            "processingStatus": item.processingStatus ?? "complete",
+            "message": "Swipe captured from \(sourceLabel): \(item.title ?? "Untitled")"
+        ] as [String: Any])
+    }
+
+    private func captureResearch(_ args: [String: Any]) async throws -> String {
+        guard let title = args["title"] as? String else {
+            return jsonError("Missing required parameter: title")
+        }
+        let url = args["url"] as? String
+        let body = args["body"] as? String
+
+        // Determine source type from URL if provided
+        var sourceType: ResearchRichContent.SourceType? = nil
+        if let url = url {
+            let classifier = SwipeURLClassifier()
+            let classification = classifier.classify(url)
+            sourceType = classification.sourceType
+        }
+
+        var item = Research.new(
+            title: title,
+            url: url,
+            sourceType: sourceType
+        )
+        item.body = body
+        item.updatedAt = ISO8601DateFormatter().string(from: Date())
+
+        // Save to GRDB
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                var dbItem = item
+                try dbItem.insert(db)
+                dbItem.id = db.lastInsertedRowID
+                item.id = dbItem.id
+            }
+        } catch {
+            return jsonError("Failed to save research: \(error.localizedDescription)")
+        }
+
+        // Generate embedding in background
+        Task {
+            let textToEmbed = [title, body ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            if !textToEmbed.isEmpty {
+                try? await VectorDatabase.shared.index(
+                    text: textToEmbed,
+                    entityType: "research",
+                    entityId: item.id ?? 0,
+                    entityUUID: item.uuid
+                )
+            }
+        }
+
+        // Post notification for UI updates
+        NotificationCenter.default.post(
+            name: .researchCreated,
+            object: nil,
+            userInfo: ["research": item, "uuid": item.uuid]
+        )
+
+        return jsonEncode([
+            "success": true,
+            "uuid": item.uuid,
+            "title": title,
+            "message": "Research captured: \(title)"
         ] as [String: Any])
     }
 

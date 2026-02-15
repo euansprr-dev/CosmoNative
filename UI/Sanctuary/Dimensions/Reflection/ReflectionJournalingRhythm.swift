@@ -47,8 +47,8 @@ public struct JournalingRhythmPanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("JOURNALING RHYTHM")
-                .font(SanctuaryTypography.label)
+            Text("Journaling Rhythm")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -95,7 +95,7 @@ public struct JournalingRhythmPanel: View {
 
     private var streakDisplay: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("CURRENT STREAK")
+            Text("Current Streak")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -141,7 +141,7 @@ public struct JournalingRhythmPanel: View {
 
     private var consistencyGauge: some View {
         VStack(spacing: SanctuaryLayout.Spacing.md) {
-            Text("CONSISTENCY")
+            Text("Consistency")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -227,7 +227,7 @@ public struct JournalingRhythmPanel: View {
 
     private var depthSection: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("DEPTH SCORE")
+            Text("Depth Score")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -281,7 +281,7 @@ public struct JournalingRhythmPanel: View {
 
     private var weeklyDepthChart: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("WEEKLY DEPTH")
+            Text("Weekly Depth")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -568,7 +568,7 @@ public struct JournalingRhythmCompact: View {
 
             // Word count
             VStack(alignment: .leading, spacing: 2) {
-                Text("TODAY")
+                Text("Today")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
 

@@ -179,9 +179,8 @@ class ConversationMemoryService {
             }
         }
 
-        // Reconstruct conversation by creating and populating
-        var conv = AgentConversation(source: source)
-        // Copy messages into the conversation
+        // Reconstruct conversation with the original ID so lookups work
+        var conv = AgentConversation(id: convId, source: source)
         for msg in messages {
             conv.messages.append(msg)
         }

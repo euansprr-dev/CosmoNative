@@ -73,12 +73,12 @@ class BehavioralDataProvider: ObservableObject {
         let disciplineChange = await computeDisciplineChange(snapshots: dimensionSnapshots, currentIndex: disciplineIndex)
 
         // Build component scores
-        let morningScore = buildComponentScore(name: "MORNING", score: morningScoreValue * 100, snapshots: dimensionSnapshots, key: "morning")
-        let deepWorkScore = buildComponentScore(name: "DEEP WORK", score: deepWorkScoreValue * 100, snapshots: dimensionSnapshots, key: "deepWork")
-        let sleepScore = buildComponentScore(name: "SLEEP", score: sleepScoreValue * 100, snapshots: dimensionSnapshots, key: "sleep")
-        let movementScore = buildComponentScore(name: "MOVEMENT", score: movementScoreValue * 100, snapshots: dimensionSnapshots, key: "movement")
-        let screenScore = buildComponentScore(name: "SCREEN", score: screenScoreValue, snapshots: dimensionSnapshots, key: "screen")
-        let taskScore = buildComponentScore(name: "TASKS", score: taskScoreValue * 100, snapshots: dimensionSnapshots, key: "tasks")
+        let morningScore = buildComponentScore(name: "Morning", score: morningScoreValue * 100, snapshots: dimensionSnapshots, key: "morning")
+        let deepWorkScore = buildComponentScore(name: "Deep Work", score: deepWorkScoreValue * 100, snapshots: dimensionSnapshots, key: "deepWork")
+        let sleepScore = buildComponentScore(name: "Sleep", score: sleepScoreValue * 100, snapshots: dimensionSnapshots, key: "sleep")
+        let movementScore = buildComponentScore(name: "Movement", score: movementScoreValue * 100, snapshots: dimensionSnapshots, key: "movement")
+        let screenScore = buildComponentScore(name: "Screen", score: screenScoreValue, snapshots: dimensionSnapshots, key: "screen")
+        let taskScore = buildComponentScore(name: "Tasks", score: taskScoreValue * 100, snapshots: dimensionSnapshots, key: "tasks")
 
         // Build routine trackers
         let morningRoutine = buildMorningRoutineTracker(deepWorkAtoms: deepWorkAtoms, now: now)
@@ -296,7 +296,7 @@ class BehavioralDataProvider: ObservableObject {
         let avgDate = calendar.date(bySettingHour: Int(avgMinutes) / 60, minute: Int(avgMinutes) % 60, second: 0, of: now) ?? now
 
         return RoutineTracker(
-            name: "MORNING ROUTINE",
+            name: "Morning Routine",
             targetTime: targetTime,
             toleranceMinutes: 30,
             weekData: weekData,
@@ -321,7 +321,7 @@ class BehavioralDataProvider: ObservableObject {
         }
 
         return RoutineTracker(
-            name: "SLEEP SCHEDULE",
+            name: "Sleep Schedule",
             targetTime: targetTime,
             toleranceMinutes: 30,
             weekData: weekData,
@@ -339,7 +339,7 @@ class BehavioralDataProvider: ObservableObject {
         let consistency = Double(weekData.filter { $0.status == .success }.count) / max(1, Double(weekData.count)) * 100
 
         return RoutineTracker(
-            name: "WAKE SCHEDULE",
+            name: "Wake Schedule",
             targetTime: targetTime,
             toleranceMinutes: 30,
             weekData: weekData,
@@ -388,7 +388,7 @@ class BehavioralDataProvider: ObservableObject {
         // Deep Work streak — consecutive days with at least one deep work session
         let dwStreak = computeConsecutiveDayStreak(atoms: deepWorkAtoms, from: now)
         streaks.append(Streak(
-            name: "DEEP WORK",
+            name: "Deep Work",
             category: .focus,
             currentDays: dwStreak,
             personalBest: max(dwStreak, 7),
@@ -402,7 +402,7 @@ class BehavioralDataProvider: ObservableObject {
         // Task Zero streak — consecutive days with all tasks completed
         let taskStreak = computeTaskZeroStreak(taskAtoms: taskAtoms, from: now)
         streaks.append(Streak(
-            name: "TASK ZERO",
+            name: "Task Zero",
             category: .tasks,
             currentDays: taskStreak,
             personalBest: max(taskStreak, 7),
@@ -416,7 +416,7 @@ class BehavioralDataProvider: ObservableObject {
         let exerciseStreak = computeConsecutiveDayStreak(atoms: workoutAtoms, from: now)
         if exerciseStreak > 0 {
             streaks.append(Streak(
-                name: "EXERCISE",
+                name: "Exercise",
                 category: .exercise,
                 currentDays: exerciseStreak,
                 personalBest: max(exerciseStreak, 5),
@@ -432,7 +432,7 @@ class BehavioralDataProvider: ObservableObject {
         let sleepStreak = computeConsecutiveDayStreak(atoms: sleepAtoms, from: now)
         if sleepStreak > 0 {
             streaks.append(Streak(
-                name: "SLEEP BEFORE 11PM",
+                name: "Sleep Before 11pm",
                 category: .sleep,
                 currentDays: sleepStreak,
                 personalBest: max(sleepStreak, 7),

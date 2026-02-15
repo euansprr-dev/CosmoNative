@@ -85,8 +85,8 @@ public struct CognitiveCorrelationMap: View {
 
     private var header: some View {
         HStack {
-            Text("CORRELATION MAP")
-                .font(SanctuaryTypography.label)
+            Text("Correlation Map")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -418,7 +418,7 @@ public struct CorrelationDetailView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(correlation.title)
-                        .font(SanctuaryTypography.title)
+                        .font(OnyxTypography.cardTitle)
                         .foregroundColor(SanctuaryColors.Text.primary)
 
                     HStack(spacing: SanctuaryLayout.Spacing.sm) {
@@ -458,12 +458,12 @@ public struct CorrelationDetailView: View {
 
             // Causal analysis
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                Text("CAUSAL ANALYSIS")
-                    .font(SanctuaryTypography.label)
+                Text("Causal Analysis")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
 
                 Text(correlation.actionInsight)
-                    .font(SanctuaryTypography.body)
+                    .font(OnyxTypography.body)
                     .foregroundColor(SanctuaryColors.Text.primary)
 
                 // Source and target metrics

@@ -690,7 +690,8 @@ struct SwipeStudyFocusModeView: View {
                 igMediaData = mediaData
 
                 if let videoURL = mediaData.videoURL {
-                    setupIGPlayer(videoURL: videoURL)
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    setupIGPlayer(videoURL: playableURL)
                     if let dur = mediaData.duration {
                         videoDuration = dur
                     }
@@ -698,10 +699,11 @@ struct SwipeStudyFocusModeView: View {
                     // Auto-transcribe if slides are empty
                     let hasContent = transcriptSlides.contains { !$0.text.isEmpty }
                     if !hasContent {
-                        await autoTranscribe(videoURL: videoURL, duration: mediaData.duration ?? 60)
+                        await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
                     }
                 } else {
                     // Image post or extraction returned no video
+                    print("SwipeStudy: Instagram extraction returned no video URL (type: \(mediaData.contentType), thumb: \(mediaData.thumbnailURL?.absoluteString ?? "nil"))")
                     igVideoFailed = true
                 }
             } catch {
@@ -752,9 +754,24 @@ struct SwipeStudyFocusModeView: View {
 
             transcriptSlides = finalSlides
             saveSlideTranscript()
+
+            // Auto-run analysis after successful auto-transcription so the right panel
+            // populates without requiring a manual "Analyze" click.
+            if shouldAutoAnalyzeAfterTranscription() {
+                triggerManualAnalysis()
+            }
         }
 
         isAutoTranscribing = false
+    }
+
+    private func shouldAutoAnalyzeAfterTranscription() -> Bool {
+        guard transcriptSlides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            return false
+        }
+        guard !isAnalyzing, !isDeepAnalyzing else { return false }
+        if let analysis, analysis.isFullyAnalyzed { return false }
+        return true
     }
 
     private func setupIGPlayer(videoURL: URL) {
@@ -804,7 +821,8 @@ struct SwipeStudyFocusModeView: View {
                 let fresh = try await InstagramMediaCache.shared.getMedia(for: url)
                 igMediaData = fresh
                 if let videoURL = fresh.videoURL {
-                    let item = AVPlayerItem(url: videoURL)
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    let item = AVPlayerItem(url: playableURL)
                     igPlayer?.replaceCurrentItem(with: item)
                     // Resume from saved position
                     if currentTimestamp > 0 {
@@ -3135,4 +3153,3 @@ private struct SlideTextEditor: NSViewRepresentable {
         }
     }
 }
-

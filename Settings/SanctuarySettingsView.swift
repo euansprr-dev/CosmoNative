@@ -59,14 +59,13 @@ struct SanctuarySettingsView: View {
     // Connections — Health
     @AppStorage("healthKitEnabled") private var healthKitEnabled = false
 
-    // Connections — Social Platforms
-    @AppStorage("instagramConnected") private var instagramConnected = false
-    @AppStorage("youtubeConnected") private var youtubeConnected = false
-    @AppStorage("tiktokConnected") private var tiktokConnected = false
-    @AppStorage("xConnected") private var xConnected = false
+    // Social Sync
+    @ObservedObject private var socialSyncService = SocialSyncService.shared
 
     // Connections — Knowledge
     @AppStorage("readwiseAPIKey") private var readwiseAPIKey = ""
+    @StateObject private var readwiseService = ReadwiseService.shared
+    @State private var isValidatingToken = false
 
     // Connections — Screen Time
     @AppStorage("screenTimeEnabled") private var screenTimeEnabled = false
@@ -220,10 +219,39 @@ struct SanctuarySettingsView: View {
             // Social Platforms Section
             settingsSection(title: "SOCIAL PLATFORMS", icon: "globe", color: SanctuaryColors.creative) {
                 VStack(spacing: SanctuaryLayout.Spacing.sm) {
-                    comingSoonCard(icon: "camera.fill", name: "Instagram", accentColor: Color(hex: "E1306C"))
-                    comingSoonCard(icon: "play.rectangle.fill", name: "YouTube", accentColor: Color(hex: "FF0000"))
-                    comingSoonCard(icon: "music.note", name: "TikTok", accentColor: Color(hex: "00F2EA"))
-                    comingSoonCard(icon: "at", name: "X", accentColor: SanctuaryColors.Text.primary)
+                    SocialPlatformConnectionCard(platform: .youtube, socialService: socialSyncService)
+                    SocialPlatformConnectionCard(platform: .instagram, socialService: socialSyncService)
+                    SocialPlatformConnectionCard(platform: .tiktok, socialService: socialSyncService)
+                    SocialPlatformConnectionCard(platform: .x, socialService: socialSyncService)
+
+                    // Sync All button
+                    if socialSyncService.hasAnyConnection {
+                        Button(action: {
+                            Task { await socialSyncService.syncAll() }
+                        }) {
+                            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                                if socialSyncService.isSyncing {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                        .frame(width: 14, height: 14)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                Text(socialSyncService.isSyncing ? "Syncing..." : "Sync All Platforms")
+                                    .font(SanctuaryTypography.label)
+                            }
+                            .foregroundColor(SanctuaryColors.creative)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, SanctuaryLayout.Spacing.sm + 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                                    .fill(SanctuaryColors.creative.opacity(0.12))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(socialSyncService.isSyncing)
+                    }
                 }
             }
 
@@ -619,6 +647,7 @@ struct SanctuarySettingsView: View {
 
     private var readwiseCard: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            // Header row
             HStack(spacing: SanctuaryLayout.Spacing.md) {
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 20))
@@ -639,9 +668,32 @@ struct SanctuarySettingsView: View {
 
                 Spacer()
 
-                statusBadge(for: readwiseAPIKey.isEmpty ? .notConnected : .connected)
+                // Token validation badge
+                if isValidatingToken {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 16, height: 16)
+                } else if let valid = readwiseService.isTokenValid {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(valid ? SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.danger)
+                            .frame(width: 6, height: 6)
+                        Text(valid ? "Valid" : "Invalid")
+                            .font(SanctuaryTypography.caption)
+                            .foregroundColor(valid ? SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.danger)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill((valid ? SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.danger).opacity(0.1))
+                    )
+                } else {
+                    statusBadge(for: readwiseAPIKey.isEmpty ? .notConnected : .connected)
+                }
             }
 
+            // API key input
             SecureField("Readwise API Key", text: $readwiseAPIKey)
                 .textFieldStyle(.plain)
                 .font(SanctuaryTypography.bodyMedium)
@@ -655,6 +707,110 @@ struct SanctuarySettingsView: View {
                                 .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
                         )
                 )
+                .onSubmit {
+                    guard !readwiseAPIKey.isEmpty else { return }
+                    isValidatingToken = true
+                    Task {
+                        _ = await readwiseService.validateToken()
+                        isValidatingToken = false
+                    }
+                }
+                .onChange(of: readwiseAPIKey) { newValue in
+                    if newValue.isEmpty {
+                        readwiseService.disconnect()
+                    }
+                }
+
+            // Sync controls (only visible when connected)
+            if readwiseService.isConnected {
+                HStack(spacing: SanctuaryLayout.Spacing.md) {
+                    // Sync Now button
+                    Button(action: {
+                        Task {
+                            do {
+                                try await readwiseService.syncHighlights()
+                            } catch {
+                                readwiseService.syncError = error.localizedDescription
+                            }
+                        }
+                    }) {
+                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            if readwiseService.isSyncing {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            Text(readwiseService.isSyncing ? "Syncing..." : "Sync Now")
+                                .font(SanctuaryTypography.label)
+                        }
+                        .foregroundColor(SanctuaryColors.knowledge)
+                        .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
+                        .padding(.vertical, SanctuaryLayout.Spacing.xs + 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                                .fill(SanctuaryColors.knowledge.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(readwiseService.isSyncing)
+
+                    // Disconnect button
+                    Button(action: {
+                        readwiseAPIKey = ""
+                        readwiseService.disconnect()
+                    }) {
+                        Text("Disconnect")
+                            .font(SanctuaryTypography.label)
+                            .foregroundColor(SanctuaryColors.Semantic.danger)
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+                }
+
+                // Sync status info
+                HStack(spacing: SanctuaryLayout.Spacing.md) {
+                    if readwiseService.highlightCount > 0 {
+                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            Image(systemName: "text.quote")
+                                .font(.system(size: 11))
+                                .foregroundColor(SanctuaryColors.Text.tertiary)
+                            Text("\(readwiseService.highlightCount) highlights")
+                                .font(SanctuaryTypography.caption)
+                                .foregroundColor(SanctuaryColors.Text.secondary)
+                        }
+                    }
+
+                    if let lastSync = readwiseService.lastSyncDate {
+                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 11))
+                                .foregroundColor(SanctuaryColors.Text.tertiary)
+                            Text("Last sync: \(lastSync, style: .relative) ago")
+                                .font(SanctuaryTypography.caption)
+                                .foregroundColor(SanctuaryColors.Text.secondary)
+                        }
+                    }
+
+                    Spacer()
+                }
+            }
+
+            // Error display
+            if let error = readwiseService.syncError {
+                HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(SanctuaryColors.Semantic.danger)
+                    Text(error)
+                        .font(SanctuaryTypography.caption)
+                        .foregroundColor(SanctuaryColors.Semantic.danger)
+                        .lineLimit(2)
+                }
+            }
         }
         .padding(SanctuaryLayout.Spacing.md)
         .background(glassCard)
@@ -1037,6 +1193,10 @@ private struct APIKeyCard: View {
         case "openrouter": return APIKeys.openRouter
         case "youtube": return APIKeys.youtube
         case "perplexity": return APIKeys.perplexity
+        case "instagram": return APIKeys.instagram
+        case "tiktok": return APIKeys.tiktok
+        case "x_twitter": return APIKeys.xTwitter
+        case "youtube_channel_id": return APIKeys.youtubeChannelId
         default: return nil
         }
     }
@@ -1048,6 +1208,369 @@ private struct APIKeyCard: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(.easeInOut(duration: 0.2)) { showSuccess = false }
         }
+    }
+}
+
+// MARK: - Social Platform Connection Card
+
+private struct SocialPlatformConnectionCard: View {
+    let platform: SocialSyncPlatform
+    @ObservedObject var socialService: SocialSyncService
+
+    @State private var tokenInput: String = ""
+    @State private var channelIdInput: String = ""
+    @State private var isExpanded: Bool = false
+    @State private var statusMessage: String? = nil
+
+    private var isConnected: Bool {
+        socialService.isConnected(platform)
+    }
+
+    private var syncError: String? {
+        socialService.syncErrors[platform]
+    }
+
+    private var syncResult: PlatformSyncResult? {
+        socialService.lastSyncResults[platform]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+            // Header row
+            headerRow
+
+            // Expandable token input
+            if isExpanded && !isConnected {
+                tokenInputSection
+            }
+
+            // Connected status info
+            if isConnected, let result = syncResult {
+                connectedInfoRow(result: result)
+            }
+
+            // Status/error messages
+            if let msg = statusMessage {
+                statusMessageRow(msg)
+            }
+            if let error = syncError {
+                errorRow(error)
+            }
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(platformGlassCard)
+    }
+
+    // MARK: - Header
+
+    @ViewBuilder
+    private var headerRow: some View {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
+            Image(systemName: platform.icon)
+                .font(.system(size: 18))
+                .foregroundColor(isConnected ? platform.accentColor : platform.accentColor.opacity(0.5))
+                .frame(width: 36, height: 36)
+                .background(platform.accentColor.opacity(isConnected ? 0.15 : 0.08))
+                .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(platform.displayName)
+                    .font(SanctuaryTypography.titleSmall)
+                    .foregroundColor(isConnected ? SanctuaryColors.Text.primary : SanctuaryColors.Text.secondary)
+
+                if isConnected, let handle = syncResult?.accountHandle, !handle.isEmpty {
+                    Text(handle)
+                        .font(SanctuaryTypography.caption)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                }
+            }
+
+            Spacer()
+
+            if isConnected {
+                connectionBadge
+                disconnectButton
+            } else {
+                connectToggleButton
+            }
+        }
+    }
+
+    private var connectionBadge: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(SanctuaryColors.Semantic.success)
+                .frame(width: 6, height: 6)
+            Text("Connected")
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Semantic.success)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(SanctuaryColors.Semantic.success.opacity(0.1))
+        )
+    }
+
+    private var disconnectButton: some View {
+        Button(action: {
+            socialService.disconnect(platform)
+            tokenInput = ""
+            channelIdInput = ""
+            statusMessage = nil
+        }) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(SanctuaryColors.Text.muted)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var connectToggleButton: some View {
+        Button(action: {
+            withAnimation(.easeOut(duration: 0.15)) {
+                isExpanded.toggle()
+            }
+        }) {
+            Text(isExpanded ? "Cancel" : "Connect")
+                .font(SanctuaryTypography.label)
+                .foregroundColor(isExpanded ? SanctuaryColors.Text.muted : platform.accentColor)
+                .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                .padding(.vertical, SanctuaryLayout.Spacing.xs)
+                .background(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        .fill(isExpanded ? SanctuaryColors.Glass.secondary : platform.accentColor.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Token Input
+
+    @ViewBuilder
+    private var tokenInputSection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+            if platform == .youtube {
+                youTubeInputFields
+            } else {
+                singleTokenInput
+            }
+
+            saveButton
+        }
+    }
+
+    @ViewBuilder
+    private var youTubeInputFields: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+            Text("YouTube API Key")
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+
+            SecureField("AIza...", text: $tokenInput)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(SanctuaryColors.Text.primary)
+                .padding(SanctuaryLayout.Spacing.sm)
+                .background(tokenFieldBackground)
+        }
+
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+            Text("Channel ID")
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+
+            TextField("UC...", text: $channelIdInput)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(SanctuaryColors.Text.primary)
+                .padding(SanctuaryLayout.Spacing.sm)
+                .background(tokenFieldBackground)
+        }
+
+        Text("Find your Channel ID at youtube.com/account_advanced")
+            .font(.system(size: 10))
+            .foregroundColor(SanctuaryColors.Text.muted)
+    }
+
+    @ViewBuilder
+    private var singleTokenInput: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+            Text(tokenLabel)
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+
+            SecureField(tokenPlaceholder, text: $tokenInput)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(SanctuaryColors.Text.primary)
+                .padding(SanctuaryLayout.Spacing.sm)
+                .background(tokenFieldBackground)
+        }
+
+        Text(tokenInstructions)
+            .font(.system(size: 10))
+            .foregroundColor(SanctuaryColors.Text.muted)
+    }
+
+    private var saveButton: some View {
+        Button(action: saveToken) {
+            Text("Save & Connect")
+                .font(SanctuaryTypography.label)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        .fill(platform.accentColor)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(platform == .youtube ? (tokenInput.isEmpty || channelIdInput.isEmpty) : tokenInput.isEmpty)
+        .opacity(platform == .youtube ? (tokenInput.isEmpty || channelIdInput.isEmpty ? 0.5 : 1) : (tokenInput.isEmpty ? 0.5 : 1))
+    }
+
+    // MARK: - Connected Info
+
+    @ViewBuilder
+    private func connectedInfoRow(result: PlatformSyncResult) -> some View {
+        HStack(spacing: SanctuaryLayout.Spacing.lg) {
+            if result.followerCount > 0 {
+                metricPill(
+                    icon: "person.2.fill",
+                    value: formatNumber(result.followerCount),
+                    label: "followers"
+                )
+            }
+            if result.totalReach > 0 {
+                metricPill(
+                    icon: "eye.fill",
+                    value: formatNumber(result.totalReach),
+                    label: "reach"
+                )
+            }
+            if result.engagementRate > 0 {
+                metricPill(
+                    icon: "heart.fill",
+                    value: String(format: "%.1f%%", result.engagementRate),
+                    label: "engagement"
+                )
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private func metricPill(icon: String, value: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(SanctuaryColors.Text.primary)
+        }
+    }
+
+    // MARK: - Status/Error
+
+    @ViewBuilder
+    private func statusMessageRow(_ msg: String) -> some View {
+        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 11))
+                .foregroundColor(SanctuaryColors.Semantic.success)
+            Text(msg)
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Text.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func errorRow(_ error: String) -> some View {
+        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundColor(SanctuaryColors.Semantic.danger)
+            Text(error)
+                .font(SanctuaryTypography.caption)
+                .foregroundColor(SanctuaryColors.Semantic.danger)
+                .lineLimit(2)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var tokenLabel: String {
+        switch platform {
+        case .instagram: return "Instagram Access Token"
+        case .tiktok: return "TikTok Access Token"
+        case .x: return "X Bearer Token"
+        case .youtube: return "YouTube API Key"
+        }
+    }
+
+    private var tokenPlaceholder: String {
+        switch platform {
+        case .instagram: return "IGQVJ..."
+        case .tiktok: return "act...."
+        case .x: return "AAAA..."
+        case .youtube: return "AIza..."
+        }
+    }
+
+    private var tokenInstructions: String {
+        switch platform {
+        case .instagram: return "Get a long-lived token from Facebook Developer Portal"
+        case .tiktok: return "Get an access token from TikTok Developer Portal"
+        case .x: return "Get a Bearer token from developer.x.com"
+        case .youtube: return "Get an API key from Google Cloud Console"
+        }
+    }
+
+    private func saveToken() {
+        if platform == .youtube {
+            APIKeys.save(tokenInput, identifier: "youtube")
+            APIKeys.save(channelIdInput, identifier: "youtube_channel_id")
+            statusMessage = "YouTube connected"
+            withAnimation { isExpanded = false }
+        } else {
+            Task {
+                let result = await socialService.connect(platform: platform, token: tokenInput)
+                statusMessage = result.message
+                if result.success {
+                    withAnimation { isExpanded = false }
+                }
+            }
+        }
+    }
+
+    private var tokenFieldBackground: some View {
+        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+            .fill(SanctuaryColors.Glass.secondary)
+            .overlay(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+            )
+    }
+
+    private var platformGlassCard: some View {
+        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
+            .fill(SanctuaryColors.Glass.primary)
+            .overlay(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
+                    .stroke(isConnected ? platform.accentColor.opacity(0.2) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+            )
+    }
+
+    private func formatNumber(_ num: Int) -> String {
+        if num >= 1_000_000 {
+            return String(format: "%.1fM", Double(num) / 1_000_000)
+        } else if num >= 1_000 {
+            return String(format: "%.1fK", Double(num) / 1_000)
+        }
+        return "\(num)"
     }
 }
 

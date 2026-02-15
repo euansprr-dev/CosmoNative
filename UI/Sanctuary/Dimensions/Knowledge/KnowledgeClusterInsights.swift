@@ -37,8 +37,8 @@ public struct KnowledgeClusterInsights: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("CLUSTER INSIGHTS")
-                .font(SanctuaryTypography.label)
+            Text("Cluster Insights")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -203,7 +203,7 @@ public struct EmergingLinkCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
-            Text("EMERGING LINK")
+            Text("Emerging Link")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(SanctuaryColors.XP.primary)
                 .tracking(1)
@@ -297,7 +297,7 @@ public struct KnowledgePredictionCard: View {
                         .font(.system(size: 12))
                         .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("PREDICTION")
+                    Text("Prediction")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(SanctuaryColors.XP.primary)
                         .tracking(1)
@@ -305,7 +305,7 @@ public struct KnowledgePredictionCard: View {
 
                 Spacer()
 
-                Text("CONFIDENCE: \(Int(prediction.confidence * 100))%")
+                Text("Confidence: \(Int(prediction.confidence * 100))%")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
             }
@@ -427,7 +427,7 @@ public struct ClusterListCompact: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("CLUSTERS")
+            Text("Clusters")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)

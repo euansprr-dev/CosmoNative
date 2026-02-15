@@ -35,7 +35,10 @@ class CosmoAgentService: ObservableObject {
             activeProvider = provider
         }
         if let model = UserDefaults.standard.string(forKey: "agent_model") {
-            selectedModel = model
+            selectedModel = Self.migrateModelId(model)
+            if selectedModel != model {
+                UserDefaults.standard.set(selectedModel, forKey: "agent_model")
+            }
         }
         refreshProvider()
     }
@@ -53,6 +56,15 @@ class CosmoAgentService: ObservableObject {
     func setModel(_ model: String) {
         selectedModel = model
         UserDefaults.standard.set(model, forKey: "agent_model")
+    }
+
+    /// Migrate old model IDs to current OpenRouter format
+    private static func migrateModelId(_ model: String) -> String {
+        let migrations: [String: String] = [
+            "anthropic/claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.5",
+            "anthropic/claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5",
+        ]
+        return migrations[model] ?? model
     }
 
     private func refreshProvider() {
@@ -116,6 +128,10 @@ class CosmoAgentService: ObservableObject {
         if let convId = conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
             conversation = existing
+        } else if let convId = conversationId {
+            // External source (Telegram) — key the conversation by the provided ID
+            // so subsequent messages find the same conversation
+            conversation = AgentConversation(id: convId, source: source)
         } else {
             conversation = AgentConversation(source: source)
         }
@@ -182,6 +198,16 @@ class CosmoAgentService: ObservableObject {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
 
+                    // Track created atom UUIDs in conversation memory
+                    if let data = result.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let uuid = json["uuid"] as? String,
+                       json["success"] as? Bool == true {
+                        if !conversation.linkedAtomUUIDs.contains(uuid) {
+                            conversation.linkedAtomUUIDs.append(uuid)
+                        }
+                    }
+
                     let toolMsg = AgentMessage.tool(callId: toolCall.id, content: result)
                     llmMessages.append(toolMsg)
                     conversation.append(toolMsg)
@@ -216,9 +242,19 @@ class CosmoAgentService: ObservableObject {
         let lower = text.lowercased()
 
         // Check for capture patterns first (most specific)
+        let hasURL = lower.contains("http://") || lower.contains("https://") ||
+                     lower.contains("youtu.be/") || lower.contains("youtube.com") ||
+                     lower.contains("instagram.com") || lower.contains("x.com") ||
+                     lower.contains("twitter.com") || lower.contains("threads.net")
+
+        let captureKeywords = ["swipe", "capture", "save this", "save that", "grab this",
+                               "snag this", "file this", "add to swipes", "swipe this",
+                               "research this", "note this", "jot down"]
+
         if lower.hasPrefix("idea:") || lower.hasPrefix("task:") ||
            (lower.contains("idea") && containsAny(lower, ["save", "capture", "new idea", "jot down", "note this"])) ||
-           (lower.contains("save") && containsAny(lower, ["this", "that", "as"])) {
+           (lower.contains("save") && containsAny(lower, ["this", "that", "as"])) ||
+           (hasURL && containsAny(lower, captureKeywords)) {
             return .capture
         }
 

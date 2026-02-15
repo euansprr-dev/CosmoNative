@@ -80,8 +80,8 @@ public struct CognitiveDeepWorkTimeline: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("DEEP WORK TIMELINE")
-                    .font(SanctuaryTypography.label)
+                Text("Deep Work Timeline")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -205,7 +205,7 @@ public struct CognitiveDeepWorkTimeline: View {
                         .frame(width: 5, height: 5)
                         .pulseAnimation()
 
-                    Text("ACTIVE")
+                    Text("Active")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(SanctuaryColors.Semantic.success)
                 }
@@ -288,7 +288,7 @@ public struct CognitiveDeepWorkTimeline: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 8))
 
-                    Text("PRED")
+                    Text("Pred")
                         .font(.system(size: 8, weight: .bold))
 
                     Text("\(Int(window.confidence))%")
@@ -436,7 +436,7 @@ public struct DeepWorkSessionDetail: View {
                         .foregroundColor(Color(hex: session.taskType.colorHex))
 
                     Text(session.taskType.displayName)
-                        .font(SanctuaryTypography.title)
+                        .font(OnyxTypography.cardTitle)
                         .foregroundColor(SanctuaryColors.Text.primary)
                 }
 
@@ -531,7 +531,7 @@ public struct DeepWorkSessionDetail: View {
                         .foregroundColor(SanctuaryColors.Text.tertiary)
 
                     Text(notes)
-                        .font(SanctuaryTypography.body)
+                        .font(OnyxTypography.body)
                         .foregroundColor(SanctuaryColors.Text.secondary)
                 }
             }

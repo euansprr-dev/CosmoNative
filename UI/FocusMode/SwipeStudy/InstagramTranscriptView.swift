@@ -369,13 +369,15 @@ struct InstagramTranscriptView: View {
                 igMediaData = mediaData
 
                 if let videoURL = mediaData.videoURL {
-                    setupPlayer(videoURL: videoURL)
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    setupPlayer(videoURL: playableURL)
 
                     // Auto-transcribe if transcript is empty
                     if transcript.isEmpty {
-                        await autoTranscribe(videoURL: videoURL, duration: mediaData.duration ?? 60)
+                        await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
                     }
                 } else {
+                    print("InstagramTranscriptView: Extraction returned no video URL (type: \(mediaData.contentType), thumb: \(mediaData.thumbnailURL?.absoluteString ?? "nil"))")
                     igVideoFailed = true
                 }
             } catch {
@@ -426,6 +428,12 @@ struct InstagramTranscriptView: View {
 
             // Combine slide texts into the transcript TextEditor
             transcript = slides.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+
+            // Keep behavior consistent with SwipeStudy focus mode:
+            // automatically run analysis once transcript content is populated.
+            if wordCount >= 10 && !isAnalyzing {
+                runAnalysis()
+            }
         }
 
         isAutoTranscribing = false
@@ -475,7 +483,8 @@ struct InstagramTranscriptView: View {
                 let fresh = try await InstagramMediaCache.shared.getMedia(for: url)
                 igMediaData = fresh
                 if let videoURL = fresh.videoURL {
-                    let item = AVPlayerItem(url: videoURL)
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    let item = AVPlayerItem(url: playableURL)
                     igPlayer?.replaceCurrentItem(with: item)
                     if igCurrentTime > 0 {
                         await igPlayer?.seek(to: CMTime(seconds: igCurrentTime, preferredTimescale: 600))

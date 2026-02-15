@@ -70,10 +70,10 @@ public struct FocusConstellation: View {
 
         var label: String {
             switch self {
-            case .active: return "ACTIVE"
-            case .timer: return "TIMER"
-            case .complete: return "COMPLETE"
-            case .skip: return "SKIP"
+            case .active: return "Active"
+            case .timer: return "Timer"
+            case .complete: return "Complete"
+            case .skip: return "Skip"
             }
         }
     }
@@ -403,7 +403,7 @@ public struct FocusConstellation: View {
                         .font(.system(size: 14))
                         .foregroundColor(accentColor)
 
-                    Text("\(block.blockType.displayName.uppercased()): \(block.title)")
+                    Text("\(block.blockType.displayName): \(block.title)")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(PlannerumColors.textPrimary)
                         .lineLimit(1)
@@ -792,10 +792,10 @@ public struct HorizontalFocusStrip: View {
 
                 // Block type + title
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(block.blockType.displayName.uppercased())
-                        .font(.system(size: 9, weight: .heavy))
+                    Text(block.blockType.displayName)
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(accentColor)
-                        .tracking(1)
+                        .tracking(0.3)
 
                     Text(block.title)
                         .font(.system(size: 13, weight: .medium))
@@ -825,9 +825,9 @@ public struct HorizontalFocusStrip: View {
                     Text("+\(viewModel.potentialXP)")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
                         .foregroundColor(accentColor)
-                    Text("XP")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(PlannerumColors.textMuted)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10))
+                        .foregroundColor(OnyxColors.Accent.amber)
                 }
 
                 // Action buttons inline

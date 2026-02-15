@@ -118,11 +118,11 @@ public struct PlannerumColors {
     // SURFACE COLORS - Glass morphism
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Primary background (void #0A0A0F)
-    public static let voidPrimary = Color(red: 10/255, green: 10/255, blue: 15/255)
+    /// Primary background (Onyx void)
+    public static let voidPrimary = OnyxColors.Elevation.void
 
-    /// Secondary background (#0C0C12)
-    public static let voidSecondary = Color(red: 12/255, green: 12/255, blue: 18/255)
+    /// Secondary background (Onyx base)
+    public static let voidSecondary = OnyxColors.Elevation.base
 
     /// Glass surface primary (#12121A)
     public static let glassPrimary = Color(red: 18/255, green: 18/255, blue: 26/255).opacity(0.9)
@@ -140,29 +140,29 @@ public struct PlannerumColors {
     // XP COLORS
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// XP primary gold (#FFD700)
-    public static let xpGold = Color(red: 255/255, green: 215/255, blue: 0/255)
+    /// XP primary — muted amber (Onyx)
+    public static let xpGold = OnyxColors.Accent.amber
 
     /// Alias for xpGold
-    public static let xpPrimary = xpGold
+    public static let xpPrimary = OnyxColors.Accent.amber
 
     /// Alias for voidPrimary
     public static let background = voidPrimary
 
     /// XP glow
-    public static let xpGlow = Color(red: 255/255, green: 215/255, blue: 0/255).opacity(0.4)
+    public static let xpGlow = OnyxColors.Accent.amber.opacity(0.4)
 
-    /// XP tracer particle (#FFC107)
-    public static let xpTracer = Color(red: 255/255, green: 193/255, blue: 7/255)
+    /// XP tracer particle
+    public static let xpTracer = OnyxColors.Accent.amber
 
     // ─────────────────────────────────────────────────────────────────────────
     // TEXT COLORS
     // ─────────────────────────────────────────────────────────────────────────
 
-    public static let textPrimary = Color.white.opacity(0.95)
-    public static let textSecondary = Color.white.opacity(0.75)
-    public static let textTertiary = Color.white.opacity(0.55)
-    public static let textMuted = Color.white.opacity(0.35)
+    public static let textPrimary = OnyxColors.Text.primary
+    public static let textSecondary = OnyxColors.Text.secondary
+    public static let textTertiary = OnyxColors.Text.tertiary
+    public static let textMuted = OnyxColors.Text.muted
     public static let textDisabled = Color.white.opacity(0.2)
 }
 
@@ -218,7 +218,7 @@ public struct PlannerumLayout {
     public static let nowBarHeight: CGFloat = 2
 
     /// Now bar glow radius
-    public static let nowBarGlowRadius: CGFloat = 40
+    public static let nowBarGlowRadius: CGFloat = 12
 
     /// Now bar particle count
     public static let nowBarParticleCount: Int = 24
@@ -307,8 +307,8 @@ public struct PlannerumLayout {
 /// Typography system for Plannerium
 public struct PlannerumTypography {
 
-    /// Page header - "PLANNERIUM"
-    public static let header = Font.system(size: 26, weight: .bold, design: .rounded)
+    /// Page header - "Plannerum" (Onyx view title)
+    public static let header = OnyxTypography.viewTitle
 
     /// Subheader - "Shape your next chapter"
     public static let subheader = Font.system(size: 14, weight: .medium, design: .rounded)
@@ -983,7 +983,7 @@ public struct DailyQuestsTokens {
     public static let sideQuestProgress = Color(red: 99/255, green: 102/255, blue: 241/255)
 
     /// Bonus quest progress fill
-    public static let bonusQuestProgress = PlannerumColors.xpGold
+    public static let bonusQuestProgress = OnyxColors.Accent.amber
 
     /// Quest complete check
     public static let completeCheck = Color(red: 34/255, green: 197/255, blue: 94/255)
@@ -1268,16 +1268,16 @@ public struct PlannerumHeaderTokens {
     public static let xpBarBackground = Color.white.opacity(0.08)
 
     /// XP bar fill gradient start
-    public static let xpBarFillStart = PlannerumColors.xpGold
+    public static let xpBarFillStart = OnyxColors.Accent.amber
 
     /// XP bar fill gradient end
-    public static let xpBarFillEnd = Color(red: 251/255, green: 191/255, blue: 36/255)
+    public static let xpBarFillEnd = OnyxColors.Accent.amber.opacity(0.7)
 
     /// Level badge background
     public static let levelBadgeBackground = Color(red: 24/255, green: 24/255, blue: 42/255)
 
     /// Level badge border
-    public static let levelBadgeBorder = PlannerumColors.xpGold
+    public static let levelBadgeBorder = OnyxColors.Accent.amber
 
     /// Focus metric color (based on level)
     public static func focusColor(percent: Int) -> Color {

@@ -813,10 +813,10 @@ extension ReflectionDimensionData {
 
         // Recurring themes
         let themes: [ReflectionTheme] = [
-            ReflectionTheme(name: "PURPOSE", mentionCount: 47, weeklyChange: 12, trend: .improving, colorHex: "#EC4899", relatedKeywords: ["meaning", "mission", "calling"], lastMentioned: now),
-            ReflectionTheme(name: "GROWTH", mentionCount: 38, weeklyChange: 0, trend: .stable, colorHex: "#10B981", relatedKeywords: ["learning", "progress", "development"], lastMentioned: now),
-            ReflectionTheme(name: "BALANCE", mentionCount: 31, weeklyChange: 8, trend: .improving, colorHex: "#3B82F6", relatedKeywords: ["harmony", "equilibrium", "peace"], lastMentioned: now),
-            ReflectionTheme(name: "CREATION", mentionCount: 24, weeklyChange: -5, trend: .declining, colorHex: "#F59E0B", relatedKeywords: ["making", "building", "art"], lastMentioned: calendar.date(byAdding: .day, value: -2, to: now)!)
+            ReflectionTheme(name: "Purpose", mentionCount: 47, weeklyChange: 12, trend: .improving, colorHex: "#EC4899", relatedKeywords: ["meaning", "mission", "calling"], lastMentioned: now),
+            ReflectionTheme(name: "Growth", mentionCount: 38, weeklyChange: 0, trend: .stable, colorHex: "#10B981", relatedKeywords: ["learning", "progress", "development"], lastMentioned: now),
+            ReflectionTheme(name: "Balance", mentionCount: 31, weeklyChange: 8, trend: .improving, colorHex: "#3B82F6", relatedKeywords: ["harmony", "equilibrium", "peace"], lastMentioned: now),
+            ReflectionTheme(name: "Creation", mentionCount: 24, weeklyChange: -5, trend: .declining, colorHex: "#F59E0B", relatedKeywords: ["making", "building", "art"], lastMentioned: calendar.date(byAdding: .day, value: -2, to: now)!)
         ]
 
         // Emerging theme

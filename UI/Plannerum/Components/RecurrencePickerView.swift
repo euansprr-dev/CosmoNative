@@ -97,10 +97,10 @@ public struct RecurrencePickerView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(isEnabled ? PlannerumColors.primary : PlannerumColors.textMuted)
 
-            Text("REPEAT")
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundColor(isEnabled ? PlannerumColors.textSecondary : PlannerumColors.textMuted)
-                .tracking(PlannerumTypography.trackingWide)
+            Text("Repeat")
+                .font(OnyxTypography.label)
+                .foregroundColor(isEnabled ? OnyxColors.Text.secondary : OnyxColors.Text.muted)
+                .tracking(OnyxTypography.labelTracking)
 
             Spacer()
 
@@ -115,10 +115,10 @@ public struct RecurrencePickerView: View {
 
     private var frequencyRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("FREQUENCY")
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted)
-                .tracking(1.5)
+            Text("Frequency")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.muted)
+                .tracking(OnyxTypography.labelTracking)
 
             HStack(spacing: 6) {
                 ForEach(frequencyOptions, id: \.self) { freq in
@@ -177,7 +177,7 @@ public struct RecurrencePickerView: View {
 
     private var daySelector: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("ON DAYS")
+            Text("On Days")
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(1.5)
@@ -221,7 +221,7 @@ public struct RecurrencePickerView: View {
 
     private var dayOfMonthSelector: some View {
         HStack(spacing: 8) {
-            Text("ON THE")
+            Text("On The")
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(1.5)
@@ -240,10 +240,10 @@ public struct RecurrencePickerView: View {
 
     private var endConditionRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("ENDS")
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted)
-                .tracking(1.5)
+            Text("Ends")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.muted)
+                .tracking(OnyxTypography.labelTracking)
 
             HStack(spacing: 8) {
                 // End type picker

@@ -51,12 +51,12 @@ struct SwipeURLClassifier {
 
     // Instagram patterns
     private let instagramReelPattern = try! NSRegularExpression(
-        pattern: #"instagram\.com/(?:reel|reels)/([a-zA-Z0-9_-]+)"#,
+        pattern: #"instagram\.com/(?:(?:reel|reels)|(?:share/reel))/([a-zA-Z0-9_-]+)"#,
         options: .caseInsensitive
     )
 
     private let instagramPostPattern = try! NSRegularExpression(
-        pattern: #"instagram\.com/p/([a-zA-Z0-9_-]+)"#,
+        pattern: #"instagram\.com/(?:(?:p)|(?:share/p))/([a-zA-Z0-9_-]+)"#,
         options: .caseInsensitive
     )
 

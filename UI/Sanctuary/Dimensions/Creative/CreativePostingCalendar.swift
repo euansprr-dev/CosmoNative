@@ -85,8 +85,8 @@ public struct CreativePostingCalendar: View {
 
     private var header: some View {
         HStack {
-            Text("POSTING CALENDAR")
-                .font(SanctuaryTypography.label)
+            Text("Posting Calendar")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 

@@ -35,9 +35,74 @@ class TelegramBridgeService: ObservableObject {
     private var backoffInterval: TimeInterval = 1.0
     private let maxBackoff: TimeInterval = 30.0
 
-    private var botToken: String? { APIKeys.telegramBotToken }
+    /// Cached token — read from Keychain once on start(), not on every poll
+    private var cachedToken: String?
+
+    /// Sanitize and extract a Telegram bot token from pasted text/URLs.
+    /// Accepts inputs like:
+    /// - `123456:ABCDEF...`
+    /// - `bot123456:ABCDEF...`
+    /// - `https://api.telegram.org/bot123456:ABCDEF.../getMe`
+    static func sanitizeToken(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let stripped = stripBotPrefix(from: trimmed)
+
+        if let token = firstTokenMatch(in: stripped) {
+            return token
+        }
+        if let token = firstTokenMatch(in: trimmed) {
+            return token
+        }
+
+        if looksLikeToken(stripped) {
+            return stripped
+        }
+
+        return nil
+    }
+
+    private static func stripBotPrefix(from input: String) -> String {
+        guard input.lowercased().hasPrefix("bot"), input.count > 3 else { return input }
+        let candidate = String(input.dropFirst(3))
+        if let first = candidate.first, first.isNumber {
+            return candidate
+        }
+        return input
+    }
+
+    private static func firstTokenMatch(in input: String) -> String? {
+        let pattern = #"\d{5,}:[A-Za-z0-9_-]{20,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, options: [], range: range),
+              let tokenRange = Range(match.range, in: input) else {
+            return nil
+        }
+        return String(input[tokenRange])
+    }
+
+    private static func looksLikeToken(_ value: String) -> Bool {
+        let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        let idPart = String(parts[0])
+        let secretPart = String(parts[1])
+        guard idPart.count >= 5, secretPart.count >= 20 else { return false }
+        guard idPart.allSatisfy(\.isNumber) else { return false }
+        return secretPart.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+    }
+
+    /// Read token from Keychain (one-time read, result gets cached)
+    private func loadTokenFromKeychain() -> String? {
+        guard let raw = APIKeys.telegramBotToken else { return nil }
+        return Self.sanitizeToken(raw)
+    }
+
+    private var botToken: String? { cachedToken }
+
     private var baseURL: String {
-        guard let token = botToken else { return "" }
+        guard let token = cachedToken else { return "" }
         return "https://api.telegram.org/bot\(token)"
     }
 
@@ -57,16 +122,30 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Start/Stop Polling
 
     func start() async {
-        guard botToken != nil else {
-            lastError = "No bot token configured"
+        guard let token = loadTokenFromKeychain() else {
+            if let raw = APIKeys.telegramBotToken,
+               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lastError = "Invalid token format. Re-save your BotFather token."
+            } else {
+                lastError = "No bot token configured"
+            }
             return
         }
 
-        stop() // Cancel any existing polling
+        // Cancel existing polling without clearing the newly loaded token.
+        pollingTask?.cancel()
+        pollingTask = nil
+        cachedToken = token
 
         isConnected = true
         lastError = nil
         backoffInterval = 1.0
+
+        // Debug: log masked token for troubleshooting
+        let masked = token.count > 10
+            ? String(token.prefix(4)) + "..." + String(token.suffix(4))
+            : "***"
+        print("[Telegram] Using token: \(masked) (length: \(token.count))")
 
         pollingTask = Task { [weak self] in
             await self?.pollLoop()
@@ -78,8 +157,49 @@ class TelegramBridgeService: ObservableObject {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
+        cachedToken = nil
         isConnected = false
         print("[Telegram] Bridge stopped")
+    }
+
+    // MARK: - Test Bot Token
+
+    /// Validate the bot token by calling getMe (reads fresh from Keychain)
+    func testBot() async -> (success: Bool, message: String) {
+        guard let raw = APIKeys.telegramBotToken,
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return (false, "No bot token configured")
+        }
+        guard let token = Self.sanitizeToken(raw) else {
+            return (false, "Invalid token format. Paste only the BotFather token (123456:ABC...)")
+        }
+
+        let masked = token.count > 10
+            ? String(token.prefix(4)) + "..." + String(token.suffix(4))
+            : "***"
+
+        do {
+            let url = URL(string: "https://api.telegram.org/bot\(token)/getMe")!
+            let (data, response) = try await URLSession.shared.data(from: url)
+
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                let body = String(data: data, encoding: .utf8) ?? "unknown"
+                return (false, "HTTP \(httpResponse.statusCode) (token: \(masked)). Response: \(body)")
+            }
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ok = json["ok"] as? Bool, ok,
+                  let result = json["result"] as? [String: Any] else {
+                return (false, "Invalid response from Telegram (token: \(masked))")
+            }
+
+            let botName = result["first_name"] as? String ?? "Unknown"
+            let botUsername = result["username"] as? String ?? ""
+            return (true, "Connected to @\(botUsername) (\(botName))")
+
+        } catch {
+            return (false, "Network error: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Polling Loop
@@ -112,6 +232,10 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Telegram Bot API Methods
 
     private func getUpdates(offset: Int, timeout: Int) async throws -> [[String: Any]] {
+        guard !baseURL.isEmpty else {
+            throw TelegramError.noBotToken
+        }
+
         var components = URLComponents(string: "\(baseURL)/getUpdates")!
         components.queryItems = [
             URLQueryItem(name: "offset", value: "\(offset)"),
@@ -119,14 +243,36 @@ class TelegramBridgeService: ObservableObject {
             URLQueryItem(name: "allowed_updates", value: "[\"message\",\"callback_query\"]")
         ]
 
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else {
+            throw TelegramError.sendFailed("Invalid Telegram URL")
+        }
+
+        var request = URLRequest(url: url)
         request.timeoutInterval = TimeInterval(timeout + 10) // Buffer beyond long-poll timeout
 
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ok = json["ok"] as? Bool, ok,
-              let result = json["result"] as? [[String: Any]] else {
+        // Check HTTP status first
+        if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "unknown"
+            print("[Telegram] HTTP \(httpResponse.statusCode): \(body)")
+            throw TelegramError.sendFailed("HTTP \(httpResponse.statusCode): \(body)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let body = String(data: data, encoding: .utf8) ?? "not UTF-8"
+            print("[Telegram] Invalid JSON response: \(body)")
+            throw TelegramError.invalidResponse
+        }
+
+        guard let ok = json["ok"] as? Bool, ok else {
+            let desc = json["description"] as? String ?? "unknown error"
+            let code = json["error_code"] as? Int ?? 0
+            print("[Telegram] API error \(code): \(desc)")
+            throw TelegramError.sendFailed("Telegram \(code): \(desc)")
+        }
+
+        guard let result = json["result"] as? [[String: Any]] else {
             throw TelegramError.invalidResponse
         }
 
@@ -234,6 +380,10 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Send Message
 
     func sendMessage(chatId: String, text: String, parseMode: String? = nil, replyMarkup: Any? = nil) async {
+        // Lazy-load token for proactive messages sent outside the polling loop
+        if cachedToken == nil {
+            cachedToken = loadTokenFromKeychain()
+        }
         guard !baseURL.isEmpty else { return }
 
         let url = URL(string: "\(baseURL)/sendMessage")!

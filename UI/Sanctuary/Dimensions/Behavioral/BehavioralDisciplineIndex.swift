@@ -35,8 +35,8 @@ public struct BehavioralDisciplineIndex: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xl) {
             // Header
-            Text("DISCIPLINE INDEX")
-                .font(SanctuaryTypography.label)
+            Text("Discipline Index")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -311,7 +311,7 @@ public struct DisciplineMiniCard: View {
             Spacer()
 
             // Label
-            Text("DISCIPLINE")
+            Text("Discipline")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -352,14 +352,14 @@ public struct DisciplineTrendChart: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("TREND")
+                Text("Trend")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
 
                 Spacer()
 
-                Text("7 DAYS")
+                Text("7 Days")
                     .font(.system(size: 9))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
             }

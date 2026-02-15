@@ -708,15 +708,15 @@ extension BehavioralDimensionData {
         return BehavioralDimensionData(
             disciplineIndex: 0,
             disciplineChange: 0,
-            morningScore: emptyComponentScore("MORNING"),
-            deepWorkScore: emptyComponentScore("DEEP WORK"),
-            sleepScore: emptyComponentScore("SLEEP"),
-            movementScore: emptyComponentScore("MOVEMENT"),
-            screenScore: emptyComponentScore("SCREEN"),
-            taskScore: emptyComponentScore("TASKS"),
-            morningRoutine: emptyRoutine("MORNING ROUTINE"),
-            sleepSchedule: emptyRoutine("SLEEP SCHEDULE"),
-            wakeSchedule: emptyRoutine("WAKE SCHEDULE"),
+            morningScore: emptyComponentScore("Morning"),
+            deepWorkScore: emptyComponentScore("Deep Work"),
+            sleepScore: emptyComponentScore("Sleep"),
+            movementScore: emptyComponentScore("Movement"),
+            screenScore: emptyComponentScore("Screen"),
+            taskScore: emptyComponentScore("Tasks"),
+            morningRoutine: emptyRoutine("Morning Routine"),
+            sleepSchedule: emptyRoutine("Sleep Schedule"),
+            wakeSchedule: emptyRoutine("Wake Schedule"),
             activeStreaks: [],
             endangeredStreaks: [],
             personalBests: [],
@@ -775,16 +775,16 @@ extension BehavioralDimensionData {
         }
 
         // Component scores
-        let morningScore = ComponentScore(name: "MORNING", currentScore: 92, trend: .up, changePercent: 5, status: .excellent)
-        let deepWorkScore = ComponentScore(name: "DEEP WORK", currentScore: 84, trend: .stable, changePercent: 0, status: .good)
-        let sleepScore = ComponentScore(name: "SLEEP", currentScore: 73, trend: .down, changePercent: -4, status: .needsWork)
-        let movementScore = ComponentScore(name: "MOVEMENT", currentScore: 81, trend: .up, changePercent: 3, status: .good)
-        let screenScore = ComponentScore(name: "SCREEN", currentScore: 62, trend: .down, changePercent: -8, status: .atRisk)
-        let taskScore = ComponentScore(name: "TASKS", currentScore: 88, trend: .up, changePercent: 2, status: .excellent)
+        let morningScore = ComponentScore(name: "Morning", currentScore: 92, trend: .up, changePercent: 5, status: .excellent)
+        let deepWorkScore = ComponentScore(name: "Deep Work", currentScore: 84, trend: .stable, changePercent: 0, status: .good)
+        let sleepScore = ComponentScore(name: "Sleep", currentScore: 73, trend: .down, changePercent: -4, status: .needsWork)
+        let movementScore = ComponentScore(name: "Movement", currentScore: 81, trend: .up, changePercent: 3, status: .good)
+        let screenScore = ComponentScore(name: "Screen", currentScore: 62, trend: .down, changePercent: -8, status: .atRisk)
+        let taskScore = ComponentScore(name: "Tasks", currentScore: 88, trend: .up, changePercent: 2, status: .excellent)
 
         // Routine trackers
         let morningRoutine = RoutineTracker(
-            name: "MORNING ROUTINE",
+            name: "Morning Routine",
             targetTime: calendar.date(bySettingHour: 6, minute: 30, second: 0, of: now)!,
             toleranceMinutes: 15,
             weekData: generateWeekData(targetHour: 6, targetMinute: 30),
@@ -794,7 +794,7 @@ extension BehavioralDimensionData {
         )
 
         let sleepSchedule = RoutineTracker(
-            name: "SLEEP SCHEDULE",
+            name: "Sleep Schedule",
             targetTime: calendar.date(bySettingHour: 23, minute: 0, second: 0, of: now)!,
             toleranceMinutes: 30,
             weekData: generateWeekData(targetHour: 22, targetMinute: 50),
@@ -804,7 +804,7 @@ extension BehavioralDimensionData {
         )
 
         let wakeSchedule = RoutineTracker(
-            name: "WAKE SCHEDULE",
+            name: "Wake Schedule",
             targetTime: calendar.date(bySettingHour: 6, minute: 30, second: 0, of: now)!,
             toleranceMinutes: 30,
             weekData: generateWeekData(targetHour: 6, targetMinute: 30),
@@ -815,10 +815,10 @@ extension BehavioralDimensionData {
 
         // Streaks
         let activeStreaks: [Streak] = [
-            Streak(name: "DEEP WORK", category: .focus, currentDays: 12, personalBest: 18, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 15, milestoneXP: 150),
-            Streak(name: "TASK ZERO", category: .tasks, currentDays: 21, personalBest: 21, daysToNextMilestone: 9, lastCompletedDate: now, xpPerDay: 10, milestoneXP: 200),
-            Streak(name: "SLEEP BEFORE 11PM", category: .sleep, currentDays: 8, personalBest: 14, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 12, milestoneXP: 100),
-            Streak(name: "MORNING ROUTINE", category: .morning, currentDays: 5, personalBest: 23, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 10, milestoneXP: 75)
+            Streak(name: "Deep Work", category: .focus, currentDays: 12, personalBest: 18, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 15, milestoneXP: 150),
+            Streak(name: "Task Zero", category: .tasks, currentDays: 21, personalBest: 21, daysToNextMilestone: 9, lastCompletedDate: now, xpPerDay: 10, milestoneXP: 200),
+            Streak(name: "Sleep Before 11pm", category: .sleep, currentDays: 8, personalBest: 14, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 12, milestoneXP: 100),
+            Streak(name: "Morning Routine", category: .morning, currentDays: 5, personalBest: 23, daysToNextMilestone: 2, lastCompletedDate: now, xpPerDay: 10, milestoneXP: 75)
         ]
 
         let endangeredStreaks: [Streak] = [

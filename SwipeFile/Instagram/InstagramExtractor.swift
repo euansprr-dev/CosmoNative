@@ -9,6 +9,7 @@ import Foundation
 @MainActor
 final class InstagramExtractor: Sendable {
     static let shared = InstagramExtractor()
+    private let fileManager = FileManager.default
 
     private init() {}
 
@@ -16,41 +17,130 @@ final class InstagramExtractor: Sendable {
 
     /// Extract media data from an Instagram URL
     func extract(from url: URL) async throws -> InstagramMediaData {
-        let contentType = detectContentType(from: url)
+        let normalizedURL = normalizeInstagramURL(url)
+        let contentType = detectContentType(from: normalizedURL)
+        var bestPartialResult: InstagramMediaData?
+
+        if normalizedURL != url {
+            print("InstagramExtractor: Normalized URL \(url.absoluteString) -> \(normalizedURL.absoluteString)")
+        }
 
         // Strategy 1: Cobalt API (server-side proxy — same pattern as SnapInsta)
-        if let mediaData = try? await extractViaCobalt(url: url, contentType: contentType) {
-            print("InstagramExtractor: Cobalt API succeeded")
-            return mediaData
+        do {
+            let mediaData = try await extractViaCobalt(url: normalizedURL, contentType: contentType)
+            if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                print("InstagramExtractor: Cobalt API succeeded")
+                return mediaData
+            }
+            bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+            print("InstagramExtractor: Cobalt API returned partial media (no playable video yet), continuing")
+        } catch {
+            print("InstagramExtractor: Cobalt API failed: \(error.localizedDescription)")
         }
 
         // Strategy 2: Embed page scraping (no auth needed, works for public content)
-        if let shortcode = extractShortcode(from: url),
-           let mediaData = try? await extractFromEmbedPage(shortcode: shortcode, originalURL: url, contentType: contentType) {
-            print("InstagramExtractor: Embed page succeeded")
-            return mediaData
+        if let shortcode = extractShortcode(from: normalizedURL) {
+            do {
+                let mediaData = try await extractFromEmbedPage(shortcode: shortcode, originalURL: normalizedURL, contentType: contentType)
+                if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                    print("InstagramExtractor: Embed page succeeded")
+                    return mediaData
+                }
+                bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+                print("InstagramExtractor: Embed page returned partial media (no playable video yet), continuing")
+            } catch {
+                print("InstagramExtractor: Embed page failed: \(error.localizedDescription)")
+            }
         }
 
         // Strategy 3: GraphQL API at /api/graphql (correct endpoint)
-        if let mediaData = try? await extractFromGraphQL(url: url, contentType: contentType) {
-            print("InstagramExtractor: GraphQL succeeded")
-            return mediaData
+        do {
+            let mediaData = try await extractFromGraphQL(url: normalizedURL, contentType: contentType)
+            if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                print("InstagramExtractor: GraphQL succeeded")
+                return mediaData
+            }
+            bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+            print("InstagramExtractor: GraphQL returned partial media (no playable video yet), continuing")
+        } catch {
+            print("InstagramExtractor: GraphQL failed: \(error.localizedDescription)")
         }
 
         // Strategy 4: Fetch HTML page and try multiple parse strategies
-        if let mediaData = try? await extractFromHTMLPage(url: url, contentType: contentType) {
-            print("InstagramExtractor: HTML page succeeded")
-            return mediaData
+        do {
+            let mediaData = try await extractFromHTMLPage(url: normalizedURL, contentType: contentType)
+            if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                print("InstagramExtractor: HTML page succeeded")
+                return mediaData
+            }
+            bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+            print("InstagramExtractor: HTML page returned partial media (no playable video yet), continuing")
+        } catch {
+            print("InstagramExtractor: HTML page failed: \(error.localizedDescription)")
         }
 
-        print("InstagramExtractor: All strategies failed for \(url)")
+        // Strategy 5: yt-dlp extractor fallback (most robust for public reels)
+        do {
+            let mediaData = try await extractViaYtDlp(url: normalizedURL, contentType: contentType)
+            if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                print("InstagramExtractor: yt-dlp fallback succeeded")
+                return mediaData
+            }
+            bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+            print("InstagramExtractor: yt-dlp fallback returned partial media (no playable video yet)")
+        } catch {
+            print("InstagramExtractor: yt-dlp fallback failed: \(error.localizedDescription)")
+        }
+
+        if let bestPartialResult {
+            print("InstagramExtractor: Returning best partial media result for \(normalizedURL)")
+            return bestPartialResult
+        }
+
+        print("InstagramExtractor: All strategies failed for \(normalizedURL)")
 
         // If all extraction fails, return basic data with the URL
         return InstagramMediaData(
-            originalURL: url,
+            originalURL: normalizedURL,
             contentType: contentType,
             extractedAt: Date()
         )
+    }
+
+    private func shouldReturnImmediately(
+        _ mediaData: InstagramMediaData,
+        requestedType: InstagramContentType
+    ) -> Bool {
+        switch requestedType {
+        case .reel, .videoPost:
+            return mediaData.videoURL != nil
+        case .carousel:
+            if mediaData.videoURL != nil { return true }
+            return !(mediaData.carouselItems?.isEmpty ?? true)
+        case .image, .story:
+            return mediaData.videoURL != nil ||
+                mediaData.thumbnailURL != nil ||
+                !(mediaData.caption?.isEmpty ?? true) ||
+                !(mediaData.authorUsername?.isEmpty ?? true)
+        }
+    }
+
+    private func betterPartialResult(
+        current: InstagramMediaData?,
+        candidate: InstagramMediaData
+    ) -> InstagramMediaData {
+        guard let current else { return candidate }
+        return partialScore(candidate) >= partialScore(current) ? candidate : current
+    }
+
+    private func partialScore(_ mediaData: InstagramMediaData) -> Int {
+        var score = 0
+        if mediaData.videoURL != nil { score += 100 }
+        if mediaData.thumbnailURL != nil { score += 20 }
+        if !(mediaData.caption?.isEmpty ?? true) { score += 10 }
+        if !(mediaData.authorUsername?.isEmpty ?? true) { score += 5 }
+        score += (mediaData.carouselItems?.count ?? 0) * 3
+        return score
     }
 
     // MARK: - Content Type Detection
@@ -58,17 +148,70 @@ final class InstagramExtractor: Sendable {
     private func detectContentType(from url: URL) -> InstagramContentType {
         let path = url.path.lowercased()
 
-        if path.contains("/reel/") || path.contains("/reels/") {
+        if path.contains("/reel/") || path.contains("/reels/") || path.contains("/share/reel/") {
             return .reel
         }
         if path.contains("/stories/") {
             return .story
         }
-        if path.contains("/p/") {
+        if path.contains("/p/") || path.contains("/share/p/") {
             return .image
         }
 
         return .image
+    }
+
+    /// Normalize Instagram URLs so extraction/cache work across copied variants.
+    /// Handles share links, query-heavy URLs, and redirect wrappers.
+    private func normalizeInstagramURL(_ input: URL) -> URL {
+        // Instagram redirect wrapper: https://l.instagram.com/?u=<encoded target>
+        if let host = input.host?.lowercased(),
+           host == "l.instagram.com",
+           let components = URLComponents(url: input, resolvingAgainstBaseURL: false),
+           let encoded = components.queryItems?.first(where: { $0.name == "u" })?.value,
+           let decoded = encoded.removingPercentEncoding,
+           let decodedURL = URL(string: decoded) {
+            return normalizeInstagramURL(decodedURL)
+        }
+
+        guard var components = URLComponents(url: input, resolvingAgainstBaseURL: false) else {
+            return input
+        }
+
+        components.scheme = "https"
+        if let host = components.host?.lowercased(),
+           host.contains("instagram.com") {
+            components.host = "www.instagram.com"
+        }
+
+        var path = components.path
+        if let match = path.range(of: #"/share/reel/([A-Za-z0-9_-]+)"#, options: .regularExpression) {
+            let matched = String(path[match])
+            let shortcode = matched.replacingOccurrences(
+                of: #"/share/reel/([A-Za-z0-9_-]+)"#,
+                with: "$1",
+                options: .regularExpression
+            )
+            path = "/reel/\(shortcode)/"
+        } else if let match = path.range(of: #"/share/p/([A-Za-z0-9_-]+)"#, options: .regularExpression) {
+            let matched = String(path[match])
+            let shortcode = matched.replacingOccurrences(
+                of: #"/share/p/([A-Za-z0-9_-]+)"#,
+                with: "$1",
+                options: .regularExpression
+            )
+            path = "/p/\(shortcode)/"
+        }
+
+        if path.contains("/reels/") {
+            path = path.replacingOccurrences(of: "/reels/", with: "/reel/")
+        }
+
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+
+        return components.url ?? input
     }
 
     // MARK: - Strategy 1: Cobalt API (like SnapInsta server-side proxy)
@@ -186,29 +329,67 @@ final class InstagramExtractor: Sendable {
 
     /// Fetch the embed page which has less restrictions than the main page
     private func extractFromEmbedPage(shortcode: String, originalURL: URL, contentType: InstagramContentType) async throws -> InstagramMediaData {
-        let embedURL = URL(string: "https://www.instagram.com/p/\(shortcode)/embed/captioned/")!
-        var request = URLRequest(url: embedURL)
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
-        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
-        request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
-        request.setValue("iframe", forHTTPHeaderField: "Sec-Fetch-Dest")
-        request.timeoutInterval = 12
+        let preferredPaths: [String] = {
+            switch contentType {
+            case .reel:
+                return [
+                    "/reel/\(shortcode)/embed/captioned/",
+                    "/reel/\(shortcode)/embed/",
+                    "/p/\(shortcode)/embed/captioned/",
+                    "/p/\(shortcode)/embed/"
+                ]
+            default:
+                return [
+                    "/p/\(shortcode)/embed/captioned/",
+                    "/p/\(shortcode)/embed/",
+                    "/reel/\(shortcode)/embed/captioned/",
+                    "/reel/\(shortcode)/embed/"
+                ]
+            }
+        }()
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        for path in preferredPaths {
+            guard let embedURL = URL(string: "https://www.instagram.com\(path)") else { continue }
 
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-              let html = String(data: data, encoding: .utf8) else {
-            throw InstagramExtractionError.couldNotExtract
+            var request = URLRequest(url: embedURL)
+            request.setValue(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                forHTTPHeaderField: "User-Agent"
+            )
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+            request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+            request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
+            request.setValue("iframe", forHTTPHeaderField: "Sec-Fetch-Dest")
+            request.timeoutInterval = 12
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                      let html = String(data: data, encoding: .utf8) else {
+                    continue
+                }
+
+                if let mediaData = parseEmbedHTML(
+                    html: html,
+                    originalURL: originalURL,
+                    contentType: contentType
+                ) {
+                    return mediaData
+                }
+            } catch {
+                continue
+            }
         }
 
-        // Try to find video URL in embed page
-        // Embed pages often contain the video URL in various formats
+        throw InstagramExtractionError.couldNotExtract
+    }
 
+    private func parseEmbedHTML(
+        html: String,
+        originalURL: URL,
+        contentType: InstagramContentType
+    ) -> InstagramMediaData? {
         // Pattern 1: "video_url":"..." in embedded JSON
         if let videoURL = extractVideoURLFromJSON(html: html) {
             let thumbnailURL = extractThumbnailFromHTML(html: html)
@@ -252,7 +433,6 @@ final class InstagramExtractor: Sendable {
                     .replacingOccurrences(of: "\"", with: "")
                     .replacingOccurrences(of: "&amp;", with: "&")
                 if let thumbnailURL = URL(string: urlStr) {
-                    // Got thumbnail at least — return with no video (better than nothing)
                     return InstagramMediaData(
                         originalURL: originalURL,
                         contentType: contentType,
@@ -263,7 +443,7 @@ final class InstagramExtractor: Sendable {
             }
         }
 
-        throw InstagramExtractionError.couldNotExtract
+        return nil
     }
 
     // MARK: - Strategy 3: GraphQL API
@@ -544,7 +724,7 @@ final class InstagramExtractor: Sendable {
     /// Extract shortcode from Instagram URL path (/reel/ABC123/ or /p/ABC123/)
     func extractShortcode(from url: URL) -> String? {
         let path = url.path
-        let patterns = ["/reel/", "/reels/", "/p/"]
+        let patterns = ["/reel/", "/reels/", "/p/", "/share/reel/", "/share/p/"]
 
         for pattern in patterns {
             if let range = path.range(of: pattern) {
@@ -643,6 +823,209 @@ final class InstagramExtractor: Sendable {
             carouselItems: carouselItems,
             extractedAt: Date()
         )
+    }
+
+    // MARK: - Strategy 5: yt-dlp Fallback
+
+    private func extractViaYtDlp(url: URL, contentType: InstagramContentType) async throws -> InstagramMediaData {
+        guard let ytdlpPath = findYtDlp() else {
+            throw InstagramExtractionError.couldNotExtract
+        }
+
+        let json = try await runYtDlpDump(ytdlpPath: ytdlpPath, url: url)
+        return parseYtDlpResult(json, originalURL: url, contentType: contentType)
+    }
+
+    private func runYtDlpDump(ytdlpPath: String, url: URL) async throws -> [String: Any] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: ytdlpPath)
+                process.arguments = [
+                    "--dump-single-json",
+                    "--skip-download",
+                    "--no-playlist",
+                    "--no-warnings",
+                    url.absoluteString
+                ]
+
+                var env = ProcessInfo.processInfo.environment
+                let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+                if let existingPath = env["PATH"] {
+                    env["PATH"] = "\(homebrewPaths):\(existingPath)"
+                } else {
+                    env["PATH"] = homebrewPaths
+                }
+                process.environment = env
+
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorText = String(data: errorData, encoding: .utf8) ?? ""
+
+                    guard process.terminationStatus == 0 else {
+                        continuation.resume(throwing: InstagramExtractionError.couldNotExtract)
+                        if !errorText.isEmpty {
+                            print("InstagramExtractor: yt-dlp error: \(errorText.prefix(250))")
+                        }
+                        return
+                    }
+
+                    guard let json = try? JSONSerialization.jsonObject(with: outputData) as? [String: Any] else {
+                        continuation.resume(throwing: InstagramExtractionError.invalidResponse)
+                        return
+                    }
+
+                    continuation.resume(returning: json)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func parseYtDlpResult(
+        _ json: [String: Any],
+        originalURL: URL,
+        contentType: InstagramContentType
+    ) -> InstagramMediaData {
+        let author = json["uploader_id"] as? String ?? json["uploader"] as? String
+        let caption = json["description"] as? String
+        let thumbnail = (json["thumbnail"] as? String).flatMap(URL.init(string:))
+        let duration = json["duration"] as? TimeInterval
+
+        if let entries = json["entries"] as? [[String: Any]], !entries.isEmpty {
+            var carouselItems: [CarouselItem] = []
+            var firstVideoURL: URL?
+            var fallbackThumb = thumbnail
+
+            for (index, entry) in entries.enumerated() {
+                guard let itemURL = extractYtDlpMediaURL(from: entry) else { continue }
+
+                let ext = (entry["ext"] as? String ?? "").lowercased()
+                let isVideo = ext == "mp4" || ext == "webm" || (entry["duration"] as? Double ?? 0) > 0
+                let mediaType: CarouselMediaType = isVideo ? .video : .image
+
+                if firstVideoURL == nil && isVideo {
+                    firstVideoURL = itemURL
+                }
+
+                let thumb = (entry["thumbnail"] as? String).flatMap(URL.init(string:))
+                if fallbackThumb == nil {
+                    fallbackThumb = thumb
+                }
+
+                carouselItems.append(
+                    CarouselItem(
+                        index: index,
+                        mediaType: mediaType,
+                        mediaURL: itemURL,
+                        thumbnailURL: thumb,
+                        duration: entry["duration"] as? TimeInterval
+                    )
+                )
+            }
+
+            return InstagramMediaData(
+                originalURL: originalURL,
+                contentType: .carousel,
+                videoURL: firstVideoURL,
+                thumbnailURL: fallbackThumb,
+                authorUsername: author,
+                caption: caption,
+                carouselItems: carouselItems.isEmpty ? nil : carouselItems,
+                extractedAt: Date()
+            )
+        }
+
+        let directURL = extractYtDlpMediaURL(from: json)
+        let finalType: InstagramContentType
+        if contentType == .reel {
+            finalType = .reel
+        } else {
+            finalType = directURL == nil ? contentType : .videoPost
+        }
+
+        return InstagramMediaData(
+            originalURL: originalURL,
+            contentType: finalType,
+            videoURL: directURL,
+            thumbnailURL: thumbnail,
+            duration: duration,
+            authorUsername: author,
+            caption: caption,
+            extractedAt: Date()
+        )
+    }
+
+    private func extractYtDlpMediaURL(from payload: [String: Any]) -> URL? {
+        if let urlString = payload["url"] as? String,
+           let direct = URL(string: urlString),
+           direct.scheme?.hasPrefix("http") == true {
+            return direct
+        }
+
+        if let requested = payload["requested_downloads"] as? [[String: Any]],
+           let first = requested.first,
+           let urlString = first["url"] as? String {
+            return URL(string: urlString)
+        }
+
+        if let formats = payload["formats"] as? [[String: Any]] {
+            let sortedFormats = formats.sorted {
+                let lhsHeight = $0["height"] as? Int ?? 0
+                let rhsHeight = $1["height"] as? Int ?? 0
+                return lhsHeight > rhsHeight
+            }
+
+            for format in sortedFormats {
+                let ext = (format["ext"] as? String ?? "").lowercased()
+                guard ext == "mp4" || ext == "webm" else { continue }
+                guard let urlString = format["url"] as? String else { continue }
+                if let mediaURL = URL(string: urlString) {
+                    return mediaURL
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func findYtDlp() -> String? {
+        let paths = [
+            "/opt/homebrew/bin/yt-dlp",
+            "/usr/local/bin/yt-dlp",
+            "/usr/bin/yt-dlp"
+        ]
+
+        for path in paths where fileManager.fileExists(atPath: path) {
+            return path
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["yt-dlp"]
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (output?.isEmpty == false) ? output : nil
+        } catch {
+            return nil
+        }
     }
 
     // MARK: - HTML Parse Helpers
@@ -760,23 +1143,29 @@ final class InstagramMediaCache {
 
     /// Get media for an Instagram URL, extracting or refreshing as needed
     func getMedia(for originalURL: URL) async throws -> InstagramMediaData {
+        let cacheKey = normalizedCacheKey(for: originalURL)
+
         // Check cache
-        if let cached = cache[originalURL], !cached.isExpired {
-            return cached
+        if let cached = cache[cacheKey], !cached.isExpired {
+            if isUsableCachedResult(cached) {
+                return cached
+            }
+            print("InstagramCache: Cached media is incomplete for \(cacheKey.absoluteString), refreshing")
         }
 
         // Re-extract if expired or missing
         let fresh = try await InstagramExtractor.shared.extract(from: originalURL)
-        cache[originalURL] = fresh
+        cache[cacheKey] = fresh
         return fresh
     }
 
     /// Preemptively refresh media before expiration
     func preemptiveRefresh(for originalURL: URL) {
+        let cacheKey = normalizedCacheKey(for: originalURL)
         Task {
             do {
                 let fresh = try await InstagramExtractor.shared.extract(from: originalURL)
-                cache[originalURL] = fresh
+                cache[cacheKey] = fresh
             } catch {
                 print("InstagramCache: Preemptive refresh failed: \(error)")
             }
@@ -785,11 +1174,135 @@ final class InstagramMediaCache {
 
     /// Clear cached data for a URL
     func invalidate(for originalURL: URL) {
-        cache.removeValue(forKey: originalURL)
+        cache.removeValue(forKey: normalizedCacheKey(for: originalURL))
     }
 
     /// Clear all cached data
     func clearAll() {
         cache.removeAll()
+    }
+
+    private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
+        switch mediaData.contentType {
+        case .reel, .videoPost:
+            return mediaData.videoURL != nil
+        case .carousel:
+            if mediaData.videoURL != nil { return true }
+            return !(mediaData.carouselItems?.isEmpty ?? true)
+        case .image, .story:
+            return mediaData.thumbnailURL != nil ||
+                !(mediaData.caption?.isEmpty ?? true) ||
+                !(mediaData.authorUsername?.isEmpty ?? true)
+        }
+    }
+
+    private func normalizedCacheKey(for input: URL) -> URL {
+        guard var components = URLComponents(url: input, resolvingAgainstBaseURL: false) else {
+            return input
+        }
+
+        components.scheme = "https"
+        if let host = components.host?.lowercased(), host.contains("instagram.com") {
+            components.host = "www.instagram.com"
+        }
+
+        var path = components.path
+        if let match = path.range(of: #"/share/reel/([A-Za-z0-9_-]+)"#, options: .regularExpression) {
+            let matched = String(path[match])
+            let shortcode = matched.replacingOccurrences(
+                of: #"/share/reel/([A-Za-z0-9_-]+)"#,
+                with: "$1",
+                options: .regularExpression
+            )
+            path = "/reel/\(shortcode)/"
+        } else if let match = path.range(of: #"/share/p/([A-Za-z0-9_-]+)"#, options: .regularExpression) {
+            let matched = String(path[match])
+            let shortcode = matched.replacingOccurrences(
+                of: #"/share/p/([A-Za-z0-9_-]+)"#,
+                with: "$1",
+                options: .regularExpression
+            )
+            path = "/p/\(shortcode)/"
+        }
+        if path.contains("/reels/") {
+            path = path.replacingOccurrences(of: "/reels/", with: "/reel/")
+        }
+        if !path.hasSuffix("/") {
+            path += "/"
+        }
+
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+
+        return components.url ?? input
+    }
+}
+
+// MARK: - Local Video Resolver
+
+/// Resolves remote Instagram CDN URLs to a local downloaded file for reliable playback/transcription.
+enum InstagramVideoLocalCache {
+    private static let fileManager = FileManager.default
+    private static let cacheDirectory = fileManager.temporaryDirectory
+        .appendingPathComponent("CosmoInstagramVideoCache", isDirectory: true)
+
+    static func resolvePlayableURL(from sourceURL: URL) async -> URL {
+        guard !sourceURL.isFileURL else { return sourceURL }
+
+        do {
+            let local = try await downloadIfNeeded(from: sourceURL)
+            return local
+        } catch {
+            print("InstagramVideoLocalCache: Failed local download (\(error.localizedDescription)); using remote URL")
+            return sourceURL
+        }
+    }
+
+    private static func downloadIfNeeded(from remoteURL: URL) async throws -> URL {
+        try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+
+        let ext = remoteURL.pathExtension.isEmpty ? "mp4" : remoteURL.pathExtension
+        let fileName = "ig-\(stableHash(remoteURL.absoluteString)).\(ext)"
+        let destination = cacheDirectory.appendingPathComponent(fileName)
+
+        if fileManager.fileExists(atPath: destination.path) {
+            let attrs = try? fileManager.attributesOfItem(atPath: destination.path)
+            if let size = attrs?[.size] as? NSNumber, size.int64Value > 0 {
+                return destination
+            }
+            try? fileManager.removeItem(at: destination)
+        }
+
+        var request = URLRequest(url: remoteURL)
+        request.timeoutInterval = 60
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+
+        let (temporaryFile, response) = try await URLSession.shared.download(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            throw InstagramExtractionError.invalidResponse
+        }
+
+        if fileManager.fileExists(atPath: destination.path) {
+            try? fileManager.removeItem(at: destination)
+        }
+
+        try fileManager.moveItem(at: temporaryFile, to: destination)
+        print("InstagramVideoLocalCache: Downloaded local video \(destination.lastPathComponent)")
+        return destination
+    }
+
+    private static func stableHash(_ input: String) -> String {
+        var hash: UInt64 = 5381
+        for scalar in input.unicodeScalars {
+            hash = ((hash << 5) &+ hash) &+ UInt64(scalar.value)
+        }
+        return String(hash, radix: 16)
     }
 }

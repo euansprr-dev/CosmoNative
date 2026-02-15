@@ -44,8 +44,8 @@ public struct KnowledgeConstellation: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("3D KNOWLEDGE CONSTELLATION")
-                .font(SanctuaryTypography.label)
+            Text("3D Knowledge Constellation")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -287,30 +287,30 @@ public struct KnowledgeConstellation: View {
 
     private var controlBar: some View {
         HStack(spacing: SanctuaryLayout.Spacing.md) {
-            controlButton(icon: "arrow.counterclockwise", label: "ROTATE") {
+            controlButton(icon: "arrow.counterclockwise", label: "Rotate") {
                 withAnimation(.easeOut(duration: 0.5)) {
                     rotationAngle -= 45
                 }
             }
 
-            controlButton(icon: isAutoRotating ? "pause.fill" : "play.fill", label: isAutoRotating ? "PAUSE" : "AUTO") {
+            controlButton(icon: isAutoRotating ? "pause.fill" : "play.fill", label: isAutoRotating ? "Pause" : "Auto") {
                 isAutoRotating.toggle()
                 if isAutoRotating { startAutoRotation() }
             }
 
-            controlButton(icon: "plus.magnifyingglass", label: "ZOOM") {
+            controlButton(icon: "plus.magnifyingglass", label: "Zoom") {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scale = min(2.0, scale + 0.2)
                 }
             }
 
-            controlButton(icon: "minus.magnifyingglass", label: "ZOOM") {
+            controlButton(icon: "minus.magnifyingglass", label: "Zoom") {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scale = max(0.5, scale - 0.2)
                 }
             }
 
-            controlButton(icon: "arrow.down.backward.and.arrow.up.forward", label: "RESET") {
+            controlButton(icon: "arrow.down.backward.and.arrow.up.forward", label: "Reset") {
                 withAnimation(.easeOut(duration: 0.5)) {
                     rotationAngle = 0
                     scale = 1.0
@@ -420,15 +420,15 @@ public struct NodeDetailPanel: View {
 
             // Metadata
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                metadataRow(label: "CREATED", value: formattedDate(node.createdDate))
-                metadataRow(label: "LAST ACCESSED", value: formattedDate(node.lastAccessedDate))
-                metadataRow(label: "ACCESS COUNT", value: "\(node.accessCount)")
+                metadataRow(label: "Created", value: formattedDate(node.createdDate))
+                metadataRow(label: "Last Accessed", value: formattedDate(node.lastAccessedDate))
+                metadataRow(label: "Access Count", value: "\(node.accessCount)")
             }
 
             // Tags
             if !node.tags.isEmpty {
                 VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-                    Text("TAGS")
+                    Text("Tags")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
 

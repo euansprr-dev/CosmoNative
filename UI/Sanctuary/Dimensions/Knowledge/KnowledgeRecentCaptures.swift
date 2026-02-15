@@ -34,8 +34,8 @@ public struct KnowledgeRecentCaptures: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("RECENT CAPTURES")
-                .font(SanctuaryTypography.label)
+            Text("Recent Captures")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -378,7 +378,7 @@ public struct CapturesSummaryCompact: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("RECENT CAPTURES")
+                Text("Recent Captures")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

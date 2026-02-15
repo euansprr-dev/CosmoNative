@@ -121,10 +121,10 @@ public struct MonthDensityView: View {
 
             // Month title
             VStack(spacing: 2) {
-                Text(PlannerumFormatters.monthYear.string(from: centerDate).uppercased())
+                Text(PlannerumFormatters.monthYear.string(from: centerDate))
                     .font(PlannerumTypography.subheader)
-                    .foregroundColor(PlannerumColors.textPrimary)
-                    .tracking(PlannerumTypography.trackingWide)
+                    .foregroundColor(OnyxColors.Text.primary)
+                    .tracking(0.5)
 
                 // Month XP stats
                 if viewModel.totalXP > 0 || viewModel.projectedXP > 0 {

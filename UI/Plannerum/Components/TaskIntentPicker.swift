@@ -109,10 +109,10 @@ public struct TaskIntentPicker: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: PlannerumLayout.spacingSM) {
             // Section label
-            Text("INTENT")
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted)
-                .tracking(PlannerumTypography.trackingWide)
+            Text("Intent")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.tertiary)
+                .tracking(OnyxTypography.labelTracking)
 
             // 4x2 intent grid
             intentGrid
@@ -200,10 +200,10 @@ public struct TaskIntentPicker: View {
             linkedIdeaSection
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Research":
-            linkedAtomSection(label: "LINK RESEARCH", atomType: .research, icon: "magnifyingglass")
+            linkedAtomSection(label: "Link Research", atomType: .research, icon: "magnifyingglass")
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Think":
-            linkedAtomSection(label: "LINK CONNECTION", atomType: .connection, icon: "link")
+            linkedAtomSection(label: "Link Connection", atomType: .connection, icon: "link")
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Review":
             linkedContentSection

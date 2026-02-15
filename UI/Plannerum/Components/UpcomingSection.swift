@@ -64,10 +64,10 @@ public struct UpcomingSection: View {
                     .foregroundColor(PlannerumColors.primary.opacity(0.8))
 
                 // Title
-                Text("UPCOMING")
-                    .font(UpcomingSectionTokens.sectionHeaderFont)
-                    .tracking(PlannerumTypography.trackingWide)
-                    .foregroundColor(PlannerumColors.textSecondary)
+                Text("Upcoming")
+                    .font(OnyxTypography.label)
+                    .tracking(OnyxTypography.labelTracking)
+                    .foregroundColor(OnyxColors.Text.secondary)
 
                 Spacer()
 
@@ -155,19 +155,19 @@ struct DayColumn: View {
 
                 // Today/Tomorrow badge
                 if day.isToday {
-                    Text("TODAY")
+                    Text("Today")
                         .font(.system(size: 8, weight: .heavy))
-                        .tracking(1)
+                        .tracking(0.5)
                         .foregroundColor(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(UpcomingSectionTokens.todayBadge)
                         .clipShape(Capsule())
                 } else if day.isTomorrow {
-                    Text("TOMORROW")
+                    Text("Tomorrow")
                         .font(.system(size: 8, weight: .heavy))
-                        .tracking(1)
-                        .foregroundColor(PlannerumColors.textSecondary)
+                        .tracking(0.5)
+                        .foregroundColor(OnyxColors.Text.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.white.opacity(0.08))

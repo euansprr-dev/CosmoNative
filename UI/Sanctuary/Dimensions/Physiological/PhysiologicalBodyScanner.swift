@@ -48,8 +48,8 @@ public struct PhysiologicalBodyScanner: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("HOLOGRAPHIC BODY SCANNER")
-                .font(SanctuaryTypography.label)
+            Text("Holographic Body Scanner")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -317,7 +317,7 @@ public struct PhysiologicalBodyScanner: View {
 
     private var stressZonePanel: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("STRESS ZONE")
+            Text("Stress Zone")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -367,7 +367,7 @@ public struct PhysiologicalBodyScanner: View {
 
     private var breathingPanel: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("BREATHING")
+            Text("Breathing")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -395,7 +395,7 @@ public struct PhysiologicalBodyScanner: View {
 
     private var hrvWavePanel: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("HRV WAVE")
+            Text("HRV Wave")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -406,7 +406,7 @@ public struct PhysiologicalBodyScanner: View {
                     .font(.system(size: 18, weight: .bold, design: .monospaced))
                     .foregroundColor(SanctuaryColors.Dimensions.physiological)
 
-                Text("LIVE")
+                Text("Live")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(SanctuaryColors.Semantic.success)
                     .padding(.horizontal, 4)
@@ -452,7 +452,7 @@ public struct PhysiologicalBodyScanner: View {
 
     private var controlsRow: some View {
         HStack(spacing: SanctuaryLayout.Spacing.md) {
-            controlButton(icon: "arrow.left", label: "ROTATE") {
+            controlButton(icon: "arrow.left", label: "Rotate") {
                 withAnimation(.easeInOut(duration: 0.5)) {
                     rotationAngle -= 45
                 }
@@ -464,11 +464,11 @@ public struct PhysiologicalBodyScanner: View {
                 }
             }
 
-            controlButton(icon: "plus.magnifyingglass", label: "ZOOM") {
+            controlButton(icon: "plus.magnifyingglass", label: "Zoom") {
                 // Zoom functionality
             }
 
-            controlButton(icon: "arrow.counterclockwise", label: "RESET") {
+            controlButton(icon: "arrow.counterclockwise", label: "Reset") {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     rotationAngle = 0
                     selectedMuscle = nil
@@ -690,7 +690,7 @@ public struct BodyScannerCompact: View {
 
             // Recovery summary
             VStack(alignment: .leading, spacing: 2) {
-                Text("MUSCLE RECOVERY")
+                Text("Muscle Recovery")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

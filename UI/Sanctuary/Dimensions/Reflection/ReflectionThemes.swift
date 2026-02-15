@@ -87,8 +87,8 @@ public struct RecurringThemesPanel: View {
     private var headerSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("RECURRING THEMES")
-                    .font(SanctuaryTypography.label)
+                Text("Recurring Themes")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -204,17 +204,17 @@ public struct RecurringThemesPanel: View {
         VStack(spacing: SanctuaryLayout.Spacing.md) {
             // Emerging themes
             if !emergingThemes.isEmpty {
-                themeSection(title: "EMERGING", themes: emergingThemes, color: SanctuaryColors.Semantic.success, icon: "arrow.up.circle.fill")
+                themeSection(title: "Emerging", themes: emergingThemes, color: SanctuaryColors.Semantic.success, icon: "arrow.up.circle.fill")
             }
 
             // Top themes
             if !topThemes.isEmpty {
-                themeSection(title: "DOMINANT", themes: Array(topThemes.prefix(3)), color: SanctuaryColors.Dimensions.reflection, icon: "star.fill")
+                themeSection(title: "Dominant", themes: Array(topThemes.prefix(3)), color: SanctuaryColors.Dimensions.reflection, icon: "star.fill")
             }
 
             // Fading themes
             if !fadingThemes.isEmpty {
-                themeSection(title: "FADING", themes: fadingThemes, color: SanctuaryColors.Text.tertiary, icon: "arrow.down.circle.fill")
+                themeSection(title: "Fading", themes: fadingThemes, color: SanctuaryColors.Text.tertiary, icon: "arrow.down.circle.fill")
             }
         }
         .padding(SanctuaryLayout.Spacing.md)
@@ -495,7 +495,7 @@ public struct ThemeDetailPanel: View {
             // Related themes
             if !relatedThemes.isEmpty {
                 VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                    Text("RELATED THEMES")
+                    Text("Related Themes")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
                         .tracking(1)
@@ -519,7 +519,7 @@ public struct ThemeDetailPanel: View {
             // Journal excerpts
             if !journalExcerpts.isEmpty {
                 VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                    Text("EXCERPTS")
+                    Text("Excerpts")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
                         .tracking(1)
@@ -596,7 +596,7 @@ public struct ThemesCompact: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             HStack {
-                Text("THEMES")
+                Text("Themes")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

@@ -360,14 +360,14 @@ struct ResearchFocusModeView: View {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 10))
-                Text("RESEARCH")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
+                Text("Research")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(OnyxTypography.labelTracking)
             }
-            .foregroundColor(CosmoColors.blockResearch)
+            .foregroundColor(OnyxColors.Dimension.knowledge)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(CosmoColors.blockResearch.opacity(0.15), in: Capsule())
+            .background(OnyxColors.Dimension.knowledge.opacity(0.12), in: Capsule())
 
             Spacer()
 
@@ -421,12 +421,15 @@ struct ResearchFocusModeView: View {
                 colors: [
                     CosmoColors.thinkspaceVoid.opacity(0.95),
                     CosmoColors.thinkspaceVoid.opacity(0.8),
+                    CosmoColors.thinkspaceVoid.opacity(0.4),
                     .clear
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        )
+            .frame(height: 120)
+            .allowsHitTesting(false)
+        , alignment: .top)
     }
 
     // MARK: - Helpers

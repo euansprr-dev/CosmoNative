@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Reflection/ReflectionDimensionView.swift
 // Reflection Dimension View - "The Inner Sanctum" complete dimension experience
-// Phase 8: Following SANCTUARY_UI_SPEC_V2.md section 3.6
+// Onyx Design System — premium cognitive atelier aesthetic
 
 import SwiftUI
 
@@ -35,110 +35,92 @@ public struct ReflectionDimensionView: View {
     // MARK: - Body
 
     public var body: some View {
-        ZStack {
-            // Background
-            backgroundLayer
+        GeometryReader { geometry in
+            let useSingleColumn = geometry.size.width < Layout.twoColumnBreakpoint
 
-            // Main content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SanctuaryLayout.Spacing.xxl) {
-                    // Header with back button
-                    headerSection
+            ZStack {
+                // Background
+                backgroundLayer
 
-                    // Emotional Landscape
-                    EmotionalLandscapePanel(
-                        currentState: viewModel.data.currentEmotionalState,
-                        dataPoints: viewModel.data.emotionalDataPoints,
-                        weekAverage: viewModel.data.weekAverageState,
-                        trendDirection: viewModel.data.emotionalTrend,
-                        moodTimeline: viewModel.data.todayMoodTimeline
-                    )
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                        // Header with back button
+                        headerSection
 
-                    // Journaling and Meditation row
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
-                        JournalingRhythmPanel(
-                            currentStreak: viewModel.data.journalingStreak,
-                            longestStreak: viewModel.data.longestJournalingStreak,
-                            todayWordCount: viewModel.data.todayWordCount,
-                            averageWordCount: viewModel.data.averageWordCount,
-                            todayDepthScore: viewModel.data.todayDepthScore,
-                            weeklyDepthData: viewModel.weeklyDepthData,
-                            consistency: viewModel.data.journalingConsistency
+                        // Emotional Landscape
+                        EmotionalLandscapePanel(
+                            currentState: viewModel.data.currentEmotionalState,
+                            dataPoints: viewModel.data.emotionalDataPoints,
+                            weekAverage: viewModel.data.weekAverageState,
+                            trendDirection: viewModel.data.emotionalTrend,
+                            moodTimeline: viewModel.data.todayMoodTimeline
                         )
-                        .frame(maxWidth: .infinity)
 
-                        MeditationPanel(
-                            todayMinutes: viewModel.data.todayMeditationMinutes,
-                            goalMinutes: viewModel.data.meditationGoalMinutes,
-                            currentStreak: viewModel.data.meditationStreak,
-                            totalSessions: viewModel.data.totalMeditationSessions,
-                            totalMinutes: viewModel.data.totalMeditationMinutes,
-                            weeklyData: viewModel.data.weeklyMeditationData,
-                            preferredTime: viewModel.data.preferredMeditationTime
+                        journalingAndMeditationSection(useSingleColumn: useSingleColumn)
+
+                        // Recurring Themes
+                        RecurringThemesPanel(
+                            themes: viewModel.data.themes,
+                            topThemes: viewModel.topThemes,
+                            emergingThemes: viewModel.emergingThemes,
+                            fadingThemes: viewModel.fadingThemes,
+                            onThemeTap: { theme in
+                                selectedTheme = theme
+                                showThemeDetail = true
+                            }
                         )
-                        .frame(maxWidth: 400)
-                    }
 
-                    // Recurring Themes
-                    RecurringThemesPanel(
-                        themes: viewModel.data.themes,
-                        topThemes: viewModel.topThemes,
-                        emergingThemes: viewModel.emergingThemes,
-                        fadingThemes: viewModel.fadingThemes,
-                        onThemeTap: { theme in
-                            selectedTheme = theme
-                            showThemeDetail = true
+                        // Grail Insights
+                        GrailInsightsPanel(
+                            insights: viewModel.data.grailInsights,
+                            patterns: viewModel.data.insightPatterns,
+                            predictions: viewModel.data.predictions,
+                            totalInsights: viewModel.data.totalGrailInsights,
+                            onInsightTap: { insight in
+                                selectedInsight = insight
+                                showInsightDetail = true
+                            }
+                        )
+
+                        // Bottom spacer for safe area
+                        Spacer(minLength: 40)
+                    }
+                    .frame(maxWidth: Layout.maxContentWidth)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                }
+                // Detail overlays
+                detailOverlays
+
+                // Mood Check-In overlay
+                if showMoodCheckIn {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { showMoodCheckIn = false }
+
+                    MoodCheckInView(isPresented: $showMoodCheckIn) { valence, energy, note in
+                        Task {
+                            await dataProvider.recordMood(valence: valence, energy: energy, note: note)
                         }
-                    )
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
 
-                    // Grail Insights
-                    GrailInsightsPanel(
-                        insights: viewModel.data.grailInsights,
-                        patterns: viewModel.data.insightPatterns,
-                        predictions: viewModel.data.predictions,
-                        totalInsights: viewModel.data.totalGrailInsights,
-                        onInsightTap: { insight in
-                            selectedInsight = insight
-                            showInsightDetail = true
+                // Journal Entry overlay
+                if showJournalSheet {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { showJournalSheet = false }
+
+                    JournalEntrySheet(isPresented: $showJournalSheet) { text, prompt in
+                        Task {
+                            await dataProvider.createJournalEntry(text: text, prompt: prompt)
                         }
-                    )
-
-                    // Bottom spacer for safe area
-                    Spacer(minLength: 40)
-                }
-                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
-                .padding(.top, SanctuaryLayout.Spacing.lg)
-            }
-
-            // Detail overlays
-            detailOverlays
-
-            // Mood Check-In overlay
-            if showMoodCheckIn {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .onTapGesture { showMoodCheckIn = false }
-
-                MoodCheckInView(isPresented: $showMoodCheckIn) { valence, energy, note in
-                    Task {
-                        await dataProvider.recordMood(valence: valence, energy: energy, note: note)
                     }
+                    .transition(.scale.combined(with: .opacity))
                 }
-                .transition(.scale.combined(with: .opacity))
-            }
-
-            // Journal Entry overlay
-            if showJournalSheet {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .onTapGesture { showJournalSheet = false }
-
-                JournalEntrySheet(isPresented: $showJournalSheet) { text, prompt in
-                    Task {
-                        await dataProvider.createJournalEntry(text: text, prompt: prompt)
-                    }
-                }
-                .transition(.scale.combined(with: .opacity))
             }
         }
         .onAppear {
@@ -152,19 +134,77 @@ public struct ReflectionDimensionView: View {
         }
     }
 
+    private enum Layout {
+        static let maxContentWidth: CGFloat = 1400
+        static let twoColumnBreakpoint: CGFloat = 900
+    }
+
+    @ViewBuilder
+    private func journalingAndMeditationSection(useSingleColumn: Bool) -> some View {
+        if useSingleColumn {
+            VStack(spacing: 16) {
+                JournalingRhythmPanel(
+                    currentStreak: viewModel.data.journalingStreak,
+                    longestStreak: viewModel.data.longestJournalingStreak,
+                    todayWordCount: viewModel.data.todayWordCount,
+                    averageWordCount: viewModel.data.averageWordCount,
+                    todayDepthScore: viewModel.data.todayDepthScore,
+                    weeklyDepthData: viewModel.weeklyDepthData,
+                    consistency: viewModel.data.journalingConsistency
+                )
+                .frame(maxWidth: .infinity)
+
+                MeditationPanel(
+                    todayMinutes: viewModel.data.todayMeditationMinutes,
+                    goalMinutes: viewModel.data.meditationGoalMinutes,
+                    currentStreak: viewModel.data.meditationStreak,
+                    totalSessions: viewModel.data.totalMeditationSessions,
+                    totalMinutes: viewModel.data.totalMeditationMinutes,
+                    weeklyData: viewModel.data.weeklyMeditationData,
+                    preferredTime: viewModel.data.preferredMeditationTime
+                )
+                .frame(maxWidth: .infinity)
+            }
+        } else {
+            HStack(alignment: .top, spacing: 16) {
+                JournalingRhythmPanel(
+                    currentStreak: viewModel.data.journalingStreak,
+                    longestStreak: viewModel.data.longestJournalingStreak,
+                    todayWordCount: viewModel.data.todayWordCount,
+                    averageWordCount: viewModel.data.averageWordCount,
+                    todayDepthScore: viewModel.data.todayDepthScore,
+                    weeklyDepthData: viewModel.weeklyDepthData,
+                    consistency: viewModel.data.journalingConsistency
+                )
+                .frame(maxWidth: .infinity)
+
+                MeditationPanel(
+                    todayMinutes: viewModel.data.todayMeditationMinutes,
+                    goalMinutes: viewModel.data.meditationGoalMinutes,
+                    currentStreak: viewModel.data.meditationStreak,
+                    totalSessions: viewModel.data.totalMeditationSessions,
+                    totalMinutes: viewModel.data.totalMeditationMinutes,
+                    weeklyData: viewModel.data.weeklyMeditationData,
+                    preferredTime: viewModel.data.preferredMeditationTime
+                )
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
     // MARK: - Background Layer
 
     private var backgroundLayer: some View {
         ZStack {
-            // Base void
-            SanctuaryColors.Background.void
+            // Onyx base surface
+            OnyxColors.Elevation.base
                 .ignoresSafeArea()
 
-            // Reflection dimension tint - soft, meditative
+            // Subtle reflection dimension tint — soft, meditative
             RadialGradient(
                 colors: [
-                    SanctuaryColors.Dimensions.reflection.opacity(0.12),
-                    SanctuaryColors.Dimensions.reflection.opacity(0.04),
+                    OnyxColors.DimensionVivid.reflection.opacity(0.06),
+                    OnyxColors.DimensionVivid.reflection.opacity(0.02),
                     Color.clear
                 ],
                 center: .center,
@@ -178,10 +218,10 @@ public struct ReflectionDimensionView: View {
                 petalShape(index: i)
             }
 
-            // Floating light particles
+            // Floating light particles (more subtle)
             ForEach(0..<15, id: \.self) { _ in
                 Circle()
-                    .fill(SanctuaryColors.Dimensions.reflection.opacity(Double.random(in: 0.03...0.08)))
+                    .fill(OnyxColors.Dimension.reflection.opacity(Double.random(in: 0.02...0.05)))
                     .frame(width: CGFloat.random(in: 3...8))
                     .position(
                         x: CGFloat.random(in: 0...1200),
@@ -190,9 +230,9 @@ public struct ReflectionDimensionView: View {
                     .blur(radius: 2)
             }
 
-            // Edge vignette
+            // Subtle edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.5)],
+                colors: [Color.clear, Color.black.opacity(0.3)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 900
@@ -206,7 +246,7 @@ public struct ReflectionDimensionView: View {
         let radius: CGFloat = 250
 
         return Ellipse()
-            .fill(SanctuaryColors.Dimensions.reflection.opacity(0.03))
+            .fill(OnyxColors.Dimension.reflection.opacity(0.02))
             .frame(width: 100, height: 200)
             .rotationEffect(.degrees(angle))
             .offset(
@@ -222,44 +262,44 @@ public struct ReflectionDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .medium))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .foregroundColor(OnyxColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title
+            // Title — sentence case, Onyx typography
             VStack(spacing: 2) {
-                Text("REFLECTION")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.primary)
-                    .tracking(4)
+                Text("Reflection")
+                    .font(OnyxTypography.viewTitle)
+                    .tracking(OnyxTypography.viewTitleTracking)
+                    .foregroundColor(OnyxColors.Text.primary)
 
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 8) {
                     Text("The Inner Sanctum")
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundColor(OnyxColors.Text.secondary)
 
-                    Text("•")
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                    Text("·")
+                        .foregroundColor(OnyxColors.Text.tertiary)
 
-                    Text("Level \(viewModel.dimensionLevel)")
+                    Text("Tier \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                        .foregroundColor(OnyxColors.Dimension.reflection)
 
-                    Text("•")
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                    Text("·")
+                        .foregroundColor(OnyxColors.Text.tertiary)
 
-                    Text("Rank: SAGE")
+                    Text("Sage")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                        .foregroundColor(OnyxColors.Dimension.reflection)
                 }
             }
 
@@ -285,16 +325,12 @@ public struct ReflectionDimensionView: View {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(SanctuaryColors.Dimensions.reflection)
+            .foregroundColor(OnyxColors.Dimension.reflection)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(SanctuaryColors.Dimensions.reflection.opacity(0.1))
-                    .overlay(
-                        Capsule()
-                            .stroke(SanctuaryColors.Dimensions.reflection.opacity(0.3), lineWidth: 1)
-                    )
+                    .fill(OnyxColors.Dimension.reflection.opacity(0.1))
             )
         }
         .buttonStyle(.plain)
@@ -304,32 +340,29 @@ public struct ReflectionDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(SanctuaryColors.Semantic.success)
+                    .fill(OnyxColors.Accent.sage)
                     .frame(width: 6, height: 6)
-                    .modifier(PulseModifier())
+                    .modifier(OnyxPulseModifier())
 
-                Text("MINDFUL")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                Text("Mindful")
+                    .font(OnyxTypography.micro)
+                    .foregroundColor(OnyxColors.Text.tertiary)
             }
 
             Text(viewModel.data.currentEmotionalState.label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                .foregroundColor(OnyxColors.DimensionVivid.reflection)
 
             Text("\(viewModel.data.journalingStreak) day streak")
-                .font(.system(size: 10))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(OnyxTypography.micro)
+                .foregroundColor(OnyxColors.Text.tertiary)
         }
-        .padding(SanctuaryLayout.Spacing.md)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
+        .onyxShadow(.resting)
     }
 
     // MARK: - Detail Overlays
@@ -376,18 +409,18 @@ public struct ReflectionDimensionView: View {
     }
 }
 
-// MARK: - Pulse Modifier
+// MARK: - Onyx Pulse Modifier
 
 @MainActor
-private struct PulseModifier: ViewModifier {
+private struct OnyxPulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.3 : 1.0)
-            .opacity(isPulsing ? 0.6 : 1.0)
+            .scaleEffect(isPulsing ? 1.2 : 1.0)
+            .opacity(isPulsing ? 0.5 : 1.0)
             .animation(
-                .easeInOut(duration: 1.2)
+                .easeInOut(duration: 1.5)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -483,7 +516,7 @@ public final class ReflectionDimensionViewModel: ObservableObject {
 
 // MARK: - Compact Reflection View
 
-/// Compact version for embedding in other views
+/// Compact version for embedding in other views — Onyx design
 public struct ReflectionDimensionCompact: View {
 
     let data: ReflectionDimensionData
@@ -497,18 +530,18 @@ public struct ReflectionDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(spacing: 16) {
             // Header
             HStack {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "leaf.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                        .foregroundColor(OnyxColors.Dimension.reflection)
 
-                    Text("REFLECTION")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(SanctuaryColors.Text.primary)
-                        .tracking(2)
+                    Text("Reflection")
+                        .font(OnyxTypography.cardTitle)
+                        .tracking(OnyxTypography.cardTitleTracking)
+                        .foregroundColor(OnyxColors.Text.primary)
                 }
 
                 Spacer()
@@ -521,7 +554,7 @@ public struct ReflectionDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(SanctuaryColors.Dimensions.reflection)
+                    .foregroundColor(OnyxColors.Dimension.reflection)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -549,20 +582,13 @@ public struct ReflectionDimensionCompact: View {
                 onExpand: {}
             )
         }
-        .padding(SanctuaryLayout.Spacing.lg)
+        .padding(OnyxLayout.cardPadding)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                        .stroke(
-                            isHovered ? SanctuaryColors.Dimensions.reflection.opacity(0.5) : SanctuaryColors.Glass.border,
-                            lineWidth: 1
-                        )
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(SanctuarySprings.hover, value: isHovered)
+        .onyxShadow(isHovered ? .hovered : .resting)
+        .animation(OnyxSpring.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

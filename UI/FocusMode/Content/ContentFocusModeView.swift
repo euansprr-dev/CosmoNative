@@ -50,7 +50,7 @@ struct ContentFocusModeView: View {
                     // Divider
                     if isContextPanelVisible {
                         Rectangle()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Color.white.opacity(OnyxLayout.dividerOpacity))
                             .frame(width: 1)
                     }
 
@@ -287,14 +287,14 @@ struct ContentFocusModeView: View {
             HStack(spacing: 4) {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 10))
-                Text("CONTENT")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
+                Text("Content")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(OnyxTypography.labelTracking)
             }
-            .foregroundColor(CosmoColors.blockContent)
+            .foregroundColor(OnyxColors.Dimension.creative)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(CosmoColors.blockContent.opacity(0.15), in: Capsule())
+            .background(OnyxColors.Dimension.creative.opacity(0.12), in: Capsule())
 
             Spacer()
 
@@ -329,12 +329,15 @@ struct ContentFocusModeView: View {
                 colors: [
                     CosmoColors.thinkspaceVoid.opacity(0.95),
                     CosmoColors.thinkspaceVoid.opacity(0.8),
+                    CosmoColors.thinkspaceVoid.opacity(0.4),
                     .clear
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        )
+            .frame(height: 120)
+            .allowsHitTesting(false)
+        , alignment: .top)
     }
 
 }

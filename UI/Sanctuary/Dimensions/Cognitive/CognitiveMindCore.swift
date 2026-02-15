@@ -306,7 +306,7 @@ public struct CognitiveMindCore: View {
     private var levelDisplay: some View {
         VStack(spacing: SanctuaryLayout.Spacing.xs) {
             // NELO indicator
-            Text("NELO")
+            Text("Nelo")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.secondary)
 
@@ -487,8 +487,8 @@ public struct NELOScoreCard: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("NELO SCORE")
-                    .font(SanctuaryTypography.label)
+                Text("Nelo Score")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
 
                 Spacer()
@@ -500,7 +500,7 @@ public struct NELOScoreCard: View {
                         .frame(width: 6, height: 6)
 
                     Text(data.neloStatus.displayName)
-                        .font(SanctuaryTypography.label)
+                        .font(OnyxTypography.label)
                         .foregroundColor(statusColor)
                 }
             }
@@ -569,8 +569,8 @@ public struct FocusIndexCard: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("FOCUS INDEX")
-                    .font(SanctuaryTypography.label)
+                Text("Focus Index")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
 
                 Spacer()
@@ -583,7 +583,7 @@ public struct FocusIndexCard: View {
                             .frame(width: 6, height: 6)
 
                         Text("Peak")
-                            .font(SanctuaryTypography.label)
+                            .font(OnyxTypography.label)
                             .foregroundColor(SanctuaryColors.Semantic.success)
                     }
                 }

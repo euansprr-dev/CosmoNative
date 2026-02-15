@@ -41,8 +41,8 @@ public struct KnowledgeStaminaPanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("KNOWLEDGE STAMINA")
-                .font(SanctuaryTypography.label)
+            Text("Knowledge Stamina")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -274,7 +274,7 @@ public struct StaminaCompact: View {
             StaminaGauge(stamina: stamina)
 
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                Text("STAMINA")
+                Text("Stamina")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -329,7 +329,7 @@ public struct FactorImpactBar: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("FACTOR IMPACT")
+            Text("Factor Impact")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)

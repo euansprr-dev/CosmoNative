@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Cognitive/CognitiveDimensionView.swift
 // Cognitive Dimension View - "The Mind Core" complete dimension experience
-// Phase 3: Following SANCTUARY_UI_SPEC_V2.md section 3.1
+// Onyx Design System — premium cognitive atelier aesthetic
 
 import SwiftUI
 
@@ -36,55 +36,60 @@ public struct CognitiveDimensionView: View {
     // MARK: - Body
 
     public var body: some View {
-        ZStack {
-            // Background
-            backgroundLayer
+        GeometryReader { geometry in
+            let useSingleColumn = geometry.size.width < Layout.twoColumnBreakpoint
 
-            // Main content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SanctuaryLayout.Spacing.xxl) {
-                    // Header with back button
-                    headerSection
+            ZStack {
+                // Background
+                backgroundLayer
 
-                    // Deep Work Timeline (full width)
-                    CognitiveDeepWorkTimeline(
-                        data: viewModel.data,
-                        onSessionTap: { session in
-                            selectedSession = session
-                            showSessionDetail = true
-                        }
-                    )
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                        // Header with back button
+                        headerSection
 
-                    // Central section: Mind Core + Side Panels
-                    centralSection
+                        // Deep Work Timeline (full width)
+                        CognitiveDeepWorkTimeline(
+                            data: viewModel.data,
+                            onSessionTap: { session in
+                                selectedSession = session
+                                showSessionDetail = true
+                            }
+                        )
 
-                    // Correlation Map (full width)
-                    CognitiveCorrelationMap(
-                        correlations: viewModel.data.topCorrelations,
-                        onCorrelationTap: { correlation in
-                            selectedCorrelation = correlation
-                            showCorrelationDetail = true
-                        }
-                    )
+                        // Central section: Mind Core + Side Panels
+                        centralSection(useSingleColumn: useSingleColumn)
 
-                    // Interruption Timeline (full width)
-                    CognitiveInterruptionTimeline(
-                        data: viewModel.data,
-                        onInterruptionTap: { interruption in
-                            selectedInterruption = interruption
-                            showInterruptionDetail = true
-                        }
-                    )
+                        // Correlation Map (full width)
+                        CognitiveCorrelationMap(
+                            correlations: viewModel.data.topCorrelations,
+                            onCorrelationTap: { correlation in
+                                selectedCorrelation = correlation
+                                showCorrelationDetail = true
+                            }
+                        )
 
-                    // Bottom spacer for safe area
-                    Spacer(minLength: 40)
+                        // Interruption Timeline (full width)
+                        CognitiveInterruptionTimeline(
+                            data: viewModel.data,
+                            onInterruptionTap: { interruption in
+                                selectedInterruption = interruption
+                                showInterruptionDetail = true
+                            }
+                        )
+
+                        // Bottom spacer for safe area
+                        Spacer(minLength: 40)
+                    }
+                    .frame(maxWidth: Layout.maxContentWidth)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
                 }
-                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
-                .padding(.top, SanctuaryLayout.Spacing.lg)
+                // Detail overlays
+                detailOverlays
             }
-
-            // Detail overlays
-            detailOverlays
         }
         .onAppear {
             startBreathingAnimation()
@@ -95,19 +100,24 @@ public struct CognitiveDimensionView: View {
         }
     }
 
+    private enum Layout {
+        static let maxContentWidth: CGFloat = 1400
+        static let twoColumnBreakpoint: CGFloat = 900
+    }
+
     // MARK: - Background Layer
 
     private var backgroundLayer: some View {
         ZStack {
-            // Base void
-            SanctuaryColors.Background.void
+            // Onyx base surface
+            OnyxColors.Elevation.base
                 .ignoresSafeArea()
 
-            // Cognitive dimension tint
+            // Subtle cognitive dimension tint
             RadialGradient(
                 colors: [
-                    SanctuaryColors.Dimensions.cognitive.opacity(0.15),
-                    SanctuaryColors.Dimensions.cognitive.opacity(0.05),
+                    OnyxColors.DimensionVivid.cognitive.opacity(0.08),
+                    OnyxColors.DimensionVivid.cognitive.opacity(0.03),
                     Color.clear
                 ],
                 center: .center,
@@ -116,9 +126,9 @@ public struct CognitiveDimensionView: View {
             )
             .ignoresSafeArea()
 
-            // Edge vignette
+            // Subtle edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.4)],
+                colors: [Color.clear, Color.black.opacity(0.3)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 800
@@ -133,37 +143,37 @@ public struct CognitiveDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .medium))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .foregroundColor(OnyxColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title
+            // Title — sentence case, Onyx typography
             VStack(spacing: 2) {
-                Text("COGNITIVE")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.primary)
-                    .tracking(4)
+                Text("Cognitive")
+                    .font(OnyxTypography.viewTitle)
+                    .tracking(OnyxTypography.viewTitleTracking)
+                    .foregroundColor(OnyxColors.Text.primary)
 
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 8) {
                     Text("Mind Core")
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundColor(OnyxColors.Text.secondary)
 
-                    Text("•")
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                    Text("·")
+                        .foregroundColor(OnyxColors.Text.tertiary)
 
-                    Text("Level \(viewModel.dimensionLevel)")
+                    Text("Tier \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Dimensions.cognitive)
+                        .foregroundColor(OnyxColors.Dimension.cognitive)
                 }
             }
 
@@ -178,61 +188,53 @@ public struct CognitiveDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(Color.green)
+                    .fill(OnyxColors.Accent.sage)
                     .frame(width: 6, height: 6)
-                    .modifier(PulseModifier())
+                    .modifier(OnyxPulseModifier())
 
-                Text("LIVE")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                Text("Live")
+                    .font(OnyxTypography.micro)
+                    .foregroundColor(OnyxColors.Text.tertiary)
             }
 
             Text("NELO: \(String(format: "%.1f", viewModel.data.neloScore))")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(viewModel.data.neloStatus == .balanced ?
-                    SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.warning)
+                    OnyxColors.Accent.sage : OnyxColors.Accent.rose)
 
             Text(viewModel.data.neloStatus.displayName)
-                .font(.system(size: 10))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(OnyxTypography.micro)
+                .foregroundColor(OnyxColors.Text.tertiary)
         }
-        .padding(SanctuaryLayout.Spacing.md)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
+        .onyxShadow(.resting)
     }
 
     // MARK: - Central Section
 
-    private var centralSection: some View {
-        HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
-            // Left column: Mind Core with metrics below
-            VStack(spacing: SanctuaryLayout.Spacing.md) {
+    @ViewBuilder
+    private func centralSection(useSingleColumn: Bool) -> some View {
+        if useSingleColumn {
+            VStack(spacing: 16) {
                 CognitiveMindCore(
                     data: viewModel.data,
                     breathingScale: breathingScale
                 )
 
-                // Metrics below the Mind Core
                 NELOScoreCard(data: viewModel.data)
-                    .frame(maxWidth: 280)
+                    .frame(maxWidth: .infinity)
                 FocusIndexCard(data: viewModel.data)
-                    .frame(maxWidth: 280)
-            }
-            .frame(width: 300)
+                    .frame(maxWidth: .infinity)
 
-            // Right section: Forecast, Journal, Prediction in a row
-            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.md) {
                 CognitiveHourlyForecast(
                     windows: viewModel.data.predictedOptimalWindows,
                     currentStatus: viewModel.data.currentWindowStatus
                 )
-                .frame(maxWidth: 260)
+                .frame(maxWidth: .infinity)
 
                 CognitiveJournalDensity(
                     insightMarkersToday: viewModel.data.journalInsightMarkersToday,
@@ -240,9 +242,8 @@ public struct CognitiveDimensionView: View {
                     detectedThemes: viewModel.data.detectedThemes,
                     journalExcerpt: viewModel.data.journalExcerpt
                 )
-                .frame(maxWidth: 260)
+                .frame(maxWidth: .infinity)
 
-                // Prediction card moved up here
                 if let prediction = viewModel.currentPrediction {
                     CognitivePredictionCard(
                         prediction: prediction,
@@ -250,11 +251,55 @@ public struct CognitiveDimensionView: View {
                             viewModel.handlePredictionAction()
                         }
                     )
-                    .frame(maxWidth: 280)
+                    .frame(maxWidth: .infinity)
                 }
             }
+        } else {
+            HStack(alignment: .top, spacing: 16) {
+                // Left column: Mind Core with metrics below
+                VStack(spacing: 12) {
+                    CognitiveMindCore(
+                        data: viewModel.data,
+                        breathingScale: breathingScale
+                    )
+
+                    NELOScoreCard(data: viewModel.data)
+                        .frame(maxWidth: .infinity)
+                    FocusIndexCard(data: viewModel.data)
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Right section: Forecast, Journal, Prediction stacked
+                VStack(spacing: 12) {
+                    CognitiveHourlyForecast(
+                        windows: viewModel.data.predictedOptimalWindows,
+                        currentStatus: viewModel.data.currentWindowStatus
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    CognitiveJournalDensity(
+                        insightMarkersToday: viewModel.data.journalInsightMarkersToday,
+                        reflectionDepthScore: viewModel.data.reflectionDepthScore,
+                        detectedThemes: viewModel.data.detectedThemes,
+                        journalExcerpt: viewModel.data.journalExcerpt
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    if let prediction = viewModel.currentPrediction {
+                        CognitivePredictionCard(
+                            prediction: prediction,
+                            onActionTap: {
+                                viewModel.handlePredictionAction()
+                            }
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Detail Overlays
@@ -325,18 +370,18 @@ public struct CognitiveDimensionView: View {
     }
 }
 
-// MARK: - Pulse Modifier
+// MARK: - Onyx Pulse Modifier
 
 @MainActor
-private struct PulseModifier: ViewModifier {
+private struct OnyxPulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.3 : 1.0)
-            .opacity(isPulsing ? 0.6 : 1.0)
+            .scaleEffect(isPulsing ? 1.2 : 1.0)
+            .opacity(isPulsing ? 0.5 : 1.0)
             .animation(
-                .easeInOut(duration: 1)
+                .easeInOut(duration: 1.5)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -401,7 +446,7 @@ public final class CognitiveDimensionViewModel: ObservableObject {
 
 // MARK: - Compact Cognitive View
 
-/// Compact version for embedding in other views
+/// Compact version for embedding in other views — Onyx design
 public struct CognitiveDimensionCompact: View {
 
     let data: CognitiveDimensionData
@@ -415,18 +460,18 @@ public struct CognitiveDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(spacing: 16) {
             // Header
             HStack {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 16))
-                        .foregroundColor(SanctuaryColors.Dimensions.cognitive)
+                        .foregroundColor(OnyxColors.Dimension.cognitive)
 
-                    Text("COGNITIVE")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(SanctuaryColors.Text.primary)
-                        .tracking(2)
+                    Text("Cognitive")
+                        .font(OnyxTypography.cardTitle)
+                        .tracking(OnyxTypography.cardTitleTracking)
+                        .foregroundColor(OnyxColors.Text.primary)
                 }
 
                 Spacer()
@@ -439,13 +484,13 @@ public struct CognitiveDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(SanctuaryColors.Dimensions.cognitive)
+                    .foregroundColor(OnyxColors.Dimension.cognitive)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
 
             // Key metrics row
-            HStack(spacing: SanctuaryLayout.Spacing.xl) {
+            HStack(spacing: 24) {
                 compactMetric(
                     label: "NELO",
                     value: String(format: "%.1f", data.neloScore),
@@ -454,7 +499,7 @@ public struct CognitiveDimensionCompact: View {
 
                 compactMetric(
                     label: "Focus",
-                    value: "\(Int(data.focusIndex))%",
+                    value: "\(Int(data.focusIndex))",
                     status: data.focusIndex >= 80 ? "Peak" : "Normal"
                 )
 
@@ -473,35 +518,28 @@ public struct CognitiveDimensionCompact: View {
 
             // Current window indicator
             if let window = data.primaryWindow {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 10))
-                        .foregroundColor(SanctuaryColors.XP.primary)
+                        .foregroundColor(OnyxColors.Accent.amber)
 
                     Text("Optimal window: \(window.formattedTimeRange)")
                         .font(.system(size: 11))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundColor(OnyxColors.Text.secondary)
 
                     Text("(\(Int(window.confidence))% conf)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(OnyxTypography.micro)
+                        .foregroundColor(OnyxColors.Text.tertiary)
                 }
             }
         }
-        .padding(SanctuaryLayout.Spacing.lg)
+        .padding(OnyxLayout.cardPadding)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                        .stroke(
-                            isHovered ? SanctuaryColors.Dimensions.cognitive.opacity(0.5) : SanctuaryColors.Glass.border,
-                            lineWidth: 1
-                        )
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(SanctuarySprings.hover, value: isHovered)
+        .onyxShadow(isHovered ? .hovered : .resting)
+        .animation(OnyxSpring.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -510,17 +548,17 @@ public struct CognitiveDimensionCompact: View {
     private func compactMetric(label: String, value: String, status: String?) -> some View {
         VStack(spacing: 2) {
             Text(label)
-                .font(.system(size: 9))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(OnyxTypography.micro)
+                .foregroundColor(OnyxColors.Text.tertiary)
 
             Text(value)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(.system(size: 16, weight: .light))
+                .foregroundColor(OnyxColors.Text.primary)
 
             if let status = status {
                 Text(status)
-                    .font(.system(size: 9))
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .font(OnyxTypography.micro)
+                    .foregroundColor(OnyxColors.Text.secondary)
             }
         }
     }

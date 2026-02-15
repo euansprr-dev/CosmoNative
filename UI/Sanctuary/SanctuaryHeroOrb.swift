@@ -249,18 +249,15 @@ public struct SanctuaryHeroOrb: View {
     // MARK: - Layer 4: Level Display
 
     private var levelDisplay: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.xs) {
-            Text("CI")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(SanctuaryColors.Text.secondary)
-
+        Group {
             if let state = state {
                 Text("\(state.level)")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundColor(SanctuaryColors.Text.primary)
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 2)
+                    .font(.system(size: 32, weight: .ultraLight))
+                    .foregroundColor(OnyxColors.Text.primary)
+                    .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
             }
         }
+        .help("Cosmo Index")
     }
 
     // MARK: - Layer 5: Live Metrics Orbit

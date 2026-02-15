@@ -40,8 +40,8 @@ public struct KnowledgeFlowPanel: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("TODAY'S KNOWLEDGE FLOW")
-                .font(SanctuaryTypography.label)
+            Text("Today's Knowledge Flow")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -49,7 +49,7 @@ public struct KnowledgeFlowPanel: View {
             HStack(spacing: SanctuaryLayout.Spacing.md) {
                 // Captured
                 FlowMetricCard(
-                    title: "CAPTURED",
+                    title: "Captured",
                     value: capturesToday,
                     unit: "ideas",
                     change: capturesChange,
@@ -66,7 +66,7 @@ public struct KnowledgeFlowPanel: View {
 
                 // Processed
                 FlowMetricCard(
-                    title: "PROCESSED",
+                    title: "Processed",
                     value: processedToday,
                     unit: "embeddings",
                     change: nil,
@@ -83,7 +83,7 @@ public struct KnowledgeFlowPanel: View {
 
                 // Connected
                 FlowMetricCard(
-                    title: "CONNECTED",
+                    title: "Connected",
                     value: connectionsToday,
                     unit: "links",
                     change: nil,
@@ -221,7 +221,7 @@ public struct DensityIndicator: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
             HStack {
-                Text("DENSITY")
+                Text("Density")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

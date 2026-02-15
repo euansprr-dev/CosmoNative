@@ -202,7 +202,7 @@ public struct QuarterView: View {
         )
 
         return VStack(alignment: .leading, spacing: PlannerumLayout.spacingLG) {
-            Text("CORE OBJECTIVES")
+            Text("Core Objectives")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(3)
@@ -463,7 +463,7 @@ public struct QuarterView: View {
         let daysOfData = trajectoryDaysOfData(objectives: quarterObjectives)
 
         return VStack(alignment: .leading, spacing: PlannerumLayout.spacingLG) {
-            Text("QUARTER TRAJECTORY")
+            Text("Quarter Trajectory")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(3)
@@ -714,7 +714,7 @@ struct AddObjectiveSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     // Title
-                    formField(label: "OBJECTIVE TITLE") {
+                    formField(label: "Objective Title") {
                         TextField("e.g., Complete 100 Deep Work Sessions", text: $title)
                             .textFieldStyle(.plain)
                             .font(.system(size: 14))
@@ -731,7 +731,7 @@ struct AddObjectiveSheet: View {
                     }
 
                     // Data Source
-                    formField(label: "DATA SOURCE") {
+                    formField(label: "Data Source") {
                         VStack(spacing: 6) {
                             ForEach(ObjectiveDataSource.allCases, id: \.rawValue) { source in
                                 dataSourceOption(source)
@@ -741,7 +741,7 @@ struct AddObjectiveSheet: View {
 
                     // Target + Unit (side by side)
                     HStack(spacing: 12) {
-                        formField(label: "TARGET VALUE") {
+                        formField(label: "Target Value") {
                             TextField("100", text: $targetValue)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 14, design: .monospaced))
@@ -757,7 +757,7 @@ struct AddObjectiveSheet: View {
                                 )
                         }
 
-                        formField(label: "UNIT") {
+                        formField(label: "Unit") {
                             TextField("sessions", text: $unit)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 14))
@@ -879,7 +879,7 @@ struct AddObjectiveSheet: View {
 
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("CURRENT PROGRESS")
+            Text("Current Progress")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(2)

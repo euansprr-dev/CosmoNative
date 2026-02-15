@@ -356,7 +356,7 @@ struct CanvasGridView: View {
                             width: dotSize,
                             height: dotSize
                         )),
-                        with: .color(CosmoColors.thinkspaceGrid.opacity(0.4))
+                        with: .color(CosmoColors.thinkspaceGrid.opacity(0.15))
                     )
 
                     y += scaledSpacing

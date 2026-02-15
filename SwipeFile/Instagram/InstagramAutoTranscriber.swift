@@ -33,8 +33,18 @@ struct TranscriptionResult: Sendable {
 /// Text recognized in a single video frame
 private struct OCRFrameResult: Sendable {
     let timestamp: TimeInterval
-    let texts: Set<String>
+    let lines: [String]
+    let normalizedLineSet: Set<String>
     let confidence: Float
+}
+
+/// Aggregated OCR line statistics across multiple frames in the same visual slide
+private struct OCRLineAggregate: Sendable {
+    var variants: [String: Int]
+    var count: Int
+    var firstFrameIndex: Int
+    var firstLineIndex: Int
+    var totalLineIndex: Int
 }
 
 // MARK: - Speech Segment
@@ -53,7 +63,9 @@ final class InstagramAutoTranscriber {
     static let shared = InstagramAutoTranscriber()
 
     private let framesPerSecond: Double = 2.0
-    private let jaccardThreshold: Double = 0.5
+    private let jaccardThreshold: Double = 0.62
+    private let minLineConfidence: Float = 0.22
+    private let minStableLineRatio: Double = 0.30
 
     private init() {}
 
@@ -134,7 +146,8 @@ final class InstagramAutoTranscriber {
 
     /// Run VNRecognizeTextRequest on a single frame
     private func recognizeText(in image: CGImage, at timestamp: TimeInterval) async -> OCRFrameResult? {
-        await withCheckedContinuation { continuation in
+        let minLineConfidence = self.minLineConfidence
+        await withCheckedContinuation { (continuation: CheckedContinuation<OCRFrameResult?, Never>) in
             let request = VNRecognizeTextRequest { request, error in
                 guard error == nil,
                       let observations = request.results as? [VNRecognizedTextObservation],
@@ -143,28 +156,45 @@ final class InstagramAutoTranscriber {
                     return
                 }
 
-                var texts = Set<String>()
-                var totalConfidence: Float = 0
-
-                for observation in observations {
-                    if let candidate = observation.topCandidates(1).first {
-                        let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !text.isEmpty && text.count > 1 { // Skip single chars
-                            texts.insert(text)
-                            totalConfidence += candidate.confidence
-                        }
+                let sortedObservations = observations.sorted { lhs, rhs in
+                    let lhsY = lhs.boundingBox.midY
+                    let rhsY = rhs.boundingBox.midY
+                    if abs(lhsY - rhsY) > 0.02 {
+                        return lhsY > rhsY // top -> bottom
                     }
+                    return lhs.boundingBox.minX < rhs.boundingBox.minX // left -> right
                 }
 
-                guard !texts.isEmpty else {
+                var lines: [String] = []
+                var normalizedLineSet = Set<String>()
+                var totalConfidence: Float = 0
+                var acceptedCount = 0
+
+                for observation in sortedObservations {
+                    guard let candidate = observation.topCandidates(1).first else { continue }
+                    guard candidate.confidence >= minLineConfidence else { continue }
+                    guard let cleaned = self.cleanOCRLine(candidate.string) else { continue }
+
+                    let normalized = self.normalizedLineKey(cleaned)
+                    guard !normalized.isEmpty else { continue }
+                    guard !normalizedLineSet.contains(normalized) else { continue }
+
+                    lines.append(cleaned)
+                    normalizedLineSet.insert(normalized)
+                    totalConfidence += candidate.confidence
+                    acceptedCount += 1
+                }
+
+                guard !lines.isEmpty else {
                     continuation.resume(returning: nil)
                     return
                 }
 
-                let avgConfidence = totalConfidence / Float(texts.count)
+                let avgConfidence = totalConfidence / Float(max(acceptedCount, 1))
                 continuation.resume(returning: OCRFrameResult(
                     timestamp: timestamp,
-                    texts: texts,
+                    lines: lines,
+                    normalizedLineSet: normalizedLineSet,
                     confidence: avgConfidence
                 ))
             }
@@ -188,6 +218,11 @@ final class InstagramAutoTranscriber {
         videoURL: URL,
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
     ) async -> [SpeechSegment] {
+        guard await hasUsableAudioTrack(videoURL) else {
+            print("InstagramAutoTranscriber: Skipping speech pipeline (no audio track)")
+            return []
+        }
+
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
               recognizer.isAvailable else {
             return []
@@ -203,7 +238,21 @@ final class InstagramAutoTranscriber {
             return []
         }
 
+        final class ResumeGate {
+            private let lock = NSLock()
+            private var didResume = false
+
+            func run(_ action: () -> Void) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !didResume else { return }
+                didResume = true
+                action()
+            }
+        }
+
         return await withCheckedContinuation { continuation in
+            let resumeGate = ResumeGate()
             let request = SFSpeechURLRecognitionRequest(url: videoURL)
             request.requiresOnDeviceRecognition = true
             request.addsPunctuation = true
@@ -211,8 +260,11 @@ final class InstagramAutoTranscriber {
 
             recognizer.recognitionTask(with: request) { result, error in
                 guard let result = result, result.isFinal else {
-                    if error != nil || (result == nil && error != nil) {
-                        continuation.resume(returning: [])
+                    if let error {
+                        print("InstagramAutoTranscriber: Speech recognition failed: \(error.localizedDescription)")
+                        resumeGate.run {
+                            continuation.resume(returning: [])
+                        }
                     }
                     return
                 }
@@ -223,8 +275,21 @@ final class InstagramAutoTranscriber {
 
                 // Consolidate word-level segments into sentences
                 let segments = self.consolidateSegments(from: result)
-                continuation.resume(returning: segments)
+                resumeGate.run {
+                    continuation.resume(returning: segments)
+                }
             }
+        }
+    }
+
+    private func hasUsableAudioTrack(_ videoURL: URL) async -> Bool {
+        let asset = AVURLAsset(url: videoURL)
+        do {
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            return !audioTracks.isEmpty
+        } catch {
+            print("InstagramAutoTranscriber: Failed loading audio tracks: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -330,54 +395,47 @@ final class InstagramAutoTranscriber {
     private func ocrToSlides(ocr: [OCRFrameResult]) -> [TranscriptSlide] {
         guard !ocr.isEmpty else { return [] }
 
+        let sortedFrames = ocr.sorted { $0.timestamp < $1.timestamp }
         var slides: [TranscriptSlide] = []
-        var currentTexts = Set<String>()
-        var slideStart: TimeInterval = ocr[0].timestamp
+        var currentCluster: [OCRFrameResult] = []
+        var slideStart: TimeInterval = sortedFrames[0].timestamp
         var slideNumber = 1
 
-        for (index, frame) in ocr.enumerated() {
-            if index == 0 {
-                currentTexts = frame.texts
-                continue
-            }
+        func flushCluster(endTimestamp: TimeInterval?) {
+            guard !currentCluster.isEmpty else { return }
+            let text = buildSlideText(from: currentCluster)
+            guard !text.isEmpty else { return }
 
-            // Jaccard similarity between current slide texts and this frame
-            let intersection = currentTexts.intersection(frame.texts).count
-            let union = currentTexts.union(frame.texts).count
-            let similarity = union > 0 ? Double(intersection) / Double(union) : 0
-
-            if similarity < jaccardThreshold {
-                // Slide change detected — commit current slide
-                let text = deduplicateAndJoin(currentTexts)
-                if !text.isEmpty {
-                    slides.append(TranscriptSlide(
-                        text: text,
-                        slideNumber: slideNumber,
-                        timestamp: slideStart,
-                        endTimestamp: frame.timestamp,
-                        source: .visionOCR
-                    ))
-                    slideNumber += 1
-                }
-                currentTexts = frame.texts
-                slideStart = frame.timestamp
-            } else {
-                // Same slide — accumulate texts
-                currentTexts = currentTexts.union(frame.texts)
-            }
-        }
-
-        // Flush last slide
-        let text = deduplicateAndJoin(currentTexts)
-        if !text.isEmpty {
             slides.append(TranscriptSlide(
                 text: text,
                 slideNumber: slideNumber,
                 timestamp: slideStart,
-                endTimestamp: ocr.last?.timestamp,
+                endTimestamp: endTimestamp,
                 source: .visionOCR
             ))
+            slideNumber += 1
         }
+
+        for frame in sortedFrames {
+            if currentCluster.isEmpty {
+                currentCluster = [frame]
+                slideStart = frame.timestamp
+                continue
+            }
+
+            let previous = currentCluster.last!
+            let similarity = jaccardSimilarity(previous.normalizedLineSet, frame.normalizedLineSet)
+
+            if similarity < jaccardThreshold {
+                flushCluster(endTimestamp: frame.timestamp)
+                currentCluster = [frame]
+                slideStart = frame.timestamp
+            } else {
+                currentCluster.append(frame)
+            }
+        }
+
+        flushCluster(endTimestamp: sortedFrames.last?.timestamp)
 
         return slides
     }
@@ -409,9 +467,9 @@ final class InstagramAutoTranscriber {
 
             var text = segment.text
             if !overlapping.isEmpty {
-                let ocrTexts = Set(overlapping.flatMap(\.texts))
-                let onScreenText = deduplicateAndJoin(ocrTexts)
-                if !onScreenText.isEmpty {
+                let onScreenText = buildSlideText(from: overlapping)
+                if !onScreenText.isEmpty &&
+                    !normalizedLineKey(segment.text).contains(normalizedLineKey(onScreenText)) {
                     text += "\n[On-screen: \(onScreenText)]"
                 }
             }
@@ -491,21 +549,136 @@ final class InstagramAutoTranscriber {
 
     // MARK: - Text Helpers
 
-    /// Deduplicate and join a set of OCR text strings
-    private func deduplicateAndJoin(_ texts: Set<String>) -> String {
-        // Sort by length (longest first) and remove substrings
-        let sorted = texts.sorted { $0.count > $1.count }
-        var unique: [String] = []
+    /// Build stable slide text from a cluster of OCR frames.
+    /// Keeps visual line order and removes one-off OCR noise.
+    private func buildSlideText(from frames: [OCRFrameResult]) -> String {
+        guard !frames.isEmpty else { return "" }
 
-        for text in sorted {
-            let isSubstring = unique.contains { existing in
-                existing.localizedCaseInsensitiveContains(text)
-            }
-            if !isSubstring {
-                unique.append(text)
+        var aggregates: [String: OCRLineAggregate] = [:]
+
+        for (frameIndex, frame) in frames.enumerated() {
+            for (lineIndex, line) in frame.lines.enumerated() {
+                guard let cleaned = cleanOCRLine(line) else { continue }
+                let key = normalizedLineKey(cleaned)
+                guard !key.isEmpty else { continue }
+
+                if var existing = aggregates[key] {
+                    existing.count += 1
+                    existing.totalLineIndex += lineIndex
+                    existing.variants[cleaned, default: 0] += 1
+                    aggregates[key] = existing
+                } else {
+                    aggregates[key] = OCRLineAggregate(
+                        variants: [cleaned: 1],
+                        count: 1,
+                        firstFrameIndex: frameIndex,
+                        firstLineIndex: lineIndex,
+                        totalLineIndex: lineIndex
+                    )
+                }
             }
         }
 
-        return unique.joined(separator: "\n")
+        let minAppearances = max(1, Int(ceil(Double(frames.count) * minStableLineRatio)))
+        let includeSingletons = frames.count <= 2
+
+        var orderedLines: [(text: String, firstFrame: Int, averageLineIndex: Double, firstLine: Int)] = []
+        for aggregate in aggregates.values {
+            guard includeSingletons || aggregate.count >= minAppearances else { continue }
+            guard let bestVariant = aggregate.variants.max(by: {
+                if $0.value == $1.value { return $0.key.count < $1.key.count }
+                return $0.value < $1.value
+            })?.key else {
+                continue
+            }
+
+            let averageLineIndex = Double(aggregate.totalLineIndex) / Double(max(aggregate.count, 1))
+            orderedLines.append((
+                text: bestVariant,
+                firstFrame: aggregate.firstFrameIndex,
+                averageLineIndex: averageLineIndex,
+                firstLine: aggregate.firstLineIndex
+            ))
+        }
+
+        orderedLines.sort { lhs, rhs in
+            if lhs.firstFrame != rhs.firstFrame {
+                return lhs.firstFrame < rhs.firstFrame
+            }
+            if abs(lhs.averageLineIndex - rhs.averageLineIndex) > 0.01 {
+                return lhs.averageLineIndex < rhs.averageLineIndex
+            }
+            return lhs.firstLine < rhs.firstLine
+        }
+
+        var finalLines = deduplicateLinesPreservingOrder(orderedLines.map(\.text))
+        if finalLines.isEmpty, let fallback = frames.max(by: { $0.confidence < $1.confidence }) {
+            finalLines = deduplicateLinesPreservingOrder(fallback.lines)
+        }
+
+        var text = finalLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count > TranscriptSlide.characterLimit {
+            text = String(text.prefix(TranscriptSlide.characterLimit))
+        }
+        return text
+    }
+
+    private func deduplicateLinesPreservingOrder(_ lines: [String]) -> [String] {
+        var unique: [String] = []
+        var normalizedSeen: [String] = []
+
+        for line in lines {
+            guard let cleaned = cleanOCRLine(line) else { continue }
+            let normalized = normalizedLineKey(cleaned)
+            guard !normalized.isEmpty else { continue }
+
+            let isDuplicate = normalizedSeen.contains { existing in
+                existing == normalized ||
+                    existing.contains(normalized) ||
+                    normalized.contains(existing)
+            }
+
+            if !isDuplicate {
+                unique.append(cleaned)
+                normalizedSeen.append(normalized)
+            }
+        }
+
+        return unique
+    }
+
+    private func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
+        let intersection = lhs.intersection(rhs).count
+        let union = lhs.union(rhs).count
+        return union > 0 ? Double(intersection) / Double(union) : 0
+    }
+
+    nonisolated private func cleanOCRLine(_ raw: String) -> String? {
+        let compact = raw
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "’", with: "'")
+
+        guard compact.count >= 3 else { return nil }
+
+        let scalarCount = compact.unicodeScalars.count
+        guard scalarCount > 0 else { return nil }
+
+        let alphaNumericCount = compact.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.count
+        if Double(alphaNumericCount) / Double(scalarCount) < 0.45 {
+            return nil
+        }
+
+        return compact
+    }
+
+    nonisolated private func normalizedLineKey(_ text: String) -> String {
+        text
+            .lowercased()
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: #"[^\p{L}\p{N}\s$%'/]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -168,7 +168,7 @@ public struct ActiveFocusBar: View {
     private func activeBlockLabel(_ block: ScheduleBlockViewModel) -> some View {
         HStack(spacing: 8) {
             // ACTIVE badge
-            Text("ACTIVE")
+            Text("Active")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(PlannerumColors.nowMarker)
 
@@ -193,9 +193,9 @@ public struct ActiveFocusBar: View {
 
     private func nextBlockLabel(_ block: ScheduleBlockViewModel) -> some View {
         HStack(spacing: 8) {
-            Text("NEXT")
+            Text("Next")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(PlannerumColors.textMuted)
+                .foregroundColor(OnyxColors.Text.muted)
 
             Text("at \(PlannerumFormatters.time.string(from: block.startTime))")
                 .font(.system(size: 12, weight: .medium))
@@ -216,7 +216,7 @@ public struct ActiveFocusBar: View {
 
     private var noBlockLabel: some View {
         HStack(spacing: 8) {
-            Text("NO ACTIVE BLOCK")
+            Text("No Active Block")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(PlannerumColors.textMuted)
 

@@ -27,8 +27,8 @@ public struct BehavioralRoutineConsistency: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("ROUTINE CONSISTENCY")
-                .font(SanctuaryTypography.label)
+            Text("Routine Consistency")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 

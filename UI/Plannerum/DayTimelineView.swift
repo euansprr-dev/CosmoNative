@@ -241,7 +241,7 @@ public struct DayTimelineView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: PlannerumLayout.spacingSM) {
                     if isToday {
-                        Text("TODAY")
+                        Text("Today")
                             .font(.system(size: 9, weight: .heavy))
                             .foregroundColor(PlannerumColors.nowMarker)
                             .padding(.horizontal, 8)
@@ -250,10 +250,10 @@ public struct DayTimelineView: View {
                             .clipShape(Capsule())
                     }
 
-                    Text(PlannerumFormatters.dayFull.string(from: date).uppercased())
+                    Text(PlannerumFormatters.dayFull.string(from: date))
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(PlannerumColors.textPrimary)
-                        .tracking(1.5)
+                        .foregroundColor(OnyxColors.Text.primary)
+                        .tracking(0.5)
                 }
 
                 if !viewModel.blocks.isEmpty {
@@ -1265,7 +1265,7 @@ struct ExternalEventCard: View {
                 .fill(event.color.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(event.color.opacity(0.2), lineWidth: 1)
+                        .strokeBorder(event.color.opacity(0.12), lineWidth: 1)
                 )
         )
         .opacity(0.7)
@@ -1547,8 +1547,8 @@ struct HourDividerLine: View {
                 let totalDots = Int(size.width / (dotSize + spacing))
 
                 let color = isCurrentHour
-                    ? PlannerumColors.nowMarker.opacity(0.4)
-                    : (isPast ? Color.white.opacity(0.04) : Color.white.opacity(0.08))
+                    ? PlannerumColors.nowMarker.opacity(0.3)
+                    : (isPast ? Color.white.opacity(0.02) : Color.white.opacity(0.04))
 
                 for i in 0..<totalDots {
                     let x = CGFloat(i) * (dotSize + spacing) + dotSize / 2

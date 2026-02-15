@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Knowledge/KnowledgeDimensionView.swift
 // Knowledge Dimension View - "The Semantic Constellation" complete dimension experience
-// Phase 7: Following SANCTUARY_UI_SPEC_V2.md section 3.5
+// Onyx Design System — premium cognitive atelier aesthetic
 
 import SwiftUI
 
@@ -33,86 +33,71 @@ public struct KnowledgeDimensionView: View {
     // MARK: - Body
 
     public var body: some View {
-        ZStack {
-            // Background
-            backgroundLayer
+        GeometryReader { geometry in
+            let useSingleColumn = geometry.size.width < Layout.twoColumnBreakpoint
 
-            // Main content
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: SanctuaryLayout.Spacing.xxl) {
-                    // Header with back button
-                    headerSection
+            ZStack {
+                // Background
+                backgroundLayer
 
-                    // Knowledge Flow Metrics
-                    KnowledgeFlowPanel(
-                        capturesToday: viewModel.data.capturesToday,
-                        capturesChange: viewModel.data.capturesChange,
-                        processedToday: viewModel.data.processedToday,
-                        connectionsToday: viewModel.data.connectionsToday,
-                        semanticDensity: viewModel.data.semanticDensity
-                    )
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                        // Header with back button
+                        headerSection
 
-                    // 3D Knowledge Constellation
-                    KnowledgeConstellation(
-                        nodes: viewModel.data.nodes,
-                        edges: viewModel.data.edges,
-                        positions: viewModel.data.nodePositions,
-                        clusters: viewModel.data.clusters,
-                        onNodeTap: { node in
-                            selectedNode = node
-                            showNodeDetail = true
-                        }
-                    )
-
-                    // Research Timeline + Stamina row
-                    HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
-                        KnowledgeResearchTimeline(
-                            timeline: viewModel.data.researchTimeline,
-                            peakHour: viewModel.data.peakResearchHour,
-                            peakMinutes: viewModel.data.peakResearchMinutes,
-                            totalToday: viewModel.data.totalResearchToday,
-                            weeklyData: viewModel.data.weeklyResearchData,
-                            weeklyTotal: viewModel.data.weeklyTotalMinutes
+                        // Knowledge Flow Metrics
+                        KnowledgeFlowPanel(
+                            capturesToday: viewModel.data.capturesToday,
+                            capturesChange: viewModel.data.capturesChange,
+                            processedToday: viewModel.data.processedToday,
+                            connectionsToday: viewModel.data.connectionsToday,
+                            semanticDensity: viewModel.data.semanticDensity
                         )
-                        .frame(maxWidth: .infinity)
 
-                        KnowledgeStaminaPanel(
-                            stamina: viewModel.data.knowledgeStamina,
-                            optimalWindowStart: viewModel.data.optimalWindowStart,
-                            optimalWindowEnd: viewModel.data.optimalWindowEnd,
-                            rechargeNeeded: viewModel.data.rechargeNeededMinutes,
-                            factors: viewModel.data.staminaFactors
+                        // 3D Knowledge Constellation
+                        KnowledgeConstellation(
+                            nodes: viewModel.data.nodes,
+                            edges: viewModel.data.edges,
+                            positions: viewModel.data.nodePositions,
+                            clusters: viewModel.data.clusters,
+                            onNodeTap: { node in
+                                selectedNode = node
+                                showNodeDetail = true
+                            }
                         )
-                        .frame(maxWidth: 350)
+
+                        timelineAndStaminaSection(useSingleColumn: useSingleColumn)
+
+                        // Recent Captures
+                        KnowledgeRecentCaptures(
+                            captures: viewModel.data.recentCaptures,
+                            onCaptureTap: { capture in
+                                selectedCapture = capture
+                                showCaptureDetail = true
+                            },
+                            onViewAll: {}
+                        )
+
+                        // Cluster Insights
+                        KnowledgeClusterInsights(
+                            growingClusters: viewModel.data.growingClusters,
+                            dormantClusters: viewModel.data.dormantClusters,
+                            emergingLinks: viewModel.data.emergingLinks,
+                            predictions: viewModel.data.predictions
+                        )
+
+                        // Bottom spacer for safe area
+                        Spacer(minLength: 40)
                     }
-
-                    // Recent Captures
-                    KnowledgeRecentCaptures(
-                        captures: viewModel.data.recentCaptures,
-                        onCaptureTap: { capture in
-                            selectedCapture = capture
-                            showCaptureDetail = true
-                        },
-                        onViewAll: {}
-                    )
-
-                    // Cluster Insights
-                    KnowledgeClusterInsights(
-                        growingClusters: viewModel.data.growingClusters,
-                        dormantClusters: viewModel.data.dormantClusters,
-                        emergingLinks: viewModel.data.emergingLinks,
-                        predictions: viewModel.data.predictions
-                    )
-
-                    // Bottom spacer for safe area
-                    Spacer(minLength: 40)
+                    .frame(maxWidth: Layout.maxContentWidth)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
                 }
-                .padding(.horizontal, SanctuaryLayout.Spacing.xl)
-                .padding(.top, SanctuaryLayout.Spacing.lg)
+                // Detail overlays
+                detailOverlays
             }
-
-            // Detail overlays
-            detailOverlays
         }
         .task {
             await dataProvider.refreshData()
@@ -123,19 +108,71 @@ public struct KnowledgeDimensionView: View {
         }
     }
 
+    private enum Layout {
+        static let maxContentWidth: CGFloat = 1400
+        static let twoColumnBreakpoint: CGFloat = 900
+    }
+
+    @ViewBuilder
+    private func timelineAndStaminaSection(useSingleColumn: Bool) -> some View {
+        if useSingleColumn {
+            VStack(spacing: 16) {
+                KnowledgeResearchTimeline(
+                    timeline: viewModel.data.researchTimeline,
+                    peakHour: viewModel.data.peakResearchHour,
+                    peakMinutes: viewModel.data.peakResearchMinutes,
+                    totalToday: viewModel.data.totalResearchToday,
+                    weeklyData: viewModel.data.weeklyResearchData,
+                    weeklyTotal: viewModel.data.weeklyTotalMinutes
+                )
+                .frame(maxWidth: .infinity)
+
+                KnowledgeStaminaPanel(
+                    stamina: viewModel.data.knowledgeStamina,
+                    optimalWindowStart: viewModel.data.optimalWindowStart,
+                    optimalWindowEnd: viewModel.data.optimalWindowEnd,
+                    rechargeNeeded: viewModel.data.rechargeNeededMinutes,
+                    factors: viewModel.data.staminaFactors
+                )
+                .frame(maxWidth: .infinity)
+            }
+        } else {
+            HStack(alignment: .top, spacing: 16) {
+                KnowledgeResearchTimeline(
+                    timeline: viewModel.data.researchTimeline,
+                    peakHour: viewModel.data.peakResearchHour,
+                    peakMinutes: viewModel.data.peakResearchMinutes,
+                    totalToday: viewModel.data.totalResearchToday,
+                    weeklyData: viewModel.data.weeklyResearchData,
+                    weeklyTotal: viewModel.data.weeklyTotalMinutes
+                )
+                .frame(maxWidth: .infinity)
+
+                KnowledgeStaminaPanel(
+                    stamina: viewModel.data.knowledgeStamina,
+                    optimalWindowStart: viewModel.data.optimalWindowStart,
+                    optimalWindowEnd: viewModel.data.optimalWindowEnd,
+                    rechargeNeeded: viewModel.data.rechargeNeededMinutes,
+                    factors: viewModel.data.staminaFactors
+                )
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
     // MARK: - Background Layer
 
     private var backgroundLayer: some View {
         ZStack {
-            // Base void
-            SanctuaryColors.Background.void
+            // Onyx base surface
+            OnyxColors.Elevation.base
                 .ignoresSafeArea()
 
-            // Knowledge dimension tint
+            // Subtle knowledge dimension tint
             RadialGradient(
                 colors: [
-                    SanctuaryColors.Dimensions.knowledge.opacity(0.15),
-                    SanctuaryColors.Dimensions.knowledge.opacity(0.05),
+                    OnyxColors.DimensionVivid.knowledge.opacity(0.08),
+                    OnyxColors.DimensionVivid.knowledge.opacity(0.03),
                     Color.clear
                 ],
                 center: .center,
@@ -144,10 +181,10 @@ public struct KnowledgeDimensionView: View {
             )
             .ignoresSafeArea()
 
-            // Constellation pattern overlay
+            // Constellation pattern overlay (subtle)
             ForEach(0..<30, id: \.self) { _ in
                 Circle()
-                    .fill(Color.white.opacity(Double.random(in: 0.02...0.08)))
+                    .fill(Color.white.opacity(Double.random(in: 0.01...0.05)))
                     .frame(width: CGFloat.random(in: 1...3))
                     .position(
                         x: CGFloat.random(in: 0...1200),
@@ -155,9 +192,9 @@ public struct KnowledgeDimensionView: View {
                     )
             }
 
-            // Edge vignette
+            // Subtle edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.4)],
+                colors: [Color.clear, Color.black.opacity(0.3)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 800
@@ -172,44 +209,44 @@ public struct KnowledgeDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .medium))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .foregroundColor(OnyxColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title
+            // Title — sentence case, Onyx typography
             VStack(spacing: 2) {
-                Text("KNOWLEDGE")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.primary)
-                    .tracking(4)
+                Text("Knowledge")
+                    .font(OnyxTypography.viewTitle)
+                    .tracking(OnyxTypography.viewTitleTracking)
+                    .foregroundColor(OnyxColors.Text.primary)
 
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 8) {
                     Text("Semantic Constellation")
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundColor(OnyxColors.Text.secondary)
 
-                    Text("•")
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                    Text("·")
+                        .foregroundColor(OnyxColors.Text.tertiary)
 
-                    Text("Level \(viewModel.dimensionLevel)")
+                    Text("Tier \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Dimensions.knowledge)
+                        .foregroundColor(OnyxColors.Dimension.knowledge)
 
-                    Text("•")
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                    Text("·")
+                        .foregroundColor(OnyxColors.Text.tertiary)
 
-                    Text("Rank: SCHOLAR")
+                    Text("Scholar")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Dimensions.knowledge)
+                        .foregroundColor(OnyxColors.Dimension.knowledge)
                 }
             }
 
@@ -224,32 +261,29 @@ public struct KnowledgeDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(Color.green)
+                    .fill(OnyxColors.Accent.sage)
                     .frame(width: 6, height: 6)
-                    .modifier(PulseModifier())
+                    .modifier(OnyxPulseModifier())
 
-                Text("LIVE")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                Text("Live")
+                    .font(OnyxTypography.micro)
+                    .foregroundColor(OnyxColors.Text.tertiary)
             }
 
             Text("Density: \(String(format: "%.2f", viewModel.data.semanticDensity))")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(SanctuaryColors.Dimensions.knowledge)
+                .foregroundColor(OnyxColors.DimensionVivid.knowledge)
 
             Text("\(viewModel.data.totalNodeCount) nodes")
-                .font(.system(size: 10))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(OnyxTypography.micro)
+                .foregroundColor(OnyxColors.Text.tertiary)
         }
-        .padding(SanctuaryLayout.Spacing.md)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
-                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
+        .onyxShadow(.resting)
     }
 
     // MARK: - Detail Overlays
@@ -305,18 +339,18 @@ public struct KnowledgeDimensionView: View {
     }
 }
 
-// MARK: - Pulse Modifier
+// MARK: - Onyx Pulse Modifier
 
 @MainActor
-private struct PulseModifier: ViewModifier {
+private struct OnyxPulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.3 : 1.0)
-            .opacity(isPulsing ? 0.6 : 1.0)
+            .scaleEffect(isPulsing ? 1.2 : 1.0)
+            .opacity(isPulsing ? 0.5 : 1.0)
             .animation(
-                .easeInOut(duration: 1)
+                .easeInOut(duration: 1.5)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -374,7 +408,7 @@ public final class KnowledgeDimensionViewModel: ObservableObject {
 
 // MARK: - Compact Knowledge View
 
-/// Compact version for embedding in other views
+/// Compact version for embedding in other views — Onyx design
 public struct KnowledgeDimensionCompact: View {
 
     let data: KnowledgeDimensionData
@@ -388,18 +422,18 @@ public struct KnowledgeDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(spacing: 16) {
             // Header
             HStack {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: 6) {
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 16))
-                        .foregroundColor(SanctuaryColors.Dimensions.knowledge)
+                        .foregroundColor(OnyxColors.Dimension.knowledge)
 
-                    Text("KNOWLEDGE")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(SanctuaryColors.Text.primary)
-                        .tracking(2)
+                    Text("Knowledge")
+                        .font(OnyxTypography.cardTitle)
+                        .tracking(OnyxTypography.cardTitleTracking)
+                        .foregroundColor(OnyxColors.Text.primary)
                 }
 
                 Spacer()
@@ -412,7 +446,7 @@ public struct KnowledgeDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(SanctuaryColors.Dimensions.knowledge)
+                    .foregroundColor(OnyxColors.Dimension.knowledge)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -437,20 +471,13 @@ public struct KnowledgeDimensionCompact: View {
                 optimalWindow: data.optimalWindowFormatted
             )
         }
-        .padding(SanctuaryLayout.Spacing.lg)
+        .padding(OnyxLayout.cardPadding)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                .fill(SanctuaryColors.Glass.background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
-                        .stroke(
-                            isHovered ? SanctuaryColors.Dimensions.knowledge.opacity(0.5) : SanctuaryColors.Glass.border,
-                            lineWidth: 1
-                        )
-                )
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(OnyxColors.Elevation.raised)
         )
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(SanctuarySprings.hover, value: isHovered)
+        .onyxShadow(isHovered ? .hovered : .resting)
+        .animation(OnyxSpring.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

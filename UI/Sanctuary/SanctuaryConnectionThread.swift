@@ -49,9 +49,9 @@ public struct SanctuaryConnectionThread: View {
         return base + modulation * CGFloat(sin(animationPhase * 0.5))
     }
 
-    /// Opacity based on state
+    /// Opacity based on state — reduced per Onyx spec (0.04 dormant, 0.25 active)
     private var threadOpacity: Double {
-        isActive ? 0.4 : 0.15
+        isActive ? 0.25 : 0.04
     }
 
     /// Control point for bezier curve
@@ -217,10 +217,11 @@ public struct SatelliteConnectionsView: View {
 
     public var body: some View {
         ZStack {
+            // White-only connections at low opacity per Onyx spec
             SanctuaryConnectionThread(
                 from: plannerumPosition,
                 to: heroCenter,
-                color: SanctuaryColors.plannerumPrimary,
+                color: Color.white,
                 isActive: plannerumActive,
                 animationPhase: animationPhase
             )
@@ -228,7 +229,7 @@ public struct SatelliteConnectionsView: View {
             SanctuaryConnectionThread(
                 from: thinkspacePosition,
                 to: heroCenter,
-                color: SanctuaryColors.thinkspacePrimary,
+                color: Color.white,
                 isActive: thinkspaceActive,
                 animationPhase: animationPhase
             )

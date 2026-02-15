@@ -256,7 +256,7 @@ struct SessionSummaryCard: View {
 
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("SESSION NOTES")
+            Text("Session Notes")
                 .font(.system(size: 10, weight: .heavy))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(PlannerumTypography.trackingWide)

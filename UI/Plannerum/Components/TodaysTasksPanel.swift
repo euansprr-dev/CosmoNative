@@ -64,17 +64,17 @@ public struct TodaysTasksPanel: View {
                     VStack(spacing: NowViewTokens.rowSpacing) {
                         // Overdue section
                         if !overdueTasks.isEmpty {
-                            taskSection(title: "OVERDUE", tasks: overdueTasks, style: .overdue)
+                            taskSection(title: "Overdue", tasks: overdueTasks, style: .overdue)
                         }
 
                         // Due today section
                         if !dueTodayTasks.isEmpty {
-                            taskSection(title: "DUE TODAY", tasks: dueTodayTasks, style: .dueToday)
+                            taskSection(title: "Due today", tasks: dueTodayTasks, style: .dueToday)
                         }
 
                         // Scheduled section
                         if !scheduledTasks.isEmpty {
-                            taskSection(title: "SCHEDULED", tasks: scheduledTasks, style: .normal)
+                            taskSection(title: "Scheduled", tasks: scheduledTasks, style: .normal)
                         }
 
                         // Completed section (collapsed by default)
@@ -214,10 +214,10 @@ public struct TodaysTasksPanel: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(PlannerumColors.textMuted)
 
-                    Text("COMPLETED")
-                        .font(.system(size: 10, weight: .heavy))
-                        .tracking(1.5)
-                        .foregroundColor(PlannerumColors.textMuted)
+                    Text("Completed")
+                        .font(OnyxTypography.label)
+                        .tracking(OnyxTypography.labelTracking)
+                        .foregroundColor(OnyxColors.Text.muted)
 
                     Text("(\(completedTasks.count))")
                         .font(.system(size: 10, weight: .medium))
@@ -480,10 +480,10 @@ struct TaskRow: View {
                         HStack(spacing: 2) {
                             Text("+\(task.estimatedXP)")
                                 .font(NowViewTokens.xpFont)
-                            Text("XP")
-                                .font(.system(size: 9, weight: .medium))
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 8))
                         }
-                        .foregroundColor(PlannerumColors.xpGold.opacity(0.7))
+                        .foregroundColor(OnyxColors.Accent.amber.opacity(0.7))
                     }
                 }
                 .padding(.vertical, 8)

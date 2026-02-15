@@ -80,8 +80,8 @@ public struct CognitiveInterruptionTimeline: View {
 
     private var header: some View {
         HStack {
-            Text("INTERRUPTION TIMELINE")
-                .font(SanctuaryTypography.label)
+            Text("Interruption Timeline")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -322,8 +322,8 @@ public struct InterruptionSummaryCard: View {
                     .font(.system(size: 14))
                     .foregroundColor(countColor)
 
-                Text("INTERRUPTIONS")
-                    .font(SanctuaryTypography.label)
+                Text("Interruptions")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
 
                 Spacer()
@@ -417,7 +417,7 @@ public struct InterruptionDetailView: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(interruption.source.displayName)
-                            .font(SanctuaryTypography.title)
+                            .font(OnyxTypography.cardTitle)
                             .foregroundColor(SanctuaryColors.Text.primary)
 
                         if let app = interruption.app {
@@ -558,8 +558,8 @@ public struct DisruptorBreakdown: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("DISRUPTOR BREAKDOWN")
-                .font(SanctuaryTypography.label)
+            Text("Disruptor Breakdown")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
 
             ForEach(disruptors.prefix(5), id: \.source) { disruptor in

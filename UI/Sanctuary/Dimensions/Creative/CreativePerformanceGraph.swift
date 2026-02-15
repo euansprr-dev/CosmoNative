@@ -73,8 +73,8 @@ public struct CreativePerformanceGraph: View {
 
     private var header: some View {
         HStack {
-            Text("PERFORMANCE GRAPH")
-                .font(SanctuaryTypography.label)
+            Text("Performance Graph")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 

@@ -166,15 +166,15 @@ public struct WeekArcView: View {
 
     private var weekHeader: some View {
         VStack(spacing: 4) {
-            Text("WEEK OF")
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundColor(PlannerumColors.textMuted)
-                .tracking(2)
+            Text("Week of")
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.tertiary)
+                .tracking(OnyxTypography.labelTracking)
 
-            Text(PlannerumFormatters.weekRange.string(from: weekDates.first ?? Date()).uppercased())
+            Text(PlannerumFormatters.weekRange.string(from: weekDates.first ?? Date()))
                 .font(.system(size: 14, weight: .bold))
-                .foregroundColor(PlannerumColors.textSecondary)
-                .tracking(1)
+                .foregroundColor(OnyxColors.Text.secondary)
+                .tracking(0.5)
         }
     }
 
@@ -252,10 +252,8 @@ public struct WeekArcView: View {
                         .font(.system(size: 11))
                     Text("+\(PlannerumXP.formatXP(viewModel.forecastXP))")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    Text("XP")
-                        .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(PlannerumColors.xpGold)
+                .foregroundColor(OnyxColors.Accent.amber)
             }
         }
         .padding(.horizontal, PlannerumLayout.spacingXL)
@@ -310,7 +308,7 @@ public struct DayOrbView: View {
     let animationPhase: Double
 
     private var dayName: String {
-        PlannerumFormatters.dayNameShort.string(from: date).uppercased()
+        PlannerumFormatters.dayNameShort.string(from: date)
     }
 
     private var dayNumber: String {

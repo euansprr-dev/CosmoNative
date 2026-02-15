@@ -21,15 +21,15 @@ public struct PhysiologicalActivityRings: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
-            Text("DAILY ACTIVITY RINGS")
-                .font(SanctuaryTypography.label)
+            Text("Daily Activity Rings")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
             HStack(spacing: SanctuaryLayout.Spacing.xl) {
                 // Move ring
                 activityRing(
-                    title: "MOVE",
+                    title: "Move",
                     value: rings.moveCalories,
                     goal: rings.moveGoal,
                     unit: "cal",
@@ -39,7 +39,7 @@ public struct PhysiologicalActivityRings: View {
 
                 // Exercise ring
                 activityRing(
-                    title: "EXERCISE",
+                    title: "Exercise",
                     value: rings.exerciseMinutes,
                     goal: rings.exerciseGoal,
                     unit: "min",
@@ -49,7 +49,7 @@ public struct PhysiologicalActivityRings: View {
 
                 // Stand ring
                 activityRing(
-                    title: "STAND",
+                    title: "Stand",
                     value: rings.standHours,
                     goal: rings.standGoal,
                     unit: "/\(rings.standGoal)",
@@ -160,7 +160,7 @@ public struct PhysiologicalActivityRings: View {
                 .foregroundColor(SanctuaryColors.Dimensions.physiological)
 
             VStack(spacing: 2) {
-                Text("STEPS")
+                Text("Steps")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -208,8 +208,8 @@ public struct PhysiologicalWorkoutLog: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
-            Text("WORKOUT LOG (THIS WEEK)")
-                .font(SanctuaryTypography.label)
+            Text("Workout Log (This Week)")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -362,7 +362,7 @@ public struct WorkoutDetailCard: View {
                 // Date and duration
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("DATE")
+                        Text("Date")
                             .font(.system(size: 9))
                             .foregroundColor(SanctuaryColors.Text.tertiary)
 
@@ -374,7 +374,7 @@ public struct WorkoutDetailCard: View {
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("DURATION")
+                        Text("Duration")
                             .font(.system(size: 9))
                             .foregroundColor(SanctuaryColors.Text.tertiary)
 
@@ -409,7 +409,7 @@ public struct WorkoutDetailCard: View {
                 // Muscles worked
                 if !workout.musclesWorked.isEmpty {
                     VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                        Text("MUSCLES WORKED")
+                        Text("Muscles Worked")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(SanctuaryColors.Text.tertiary)
                             .tracking(1)
@@ -433,7 +433,7 @@ public struct WorkoutDetailCard: View {
                 // Notes
                 if let notes = workout.notes {
                     VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-                        Text("NOTES")
+                        Text("Notes")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(SanctuaryColors.Text.tertiary)
                             .tracking(1)

@@ -211,7 +211,7 @@ public struct TimeBlockCard: View {
                 x: 0,
                 y: isHovered ? 8 : 4
             )
-            .scaleEffect(isHovered ? 1.02 : 1.0) // 1.02 scale on hover per plan
+            .scaleEffect(isHovered ? 1.01 : 1.0)
             .opacity(cardOpacity)
         }
         .buttonStyle(.plain)
@@ -261,9 +261,9 @@ public struct TimeBlockCard: View {
                 Image(systemName: block.blockType.icon)
                     .font(.system(size: 10, weight: .semibold))
 
-                Text(block.blockType.shortLabel.uppercased())
-                    .font(.system(size: 9, weight: .heavy))
-                    .tracking(0.5)
+                Text(block.blockType.shortLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .tracking(0.3)
             }
             .foregroundColor(accentColor)
             .padding(.horizontal, 8)
@@ -273,11 +273,11 @@ public struct TimeBlockCard: View {
 
             // Status indicator
             if showActiveIndicator {
-                statusBadge(text: "ACTIVE", color: PlannerumColors.nowMarker)
+                statusBadge(text: "Active", color: PlannerumColors.nowMarker)
             } else if block.isCompleted {
-                statusBadge(text: "DONE", color: PlannerumColors.nowMarker)
+                statusBadge(text: "Done", color: PlannerumColors.nowMarker)
             } else if block.status == .paused {
-                statusBadge(text: "PAUSED", color: PlannerumColors.textMuted)
+                statusBadge(text: "Paused", color: PlannerumColors.textMuted)
             }
 
             Spacer()
@@ -367,10 +367,10 @@ public struct TimeBlockCard: View {
                     Text("Core")
                         .font(.system(size: 10, weight: .semibold))
                 }
-                .foregroundColor(PlannerumColors.xpPrimary)
+                .foregroundColor(OnyxColors.Accent.amber)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(PlannerumColors.xpPrimary.opacity(0.15))
+                .background(OnyxColors.Accent.amber.opacity(0.15))
                 .clipShape(Capsule())
             }
 
@@ -421,14 +421,11 @@ public struct TimeBlockCard: View {
 
             Text("+\(block.estimatedXP)")
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
-
-            Text("XP")
-                .font(.system(size: 10, weight: .medium))
         }
-        .foregroundColor(PlannerumColors.xpPrimary)
+        .foregroundColor(OnyxColors.Accent.amber)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(PlannerumColors.xpPrimary.opacity(0.1))
+        .background(OnyxColors.Accent.amber.opacity(0.1))
         .clipShape(Capsule())
     }
 

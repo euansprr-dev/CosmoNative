@@ -72,12 +72,12 @@ public struct CognitiveHourlyForecast: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-            Text("HOURLY FORECAST")
-                .font(SanctuaryTypography.label)
+            Text("Hourly Forecast")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
-            Text("PREDICTED PERFORMANCE WINDOWS")
+            Text("Predicted Performance Windows")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(SanctuaryColors.Text.secondary)
         }
@@ -273,7 +273,7 @@ public struct CognitiveWindowCard: View {
                         .fill(SanctuaryColors.Semantic.success)
                         .frame(width: 6, height: 6)
 
-                    Text("NOW")
+                    Text("Now")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Semantic.success)
                 }
@@ -330,8 +330,8 @@ public struct CognitiveJournalDensity: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("JOURNAL DENSITY")
-                .font(SanctuaryTypography.label)
+            Text("Journal Density")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -439,7 +439,7 @@ public struct CognitivePredictionCard: View {
                         .font(.system(size: 14))
                         .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("PREDICTION")
+                    Text("Prediction")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
@@ -453,7 +453,7 @@ public struct CognitivePredictionCard: View {
 
             // Message
             Text(prediction.message)
-                .font(SanctuaryTypography.body)
+                .font(OnyxTypography.body)
                 .foregroundColor(SanctuaryColors.Text.primary)
                 .fixedSize(horizontal: false, vertical: true)
 

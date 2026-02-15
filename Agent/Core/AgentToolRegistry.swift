@@ -20,9 +20,9 @@ class AgentToolRegistry {
     func toolsForIntent(_ intent: AgentIntent) -> [LLMToolDefinition] {
         switch intent {
         case .capture:
-            return ideaTools + swipeTools + plannerumTools
+            return ideaTools + swipeTools + captureTools + plannerumTools
         case .brainstorm:
-            return ideaTools + swipeTools
+            return ideaTools + swipeTools + captureTools
         case .plan:
             return plannerumTools + contentTools
         case .query:
@@ -359,6 +359,37 @@ class AgentToolRegistry {
         ]
     }
 
+    private var captureTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "capture_swipe",
+                description: "Capture a URL or raw text as a swipe file. Supports YouTube, Instagram, X/Twitter, Threads, and plain text. Fetches metadata, transcript (for YouTube), and auto-links to matching ideas.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "url": ["type": "string", "description": "The URL to capture (YouTube, Instagram, X, Threads, or any website). For raw text swipes, pass the text here."] as [String: Any],
+                        "hook": ["type": "string", "description": "Optional user-provided hook or summary for the swipe"] as [String: Any],
+                        "notes": ["type": "string", "description": "Optional notes about why this was captured"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["url"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "capture_research",
+                description: "Capture a URL, note, or reference material as a research atom (not a swipe file). Use this for general research capture, bookmarks, or reference notes.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "Title for the research entry"] as [String: Any],
+                        "url": ["type": "string", "description": "Optional URL to associate with this research"] as [String: Any],
+                        "body": ["type": "string", "description": "Notes, content, or description for the research entry"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["title"]
+                ]
+            ),
+        ]
+    }
+
     private var preferenceTools: [LLMToolDefinition] {
         [
             LLMToolDefinition(
@@ -403,6 +434,6 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = ideaTools + swipeTools + contentTools + plannerumTools + analyticsTools + questTools + preferenceTools
+        allTools = ideaTools + swipeTools + captureTools + contentTools + plannerumTools + analyticsTools + questTools + preferenceTools
     }
 }

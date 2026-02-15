@@ -33,8 +33,8 @@ public struct CreativePlatformBreakdown: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("PLATFORM BREAKDOWN")
-                .font(SanctuaryTypography.label)
+            Text("Platform Breakdown")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -396,8 +396,8 @@ public struct PlatformComparisonChart: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text(metric.rawValue.uppercased())
-                .font(SanctuaryTypography.label)
+            Text(metric.rawValue.capitalized)
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -488,8 +488,8 @@ public struct PlatformGrowthTimeline: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header with range selector
             HStack {
-                Text("GROWTH TIMELINE")
-                    .font(SanctuaryTypography.label)
+                Text("Growth Timeline")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 

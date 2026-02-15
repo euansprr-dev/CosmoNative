@@ -75,8 +75,8 @@ public struct EmotionalLandscapePanel: View {
     private var headerSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("EMOTIONAL LANDSCAPE")
-                    .font(SanctuaryTypography.label)
+                Text("Emotional Landscape")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -215,7 +215,7 @@ public struct EmotionalLandscapePanel: View {
                 .position(x: size.width - 30, y: size.height / 2 + 12)
 
             // Y-axis: Energy
-            Text("ENERGY")
+            Text("Energy")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundColor(SanctuaryColors.Dimensions.reflection.opacity(0.7))
                 .tracking(1)
@@ -435,7 +435,7 @@ public struct EmotionalLandscapeCompact: View {
                 .font(.system(size: 36))
 
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-                Text("EMOTIONAL STATE")
+                Text("Emotional State")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

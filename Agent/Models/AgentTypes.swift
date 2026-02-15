@@ -27,7 +27,7 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         switch self {
         case .anthropic: return "claude-sonnet-4-5-20250929"
         case .openai: return "gpt-4o"
-        case .openRouter: return "anthropic/claude-sonnet-4-5-20250929"
+        case .openRouter: return "anthropic/claude-sonnet-4.5"
         case .ollama: return "llama3.2"
         case .custom: return "gpt-4o"
         }
@@ -52,8 +52,9 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
 
     /// Popular models available on OpenRouter
     static let openRouterModels: [(id: String, label: String)] = [
-        ("anthropic/claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
-        ("anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+        ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
+        ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
+        ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
         ("openai/gpt-4o", "GPT-4o"),
         ("openai/gpt-4o-mini", "GPT-4o Mini"),
         ("google/gemini-2.0-flash-001", "Gemini 2.0 Flash"),
@@ -164,7 +165,7 @@ struct AgentToolCall: Codable, Identifiable, Sendable {
 
 /// A complete agent conversation with message history and linked atoms
 struct AgentConversation: Codable, Identifiable, Sendable {
-    let id: String
+    var id: String
     var messages: [AgentMessage]
     let source: MessageSource
     let createdAt: Date
@@ -173,6 +174,15 @@ struct AgentConversation: Codable, Identifiable, Sendable {
 
     init(source: MessageSource) {
         self.id = UUID().uuidString
+        self.messages = []
+        self.source = source
+        self.createdAt = Date()
+        self.summary = nil
+        self.linkedAtomUUIDs = []
+    }
+
+    init(id: String, source: MessageSource) {
+        self.id = id
         self.messages = []
         self.source = source
         self.createdAt = Date()

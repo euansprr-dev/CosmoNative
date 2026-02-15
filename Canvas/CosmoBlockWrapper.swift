@@ -84,19 +84,11 @@ struct CosmoBlockWrapper<Content: View>: View {
         effectiveWidth / referenceWidth
     }
 
-    // Dynamic shadow - purple tinted for Thinkspace
-    private var shadowRadius: CGFloat {
-        if isDragging { return 24 }
-        if isSelected { return 16 }
-        if isHovered { return 12 }
-        return 8
-    }
-
-    private var shadowY: CGFloat {
-        if isDragging { return 12 }
-        if isSelected { return 8 }
-        if isHovered { return 6 }
-        return 4
+    // Onyx neutral shadow elevation
+    private var currentOnyxElevation: OnyxElevation {
+        if isDragging { return .floating }
+        if isHovered { return .hovered }
+        return .resting
     }
 
     // 3D tilt amount based on hover position
@@ -125,7 +117,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             }
             .frame(width: effectiveWidth, height: effectiveHeight)
             .background(blockBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
             .overlay(blockBorder)
             // Simple edge resize overlay (safe implementation)
             .overlay {
@@ -136,18 +128,8 @@ struct CosmoBlockWrapper<Content: View>: View {
                     maxSize: CGSize(width: maxWidth, height: maxHeight)
                 )
             }
-            // Purple-tinted shadow
-            .shadow(
-                color: CosmoColors.thinkspacePurple.opacity(isDragging ? 0.25 : (isHovered || isSelected ? 0.18 : 0.12)),
-                radius: shadowRadius,
-                y: shadowY
-            )
-            // Subtle dark ambient shadow
-            .shadow(
-                color: Color.black.opacity(0.3),
-                radius: 4,
-                y: 2
-            )
+            // Onyx neutral dual-layer shadow + optional accent glow when selected
+            .onyxShadow(currentOnyxElevation, accentGlow: isSelected ? accentColor : nil)
             .compositingGroup()
             // 3D tilt effect on hover (only when not selected)
             .rotation3DEffect(
@@ -238,23 +220,12 @@ struct CosmoBlockWrapper<Content: View>: View {
 
     private var blockBackground: some View {
         ZStack {
-            // Dark glass base
-            CosmoColors.thinkspaceTertiary
+            // Flat Onyx raised surface
+            OnyxColors.Elevation.raised
 
-            // Subtle aurora gradient
-            LinearGradient(
-                colors: [
-                    CosmoColors.thinkspacePurple.opacity(0.03),
-                    Color.clear,
-                    CosmoColors.blockResearch.opacity(0.02)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            // Inner glow when selected
+            // Subtle inner glow when selected
             if isSelected {
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
                     .fill(accentColor.opacity(0.03))
             }
         }
@@ -263,12 +234,12 @@ struct CosmoBlockWrapper<Content: View>: View {
     // MARK: - Border
 
     private var blockBorder: some View {
-        RoundedRectangle(cornerRadius: 16)
+        RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
             .stroke(
                 isSelected
-                    ? accentColor
-                    : Color.white.opacity(isHovered ? 0.15 : 0.10),
-                lineWidth: isSelected ? 2 : 1
+                    ? accentColor.opacity(0.5)
+                    : Color.white.opacity(isHovered ? 0.10 : 0.06),
+                lineWidth: 1
             )
     }
 }
@@ -359,27 +330,13 @@ struct BlockSelectionToolbar: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
         )
-        // Progress bar at bottom
-        .overlay(alignment: .bottom) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(accentColor)
-                .frame(height: 2)
-                .padding(.horizontal, 8)
-                .padding(.bottom, 2)
-        }
-        .shadow(color: Color.black.opacity(0.3), radius: 12, y: 4)
+        .onyxShadow(.floating)
     }
 
     private var toolbarBackground: some View {
-        ZStack {
-            // Dark glass
-            CosmoColors.thinkspaceTertiary
-
-            // Subtle blur effect simulation
-            Color.black.opacity(0.3)
-        }
+        OnyxColors.Elevation.floating
     }
 
     private func executeAction(_ action: ToolbarAction) {

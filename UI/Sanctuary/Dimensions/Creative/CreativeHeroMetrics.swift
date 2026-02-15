@@ -20,15 +20,15 @@ public struct CreativeHeroMetrics: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header
-            Text("HERO METRICS")
-                .font(SanctuaryTypography.label)
+            Text("Hero Metrics")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
             // Cards row
             HStack(spacing: SanctuaryLayout.Spacing.md) {
                 HeroMetricCard(
-                    title: "TOTAL REACH",
+                    title: "Total Reach",
                     value: data.formattedReach,
                     trend: data.reachTrend,
                     trendLabel: "vs last 30d",
@@ -38,7 +38,7 @@ public struct CreativeHeroMetrics: View {
                 )
 
                 HeroMetricCard(
-                    title: "ENGAGEMENT",
+                    title: "Engagement",
                     value: String(format: "%.1f%%", data.engagementRate),
                     trend: data.engagementTrend,
                     trendLabel: "vs last 30d",
@@ -48,7 +48,7 @@ public struct CreativeHeroMetrics: View {
                 )
 
                 HeroMetricCard(
-                    title: "FOLLOWERS",
+                    title: "Followers",
                     value: data.formattedFollowers,
                     trend: Double(data.followerGrowth),
                     trendLabel: "this week",
@@ -59,7 +59,7 @@ public struct CreativeHeroMetrics: View {
                 )
 
                 HeroMetricCard(
-                    title: "GROWTH RATE",
+                    title: "Growth Rate",
                     value: String(format: "+%.1f%%/wk", data.growthRate),
                     statusLabel: data.growthStatus.displayName,
                     statusColor: Color(hex: data.growthStatus.color),
@@ -414,7 +414,7 @@ public struct CreativeLiveStatus: View {
                     .scaleEffect(isPulsing ? 1.3 : 1.0)
                     .opacity(isPulsing ? 0.6 : 1.0)
 
-                Text("LIVE")
+                Text("Live")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
             }
@@ -464,14 +464,14 @@ struct CreativeHeroMetrics_Previews: PreviewProvider {
 
                 HStack(spacing: 16) {
                     CompactHeroMetric(
-                        title: "REACH",
+                        title: "Reach",
                         value: "847.2K",
                         trend: 12.3,
                         color: SanctuaryColors.Dimensions.creative
                     )
 
                     CompactHeroMetric(
-                        title: "ENGAGEMENT",
+                        title: "Engagement",
                         value: "4.7%",
                         trend: 0.3,
                         color: SanctuaryColors.Semantic.success

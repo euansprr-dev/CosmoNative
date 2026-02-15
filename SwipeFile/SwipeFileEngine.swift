@@ -156,10 +156,17 @@ final class SwipeFileEngine: ObservableObject {
     private func handleInstagramContent(_ url: String, classification: SwipeURLClassifier.Classification) async {
         // Determine Instagram content type
         let igType: ResearchRichContent.InstagramContentType
+        let sourceType: ResearchRichContent.SourceType
         switch classification.sourceType {
-        case .instagramReel: igType = .reel
-        case .instagramCarousel: igType = .carousel
-        default: igType = .post
+        case .instagramReel:
+            igType = .reel
+            sourceType = .instagramReel
+        case .instagramCarousel:
+            igType = .carousel
+            sourceType = .instagramCarousel
+        default:
+            igType = .post
+            sourceType = .instagramPost
         }
 
         processingStatus = .fetching(source: "Instagram")
@@ -174,6 +181,12 @@ final class SwipeFileEngine: ObservableObject {
 
         // Mark as needing manual transcription (Instagram has no auto-transcript API)
         item.processingStatus = "pending"
+
+        var richContent = item.richContent ?? ResearchRichContent()
+        richContent.sourceType = sourceType
+        richContent.instagramType = igType.rawValue
+        richContent.instagramId = classification.contentId
+        item.setRichContent(richContent)
 
         // Attempt oEmbed metadata fetch (title, author) — non-fatal
         do {
@@ -202,8 +215,55 @@ final class SwipeFileEngine: ObservableObject {
             print("SwipeFile: Instagram oEmbed fetch failed (non-fatal): \(error)")
         }
 
+        // Attempt direct media extraction up-front so Swipe Study opens with video + metadata ready.
+        if let igURL = URL(string: url) {
+            do {
+                let mediaData = try await InstagramMediaCache.shared.getMedia(for: igURL)
+                var richContent = item.richContent ?? ResearchRichContent()
+                var igData = richContent.instagramData ?? InstagramData(
+                    originalURL: igURL,
+                    contentType: mapToInstagramContentType(igType)
+                )
+
+                if let author = mediaData.authorUsername, !author.isEmpty {
+                    richContent.author = author
+                    igData.authorUsername = author
+                }
+                if let caption = mediaData.caption, !caption.isEmpty {
+                    igData.caption = caption
+                    if (item.title ?? "").isEmpty || item.title == "Instagram" {
+                        item.title = String(caption.prefix(100))
+                    }
+                }
+                if let thumb = mediaData.thumbnailURL?.absoluteString, !thumb.isEmpty {
+                    item.thumbnailUrl = thumb
+                    richContent.thumbnailUrl = thumb
+                }
+
+                igData.extractedMediaURL = mediaData.videoURL
+                igData.extractedAt = mediaData.extractedAt
+                if let carouselItems = mediaData.carouselItems {
+                    igData.carouselItems = carouselItems
+                }
+
+                richContent.instagramData = igData
+                item.setRichContent(richContent)
+            } catch {
+                print("SwipeFile: Instagram media extraction failed at capture time: \(error)")
+            }
+        }
+
         // Save immediately — transcript will be entered later in SwipeStudyFocusModeView
         await saveItem(item, asSwipe: true)
+    }
+
+    private func mapToInstagramContentType(_ igType: ResearchRichContent.InstagramContentType) -> InstagramContentType {
+        switch igType {
+        case .reel: return .reel
+        case .carousel: return .carousel
+        case .post: return .image
+        case .story: return .story
+        }
     }
 
     /// Called from Instagram modal when user saves (legacy support)

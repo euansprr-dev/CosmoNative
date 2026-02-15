@@ -370,6 +370,98 @@ public final class HealthKitQueryService: ObservableObject {
         return scores
     }
 
+    // MARK: - Hourly Activity Breakdown
+
+    /// Fetch hourly steps, calories, and stand minutes for a given date using HKStatisticsCollectionQuery
+    public func fetchHourlyActivity(for date: Date = Date()) async -> [(hour: Int, steps: Int, calories: Int, standMinutes: Int)] {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+        let now = Date()
+        let effectiveEnd = min(dayEnd, now)
+
+        // Fetch steps, calories, and stand time in parallel
+        async let hourlySteps = fetchHourlyStatistics(
+            type: .stepCount,
+            unit: .count(),
+            start: dayStart,
+            end: effectiveEnd
+        )
+        async let hourlyCalories = fetchHourlyStatistics(
+            type: .activeEnergyBurned,
+            unit: .kilocalorie(),
+            start: dayStart,
+            end: effectiveEnd
+        )
+        async let hourlyStand = fetchHourlyStatistics(
+            type: .appleStandTime,
+            unit: .minute(),
+            start: dayStart,
+            end: effectiveEnd
+        )
+
+        let steps = await hourlySteps
+        let calories = await hourlyCalories
+        let stand = await hourlyStand
+
+        // Merge into per-hour tuples (0-23)
+        let currentHour = calendar.component(.hour, from: effectiveEnd)
+        var results: [(hour: Int, steps: Int, calories: Int, standMinutes: Int)] = []
+
+        for hour in 0...currentHour {
+            results.append((
+                hour: hour,
+                steps: Int(steps[hour] ?? 0),
+                calories: Int(calories[hour] ?? 0),
+                standMinutes: Int(stand[hour] ?? 0)
+            ))
+        }
+
+        return results
+    }
+
+    /// Helper: fetch hourly cumulative statistics for a quantity type, returns [hour: value]
+    private func fetchHourlyStatistics(
+        type: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        start: Date,
+        end: Date
+    ) async -> [Int: Double] {
+        let quantityType = HKQuantityType(type)
+        let calendar = Calendar.current
+        let interval = DateComponents(hour: 1)
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: start,
+            end: end,
+            options: .strictStartDate
+        )
+
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: quantityType,
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum,
+                anchorDate: start,
+                intervalComponents: interval
+            )
+
+            query.initialResultsHandler = { _, collection, _ in
+                var hourValues: [Int: Double] = [:]
+
+                collection?.enumerateStatistics(from: start, to: end) { statistics, _ in
+                    let hour = calendar.component(.hour, from: statistics.startDate)
+                    let value = statistics.sumQuantity()?.doubleValue(for: unit) ?? 0
+                    hourValues[hour] = value
+                }
+
+                continuation.resume(returning: hourValues)
+            }
+
+            self.healthStore.execute(query)
+        }
+    }
+
     // MARK: - Private Helpers
 
     private func fetchTodayCumulativeSum(type: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double {

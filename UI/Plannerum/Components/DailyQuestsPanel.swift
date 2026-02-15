@@ -84,7 +84,7 @@ public struct DailyQuestsPanel: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(PlannerumColors.primary)
 
-                Text("DAILY QUESTS")
+                Text("Daily Quests")
                     .font(DailyQuestsTokens.headerFont)
                     .tracking(PlannerumTypography.trackingWide)
                     .foregroundColor(PlannerumColors.textSecondary)
@@ -368,10 +368,10 @@ struct LiveQuestRow: View {
 
             // Criteria (read-only)
             VStack(alignment: .leading, spacing: 4) {
-                Text("CRITERIA")
-                    .font(.system(size: 9, weight: .heavy))
-                    .foregroundColor(PlannerumColors.textMuted)
-                    .tracking(1)
+                Text("Criteria")
+                    .font(OnyxTypography.label)
+                    .foregroundColor(OnyxColors.Text.muted)
+                    .tracking(OnyxTypography.labelTracking)
                 Text(quest.description)
                     .font(.system(size: 11))
                     .foregroundColor(PlannerumColors.textTertiary)
@@ -422,7 +422,7 @@ struct LiveQuestRow: View {
 
             // Criteria
             VStack(alignment: .leading, spacing: 4) {
-                Text("COMPLETION CRITERIA")
+                Text("Completion Criteria")
                     .font(.system(size: 9, weight: .heavy))
                     .foregroundColor(PlannerumColors.textMuted)
                     .tracking(1)
@@ -542,10 +542,10 @@ struct LiveQuestRow: View {
         HStack(spacing: 2) {
             Text("+\(quest.xpReward)")
                 .font(DailyQuestsTokens.xpFont)
-            Text("XP")
-                .font(.system(size: 10, weight: .medium))
+            Image(systemName: "sparkles")
+                .font(.system(size: 9))
         }
-        .foregroundColor(quest.isComplete ? PlannerumColors.textMuted : PlannerumColors.xpGold)
+        .foregroundColor(quest.isComplete ? OnyxColors.Text.muted : OnyxColors.Accent.amber)
     }
 
     // MARK: - Progress Bar
@@ -690,10 +690,10 @@ struct QuestRow: View {
         HStack(spacing: 2) {
             Text("+\(quest.xpReward)")
                 .font(DailyQuestsTokens.xpFont)
-            Text("XP")
-                .font(.system(size: 10, weight: .medium))
+            Image(systemName: "sparkles")
+                .font(.system(size: 9))
         }
-        .foregroundColor(quest.isComplete ? PlannerumColors.textMuted : PlannerumColors.xpGold)
+        .foregroundColor(quest.isComplete ? OnyxColors.Text.muted : OnyxColors.Accent.amber)
     }
 
     private var progressBar: some View {

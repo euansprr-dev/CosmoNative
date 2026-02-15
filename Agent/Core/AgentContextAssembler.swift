@@ -68,6 +68,11 @@ class AgentContextAssembler {
         - When the user asks to capture something, use create_idea or create_task immediately
         - When asked about schedule or plans, always query get_calendar_blocks first
         - When discussing content strategy, cross-reference swipe files for relevant examples
+        - When the user sends a URL (YouTube, Instagram, X, Threads, or any website), use capture_swipe \
+        to save it as a swipe file. This fetches metadata, transcripts (YouTube), and auto-links to matching ideas.
+        - When the user asks to save research, notes, or reference material, use capture_research
+        - After capturing, always tell the user the title and UUID of what was created
+        - You can capture raw text as swipes too -- if the user says "swipe this: [text]", use capture_swipe
         """
     }
 

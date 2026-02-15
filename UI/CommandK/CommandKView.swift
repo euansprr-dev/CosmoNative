@@ -93,10 +93,10 @@ public struct CommandKView: View {
             Color(hex: "#0A0A0F")
                 .opacity(0.7)
 
-            // Subtle aurora glow
+            // Subtle aurora glow (reduced for Onyx)
             RadialGradient(
                 colors: [
-                    Color(hex: "#6366F1").opacity(0.05),
+                    Color(hex: "#6366F1").opacity(0.02),
                     .clear
                 ],
                 center: .center,
@@ -181,13 +181,13 @@ public struct CommandKView: View {
             // Glass overlay
             Color.white.opacity(0.08)
 
-            // Border glow
+            // Border glow (reduced for Onyx)
             RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.2),
-                            Color.white.opacity(0.05)
+                            Color.white.opacity(0.08),
+                            Color.white.opacity(0.02)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -202,13 +202,13 @@ public struct CommandKView: View {
         HStack(spacing: 16) {
             // Search icon (changes for task creation mode)
             Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundColor(viewModel.isTaskCreationMode ? PlannerumColors.primary : .white.opacity(0.5))
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(viewModel.isTaskCreationMode ? OnyxColors.Accent.iris : .white.opacity(0.5))
 
             // Text field
             TextField(activeTab == .swipeGallery ? "Search your swipes..." : (activeTab == .ideas ? "Search your ideas..." : "Search your knowledge... (task: to create)"), text: $viewModel.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 18))
+                .font(.system(size: 16))
                 .foregroundColor(.white)
                 .focused($isSearchFocused)
                 .onSubmit {
@@ -221,10 +221,10 @@ public struct CommandKView: View {
             if viewModel.isTaskCreationMode {
                 Text("Enter to create task")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(PlannerumColors.primary)
+                    .foregroundColor(OnyxColors.Accent.iris)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(PlannerumColors.primary.opacity(0.15))
+                    .background(OnyxColors.Accent.iris.opacity(0.15))
                     .clipShape(Capsule())
             }
 
@@ -233,8 +233,8 @@ public struct CommandKView: View {
                 viewModel.isVoiceActive.toggle()
             } label: {
                 Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
-                    .font(.system(size: 18))
-                    .foregroundColor(viewModel.isVoiceActive ? Color(hex: "#6366F1") : .white.opacity(0.5))
+                    .font(.system(size: 15))
+                    .foregroundColor(viewModel.isVoiceActive ? OnyxColors.Accent.iris : .white.opacity(0.5))
             }
             .buttonStyle(.plain)
 
@@ -246,7 +246,7 @@ public struct CommandKView: View {
             }
         }
         .padding(.horizontal, 24)
-        .frame(height: 72)
+        .frame(height: 56)
     }
 
     // MARK: - Filter Chips Section (Multi-select with counts)
@@ -436,7 +436,7 @@ public struct CommandKView: View {
                 title: "Swipe Gallery",
                 icon: "bolt.fill",
                 isActive: activeTab == .swipeGallery,
-                accentColor: Color(hex: "#FFD700")
+                accentColor: OnyxColors.Accent.amber
             ) {
                 withAnimation(ProMotionSprings.snappy) {
                     activeTab = .swipeGallery
@@ -633,13 +633,13 @@ private struct ConstellationNodeView: View {
 
     var body: some View {
         ZStack {
-            // Glow layer (enhanced on hover)
+            // Glow layer (reduced for Onyx)
             Circle()
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color(hex: node.dimensionColor).opacity(0.4 * node.glowIntensity * glowMultiplier),
-                            Color(hex: node.dimensionColor).opacity(0.1 * node.glowIntensity * glowMultiplier),
+                            Color(hex: node.dimensionColor).opacity(0.2 * node.glowIntensity * glowMultiplier),
+                            Color(hex: node.dimensionColor).opacity(0.05 * node.glowIntensity * glowMultiplier),
                             .clear
                         ],
                         center: .center,
@@ -730,7 +730,7 @@ private struct CommandKTabButton: View {
     let title: String
     let icon: String
     let isActive: Bool
-    var accentColor: Color = Color(hex: "#6366F1")
+    var accentColor: Color = OnyxColors.Accent.iris
     let action: () -> Void
 
     var body: some View {
@@ -742,13 +742,12 @@ private struct CommandKTabButton: View {
                     Text(title)
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(isActive ? .white : .white.opacity(0.5))
+                .foregroundColor(isActive ? OnyxColors.Text.primary : OnyxColors.Text.muted)
 
-                // Active underline
-                Rectangle()
+                // Active pill indicator (short centered pill instead of full-width underline)
+                RoundedRectangle(cornerRadius: 1)
                     .fill(isActive ? accentColor : Color.clear)
-                    .frame(height: 2)
-                    .cornerRadius(1)
+                    .frame(width: 24, height: 2)
             }
             .frame(height: 36)
             .padding(.horizontal, 12)

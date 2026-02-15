@@ -90,8 +90,8 @@ public struct MeditationPanel: View {
     private var headerSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("MEDITATION")
-                    .font(SanctuaryTypography.label)
+                Text("Meditation")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -170,7 +170,7 @@ public struct MeditationPanel: View {
 
     private var todayStats: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("TODAY")
+            Text("Today")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -242,7 +242,7 @@ public struct MeditationPanel: View {
 
     private var weeklyOverview: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("THIS WEEK")
+            Text("This Week")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -549,7 +549,7 @@ public struct MeditationCompact: View {
             .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("MEDITATION")
+                Text("Meditation")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

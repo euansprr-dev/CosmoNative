@@ -21,8 +21,8 @@ public struct PhysiologicalVitalSigns: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                Text("VITAL SIGNS PANEL")
-                    .font(SanctuaryTypography.label)
+                Text("Vital Signs Panel")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -126,7 +126,7 @@ public struct HRVCard: View {
             // Header row
             HStack {
                 Text("HRV")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
 
@@ -220,7 +220,7 @@ public struct RHRCard: View {
             // Header row
             HStack {
                 Text("RHR")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
 
@@ -326,7 +326,7 @@ public struct RecoveryCard: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header row
             HStack {
-                Text("RECOVERY")
+                Text("Recovery")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -431,7 +431,7 @@ public struct ReadinessCard: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             // Header row
             HStack {
-                Text("READINESS")
+                Text("Readiness")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)
@@ -521,8 +521,8 @@ public struct HRVTrendChart: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("HRV TREND (7 DAYS)")
-                .font(SanctuaryTypography.label)
+            Text("HRV Trend (7 Days)")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -672,7 +672,7 @@ public struct HRVTrendChart: View {
                     .fill(SanctuaryColors.Dimensions.physiological)
                     .frame(width: 8, height: 8)
 
-                Text("TODAY")
+                Text("Today")
                     .font(.system(size: 7, weight: .bold))
                     .foregroundColor(SanctuaryColors.Dimensions.physiological)
                     .offset(x: -20, y: 0)

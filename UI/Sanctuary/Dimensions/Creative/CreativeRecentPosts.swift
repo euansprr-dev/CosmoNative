@@ -71,8 +71,8 @@ public struct CreativeRecentPosts: View {
 
     private var header: some View {
         HStack {
-            Text("RECENT POSTS")
-                .font(SanctuaryTypography.label)
+            Text("Recent Posts")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -243,7 +243,7 @@ public struct RecentPostCard: View {
                     Image(systemName: "flame.fill")
                         .font(.system(size: 8))
 
-                    Text("TRENDING")
+                    Text("Trending")
                         .font(.system(size: 7, weight: .bold))
                 }
                 .foregroundColor(.white)
@@ -478,8 +478,8 @@ public struct ContentPostDetailView: View {
 
     private var performanceTimeline: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("PERFORMANCE OVER TIME")
-                .font(SanctuaryTypography.label)
+            Text("Performance Over Time")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -499,8 +499,8 @@ public struct ContentPostDetailView: View {
 
     private var engagementBreakdown: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("ENGAGEMENT BREAKDOWN")
-                .font(SanctuaryTypography.label)
+            Text("Engagement Breakdown")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -536,8 +536,8 @@ public struct ContentPostDetailView: View {
 
     private var insightsSection: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("INSIGHTS")
-                .font(SanctuaryTypography.label)
+            Text("Insights")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -585,8 +585,8 @@ public struct ContentPostDetailView: View {
 
     private var causalFactorsSection: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("WHY IT WORKED")
-                .font(SanctuaryTypography.label)
+            Text("Why It Worked")
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -690,7 +690,7 @@ public struct CreativeTopPostsGrid: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
             Text(title)
-                .font(SanctuaryTypography.label)
+                .font(OnyxTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 

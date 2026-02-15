@@ -48,13 +48,13 @@ public struct NowBarView: View {
     // MARK: - Layout (per plan Animation Specifications)
 
     private enum Layout {
-        static let lineHeight: CGFloat = 2
-        // Dot animates 10pt → 14pt → 10pt
-        static let dotSizeMin: CGFloat = 10
-        static let dotSizeMax: CGFloat = 14
-        // Glow animates 16pt → 24pt → 16pt
-        static let glowRadiusMin: CGFloat = 16
-        static let glowRadiusMax: CGFloat = 24
+        static let lineHeight: CGFloat = 1
+        // Dot animates 8pt → 10pt → 8pt
+        static let dotSizeMin: CGFloat = 8
+        static let dotSizeMax: CGFloat = 10
+        // Glow animates 8pt → 12pt → 8pt
+        static let glowRadiusMin: CGFloat = 8
+        static let glowRadiusMax: CGFloat = 12
         // Pulse cycle: 2.0s exactly
         static let pulseCycleDuration: Double = 2.0
         // Particle spawn: every 150ms
@@ -181,11 +181,11 @@ public struct NowBarView: View {
 
     private var timeIndicator: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // NOW badge
-            Text("NOW")
+            // Now badge
+            Text("Now")
                 .font(.system(size: 8, weight: .heavy))
                 .foregroundColor(PlannerumColors.nowMarker)
-                .tracking(1)
+                .tracking(0.5)
                 .opacity(0.8)
 
             // Time display

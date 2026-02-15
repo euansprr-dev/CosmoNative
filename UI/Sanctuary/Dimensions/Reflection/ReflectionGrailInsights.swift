@@ -83,8 +83,8 @@ public struct GrailInsightsPanel: View {
     private var headerSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("GRAIL INSIGHTS")
-                    .font(SanctuaryTypography.label)
+                Text("Grail Insights")
+                    .font(OnyxTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -121,7 +121,7 @@ public struct GrailInsightsPanel: View {
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
                 // Header
                 HStack {
-                    Text("LATEST BREAKTHROUGH")
+                    Text("Latest Breakthrough")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(SanctuaryColors.Dimensions.reflection)
                         .tracking(1)
@@ -234,7 +234,7 @@ public struct GrailInsightsPanel: View {
 
     private var recentInsightsGrid: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-            Text("RECENT DISCOVERIES")
+            Text("Recent Discoveries")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -256,7 +256,7 @@ public struct GrailInsightsPanel: View {
 
     private var patternsSection: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("INSIGHT PATTERNS")
+            Text("Insight Patterns")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -293,7 +293,7 @@ public struct GrailInsightsPanel: View {
 
     private var predictionsSection: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("EMERGING INSIGHTS")
+            Text("Emerging Insights")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -456,7 +456,7 @@ public struct InsightDetailPanel: View {
                         .font(.system(size: 16))
                         .foregroundColor(SanctuaryColors.Dimensions.reflection)
 
-                    Text("GRAIL INSIGHT")
+                    Text("Grail Insight")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(SanctuaryColors.Dimensions.reflection)
                         .tracking(1)
@@ -520,7 +520,7 @@ public struct InsightDetailPanel: View {
         let journey = insight.journey
         let lastId = journey.last?.id
         return VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("INSIGHT JOURNEY")
+            Text("Insight Journey")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -677,7 +677,7 @@ public struct GrailInsightsCompact: View {
                 .foregroundColor(SanctuaryColors.Dimensions.reflection)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("GRAIL INSIGHTS")
+                Text("Grail Insights")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(1)

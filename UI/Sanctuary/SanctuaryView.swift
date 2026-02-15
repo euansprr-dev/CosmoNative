@@ -95,21 +95,35 @@ public struct SanctuaryView: View {
     public var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Background with transition support
+                // Background — Onyx void base
+                OnyxColors.Elevation.void
+                    .ignoresSafeArea()
+
+                // Transition background overlay
                 SanctuaryTransitionBackground(manager: transitionManager)
 
-                // Aurora overlay when Metal is enabled
+                // Aurora overlay — reduced to ~8-10% opacity per Onyx spec
                 if useMetalRendering {
                     SanctuaryAuroraMetalView(
-                        colorA: SanctuaryColors.Dimensions.cognitive,
-                        colorB: SanctuaryColors.Dimensions.creative,
-                        colorC: SanctuaryColors.Dimensions.physiological,
-                        intensity: 0.25,
+                        colorA: OnyxColors.Dimension.cognitive,
+                        colorB: OnyxColors.Dimension.creative,
+                        colorC: OnyxColors.Dimension.physiological,
+                        intensity: 0.12,
                         speed: 0.4
                     )
-                    .opacity(choreographer.backgroundOpacity)
+                    .opacity(choreographer.backgroundOpacity * 0.4)
                     .ignoresSafeArea()
                 }
+
+                // Subtle radial vignette
+                RadialGradient(
+                    colors: [Color.clear, Color.black.opacity(0.05)],
+                    center: .center,
+                    startRadius: 200,
+                    endRadius: 600
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
                 // SATELLITE CONNECTION THREADS (behind constellation)
                 // These connect Plannerum and Thinkspace to the hero orb
@@ -135,7 +149,7 @@ public struct SanctuaryView: View {
                         thinkspaceActive: thinkspaceHovered,
                         animationPhase: choreographer.animationPhase
                     )
-                    .opacity(choreographer.backgroundOpacity * 0.7)  // Recessed depth
+                    .opacity(choreographer.backgroundOpacity * 0.25)  // Satellite connection: 0.04 base opacity
                 }
                 .allowsHitTesting(false)
 
@@ -341,19 +355,14 @@ public struct SanctuaryView: View {
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showingDimensionDetail)
         .overlay(alignment: .topTrailing) {
-            // Sanctuary settings gear — only visible on home
+            // Sanctuary settings gear — 18pt, tertiary, only visible on home
             if transitionManager.state == .home && !showingPlannerum {
                 Button(action: { showingSanctuarySettings = true }) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(SanctuaryColors.Glass.primary)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
-                        )
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, SanctuaryLayout.Spacing.lg)
@@ -374,13 +383,15 @@ public struct SanctuaryView: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Sanctuary")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .font(OnyxTypography.viewTitle)
+                    .tracking(OnyxTypography.viewTitleTracking)
+                    .foregroundColor(OnyxColors.Text.primary)
 
                 if let state = dataProvider.state {
-                    Text("Level \(state.cosmoIndex.level) • \(state.cosmoIndex.rank)")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                    Text("Tier \(SanctuaryHeaderView.romanNumeral(for: state.cosmoIndex.level)) \u{00B7} \(state.cosmoIndex.rank)")
+                        .font(OnyxTypography.label)
+                        .tracking(OnyxTypography.labelTracking)
+                        .foregroundColor(OnyxColors.Text.secondary)
                 }
             }
 
@@ -390,22 +401,16 @@ public struct SanctuaryView: View {
             if dataProvider.state?.liveMetrics.currentHRV != nil {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(Color.green)
-                        .frame(width: 8, height: 8)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.green.opacity(0.5), lineWidth: 2)
-                                .scaleEffect(1.5)
-                                .opacity(0.5)
-                        )
+                        .fill(OnyxColors.Accent.sage)
+                        .frame(width: 6, height: 6)
 
                     Text("Live")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.green)
+                        .font(OnyxTypography.micro)
+                        .foregroundColor(OnyxColors.Accent.sage)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.green.opacity(0.15))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(OnyxColors.Accent.sage.opacity(0.1))
                 .clipShape(Capsule())
             }
         }
@@ -471,17 +476,11 @@ public struct SanctuaryView: View {
                 path.move(to: CGPoint(x: x1, y: y1))
                 path.addLine(to: CGPoint(x: x2, y: y2))
 
+                // White-only lines at low opacity (0.07)
                 context.stroke(
                     path,
-                    with: .linearGradient(
-                        Gradient(colors: [
-                            Color(hex: dimensions[i].colorHex).opacity(0.3),
-                            Color(hex: dimensions[nextIndex].colorHex).opacity(0.3)
-                        ]),
-                        startPoint: CGPoint(x: x1, y: y1),
-                        endPoint: CGPoint(x: x2, y: y2)
-                    ),
-                    lineWidth: 1
+                    with: .color(Color.white.opacity(0.07)),
+                    lineWidth: 0.5
                 )
             }
         }
@@ -492,27 +491,13 @@ public struct SanctuaryView: View {
 
     @ViewBuilder
     private var heroOrbOverlay: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.xs) {
-            Text("CI")
-                .font(SanctuaryTypography.label)
-                .foregroundColor(SanctuaryColors.Text.secondary)
-
-            if let state = dataProvider.state?.cosmoIndex {
-                Text("\(state.level)")
-                    .font(SanctuaryTypography.display)
-                    .foregroundColor(SanctuaryColors.Text.primary)
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 2)
-
-                // XP progress ring
-                SanctuaryProgressRingMetalView(
-                    progress: min(1.0, CGFloat(state.xpProgress)),
-                    progressColor: SanctuaryColors.XP.primary,
-                    trackColor: SanctuaryColors.XP.track,
-                    ringWidth: 0.08,
-                    isAnimating: true
-                )
-                .frame(width: 100, height: 100)
-            }
+        // Cosmo Index number only — no "CI" label, hover tooltip shows "Cosmo Index"
+        if let state = dataProvider.state?.cosmoIndex {
+            Text("\(state.level)")
+                .font(.system(size: 32, weight: .ultraLight))
+                .foregroundColor(OnyxColors.Text.primary)
+                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+                .help("Cosmo Index")
         }
 
         // Live HRV indicator
@@ -523,15 +508,15 @@ public struct SanctuaryView: View {
                 HStack(spacing: SanctuaryLayout.Spacing.xs) {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(.red)
+                        .foregroundColor(OnyxColors.Accent.rose)
 
                     Text("\(Int(hrv))")
-                        .font(SanctuaryTypography.metric)
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .font(OnyxTypography.micro)
+                        .foregroundColor(OnyxColors.Text.secondary)
                 }
                 .padding(.horizontal, SanctuaryLayout.Spacing.sm)
                 .padding(.vertical, SanctuaryLayout.Spacing.xs)
-                .background(SanctuaryColors.Glass.background)
+                .background(OnyxColors.Elevation.raised)
                 .clipShape(Capsule())
                 .offset(y: SanctuaryLayout.Sizing.heroOrb * 0.35)
             }
@@ -548,13 +533,19 @@ public struct SanctuaryView: View {
 
         return ZStack {
             ForEach(0..<count, id: \.self) { i in
+                let nextIndex = (i + 1) % count
+                let isAdjacentToSelected = selectedDimension == dimensions[i] || selectedDimension == dimensions[nextIndex]
+                let lineOpacity: Double = isAdjacentToSelected ? 0.25 : 0.07
+
                 connectionLineView(
                     index: i,
                     center: center,
                     radius: radius,
                     dimensions: dimensions,
-                    count: count
+                    count: count,
+                    opacity: lineOpacity
                 )
+                .animation(OnyxSpring.standard, value: selectedDimension)
             }
         }
         .frame(width: orbAreaSize, height: orbAreaSize)
@@ -565,7 +556,8 @@ public struct SanctuaryView: View {
         center: CGPoint,
         radius: CGFloat,
         dimensions: [LevelDimension],
-        count: Int
+        count: Int,
+        opacity: Double = 0.07
     ) -> some View {
         let angle1 = (Double(i) / Double(count)) * 2 * .pi - .pi / 2
         let x1 = center.x + radius * Darwin.cos(angle1)
@@ -576,12 +568,13 @@ public struct SanctuaryView: View {
         let x2 = center.x + radius * Darwin.cos(angle2)
         let y2 = center.y + radius * Darwin.sin(angle2)
 
+        // White-only connection lines — brighten to 0.25 on adjacent orb hover
         return SanctuaryConnectionLine(
             from: CGPoint(x: x1, y: y1),
             to: CGPoint(x: x2, y: y2),
-            color1: SanctuaryColors.Dimensions.color(for: dimensions[i]),
-            color2: SanctuaryColors.Dimensions.color(for: dimensions[nextIndex]),
-            glowIntensity: 0.4,
+            color1: Color.white,
+            color2: Color.white,
+            glowIntensity: opacity,
             isAnimated: true
         )
     }
@@ -612,29 +605,20 @@ public struct SanctuaryView: View {
 
     // MARK: - This Week Summary
 
-    /// Hover-to-reveal summary — shows subtle hint by default, full card on hover
+    /// Hover-to-reveal summary — no hint text, reveals on hover
     private var thisWeekSummaryHoverView: some View {
         VStack(spacing: 0) {
             if summaryHovered {
                 thisWeekSummaryCard
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else {
-                // Subtle hint pill
-                HStack(spacing: SanctuaryLayout.Spacing.xs) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 9))
-                    Text("Hover for correlations")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundColor(SanctuaryColors.Text.tertiary.opacity(0.5))
-                .transition(.opacity)
             }
         }
+        .frame(height: summaryHovered ? nil : 20)
         .padding(.horizontal, SanctuaryLayout.Spacing.xxl)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(OnyxSpring.standard) {
                 summaryHovered = hovering
             }
         }
@@ -647,7 +631,7 @@ public struct SanctuaryView: View {
         let indices = dimensionIndexEngine.dimensionIndices
         let topDimension = indices.max(by: { $0.value.score < $1.value.score })
 
-        return SanctuaryCard(size: .quarter, title: "THIS WEEK") {
+        return SanctuaryCard(size: .quarter, title: "This week") {
             HStack(spacing: SanctuaryLayout.Spacing.lg) {
                 HStack(alignment: .firstTextBaseline, spacing: SanctuaryLayout.Spacing.xs) {
                     Text("\(Int(overallDI))")
@@ -735,7 +719,7 @@ public struct SanctuaryView: View {
                         HStack {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 10))
-                            Text("NEW INSIGHTS")
+                            Text("New insights")
                                 .font(.system(size: 10, weight: .bold))
                         }
                         .foregroundColor(SanctuaryColors.XP.primary)
@@ -1011,8 +995,8 @@ private struct DimensionOrbGlowWrapper: View {
 
     var body: some View {
         let diScore = engine.index(for: dimension).score
-        let glowRadius: CGFloat = diScore < 30 ? 4 : (diScore > 80 ? 15 : 4 + CGFloat((diScore - 30) / 50) * 11)
-        let glowColor = SanctuaryColors.color(for: dimension)
+        let glowRadius: CGFloat = diScore < 30 ? 3 : (diScore > 80 ? 12 : 3 + CGFloat((diScore - 30) / 50) * 9)
+        let glowColor = OnyxColors.Dimension.color(for: dimension)
 
         DimensionOrbView(
             dimension: dimension,
@@ -1020,7 +1004,7 @@ private struct DimensionOrbGlowWrapper: View {
             isSelected: isSelected,
             animationPhase: animationPhase
         )
-        .shadow(color: glowColor.opacity(0.5), radius: glowRadius, x: 0, y: 0)
+        .shadow(color: glowColor.opacity(0.35), radius: glowRadius, x: 0, y: 0)
     }
 }
 

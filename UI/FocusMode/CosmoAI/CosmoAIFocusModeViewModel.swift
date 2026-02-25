@@ -48,7 +48,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
         // Capture mention info before clearing
         let mentionInfo: [MentionedAtomInfo]? = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map { atom in
-            MentionedAtomInfo(type: atom.type.rawValue, title: atom.title ?? "Untitled")
+            MentionedAtomInfo(uuid: atom.uuid, type: atom.type.rawValue, title: atom.title ?? "Untitled")
         }
 
         let userMsg = CosmoWindowMessage.user(query, mentionedAtoms: mentionInfo)
@@ -133,13 +133,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
         // Inject mentioned atoms as referenced context
         if !mentionedAtoms.isEmpty {
-            var mentionBlock = "## Referenced Context"
-            for atom in mentionedAtoms {
-                let typeLabel = atom.type.rawValue.uppercased()
-                let title = atom.title ?? "Untitled"
-                let body = String((atom.body ?? "").prefix(500))
-                mentionBlock += "\n[\(typeLabel): \"\(title)\"]\n\(body)"
-            }
+            let mentionBlock = MentionContextHelper.buildMentionBlock(atoms: mentionedAtoms)
             parts.append(mentionBlock)
         }
 

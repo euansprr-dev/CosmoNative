@@ -2007,20 +2007,26 @@ class AgentToolExecutor {
 
         let clientName = args["clientName"] as? String
         let blueprintSwipeUUID = args["blueprintSwipeUUID"] as? String
+        let contentFormat = args["contentFormat"] as? String
 
-        // If a specific blueprint swipe UUID is provided, inject it as a primary inherited swipe
-        // on the content atom BEFORE the engine initializes, so selectSwipes() prioritizes it
-        if let bpUUID = blueprintSwipeUUID, !bpUUID.isEmpty {
+        // If a specific blueprint swipe UUID or explicit format is provided, inject into atom metadata
+        // BEFORE the engine initializes, so selectSwipes() and detectContentFormat() see them
+        if (blueprintSwipeUUID != nil && !blueprintSwipeUUID!.isEmpty) || (contentFormat != nil && !contentFormat!.isEmpty) {
             _ = try? await atomRepo.update(uuid: contentUUID) { atom in
                 var meta = atom.metadataDict ?? [:]
-                var inherited = meta["inheritedSwipeUUIDs"] as? [String] ?? []
-                if !inherited.contains(bpUUID) {
-                    inherited.insert(bpUUID, at: 0) // First = highest priority
-                    meta["inheritedSwipeUUIDs"] = inherited
-                    if let data = try? JSONSerialization.data(withJSONObject: meta),
-                       let str = String(data: data, encoding: .utf8) {
-                        atom.metadata = str
+                if let bpUUID = blueprintSwipeUUID, !bpUUID.isEmpty {
+                    var inherited = meta["inheritedSwipeUUIDs"] as? [String] ?? []
+                    if !inherited.contains(bpUUID) {
+                        inherited.insert(bpUUID, at: 0) // First = highest priority
+                        meta["inheritedSwipeUUIDs"] = inherited
                     }
+                }
+                if let format = contentFormat, !format.isEmpty {
+                    meta["explicitFormat"] = format
+                }
+                if let data = try? JSONSerialization.data(withJSONObject: meta),
+                   let str = String(data: data, encoding: .utf8) {
+                    atom.metadata = str
                 }
             }
         }
@@ -2118,11 +2124,25 @@ class AgentToolExecutor {
         }
 
         let clientName = args["clientName"] as? String
+        let contentFormat = args["contentFormat"] as? String
+
+        // Persist explicit format on the atom metadata before engine initializes
+        if let format = contentFormat, !format.isEmpty {
+            _ = try? await atomRepo.update(uuid: contentUUID) { atom in
+                var meta = atom.metadataDict ?? [:]
+                meta["explicitFormat"] = format
+                if let data = try? JSONSerialization.data(withJSONObject: meta),
+                   let str = String(data: data, encoding: .utf8) {
+                    atom.metadata = str
+                }
+            }
+        }
+
         guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
             return jsonError("Content atom not found: \(contentUUID)")
         }
 
-        print("🚀 [AgentToolExecutor] generate_draft CALLED for \(contentUUID) — inner engine will use Opus")
+        print("🚀 [AgentToolExecutor] generate_draft CALLED for \(contentUUID) — format: \(contentFormat ?? "auto") — inner engine will use Opus")
 
         let userDirection = args["userDirection"] as? String
 
@@ -2154,18 +2174,15 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let draftBody = updatedAtom?.body ?? ""
 
-        // Surface swipe titles from the inner writing engine for context trace visibility
-        let swipeTitles = await engine.loadedContext.swipeTitles
+        // Surface swipe count from the inner writing engine for context trace visibility
         let swipeCount = await engine.loadedContext.swipeCount
 
         return jsonEncode([
             "success": true,
             "contentUUID": contentUUID,
-            "message": "Show the formattedDraft to the user now.",
-            "draft": draftBody,
+            "message": "Here is the draft. Display the text below to the user exactly as-is:",
             "formattedDraft": Self.renderDraftForDisplay(draftBody),
-            "engineNotes": String(engineNotes.prefix(500)),
-            "swipesUsed": swipeTitles,
+            "engineNotes": String(engineNotes.prefix(300)),
             "swipeCount": swipeCount
         ] as [String: Any])
     }
@@ -2315,17 +2332,16 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let revisedDraft = updatedAtom?.body ?? ""
 
-        // Surface swipe titles from the inner writing engine for context trace visibility
-        let swipeTitles = await engine.loadedContext.swipeTitles
+        // Surface swipe count from the inner writing engine for context trace visibility
         let swipeCount = await engine.loadedContext.swipeCount
 
+        let revisedFormatted = Self.renderDraftForDisplay(revisedDraft)
         return jsonEncode([
             "success": true,
             "contentUUID": contentUUID,
-            "message": "Draft revised via unified writing engine",
-            "draft": revisedDraft,
-            "engineNotes": String(engineNotes.prefix(500)),
-            "swipesUsed": swipeTitles,
+            "message": "Here is the revised draft. Display the text below to the user exactly as-is:",
+            "formattedDraft": revisedFormatted,
+            "engineNotes": String(engineNotes.prefix(300)),
             "swipeCount": swipeCount
         ] as [String: Any])
     }

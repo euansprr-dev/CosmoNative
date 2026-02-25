@@ -397,7 +397,7 @@ struct ClaudeToolUseResponse: @unchecked Sendable {
 
 /// Model tier selection for cost/quality optimization (moved from OpusWritingEngine)
 enum ContentModelTier: String {
-    case writer = "anthropic/claude-opus-4-6"
+    case writer = "anthropic/claude-opus-4.6"
     case strategist = "anthropic/claude-sonnet-4.5"
     case fast = "google/gemini-2.0-flash-001"
 

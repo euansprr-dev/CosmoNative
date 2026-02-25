@@ -1360,13 +1360,11 @@ struct CanvasView: View {
     /// Optimized drag handler - updates only local @State, not @Published blocks array
     /// This prevents full view hierarchy re-renders during drag
     private func handleDragOptimized(blockId: String, translation: CGSize) {
-        // Scale translation by inverse of zoom so dragging feels natural
-        // When zoomed out, 1px cursor movement = larger canvas movement
-        let scaledTranslation = CGSize(
-            width: translation.width / effectiveScale,
-            height: translation.height / effectiveScale
-        )
-        blockDragOffsets[blockId] = scaledTranslation
+        // Gesture translation is already in canvas space (the block's local coordinate space
+        // inside the scaled container), so use it directly — no scale division needed.
+        // Dividing by effectiveScale would double-scale since scaleEffect already transforms
+        // the gesture coordinate space.
+        blockDragOffsets[blockId] = translation
         draggingBlockId = blockId
 
         // Mark selected (one-time update)
@@ -1377,17 +1375,14 @@ struct CanvasView: View {
 
     /// Optimized drag end - commits position to @Published array and database
     private func handleDragEndOptimized(blockId: String, translation: CGSize) {
-        // Scale translation by inverse of zoom to match canvas space
-        let scaledTranslation = CGSize(
-            width: translation.width / effectiveScale,
-            height: translation.height / effectiveScale
-        )
+        // Gesture translation is already in canvas space (scaleEffect transforms the
+        // gesture coordinate space), so use it directly without dividing by effectiveScale.
 
         // Commit final position to the @Published array (triggers one re-render)
         if let index = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
             let newPosition = CGPoint(
-                x: spatialEngine.blocks[index].position.x + scaledTranslation.width,
-                y: spatialEngine.blocks[index].position.y + scaledTranslation.height
+                x: spatialEngine.blocks[index].position.x + translation.width,
+                y: spatialEngine.blocks[index].position.y + translation.height
             )
             spatialEngine.blocks[index].position = newPosition
 

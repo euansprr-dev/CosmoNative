@@ -37,10 +37,31 @@ final class SwipeClassificationEngine: ObservableObject {
             let parsed = parseResponse(response)
 
             if let parsed = parsed {
-                // Resolve creator
+                // Resolve creator — AI handle first, oEmbed author fallback
+                var creatorHandle = parsed.creatorHandle
+                var creatorName = parsed.creatorName
+
+                // Fallback: if AI didn't find a handle, use oEmbed author name
+                if creatorHandle == nil || creatorHandle?.replacingOccurrences(of: "@", with: "").allSatisfy(\.isNumber) == true {
+                    let oembedAuthor = atom.richContent?.author ?? ""
+                    if !oembedAuthor.isEmpty && !oembedAuthor.allSatisfy(\.isNumber) {
+                        // Normalize: "Ben Allgeyer | Real Estate Investor" → handle "@ben_allgeyer"
+                        let handleBase = oembedAuthor
+                            .components(separatedBy: "|").first?
+                            .trimmingCharacters(in: .whitespaces) ?? oembedAuthor
+                        creatorHandle = "@" + handleBase
+                            .lowercased()
+                            .replacingOccurrences(of: " ", with: "_")
+                            .filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }
+                        creatorName = creatorName ?? oembedAuthor
+                            .components(separatedBy: "|").first?
+                            .trimmingCharacters(in: .whitespaces) ?? oembedAuthor
+                    }
+                }
+
                 let creatorUUID = await resolveCreator(
-                    handle: parsed.creatorHandle,
-                    name: parsed.creatorName,
+                    handle: creatorHandle,
+                    name: creatorName,
                     atom: atom
                 )
 

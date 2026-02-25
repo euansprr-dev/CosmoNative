@@ -36,9 +36,13 @@ struct CosmoMentionOverlay: View {
 
     // MARK: - Category Definitions
 
+    /// Sentinel value used to represent the Swipe filter (swipe files are `.research` in the DB).
+    private static let swipeFilterTag = AtomType.creator  // Unused type repurposed as filter tag
+
     private let categories: [(type: AtomType, label: String, icon: String)] = [
         (.content, "Content", "doc.richtext"),
         (.research, "Research", "magnifyingglass"),
+        (swipeFilterTag, "Swipe", "bookmark.fill"),
         (.idea, "Idea", "lightbulb"),
         (.connection, "Connection", "link"),
         (.task, "Task", "checkmark.circle"),
@@ -100,7 +104,8 @@ struct CosmoMentionOverlay: View {
     }
 
     private func categoryCapsule(_ category: (type: AtomType, label: String, icon: String)) -> some View {
-        let entityType = EntityType(rawValue: category.type.rawValue) ?? .idea
+        let isSwipeCategory = category.type == Self.swipeFilterTag
+        let entityType = isSwipeCategory ? .swipeFile : (EntityType(rawValue: category.type.rawValue) ?? .idea)
         let isSelected = selectedCategory == category.type
         let pillColor = CosmoMentionColors.color(for: entityType)
         let pillBg = CosmoMentionColors.pillBackground(for: entityType)
@@ -144,7 +149,10 @@ struct CosmoMentionOverlay: View {
     }
 
     private func resultRow(atom: Atom) -> some View {
-        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .idea
+        let isSwipe = atom.isSwipeFileAtom
+        let entityType: EntityType = isSwipe ? .swipeFile : (EntityType(rawValue: atom.type.rawValue) ?? .idea)
+        let displayLabel = isSwipe ? "Swipe" : atom.type.displayName
+        let displayIcon = isSwipe ? "bookmark.fill" : atom.type.iconName
         let isHovered = hoveredResultId == atom.uuid
 
         return Button {
@@ -152,7 +160,7 @@ struct CosmoMentionOverlay: View {
         } label: {
             HStack(spacing: 10) {
                 // Type icon with color
-                Image(systemName: atom.type.iconName)
+                Image(systemName: displayIcon)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(CosmoMentionColors.color(for: entityType))
                     .frame(width: 20)
@@ -174,7 +182,7 @@ struct CosmoMentionOverlay: View {
                 Spacer()
 
                 // Type badge
-                Text(atom.type.displayName)
+                Text(displayLabel)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(CosmoMentionColors.color(for: entityType))
                     .padding(.horizontal, 6)
@@ -249,9 +257,19 @@ struct CosmoMentionOverlay: View {
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
 
-            let atoms: [Atom]
+            var atoms: [Atom]
             if let category = selectedCategory {
-                atoms = (try? await AtomRepository.shared.search(query: query, types: [category])) ?? []
+                if category == Self.swipeFilterTag {
+                    // Swipe filter: search research atoms, then keep only swipe files
+                    atoms = (try? await AtomRepository.shared.search(query: query, types: [.research])) ?? []
+                    atoms = atoms.filter { $0.isSwipeFileAtom }
+                } else if category == .research {
+                    // Research filter: exclude swipe files so the two categories are distinct
+                    atoms = (try? await AtomRepository.shared.search(query: query, types: [.research])) ?? []
+                    atoms = atoms.filter { !$0.isSwipeFileAtom }
+                } else {
+                    atoms = (try? await AtomRepository.shared.search(query: query, types: [category])) ?? []
+                }
             } else {
                 atoms = (try? await AtomRepository.shared.search(query: query, limit: 15)) ?? []
             }

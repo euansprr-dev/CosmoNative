@@ -90,8 +90,69 @@ enum CosmoWindowMessageType: Codable, Sendable {
 /// Lightweight reference to a mentioned atom, stored on user messages.
 /// Codable and Sendable for persistence alongside messages.
 struct MentionedAtomInfo: Codable, Sendable {
+    let uuid: String?
     let type: String
     let title: String
+
+    init(uuid: String? = nil, type: String, title: String) {
+        self.uuid = uuid
+        self.type = type
+        self.title = title
+    }
+}
+
+// MARK: - Mention Context Helper
+
+/// Shared helper for building rich mention context blocks for the AI agent.
+enum MentionContextHelper {
+
+    /// Formats key fields from a SwipeAnalysis into a concise text summary.
+    static func swipeAnalysisSummary(_ analysis: SwipeAnalysis) -> String {
+        var parts: [String] = []
+        if let hookType = analysis.hookType {
+            parts.append("Hook: \(hookType.displayName)")
+        }
+        if let hookText = analysis.hookText {
+            parts.append("Hook text: \"\(hookText)\"")
+        }
+        if let hookScore = analysis.hookScore {
+            parts.append("Hook score: \(String(format: "%.1f", hookScore))/10")
+        }
+        if let framework = analysis.frameworkType {
+            parts.append("Framework: \(framework.displayName)")
+        }
+        if let emotion = analysis.dominantEmotion {
+            parts.append("Dominant emotion: \(emotion.rawValue)")
+        }
+        if let sections = analysis.sections, !sections.isEmpty {
+            let labels = sections.map(\.label).joined(separator: " → ")
+            parts.append("Structure (\(sections.count) sections): \(labels)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    /// Builds a full `## Referenced Context` block from mentioned atoms,
+    /// including UUIDs, extended body text, and swipe analysis summaries.
+    static func buildMentionBlock(atoms: [Atom], bodyLimit: Int = 2000) -> String {
+        var mentionBlock = "## Referenced Context\n"
+        for atom in atoms {
+            let typeLabel = atom.type.rawValue.uppercased()
+            let title = atom.title ?? "Untitled"
+            let body = String((atom.body ?? "").prefix(bodyLimit))
+            mentionBlock += "[\(typeLabel): \"\(title)\"] (UUID: \(atom.uuid))\n\(body)\n"
+
+            // Include swipe analysis summary if available
+            if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
+                let summary = swipeAnalysisSummary(analysis)
+                if !summary.isEmpty {
+                    mentionBlock += "Swipe Analysis: \(summary)\n"
+                    mentionBlock += "(Use `get_swipe_analysis` tool with UUID \(atom.uuid) for full details)\n"
+                }
+            }
+            mentionBlock += "\n"
+        }
+        return mentionBlock
+    }
 }
 
 // MARK: - Message

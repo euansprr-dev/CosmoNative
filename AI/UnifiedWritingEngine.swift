@@ -988,6 +988,16 @@ final class UnifiedWritingEngine: ObservableObject {
             required: ["thought"]
         ))
 
+        // set_title — always available
+        tools.append(buildTool(
+            name: "set_title",
+            description: "Set or update the content atom's title. Use the hook text or a concise content title.",
+            properties: [
+                "title": ["type": "string", "description": "The new title for this content"]
+            ],
+            required: ["title"]
+        ))
+
         // update_outline — brainstorm + draft
         if phase == .brainstorm || phase == .draft {
             tools.append(buildTool(
@@ -1188,6 +1198,10 @@ final class UnifiedWritingEngine: ObservableObject {
                 switch call.name {
                 case "think":
                     resultContent = handleThink(call.input)
+                    isError = false
+
+                case "set_title":
+                    resultContent = await handleSetTitle(call.input)
                     isError = false
 
                 case "update_outline":
@@ -1421,6 +1435,37 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         return "Added \(hookTexts.count) hook variants."
+    }
+
+    private func handleSetTitle(_ input: [String: Any]) async -> String {
+        let title = input["title"] as? String ?? ""
+        guard !title.isEmpty else { return "Error: title is empty." }
+
+        // Persist title to atom in GRDB
+        if let atomUUID = contentAtom?.uuid {
+            do {
+                try await database.asyncWrite { db in
+                    if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
+                        atom.title = title
+                        atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                        try atom.update(db)
+                    }
+                }
+                print("💾 [UnifiedWritingEngine] Set title to '\(title)' on atom \(atomUUID)")
+            } catch {
+                print("❌ [UnifiedWritingEngine] Failed to set title: \(error)")
+                return "Error setting title: \(error.localizedDescription)"
+            }
+        }
+
+        // Notify UI to refresh
+        NotificationCenter.default.post(
+            name: .unifiedEngineTitleUpdate,
+            object: nil,
+            userInfo: ["title": title]
+        )
+
+        return "Title set to: \(title)"
     }
 
     private func handleSetDescription(_ input: [String: Any]) async -> String {
@@ -2465,9 +2510,24 @@ final class UnifiedWritingEngine: ObservableObject {
     }
 
     /// Detect the writing content format from the content atom's metadata.
+    /// Checks for explicit format set by the agent tool first, then falls back to heuristic detection.
     private func detectContentFormat() -> WritingContentFormat {
-        guard let atom = contentAtom,
-              let meta = atom.metadataValue(as: ContentAtomMetadata.self) else {
+        guard let atom = contentAtom else {
+            return .staticPost
+        }
+
+        // Check for explicit format set by agent tool (contentFormat parameter)
+        if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String {
+            switch explicitFormat {
+            case "reel": return .instagramReel
+            case "carousel": return .instagramCarousel
+            case "thread": return .twitterThread
+            case "post": return .staticPost
+            default: break
+            }
+        }
+
+        guard let meta = atom.metadataValue(as: ContentAtomMetadata.self) else {
             return .staticPost
         }
 
@@ -2887,6 +2947,13 @@ final class UnifiedWritingEngine: ObservableObject {
         parts.append("2. Review the client profile — note their voice, beliefs, stances, and what makes their content unique")
         parts.append("3. Review top-performing posts — identify what patterns drove their success")
         parts.append("4. Only THEN respond to the user's request, citing specific evidence from this analysis")
+        parts.append("")
+        parts.append("When in BRAINSTORM phase: After analyzing context, you MUST:")
+        parts.append("1. Use add_hooks to generate 3-5 hook variants")
+        parts.append("2. Use set_title to set the content title to your best hook")
+        parts.append("3. Use set_description to set the content description")
+        parts.append("4. Use update_outline to create the structural outline")
+        parts.append("Then respond conversationally with a brief summary.")
 
         return parts.joined(separator: "\n")
     }
@@ -2894,6 +2961,7 @@ final class UnifiedWritingEngine: ObservableObject {
     private func labelForTool(_ name: String) -> String {
         switch name {
         case "think": return "Reasoning..."
+        case "set_title": return "Setting title"
         case "update_outline": return "Updating outline"
         case "add_hooks": return "Generating hooks"
         case "set_description": return "Setting description"
@@ -3042,6 +3110,7 @@ final class UnifiedWritingEngine: ObservableObject {
 // MARK: - Engine Notification Names
 
 extension Notification.Name {
+    static let unifiedEngineTitleUpdate = Notification.Name("unifiedEngineTitleUpdate")
     static let unifiedEngineOutlineUpdate = Notification.Name("unifiedEngineOutlineUpdate")
     static let unifiedEngineHooksUpdate = Notification.Name("unifiedEngineHooksUpdate")
     static let unifiedEngineDescriptionUpdate = Notification.Name("unifiedEngineDescriptionUpdate")

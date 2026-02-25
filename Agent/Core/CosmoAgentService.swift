@@ -315,7 +315,20 @@ class CosmoAgentService: ObservableObject {
             case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
                 modelTier = .strategist  // Sonnet — analytical reasoning, strategy
             case .brainstorm, .draft:
-                modelTier = .strategist  // Sonnet — outer loop only coordinates tools; creative writing happens in UnifiedWritingEngine's inner loop
+                modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
+            }
+        }
+
+        // For draft intent with active content, inject a system message forcing tool use
+        if intent == .draft || intent == .brainstorm {
+            let linkedUUIDs = conversation.linkedAtomUUIDs
+            if let activeUUID = linkedUUIDs.last {
+                let forceToolMsg = AgentMessage.system(
+                    "REMINDER: You MUST use generate_draft(contentUUID: \"\(activeUUID)\") or generate_outline(contentUUID: \"\(activeUUID)\") for ALL content creation. " +
+                    "Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
+                    "The writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
+                )
+                llmMessages.append(forceToolMsg)
             }
         }
 
@@ -588,7 +601,20 @@ class CosmoAgentService: ObservableObject {
         case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
             modelTier = .strategist
         case .brainstorm, .draft:
-            modelTier = .strategist  // Sonnet — outer loop only coordinates tools; creative writing happens in UnifiedWritingEngine's inner loop
+            modelTier = .writer      // Opus — creative writing coordination needs full reasoning to follow tool-use instructions precisely
+        }
+
+        // For draft intent with active content, inject a system message forcing tool use
+        if effectiveIntent == .draft || effectiveIntent == .brainstorm {
+            let linkedUUIDs = conversation.linkedAtomUUIDs
+            if let activeUUID = linkedUUIDs.last {
+                let forceToolMsg = AgentMessage.system(
+                    "REMINDER: You MUST use generate_draft(contentUUID: \"\(activeUUID)\") or generate_outline(contentUUID: \"\(activeUUID)\") for ALL content creation. " +
+                    "Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
+                    "The writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
+                )
+                llmMessages.append(forceToolMsg)
+            }
         }
 
         var contextTrace = AgentContextTrace()

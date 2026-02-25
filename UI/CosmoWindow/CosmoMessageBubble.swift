@@ -11,6 +11,9 @@ import SwiftUI
 /// Dispatches to the appropriate layout based on `CosmoWindowMessageType`.
 struct CosmoMessageBubble: View {
     let message: CosmoWindowMessage
+    var onEdit: ((CosmoWindowMessage) -> Void)? = nil
+
+    @State private var isHovering = false
 
     var body: some View {
         switch message.type {
@@ -40,14 +43,17 @@ struct CosmoMessageBubble: View {
             Spacer(minLength: 60)
 
             VStack(alignment: .trailing, spacing: 4) {
-                // Mentioned atoms (if any)
+                // Mention context pills
                 if let mentions = message.mentionedAtomInfo, !mentions.isEmpty {
-                    userMentionChips(mentions)
+                    HStack(spacing: 4) {
+                        ForEach(mentions, id: \.uuid) { mention in
+                            mentionPill(mention)
+                        }
+                    }
                 }
 
-                Text(message.content)
+                inlineContentText(message.content, mentions: message.mentionedAtomInfo)
                     .font(DS.body)
-                    .foregroundColor(DS.text)
                     .textSelection(.enabled)
                     .lineSpacing(4)
 
@@ -59,38 +65,109 @@ struct CosmoMessageBubble: View {
             .padding(.vertical, 10)
             .background(DS.accent.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+            .overlay(alignment: .topTrailing) {
+                if isHovering, let onEdit = onEdit {
+                    Button {
+                        onEdit(message)
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .frame(width: 22, height: 22)
+                            .background(DS.surfaceElevated)
+                            .clipShape(Circle())
+                            .shadow(color: Color.black.opacity(0.15), radius: 3, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 8, y: -8)
+                    .transition(.opacity)
+                }
+            }
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.snappy) {
+                    isHovering = hovering
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 2)
     }
 
-    // MARK: - User Mention Chips
+    // MARK: - Mention Pill (sent message)
 
     @ViewBuilder
-    private func userMentionChips(_ mentions: [MentionedAtomInfo]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(mentions, id: \.title) { mention in
-                    userMentionChip(mention)
-                }
-            }
-        }
-    }
-
-    private func userMentionChip(_ mention: MentionedAtomInfo) -> some View {
-        let entityType = EntityType(rawValue: mention.type) ?? .idea
-        return HStack(spacing: 3) {
+    private func mentionPill(_ mention: MentionedAtomInfo) -> some View {
+        let entityType = EntityType(rawValue: mention.type) ?? .note
+        HStack(spacing: 3) {
             Circle()
                 .fill(CosmoMentionColors.color(for: entityType))
                 .frame(width: 5, height: 5)
             Text(mention.title)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(CosmoMentionColors.color(for: entityType))
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(CosmoMentionColors.pillBackground(for: entityType))
         .clipShape(Capsule())
+    }
+
+    // MARK: - Inline Mention Rendering
+
+    /// Renders message content with `@Title` substrings highlighted in entity-type colors.
+    /// Falls back to plain text if no mentions or no inline `@Title` patterns found.
+    private func inlineContentText(_ content: String, mentions: [MentionedAtomInfo]?) -> Text {
+        guard let mentions = mentions, !mentions.isEmpty else {
+            return Text(content).foregroundColor(DS.text)
+        }
+
+        // Check if any @Title patterns exist in content (inline style)
+        let hasInlineMentions = mentions.contains { mention in
+            content.contains("@\(mention.title)")
+        }
+
+        guard hasInlineMentions else {
+            // Legacy messages — no inline @Title in content, show plain text
+            return Text(content).foregroundColor(DS.text)
+        }
+
+        return buildMentionHighlightedText(content, mentions: mentions)
+    }
+
+    /// Parses content for `@Title` substrings and builds rich Text with colored mention spans
+    /// using AttributedString for per-range styling.
+    private func buildMentionHighlightedText(_ content: String, mentions: [MentionedAtomInfo]) -> Text {
+        struct MentionMatch {
+            let range: Range<String.Index>
+            let mention: MentionedAtomInfo
+        }
+
+        var matches: [MentionMatch] = []
+        for mention in mentions {
+            let pattern = "@\(mention.title)"
+            var searchStart = content.startIndex
+            while let range = content.range(of: pattern, range: searchStart..<content.endIndex) {
+                matches.append(MentionMatch(range: range, mention: mention))
+                searchStart = range.upperBound
+            }
+        }
+
+        matches.sort { $0.range.lowerBound < $1.range.lowerBound }
+
+        // Build AttributedString with per-range styling
+        var attributed = AttributedString(content)
+        attributed.foregroundColor = DS.text
+
+        for match in matches {
+            let entityType = EntityType(rawValue: match.mention.type) ?? .idea
+            if let attrRange = Range(match.range, in: attributed) {
+                attributed[attrRange].foregroundColor = CosmoMentionColors.color(for: entityType)
+                attributed[attrRange].font = .body.bold()
+            }
+        }
+
+        return Text(attributed)
     }
 
     // MARK: - Assistant Bubble

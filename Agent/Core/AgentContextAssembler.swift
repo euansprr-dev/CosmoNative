@@ -19,6 +19,17 @@ class AgentContextAssembler {
     /// Message count threshold above which conversation history is summarized.
     private let summarizationThreshold = 15
 
+    // MARK: - Context Cache (conversation-scoped TTL)
+
+    /// Cached dynamic context to avoid re-fetching from GRDB on every message.
+    private var cachedDynamicContext: (conversationId: String, intent: AgentIntent?, context: String, timestamp: Date)?
+
+    /// Cached linked atom context (separate from main context since linked UUIDs can change mid-conversation).
+    private var cachedLinkedContext: (uuids: [String], context: String, timestamp: Date)?
+
+    /// How long cached context stays valid (2 minutes).
+    private let contextCacheTTL: TimeInterval = 120
+
     /// The default identity prompt text, exposed so the Settings UI can show it as a baseline.
     static let defaultIdentityPrompt: String = {
         return """
@@ -213,6 +224,17 @@ class AgentContextAssembler {
         Opus-powered writing engine with access to the full client voice fingerprint, swipe blueprints, \
         beat patterns, and learned lessons. Writing inline bypasses all of this context and produces \
         inferior content. Even if you think you can write it, use the tools.
+
+        CRITICAL — INLINE DRAFT PROHIBITION:
+        You MUST call generate_draft (or generate_outline) for ALL content creation. NEVER write \
+        slides, tweets, scripts, carousel JSON, or any content longer than 3 sentences directly in \
+        your response. If you find yourself typing slide/section content, STOP and call the tool instead. \
+        This applies even if you think the content is simple or short — the writing engine has context \
+        you do not have.
+
+        After any generate_draft / generate_outline / revise_draft tool call returns, extract the \
+        "formattedDraft" field from the tool result and display ONLY that text to the user. \
+        Never show the raw JSON tool result. Never show the "draft" field. Only "formattedDraft".
         - CONTENT CREATION FLOW:
           NEW content (no existing atom): create_content(title, clientName, platform) → generate_outline(contentUUID, clientName) → present outline + hooks to user → generate_draft(contentUUID, clientName).
           EXISTING content (UUID shown in ACTIVE CONTENT or EXISTING IN-PROGRESS CONTENT above): use that UUID directly with generate_outline or generate_draft. Do NOT create a duplicate atom.
@@ -300,90 +322,123 @@ class AgentContextAssembler {
             .joined(separator: "\n\n")
 
         // --- Dynamic sections: live data that changes every request ---
+        // GRDB-heavy layers (2, 3, 3.5, 5.5) are cached with a 2-minute TTL to avoid
+        // re-fetching client profiles, swipes, taste profiles, etc. on every message.
+        // Per-message layers (3.75 active items, 4 preferences, 4.5 skills, 5 conversation) stay fresh.
         var dynamicSections: [(priority: Int, content: String)] = []
         var usedTokens = estimateTokens(cachedPrompt)
 
-        // Layer 2: Intent-aware live user context from GRDB
-        let linkedUUIDs = conversation?.linkedAtomUUIDs ?? []
-        let userContext = await buildIntentAwareContext(intent: intent, linkedAtomUUIDs: linkedUUIDs)
-        if !userContext.isEmpty {
-            dynamicSections.append((priority: 1, content: userContext))
-            usedTokens += estimateTokens(userContext)
-        }
+        let convId = conversation?.id ?? ""
+        let cacheHit = cachedDynamicContext.map { cached in
+            cached.conversationId == convId &&
+            cached.intent == intent &&
+            Date().timeIntervalSince(cached.timestamp) < contextCacheTTL
+        } ?? false
 
-        // Layer 3: Taste profile (high priority for draft/strategy/brainstorm intents)
-        let tasteIntents: Set<AgentIntent> = [.draft, .strategy, .brainstorm, .analyze]
-        if let intent = intent, tasteIntents.contains(intent) {
-            let taste = await tasteProfileContext()
-            if !taste.isEmpty {
-                dynamicSections.append((priority: 2, content: taste))
-                usedTokens += estimateTokens(taste)
+        if cacheHit, let cached = cachedDynamicContext {
+            // Use cached GRDB context (layers 2, 3, 3.5, 5.5)
+            dynamicSections.append((priority: 1, content: cached.context))
+            usedTokens += estimateTokens(cached.context)
+        } else {
+            // Fetch fresh from GRDB and cache
+            var grdbSections: [String] = []
+
+            // Layer 2: Intent-aware live user context from GRDB
+            let linkedUUIDs = conversation?.linkedAtomUUIDs ?? []
+            let userContext = await buildIntentAwareContext(intent: intent, linkedAtomUUIDs: linkedUUIDs)
+            if !userContext.isEmpty {
+                grdbSections.append(userContext)
+            }
+
+            // Layer 3: Taste profile (high priority for draft/strategy/brainstorm intents)
+            let tasteIntents: Set<AgentIntent> = [.draft, .strategy, .brainstorm, .analyze]
+            if let intent = intent, tasteIntents.contains(intent) {
+                let taste = await tasteProfileContext()
+                if !taste.isEmpty {
+                    grdbSections.append(taste)
+                }
+            }
+
+            // Layer 3.5: Standing instructions (so the LLM knows what recurring tasks exist)
+            let standingInstructionContext = await standingInstructionsPrompt()
+            if !standingInstructionContext.isEmpty {
+                grdbSections.append(standingInstructionContext)
+            }
+
+            // Layer 5.5: Auto-load saved analyses for creative intents (WP6)
+            let analysisIntents: Set<AgentIntent> = [.draft, .strategy, .analyze, .brainstorm]
+            if let intent = intent, analysisIntents.contains(intent) {
+                var activeClientName: String? = nil
+                if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
+                    for uuid in conv.linkedAtomUUIDs.reversed() {
+                        if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
+                           let clientUUID = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
+                           let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
+                            activeClientName = clientAtom.title
+                            break
+                        }
+                    }
+                }
+                let analysisContext = await loadRecentAnalyses(filteredToClient: activeClientName)
+                if !analysisContext.isEmpty {
+                    grdbSections.append(analysisContext)
+                }
+            }
+
+            let combinedGrdbContext = grdbSections.joined(separator: "\n\n")
+            cachedDynamicContext = (conversationId: convId, intent: intent, context: combinedGrdbContext, timestamp: Date())
+
+            if !combinedGrdbContext.isEmpty {
+                dynamicSections.append((priority: 1, content: combinedGrdbContext))
+                usedTokens += estimateTokens(combinedGrdbContext)
             }
         }
 
-        // Layer 3.5: Standing instructions (so the LLM knows what recurring tasks exist)
-        let standingInstructionContext = await standingInstructionsPrompt()
-        if !standingInstructionContext.isEmpty {
-            dynamicSections.append((priority: 2, content: standingInstructionContext))
-            usedTokens += estimateTokens(standingInstructionContext)
-        }
-
-        // Layer 3.75: Active items context (numbered list resolution)
+        // Layer 3.75: Active items context (numbered list resolution) — always fresh
         if let itemsCtx = activeItemsContext, !itemsCtx.isEmpty {
             dynamicSections.append((priority: 2, content: itemsCtx))
             usedTokens += estimateTokens(itemsCtx)
         }
 
-        // Layer 4: Learned preferences
+        // Layer 4: Learned preferences — always fresh
         if !preferences.isEmpty {
             let prefSection = preferencesPrompt(preferences)
             dynamicSections.append((priority: 3, content: prefSection))
             usedTokens += estimateTokens(prefSection)
         }
 
-        // Layer 4.5: Learned skills (intent-filtered)
+        // Layer 4.5: Learned skills (intent-filtered) — always fresh
         let skillsSection = await learnedSkillsContext(intent: intent, conversation: conversation)
         if !skillsSection.isEmpty {
             dynamicSections.append((priority: 3, content: skillsSection))
             usedTokens += estimateTokens(skillsSection)
         }
 
-        // Layer 5: Conversation history (summarized if long)
+        // Layer 5: Conversation history (summarized if long) — always fresh
         if let conv = conversation, !conv.messages.isEmpty {
             let convContext = await conversationContext(conv)
             dynamicSections.append((priority: 4, content: convContext))
             usedTokens += estimateTokens(convContext)
         }
 
-        // Layer 5.5: Auto-load saved analyses for creative intents (WP6)
-        // Filtered to active client when possible, so irrelevant analyses don't burn budget.
-        let analysisIntents: Set<AgentIntent> = [.draft, .strategy, .analyze, .brainstorm]
-        if let intent = intent, analysisIntents.contains(intent) {
-            // Determine active client name from linked content atoms for scoping
-            var activeClientName: String? = nil
-            if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
-                for uuid in conv.linkedAtomUUIDs.reversed() {
-                    if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
-                       let clientUUID = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
-                       let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
-                        activeClientName = clientAtom.title
-                        break
-                    }
-                }
-            }
-            let analysisContext = await loadRecentAnalyses(filteredToClient: activeClientName)
-            if !analysisContext.isEmpty {
-                dynamicSections.append((priority: 5, content: analysisContext))
-                usedTokens += estimateTokens(analysisContext)
-            }
-        }
-
-        // Layer 6: Linked atom context
+        // Layer 6: Linked atom context — cached separately since linked UUIDs can change
         if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
-            let linkedContext = await injectLinkedContext(atomUUIDs: conv.linkedAtomUUIDs)
-            if !linkedContext.isEmpty {
-                dynamicSections.append((priority: 5, content: linkedContext))
-                usedTokens += estimateTokens(linkedContext)
+            let linkedUUIDs = conv.linkedAtomUUIDs
+            let linkedCacheHit = cachedLinkedContext.map { cached in
+                cached.uuids == linkedUUIDs &&
+                Date().timeIntervalSince(cached.timestamp) < contextCacheTTL
+            } ?? false
+
+            if linkedCacheHit, let cached = cachedLinkedContext {
+                dynamicSections.append((priority: 5, content: cached.context))
+                usedTokens += estimateTokens(cached.context)
+            } else {
+                let linkedContext = await injectLinkedContext(atomUUIDs: linkedUUIDs)
+                if !linkedContext.isEmpty {
+                    cachedLinkedContext = (uuids: linkedUUIDs, context: linkedContext, timestamp: Date())
+                    dynamicSections.append((priority: 5, content: linkedContext))
+                    usedTokens += estimateTokens(linkedContext)
+                }
             }
         }
 
@@ -979,10 +1034,18 @@ class AgentContextAssembler {
 
                 let title = atom.title ?? "Untitled"
                 let typeLabel = atom.type.rawValue
-                let body = String((atom.body ?? "").prefix(300))
+                let body = String((atom.body ?? "").prefix(1500))
                 parts.append("[\(typeLabel)] \(title) (UUID: \(uuid))")
                 if !body.isEmpty {
                     parts.append("  Content: \(body)")
+                }
+
+                // Include swipe analysis summary for swipe file atoms
+                if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
+                    let summary = MentionContextHelper.swipeAnalysisSummary(analysis)
+                    if !summary.isEmpty {
+                        parts.append("  Swipe Analysis: \(summary)")
+                    }
                 }
 
                 // Fetch linked atoms
@@ -995,10 +1058,18 @@ class AgentContextAssembler {
                         let linkedTitle = linkedAtom.title ?? "Untitled"
                         let linkedType = linkedAtom.type.rawValue
                         let linkType = link.type
-                        let linkedBody = String((linkedAtom.body ?? "").prefix(150))
+                        let linkedBody = String((linkedAtom.body ?? "").prefix(500))
                         parts.append("  -> [\(linkType)] \(linkedType): \(linkedTitle)")
                         if !linkedBody.isEmpty {
                             parts.append("     \(linkedBody)")
+                        }
+
+                        // Include swipe analysis for linked swipe files too
+                        if linkedAtom.isSwipeFileAtom, let analysis = linkedAtom.swipeAnalysis {
+                            let summary = MentionContextHelper.swipeAnalysisSummary(analysis)
+                            if !summary.isEmpty {
+                                parts.append("     Swipe Analysis: \(summary)")
+                            }
                         }
                     }
                 }

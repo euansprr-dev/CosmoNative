@@ -716,7 +716,9 @@ class PromptTemplateStore: ObservableObject {
 
     AFTER GENERATION: Think tool self-evaluate (format compliance + failure fingerprint). Run Self-Edit Pass. Fix failures before outputting.
 
-    OUTPUT FORMAT: Carousel = JSON {"slides": [{"number": 1, "text": "...", "visualDirection": "..."}]}. Thread = JSON {"tweets": [...]}. Video = plaintext with [VISUAL: ...]. Long-form = Markdown.
+    OUTPUT FORMAT: ALWAYS use the write_draft tool to submit content — NEVER paste draft text inline in your response.
+    For the write_draft tool's content field: Carousel = JSON {"slides": [{"number": 1, "text": "..."}]}. Thread = JSON {"tweets": [...]}. Video = plaintext with [VISUAL: ...]. Long-form = Markdown.
+    Your conversational response should be a brief summary of what you wrote (e.g., "Here's a 7-slide carousel draft with a curiosity gap hook. Want me to adjust anything?").
 
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
     SECTION 5: FEW-SHOT EXAMPLE INJECTION FORMAT

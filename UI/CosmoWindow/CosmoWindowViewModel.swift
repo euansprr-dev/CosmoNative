@@ -33,6 +33,10 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var mentionSearchText = ""
     @Published var modelOverride: AgentModelTier? = nil
 
+    // MARK: - Edit State
+
+    @Published var pendingEditIndex: Int? = nil
+
     // MARK: - Dependencies
 
     private let agentService = CosmoAgentService.shared
@@ -96,7 +100,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Capture mention info for the user message before clearing
         let mentionInfo: [MentionedAtomInfo]? = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map {
-            MentionedAtomInfo(type: $0.type.rawValue, title: $0.title ?? "Untitled")
+            MentionedAtomInfo(uuid: $0.uuid, type: $0.type.rawValue, title: $0.title ?? "Untitled")
         }
 
         // Append user message to chat (with mention metadata)
@@ -127,7 +131,14 @@ final class CosmoWindowViewModel: ObservableObject {
                    let uuid = contentUUID {
                     // Route to UnifiedWritingEngine for content-specific writing
                     let response = await routeToWritingEngine(text: trimmed, atomUUID: uuid)
-                    updateAssistantMessage(id: assistantId, content: response, isStreaming: false)
+                    let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
+                    updateAssistantMessage(id: assistantId, content: response, isStreaming: false, toolActivityGroups: frozenGroups)
+                    liveToolActivity = []
+                    activeToolLabel = nil
+                } else if isWritingRequest, activeContext.type != .contentFocusMode {
+                    // Writing request from outside Content Focus Mode —
+                    // auto-create a content atom, open focus mode, and route through writing engine
+                    await autoCreateContentAndRoute(text: trimmed, assistantId: assistantId)
                 } else {
                     // Route to general CosmoAgentService
                     let response = await routeToAgentService(text: trimmed)
@@ -287,6 +298,27 @@ final class CosmoWindowViewModel: ObservableObject {
         messages.append(.system("Operation cancelled."))
     }
 
+    // MARK: - Edit & Resend
+
+    /// Copies a past user message's content into the input field for editing.
+    func editAndResend(messageId: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        inputText = messages[index].content
+        pendingEditIndex = index
+    }
+
+    /// Truncates the conversation to the pending edit index and sends a new message.
+    func sendEditedMessage(_ text: String) async {
+        guard let editIndex = pendingEditIndex else {
+            await sendMessage(text)
+            return
+        }
+        // Remove the edited message and everything after it
+        messages = Array(messages.prefix(editIndex))
+        pendingEditIndex = nil
+        await sendMessage(text)
+    }
+
     // MARK: - Token Usage
 
     /// Estimated token count for the current conversation (rough: 4 chars per token).
@@ -375,13 +407,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Inject @-mentioned atom context into the message
         if !mentionedAtoms.isEmpty {
-            var mentionBlock = "## Referenced Context\n"
-            for atom in mentionedAtoms {
-                let typeLabel = atom.type.rawValue.uppercased()
-                let title = atom.title ?? "Untitled"
-                let body = String((atom.body ?? "").prefix(500))
-                mentionBlock += "[\(typeLabel): \"\(title)\"]\n\(body)\n\n"
-            }
+            let mentionBlock = MentionContextHelper.buildMentionBlock(atoms: mentionedAtoms)
             enrichedText = mentionBlock + "\n---\n" + enrichedText
             clearMentions()
         }
@@ -442,7 +468,10 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         // Determine the current content step from context data
-        let stepRaw = activeContext.data.viewSpecificData["contentStep"] ?? "draft"
+        // ContentContextProvider stores "step", fallback to "contentStep" for compat
+        let stepRaw = activeContext.data.viewSpecificData["step"]
+            ?? activeContext.data.viewSpecificData["contentStep"]
+            ?? "brainstorm"
         let step: ContentStep
         switch stepRaw {
         case "brainstorm": step = .brainstorm
@@ -545,13 +574,119 @@ final class CosmoWindowViewModel: ObservableObject {
         return "gearshape"
     }
 
+    // MARK: - Auto-Create Content from Writing Requests
+
+    /// Extracts swipe-related context from the current @-mentioned atoms.
+    private func extractSwipeContext() -> (swipeUUIDs: [String], clientUUID: String?, framework: String?, hooks: [String], titleHint: String?) {
+        var swipeUUIDs: [String] = []
+        var clientUUID: String?
+        var framework: String?
+        var hooks: [String] = []
+        var titleHint: String?
+
+        for atom in mentionedAtoms {
+            if titleHint == nil {
+                titleHint = atom.title
+            }
+            if let analysis = atom.swipeAnalysis {
+                swipeUUIDs.append(atom.uuid)
+                if clientUUID == nil { clientUUID = analysis.clientUUID }
+                if framework == nil { framework = analysis.frameworkType?.rawValue }
+                if let hook = analysis.hookText { hooks.append(hook) }
+            }
+        }
+
+        return (swipeUUIDs, clientUUID, framework, hooks, titleHint)
+    }
+
+    /// Derives a content title from the user's request text, falling back to a swipe title hint.
+    private func deriveTitleFromRequest(_ text: String, fallback: String?) -> String {
+        let lower = text.lowercased()
+        // Match patterns like "draft a reel about X", "write a carousel on Y"
+        let prepositions = ["about ", "on ", "for ", "titled ", "called "]
+        for prep in prepositions {
+            if let range = lower.range(of: prep) {
+                let afterPrep = String(text[range.upperBound...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !afterPrep.isEmpty {
+                    // Take up to first punctuation or end
+                    let cleaned = afterPrep.components(separatedBy: CharacterSet(charactersIn: ".!?")).first ?? afterPrep
+                    let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty && trimmed.count <= 100 {
+                        return trimmed
+                    }
+                }
+            }
+        }
+        return fallback ?? "New Content"
+    }
+
+    /// Auto-creates a content atom with inherited swipe context, opens Content Focus Mode,
+    /// and routes the message through the UnifiedWritingEngine.
+    private func autoCreateContentAndRoute(text: String, assistantId: UUID) async {
+        // 1. Extract context from @-mentioned atoms
+        let ctx = extractSwipeContext()
+
+        // 2. Build mention block before clearing mentions
+        var enrichedText = text
+        if !mentionedAtoms.isEmpty {
+            let mentionBlock = MentionContextHelper.buildMentionBlock(atoms: mentionedAtoms)
+            enrichedText = mentionBlock + "\n---\n" + text
+            clearMentions()
+        }
+
+        // 3. Create content atom
+        let title = deriveTitleFromRequest(text, fallback: ctx.titleHint)
+        let pipelineService = ContentPipelineService()
+        guard let contentAtom = try? await pipelineService.createContent(
+            title: title,
+            clientUUID: ctx.clientUUID
+        ) else {
+            updateAssistantMessage(id: assistantId, content: "Failed to create content atom.", isStreaming: false)
+            return
+        }
+
+        // 4. Update metadata with inherited swipe context
+        if !ctx.swipeUUIDs.isEmpty || ctx.framework != nil || !ctx.hooks.isEmpty {
+            _ = try? await AtomRepository.shared.update(uuid: contentAtom.uuid) { atom in
+                var meta = atom.metadataValue(as: ContentAtomMetadata.self) ?? ContentAtomMetadata(phase: .ideation, wordCount: 0)
+                meta.inheritedSwipeUUIDs = ctx.swipeUUIDs.isEmpty ? nil : ctx.swipeUUIDs
+                meta.inheritedFramework = ctx.framework
+                meta.inheritedHooks = ctx.hooks.isEmpty ? nil : ctx.hooks
+                meta.activatedAt = ISO8601DateFormatter().string(from: Date())
+                atom = atom.withMetadata(meta)
+            }
+        }
+
+        // 5. Open Content Focus Mode (renders behind CosmoWindow at lower zIndex)
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": contentAtom.uuid]
+        )
+
+        // 6. System message
+        messages.append(.system("Created new content: '\(title)' and opened in Focus Mode."))
+
+        // 7. Wait for focus mode to mount (~800ms for MainView handler delays + view mount)
+        try? await Task.sleep(nanoseconds: 800_000_000)
+
+        // 8. Route to writing engine with the new content atom UUID
+        let response = await routeToWritingEngine(text: enrichedText, atomUUID: contentAtom.uuid)
+        let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
+        updateAssistantMessage(id: assistantId, content: response, isStreaming: false, toolActivityGroups: frozenGroups)
+        liveToolActivity = []
+        activeToolLabel = nil
+    }
+
     /// Heuristic check for writing-specific requests in content context.
     private func isContentWritingRequest(_ text: String) -> Bool {
         let lower = text.lowercased()
         let writingKeywords = [
             "write", "draft", "generate", "rewrite", "expand", "condense",
             "rephrase", "hook", "outline", "section", "slide", "carousel",
-            "caption", "cta", "call to action", "body copy", "opening line"
+            "caption", "cta", "call to action", "body copy", "opening line",
+            "brainstorm"
         ]
         return writingKeywords.contains { lower.contains($0) }
     }

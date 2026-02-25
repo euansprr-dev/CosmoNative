@@ -154,8 +154,10 @@ struct CosmoAIFocusModeView: View {
                         searchText: $viewModel.mentionSearchText,
                         onSelect: { atom in
                             viewModel.addMention(atom)
+                            // Remove the @query text — the chip is the visual indicator
                             if let atIndex = inputText.lastIndex(of: "@") {
                                 inputText = String(inputText[inputText.startIndex..<atIndex])
+                                if !inputText.isEmpty && !inputText.hasSuffix(" ") { inputText += " " }
                             }
                         },
                         onDismiss: {
@@ -167,7 +169,7 @@ struct CosmoAIFocusModeView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                // Mentioned atom chips
+                // Mention context chips (above input)
                 if !viewModel.mentionedAtoms.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
@@ -175,10 +177,9 @@ struct CosmoAIFocusModeView: View {
                                 mentionChip(atom)
                             }
                         }
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                     }
-                    .frame(height: 28)
-                    .padding(.top, 6)
                 }
 
                 // Input bar
@@ -250,6 +251,35 @@ struct CosmoAIFocusModeView: View {
         }
     }
 
+    // MARK: - Mention Chip
+
+    @ViewBuilder
+    private func mentionChip(_ atom: Atom) -> some View {
+        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
+        HStack(spacing: 4) {
+            Circle()
+                .fill(CosmoMentionColors.color(for: entityType))
+                .frame(width: 6, height: 6)
+            Text(atom.title ?? "Untitled")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(CosmoMentionColors.color(for: entityType))
+                .lineLimit(1)
+            Button {
+                viewModel.removeMention(atom)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.6))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(CosmoMentionColors.pillBackground(for: entityType))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(CosmoMentionColors.color(for: entityType).opacity(0.3), lineWidth: 1))
+    }
+
     // MARK: - Model Selector
     private var modelSelector: some View {
         Menu {
@@ -276,30 +306,6 @@ struct CosmoAIFocusModeView: View {
         case nil: return "Auto"
         default: return "Auto"
         }
-    }
-
-    // MARK: - Mention Chip
-    private func mentionChip(_ atom: Atom) -> some View {
-        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .idea
-        return HStack(spacing: 4) {
-            Image(systemName: atom.type.iconName)
-                .font(.system(size: 9))
-            Text(atom.title ?? "Untitled")
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-            Button {
-                viewModel.removeMention(atom)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .bold))
-            }
-            .buttonStyle(.plain)
-        }
-        .foregroundColor(CosmoMentionColors.color(for: entityType))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(CosmoMentionColors.pillBackground(for: entityType))
-        .clipShape(Capsule())
     }
 
     // MARK: - Send

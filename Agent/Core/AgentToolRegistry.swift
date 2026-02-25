@@ -593,20 +593,22 @@ class AgentToolRegistry {
                         "contentUUID": ["type": "string", "description": "UUID of the content atom to generate an outline for"] as [String: Any],
                         "notes": ["type": "string", "description": "Creator direction for the outline. Include specific instructions like 'emulate the hook structure of the blueprint swipe', 'use the same comparison format', etc."] as [String: Any],
                         "clientName": ["type": "string", "description": "Client name for this content piece (e.g. 'Ben A'). Ensures the engine loads the correct client profile."] as [String: Any],
-                        "blueprintSwipeUUID": ["type": "string", "description": "UUID of a specific swipe to use as the PRIMARY structural blueprint. When provided, the engine will emulate this swipe's hook type, beat pattern, and section structure rather than searching for matches."] as [String: Any]
+                        "blueprintSwipeUUID": ["type": "string", "description": "UUID of a specific swipe to use as the PRIMARY structural blueprint. When provided, the engine will emulate this swipe's hook type, beat pattern, and section structure rather than searching for matches."] as [String: Any],
+                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Content format — reel (video script), carousel (slides), thread (tweets), post (single). MUST match what the user requested."] as [String: Any]
                     ] as [String: Any],
                     "required": ["contentUUID"]
                 ]
             ),
             LLMToolDefinition(
                 name: "generate_draft",
-                description: "Generate a full draft for a content atom using the unified writing engine. Loads client profile, swipe intelligence, and beat patterns, then writes a draft following the outline beat-by-beat. Requires a content atom UUID with an outline (call generate_outline first). ALWAYS pass clientName. Pass userDirection to relay any specific creative instructions from the user.",
+                description: "Generate a full draft for a content atom using the unified writing engine. Loads client profile, swipe intelligence, and beat patterns, then writes a draft following the outline beat-by-beat. Requires a content atom UUID with an outline (call generate_outline first). ALWAYS pass clientName. Pass userDirection to relay any specific creative instructions from the user. ALWAYS pass contentFormat to specify the format (reel, carousel, thread, post).",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
                         "contentUUID": ["type": "string", "description": "UUID of the content atom to draft"] as [String: Any],
                         "clientName": ["type": "string", "description": "Client name for this content piece. Ensures the engine loads the correct client profile."] as [String: Any],
-                        "userDirection": ["type": "string", "description": "The user's specific creative direction or instructions for this draft. Pass the user's exact words — e.g. 'make it punchy', 'focus on the transformation story', 'keep slides under 30 words'. This is prepended as a mandatory directive to the writing engine."] as [String: Any]
+                        "userDirection": ["type": "string", "description": "The user's specific creative direction or instructions for this draft. Pass the user's exact words — e.g. 'make it punchy', 'focus on the transformation story', 'keep slides under 30 words'. This is prepended as a mandatory directive to the writing engine."] as [String: Any],
+                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Content format — reel (video script), carousel (slides), thread (tweets), post (single). MUST match what the user requested."] as [String: Any]
                     ] as [String: Any],
                     "required": ["contentUUID"]
                 ]

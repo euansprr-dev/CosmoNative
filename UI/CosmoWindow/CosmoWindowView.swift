@@ -268,7 +268,12 @@ struct CosmoWindowView: View {
 
                     // Messages
                     ForEach(viewModel.messages) { message in
-                        CosmoMessageBubble(message: message)
+                        CosmoMessageBubble(
+                            message: message,
+                            onEdit: message.type == .user ? { msg in
+                                viewModel.editAndResend(messageId: msg.id)
+                            } : nil
+                        )
                     }
 
                     // Live tool activity (shown during processing)
@@ -351,6 +356,34 @@ struct CosmoWindowView: View {
                 errorBanner(error)
             }
 
+            // Edit indicator (above input)
+            if viewModel.pendingEditIndex != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.accent)
+
+                    Text("Editing message")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+
+                    Spacer()
+
+                    Button {
+                        viewModel.pendingEditIndex = nil
+                        inputText = ""
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(DS.accent.opacity(0.06))
+            }
+
             // Mention overlay (above input)
             if viewModel.showMentionOverlay {
                 CosmoMentionOverlay(
@@ -358,9 +391,10 @@ struct CosmoWindowView: View {
                     searchText: $viewModel.mentionSearchText,
                     onSelect: { atom in
                         viewModel.addMention(atom)
-                        // Remove the @query text from input
+                        // Remove the @query text — the chip is the visual indicator
                         if let atIndex = inputText.lastIndex(of: "@") {
                             inputText = String(inputText[inputText.startIndex..<atIndex])
+                            if !inputText.isEmpty && !inputText.hasSuffix(" ") { inputText += " " }
                         }
                     },
                     onDismiss: {
@@ -372,7 +406,7 @@ struct CosmoWindowView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Mentioned atom chips
+            // Mention context chips (above input)
             if !viewModel.mentionedAtoms.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -380,13 +414,12 @@ struct CosmoWindowView: View {
                             mentionChip(atom)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                 }
-                .frame(height: 28)
-                .padding(.top, 6)
             }
 
-            HStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 // @ mention button
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
@@ -402,11 +435,12 @@ struct CosmoWindowView: View {
                 }
                 .buttonStyle(.plain)
 
-                // Text field
-                TextField("Ask Cosmo anything...", text: $inputText)
+                // Expanding text field (grows up to 5 lines, then scrolls)
+                TextField("Ask Cosmo anything...", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(DS.body)
                     .foregroundColor(DS.text)
+                    .lineLimit(1...5)
                     .focused($isInputFocused)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -442,19 +476,29 @@ struct CosmoWindowView: View {
                 // Model selector
                 modelSelector
 
-                // Send button
-                Button {
-                    sendCurrentMessage()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(
-                            canSend ? DS.accent : DS.textMuted
-                        )
+                // Send / Stop button
+                if viewModel.isProcessing {
+                    Button {
+                        viewModel.cancelCurrentOperation()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(DS.red)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        sendCurrentMessage()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(
+                                canSend ? DS.accent : DS.textMuted
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -463,27 +507,31 @@ struct CosmoWindowView: View {
 
     // MARK: - Mention Chip
 
+    @ViewBuilder
     private func mentionChip(_ atom: Atom) -> some View {
-        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .idea
-        return HStack(spacing: 4) {
-            Image(systemName: atom.type.iconName)
-                .font(.system(size: 9))
+        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
+        HStack(spacing: 4) {
+            Circle()
+                .fill(CosmoMentionColors.color(for: entityType))
+                .frame(width: 6, height: 6)
             Text(atom.title ?? "Untitled")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(CosmoMentionColors.color(for: entityType))
                 .lineLimit(1)
             Button {
                 viewModel.removeMention(atom)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.6))
             }
             .buttonStyle(.plain)
         }
-        .foregroundColor(CosmoMentionColors.color(for: entityType))
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(CosmoMentionColors.pillBackground(for: entityType))
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(CosmoMentionColors.color(for: entityType).opacity(0.3), lineWidth: 1))
     }
 
     // MARK: - Model Selector
@@ -661,8 +709,14 @@ struct CosmoWindowView: View {
             viewModel.mentionSearchText = ""
         }
 
-        Task {
-            await viewModel.sendMessage(text)
+        if viewModel.pendingEditIndex != nil {
+            Task {
+                await viewModel.sendEditedMessage(text)
+            }
+        } else {
+            Task {
+                await viewModel.sendMessage(text)
+            }
         }
     }
 }

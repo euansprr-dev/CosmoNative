@@ -107,7 +107,7 @@ struct CosmoBlockWrapper<Content: View>: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Main card
+            // Main card — tap gestures constrained to card bounds
             VStack(spacing: 0) {
                 // Content area - fills available space naturally
                 content()
@@ -139,10 +139,31 @@ struct CosmoBlockWrapper<Content: View>: View {
             )
             .scaleEffect(isHovered && !isExpanded && !isSelected ? 1.008 : 1.0)
             .offset(y: isHovered && !isExpanded && !isSelected ? -2 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
+            .onTapGesture {
+                // Single tap to select - post notification to CanvasView
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Canvas.blockSelected,
+                    object: nil,
+                    userInfo: ["blockId": block.id]
+                )
+            }
+            .onTapGesture(count: 2) {
+                // Double-tap to enter focus mode
+                CosmicHaptics.shared.play(.focusEnter)
+                if let onFocusMode = onFocusMode {
+                    onFocusMode()
+                } else {
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: ["type": block.entityType, "id": block.entityId]
+                    )
+                }
+            }
 
-            // Floating toolbar when selected
-            // Always in view hierarchy, opacity controlled by selection state
-            // This avoids view creation during animation which can cause crashes
+            // Floating toolbar when selected — outside tap gesture scope
+            // so its layout doesn't extend the card's hit area
             BlockSelectionToolbar(
                 blockCount: 1,
                 accentColor: accentColor,
@@ -193,27 +214,6 @@ struct CosmoBlockWrapper<Content: View>: View {
                 hoverLocation = CGPoint(x: 0.5, y: 0.5)
             }
         }
-        .onTapGesture {
-            // Single tap to select - post notification to CanvasView
-            NotificationCenter.default.post(
-                name: CosmoNotification.Canvas.blockSelected,
-                object: nil,
-                userInfo: ["blockId": block.id]
-            )
-        }
-        .onTapGesture(count: 2) {
-            // Double-tap to enter focus mode
-            CosmicHaptics.shared.play(.focusEnter)
-            if let onFocusMode = onFocusMode {
-                onFocusMode()
-            } else {
-                NotificationCenter.default.post(
-                    name: .enterFocusMode,
-                    object: nil,
-                    userInfo: ["type": block.entityType, "id": block.entityId]
-                )
-            }
-        }
     }
 
     // MARK: - Background
@@ -238,7 +238,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             .stroke(
                 isSelected
                     ? accentColor.opacity(0.5)
-                    : Color.white.opacity(isHovered ? 0.10 : 0.06),
+                    : (isHovered ? DS.borderActive : DS.border),
                 lineWidth: 1
             )
     }
@@ -287,12 +287,12 @@ struct BlockSelectionToolbar: View {
             // Selected count
             Text("\(blockCount) selected")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
 
             // Divider
             Rectangle()
-                .fill(Color.white.opacity(0.1))
+                .fill(DS.borderActive)
                 .frame(width: 1, height: 20)
 
             // Action buttons
@@ -305,12 +305,12 @@ struct BlockSelectionToolbar: View {
                         .foregroundColor(
                             action == .delete
                                 ? Color(hex: "FF5F57")
-                                : (hoveredAction == action ? Color.white : Color.white.opacity(0.7))
+                                : (hoveredAction == action ? DS.text : DS.textSecondary)
                         )
                         .frame(width: 32, height: 32)
                         .background(
                             hoveredAction == action
-                                ? Color.white.opacity(0.1)
+                                ? DS.borderActive
                                 : Color.clear,
                             in: RoundedRectangle(cornerRadius: 6)
                         )
@@ -330,7 +330,7 @@ struct BlockSelectionToolbar: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onyxShadow(.floating)
     }
@@ -763,7 +763,7 @@ struct BlockResizeHandle: View {
 
             Image(systemName: "arrow.up.backward.and.arrow.down.forward")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(isHovered || isResizing ? Color.white.opacity(0.8) : Color.white.opacity(0.4))
+                .foregroundColor(isHovered || isResizing ? DS.text : DS.textMuted)
                 .rotationEffect(.degrees(90))
                 .frame(width: 14, height: 14)
                 .background(
@@ -855,12 +855,12 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
                     Text("Heading")
                         .font(.system(size: 24, weight: .regular, design: .serif))
                         .italic()
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
 
                     // Placeholder body
                     Text("Press / for commands...")
                         .font(.system(size: 14))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
 
                     Spacer()
                 }

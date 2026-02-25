@@ -226,8 +226,12 @@ final class SwipeFileEngine: ObservableObject {
                 )
 
                 if let author = mediaData.authorUsername, !author.isEmpty {
-                    richContent.author = author
-                    igData.authorUsername = author
+                    // Only use if it's a real username, not a numeric Instagram user ID
+                    let stripped = author.replacingOccurrences(of: "@", with: "")
+                    if !stripped.allSatisfy(\.isNumber) {
+                        richContent.author = author
+                        igData.authorUsername = author
+                    }
                 }
                 if let caption = mediaData.caption, !caption.isEmpty {
                     igData.caption = caption
@@ -242,8 +246,23 @@ final class SwipeFileEngine: ObservableObject {
 
                 igData.extractedMediaURL = mediaData.videoURL
                 igData.extractedAt = mediaData.extractedAt
-                if let carouselItems = mediaData.carouselItems {
+                if let carouselItems = mediaData.carouselItems, !carouselItems.isEmpty {
                     igData.carouselItems = carouselItems
+                    // Upgrade sourceType if it was .instagramPost
+                    richContent.sourceType = .instagramCarousel
+                    richContent.instagramType = "carousel"
+                    // Use first carousel image as thumbnail if none set
+                    if item.thumbnailUrl == nil || item.thumbnailUrl?.isEmpty == true {
+                        if let firstImage = carouselItems.first(where: { $0.mediaType == .image }) {
+                            item.thumbnailUrl = firstImage.mediaURL.absoluteString
+                            richContent.thumbnailUrl = firstImage.mediaURL.absoluteString
+                        }
+                    }
+                    // Cache first carousel image locally (CDN URLs expire)
+                    let shortcode = classification.contentId
+                    Task.detached(priority: .utility) {
+                        await Self.cacheCarouselThumbnail(items: carouselItems, shortcode: shortcode)
+                    }
                 }
 
                 richContent.instagramData = igData
@@ -457,7 +476,10 @@ final class SwipeFileEngine: ObservableObject {
             if asSwipe {
                 mutableItem.isSwipeFile = true
             }
-            mutableItem.contentSource = SwipeContentSource.clipboard.rawValue
+            // Only default to clipboard if no content source was set by the platform-specific handler
+            if mutableItem.contentSource == nil || mutableItem.contentSource?.isEmpty == true {
+                mutableItem.contentSource = SwipeContentSource.clipboard.rawValue
+            }
             mutableItem.updatedAt = ISO8601DateFormatter().string(from: Date())
 
             // Capture by value for async context
@@ -502,6 +524,11 @@ final class SwipeFileEngine: ObservableObject {
                 userInfo: ["research": mutableItem, "uuid": mutableItem.uuid]
             )
 
+            // Auto-process swipe in background (transcription + analysis)
+            if mutableItem.isSwipeFile, mutableItem.processingStatus == "pending" {
+                SwipeProcessingService.shared.processSwipeInBackground(uuid: mutableItem.uuid)
+            }
+
         } catch {
             print("SwipeFile: Failed to save item: \(error)")
             processingStatus = .error(error.localizedDescription)
@@ -544,6 +571,35 @@ final class SwipeFileEngine: ObservableObject {
             print("SwipeFile: Generated embedding for item \(item.id ?? -1)")
         } catch {
             print("SwipeFile: Failed to generate embedding: \(error)")
+        }
+    }
+
+    // MARK: - Carousel Thumbnail Caching
+
+    /// Download the first carousel image and cache locally so gallery cards can display it
+    /// even after Instagram CDN URLs expire.
+    static func cacheCarouselThumbnail(items: [CarouselItem], shortcode: String?) async {
+        guard let shortcode, !shortcode.isEmpty else { return }
+
+        let thumbDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
+        let thumbPath = thumbDir.appendingPathComponent("thumb-\(shortcode).jpg")
+
+        guard !FileManager.default.fileExists(atPath: thumbPath.path) else { return }
+        guard let imageItem = items.first(where: { $0.mediaType == .image }) ?? items.first else { return }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: imageItem.mediaURL)
+            guard let nsImage = NSImage(data: data) else { return }
+            guard let tiffData = nsImage.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiffData),
+                  let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return }
+
+            try FileManager.default.createDirectory(at: thumbDir, withIntermediateDirectories: true)
+            try jpegData.write(to: thumbPath)
+            print("SwipeFile: Cached carousel thumbnail for \(shortcode)")
+        } catch {
+            print("SwipeFile: Failed to cache carousel thumbnail: \(error)")
         }
     }
 

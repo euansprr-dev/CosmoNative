@@ -122,3 +122,12 @@ extension InstagramEmbedView {
         return nil
     }
 }
+
+// MARK: - Preview
+
+#Preview("Instagram Embed View") {
+    InstagramEmbedView(
+        embedUrl: "https://www.instagram.com/reel/ABC123/embed/"
+    )
+    .frame(width: 400, height: 500)
+}

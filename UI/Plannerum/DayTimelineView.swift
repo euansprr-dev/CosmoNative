@@ -158,6 +158,9 @@ public struct DayTimelineView: View {
             }
             startTimeUpdates()
             calendarSync.startPeriodicRefresh()
+            // Register context provider for global Cosmo window
+            let provider = DayTimelineContextProvider(dateRef: { [self] in self.date }, viewModel: viewModel, calendarSync: calendarSync)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             timerCancellable?.cancel()
@@ -297,7 +300,7 @@ public struct DayTimelineView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(PlannerumColors.textSecondary)
                 .frame(width: 28, height: 28)
-                .background(Color.white.opacity(0.06))
+                .background(DS.border)
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
@@ -553,12 +556,12 @@ public struct DayTimelineView: View {
     private func completeButtonLabel(isHovered: Bool) -> some View {
         ZStack {
             Circle()
-                .fill(isHovered ? PlannerumColors.nowMarker.opacity(0.15) : Color.white.opacity(0.06))
+                .fill(isHovered ? PlannerumColors.nowMarker.opacity(0.15) : DS.border)
                 .frame(width: 26, height: 26)
 
             Circle()
                 .strokeBorder(
-                    isHovered ? PlannerumColors.nowMarker.opacity(0.6) : Color.white.opacity(0.15),
+                    isHovered ? PlannerumColors.nowMarker.opacity(0.6) : DS.borderActive,
                     lineWidth: 1.5
                 )
                 .frame(width: 26, height: 26)
@@ -587,7 +590,7 @@ public struct DayTimelineView: View {
                 HStack(spacing: 3) {
                     ForEach(0..<3, id: \.self) { _ in
                         Circle()
-                            .fill(Color.white.opacity(hoveredBlockId == block.id ? 0.4 : 0.2))
+                            .fill(hoveredBlockId == block.id ? DS.textMuted : DS.textMuted)
                             .frame(width: 3, height: 3)
                     }
                 }
@@ -1341,7 +1344,7 @@ struct TimeBlockCreationPopover: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(8)
-                .background(Color.white.opacity(0.06))
+                .background(DS.border)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
             // Intent picker (4x2 grid with built-in linking)
@@ -1548,7 +1551,7 @@ struct HourDividerLine: View {
 
                 let color = isCurrentHour
                     ? PlannerumColors.nowMarker.opacity(0.3)
-                    : (isPast ? Color.white.opacity(0.02) : Color.white.opacity(0.04))
+                    : (isPast ? DS.borderSubtle : DS.borderSubtle)
 
                 for i in 0..<totalDots {
                     let x = CGFloat(i) * (dotSize + spacing) + dotSize / 2
@@ -1738,3 +1741,64 @@ struct DayTimelineView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class DayTimelineContextProvider: CosmoContextProvider {
+    private let dateRef: () -> Date
+    private weak var viewModel: DayTimelineViewModel?
+    private weak var calendarSync: CalendarSyncService?
+
+    init(dateRef: @escaping () -> Date, viewModel: DayTimelineViewModel, calendarSync: CalendarSyncService) {
+        self.dateRef = dateRef
+        self.viewModel = viewModel
+        self.calendarSync = calendarSync
+    }
+
+    var contextType: CosmoContextType { .dayTimeline }
+
+    var contextSummary: String {
+        let date = dateRef()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, MMM d"
+        return "Day: \(formatter.string(from: date))"
+    }
+
+    var contextData: CosmoContextData {
+        var viewData: [String: String] = [:]
+
+        let blockCount = viewModel?.blocks.count ?? 0
+        viewData["blockCount"] = "\(blockCount)"
+
+        if let blocks = viewModel?.blocks, !blocks.isEmpty {
+            let titles = blocks.prefix(10).map { $0.title }
+            viewData["blockTitles"] = titles.joined(separator: " | ")
+        }
+
+        let eventCount = calendarSync?.externalEvents.count ?? 0
+        if eventCount > 0 {
+            viewData["externalEventCount"] = "\(eventCount)"
+        }
+
+        return CosmoContextData(
+            viewSpecificData: viewData,
+            visibleItemCount: blockCount
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}
+
+// MARK: - Preview
+
+#Preview("Day Timeline View") {
+    DayTimelineView(
+        date: Date(),
+        onDateChange: { _ in },
+        onBlockSelect: { _ in }
+    )
+    .frame(width: 500, height: 800)
+    .background(Color(red: 15/255, green: 15/255, blue: 20/255))
+    .preferredColorScheme(.dark)
+}

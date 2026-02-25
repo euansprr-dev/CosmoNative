@@ -7,66 +7,60 @@ import SwiftUI
 struct ContentBrainstormView: View {
     @Binding var state: ContentFocusModeState
     let atom: Atom
+    var writingEngine: UnifiedWritingEngine?
     let onNext: () -> Void
 
     @State private var newOutlineText = ""
-    @State private var isSearching = false
-    @State private var searchResults: [HybridSearchEngine.SearchResult] = []
+    @State private var newHookText = ""
     @State private var contentAppeared = false
-    @FocusState private var coreIdeaFocused: Bool
-
-    @StateObject private var aiEngine = BrainstormAIEngine()
-    @State private var chatInput = ""
-    @FocusState private var chatInputFocused: Bool
+    @State private var showContextSidebar = true
+    @State private var isGeneratingOpusOutline = false
+    @State private var opusOutlineError: String?
+    @FocusState private var descriptionFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main 2-column layout
-            HStack(spacing: 0) {
-                // MARK: - Left Column (60%) - Core Idea + Outline
-                leftColumn
-                    .frame(maxWidth: .infinity)
+        HStack(spacing: 0) {
+            leftColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Divider
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: 1)
-
-                // MARK: - Right Column (40%) - AI Collaborator
-                aiCollaboratorPanel
-                    .frame(width: relatedColumnWidth)
+            if showContextSidebar {
+                BrainstormContextSidebar(
+                    atom: atom,
+                    state: $state,
+                    isVisible: $showContextSidebar
+                )
+                .padding(.vertical, 8)
+                .padding(.trailing, 8)
+                .zIndex(20)
             }
-            .frame(maxHeight: .infinity)
         }
-        .background(CosmoColors.thinkspaceVoid)
+        .background(DS.bg)
         .onAppear {
             withAnimation(ProMotionSprings.cardEntrance) {
                 contentAppeared = true
             }
-            loadRelatedAtoms()
-            syncAIContext()
-        }
-        .onChange(of: state.coreIdea) { _, _ in
-            syncAIContext()
-        }
-        .onChange(of: state.outline) { _, _ in
-            syncAIContext()
         }
     }
-
-    private var relatedColumnWidth: CGFloat { 380 }
 
     // MARK: - Left Column
 
     private var leftColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Section: Core Idea
-                coreIdeaSection
+                // Section: Hooks
+                hooksSection
 
                 // Divider
                 Rectangle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(DS.border)
+                    .frame(height: 1)
+
+                // Section: Description
+                descriptionSection
+
+                // Divider
+                Rectangle()
+                    .fill(DS.border)
                     .frame(height: 1)
 
                 // Section: Outline
@@ -78,47 +72,148 @@ struct ContentBrainstormView: View {
         .offset(y: contentAppeared ? 0 : 12)
     }
 
-    // MARK: - Core Idea Section
+    // MARK: - Hooks Section
 
-    private var coreIdeaSection: some View {
+    private var hooksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(CosmoColors.blockContent)
-                Text("Core Idea")
-                    .font(CosmoTypography.titleSmall)
-                    .foregroundColor(.white)
+                Text("HOOKS")
+                    .font(DS.sectionLabel)
+                    .foregroundColor(DS.textMuted)
+                    .tracking(0.88)
+
+                Spacer()
+
+                if !state.hooks.isEmpty {
+                    Text("\(state.hooks.count) hooks")
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                }
+
+                if !showContextSidebar {
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            showContextSidebar = true
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DS.textMuted)
+                            .padding(5)
+                            .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                }
             }
 
-            Text("What is the central message or thesis?")
-                .font(CosmoTypography.bodySmall)
-                .foregroundColor(.white.opacity(0.5))
+            Text("Opening lines that grab attention")
+                .font(.system(size: 13))
+                .foregroundColor(DS.textSecondary)
 
-            TextEditor(text: $state.coreIdea)
-                .font(CosmoTypography.bodyLarge)
-                .foregroundColor(.white)
-                .scrollContentBackground(.hidden)
-                .focused($coreIdeaFocused)
-                .frame(minHeight: 100, maxHeight: 160)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(CosmoColors.thinkspaceTertiary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(
-                                    coreIdeaFocused
-                                        ? CosmoColors.blockContent.opacity(0.4)
-                                        : Color.white.opacity(0.08),
-                                    lineWidth: 1
-                                )
-                        )
+            // Existing hooks
+            ForEach(Array(state.hooks.enumerated()), id: \.offset) { index, hook in
+                HookItemRow(
+                    hook: hook,
+                    index: index,
+                    onUpdate: { newText in
+                        state.hooks[index] = newText
+                        state.lastModified = Date()
+                        state.save()
+                    },
+                    onDelete: {
+                        withAnimation(ProMotionSprings.snappy) {
+                            state.hooks.remove(at: index)
+                            state.lastModified = Date()
+                            state.save()
+                        }
+                    }
                 )
-                .onChange(of: state.coreIdea) { _, _ in
+            }
+
+            // Add new hook
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(DS.accent.opacity(0.6))
+
+                TextField("Add a hook...", text: $newHookText)
+                    .textFieldStyle(.plain)
+                    .font(DS.body)
+                    .foregroundColor(DS.text)
+                    .onSubmit {
+                        addHook()
+                    }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(DS.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    // MARK: - Description Section
+
+    private var descriptionSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("DESCRIPTION")
+                .font(DS.sectionLabel)
+                .foregroundColor(DS.textMuted)
+                .tracking(0.88)
+
+            Text("Context, theme, or background for the content")
+                .font(.system(size: 13))
+                .foregroundColor(DS.textSecondary)
+
+            TextEditor(text: $state.contentDescription)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(DS.text)
+                .lineSpacing(15 * 0.7)
+                .scrollContentBackground(.hidden)
+                .focused($descriptionFocused)
+                .frame(minHeight: 80)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+                .background(
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: DS.radiusMedium)
+                            .fill(DS.surfaceElevated)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                                    .stroke(
+                                        descriptionFocused ? DS.borderActive : DS.border,
+                                        lineWidth: 1
+                                    )
+                            )
+
+                        // Left accent bar
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(DS.accent.opacity(0.5))
+                            .frame(width: 3)
+                            .padding(.vertical, 12)
+                    }
+                )
+                .onChange(of: state.contentDescription) { _, _ in
                     state.lastModified = Date()
                     state.save()
                 }
+        }
+    }
+
+    private func addHook() {
+        let trimmed = newHookText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            state.hooks.append(trimmed)
+            newHookText = ""
+            state.lastModified = Date()
+            state.save()
         }
     }
 
@@ -127,12 +222,13 @@ struct ContentBrainstormView: View {
     private var outlineSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "list.number")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(CosmoColors.blockContent)
-                Text("Outline")
-                    .font(CosmoTypography.titleSmall)
-                    .foregroundColor(.white)
+                Text("OUTLINE")
+                    .dsSectionLabel()
+
+                if state.outline.isEmpty {
+                    opusOutlineButton
+                }
+
                 Spacer()
                 if !state.outline.isEmpty {
                     outlineCountLabel
@@ -140,8 +236,8 @@ struct ContentBrainstormView: View {
             }
 
             Text("Build out the structure of your content")
-                .font(CosmoTypography.bodySmall)
-                .foregroundColor(.white.opacity(0.5))
+                .font(DS.sectionDesc)
+                .foregroundColor(DS.textSecondary)
 
             // AI-suggested label
             if state.isAISuggestedOutline && !state.outline.isEmpty {
@@ -179,12 +275,12 @@ struct ContentBrainstormView: View {
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(CosmoColors.blockContent.opacity(0.6))
+                    .foregroundColor(DS.accent.opacity(0.6))
 
                 TextField("Add outline point...", text: $newOutlineText)
                     .textFieldStyle(.plain)
-                    .font(CosmoTypography.body)
-                    .foregroundColor(.white)
+                    .font(DS.body)
+                    .foregroundColor(DS.text)
                     .onSubmit {
                         addOutlineItem()
                     }
@@ -192,11 +288,11 @@ struct ContentBrainstormView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(CosmoColors.thinkspaceTertiary.opacity(0.5))
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(DS.surface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
                     )
             )
         }
@@ -206,12 +302,12 @@ struct ContentBrainstormView: View {
     private var outlineCountLabel: some View {
         HStack(spacing: 4) {
             Text("\(state.outline.count) items")
-                .font(CosmoTypography.caption)
-                .foregroundColor(.white.opacity(0.3))
+                .font(DS.timestamp)
+                .foregroundColor(DS.textMuted)
             if totalEstimatedSeconds > 0 {
                 Text("~\(formattedDuration(totalEstimatedSeconds))")
-                    .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.blockContent.opacity(0.5))
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.accent.opacity(0.5))
             }
         }
     }
@@ -225,12 +321,12 @@ struct ContentBrainstormView: View {
                 .font(.system(size: 11, weight: .medium))
             Text("Click to expand details")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(DS.textMuted)
         }
-        .foregroundColor(CosmoColors.blockContent.opacity(0.7))
+        .foregroundColor(DS.accent.opacity(0.7))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(CosmoColors.blockContent.opacity(0.1), in: Capsule())
+        .background(DS.accent.opacity(0.1), in: Capsule())
     }
 
     private var totalEstimatedSeconds: Int {
@@ -246,361 +342,77 @@ struct ContentBrainstormView: View {
         return "\(seconds)s"
     }
 
-    // MARK: - AI Collaborator Panel
 
-    private var aiCollaboratorPanel: some View {
-        VStack(spacing: 0) {
-            // Header
-            aiPanelHeader
-
-            Rectangle()
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 1)
-
-            // Quick-action pills
-            quickActionPills
-
-            Rectangle()
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 1)
-
-            // Messages
-            aiMessageList
-
-            // Input
-            aiInputBar
-        }
-        .background(CosmoColors.thinkspaceSecondary.opacity(0.5))
-        .opacity(contentAppeared ? 1 : 0)
-        .offset(x: contentAppeared ? 0 : 20)
-        .animation(ProMotionSprings.cardEntrance.delay(0.1), value: contentAppeared)
-    }
-
-    // MARK: - AI Panel Header
+    // MARK: - Opus Outline Button
 
     @ViewBuilder
-    private var aiPanelHeader: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(CosmoColors.lavender.opacity(0.15))
-                    .frame(width: 24, height: 24)
-                Image(systemName: "brain")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(CosmoColors.lavender)
-            }
-
-            Text("AI Collaborator")
-                .font(CosmoTypography.label)
-                .foregroundColor(.white.opacity(0.8))
-
-            Spacer()
-
-            if aiEngine.isGenerating {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(CosmoColors.lavender)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - Quick Action Pills
-
-    @ViewBuilder
-    private var quickActionPills: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+    private var opusOutlineButton: some View {
+        if isGeneratingOpusOutline {
             HStack(spacing: 6) {
-                quickPill(label: "Suggest an outline", icon: "list.bullet.rectangle") {
-                    Task { await aiEngine.suggestOutline() }
-                }
-                quickPill(label: "Improve my hook", icon: "bolt.fill") {
-                    Task { await aiEngine.improveHook() }
-                }
-                quickPill(label: "Framework breakdown", icon: "rectangle.3.group") {
-                    Task { await aiEngine.frameworkBreakdown() }
-                }
-                quickPill(label: "Hook variants", icon: "sparkles") {
-                    Task { await aiEngine.generateHookVariants() }
-                }
-                quickPill(label: "Top creator structure", icon: "star.fill") {
-                    Task { await aiEngine.topCreatorStructure() }
-                }
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .tint(DS.accent)
+                Text("Generating...")
+                    .font(DS.buttonText)
+                    .foregroundColor(DS.accent)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-    }
-
-    @ViewBuilder
-    private func quickPill(label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            quickPillLabel(label: label, icon: icon)
-        }
-        .buttonStyle(.plain)
-        .disabled(aiEngine.isGenerating)
-    }
-
-    @ViewBuilder
-    private func quickPillLabel(label: String, icon: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(label)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(CosmoColors.lavender.opacity(aiEngine.isGenerating ? 0.4 : 0.8))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            Capsule()
-                .fill(CosmoColors.lavender.opacity(0.08))
-                .overlay(
-                    Capsule()
-                        .stroke(CosmoColors.lavender.opacity(0.15), lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: - AI Message List
-
-    @ViewBuilder
-    private var aiMessageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    if aiEngine.messages.isEmpty {
-                        aiEmptyState
-                    }
-
-                    ForEach(aiEngine.messages) { message in
-                        brainstormMessageBubble(message)
-                            .id(message.id)
-                    }
-
-                    if aiEngine.isGenerating {
-                        brainstormTypingIndicator
-                    }
-                }
-                .padding(12)
-            }
-            .onChange(of: aiEngine.messages.count) { _, _ in
-                if let lastId = aiEngine.messages.last?.id {
-                    withAnimation(.spring(response: 0.3)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var aiEmptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 28))
-                .foregroundColor(CosmoColors.lavender.opacity(0.3))
-
-            Text("Your AI brainstorm partner")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
-
-            Text("Ask me to help structure your outline, refine your core idea, or suggest hooks. Use the pills above for quick actions.")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.3))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 20)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-
-    // MARK: - Message Bubble
-
-    @ViewBuilder
-    private func brainstormMessageBubble(_ message: BrainstormMessage) -> some View {
-        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
-            // Role label
-            if message.role == .assistant {
-                HStack(spacing: 4) {
-                    Image(systemName: "brain")
-                        .font(.system(size: 9))
-                        .foregroundColor(CosmoColors.lavender)
-                    Text("AI")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(CosmoColors.lavender)
-                    Text(message.timestamp, style: .time)
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.2))
-                }
-            }
-
-            // Content bubble
-            Text(message.content)
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.9))
-                .textSelection(.enabled)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(message.role == .user
-                            ? CosmoColors.blockContent.opacity(0.15)
-                            : CosmoColors.thinkspaceTertiary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                        )
-                )
-                .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
-
-            // Action cards
-            if !message.actions.isEmpty {
-                actionCardsSection(message)
-            }
-        }
-    }
-
-    // MARK: - Action Cards
-
-    @ViewBuilder
-    private func actionCardsSection(_ message: BrainstormMessage) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(message.actions) { action in
-                actionCard(action, messageId: message.id, isApplied: message.isApplied)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func actionCard(_ action: BrainstormAction, messageId: UUID, isApplied: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: actionIcon(action.type))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(actionColor(action.type))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(action.type.rawValue)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(actionColor(action.type))
-
-                Text(action.payload)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.8))
-                    .lineLimit(3)
-            }
-
-            Spacer()
-
-            if isApplied {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(CosmoColors.emerald)
-            } else {
-                HStack(spacing: 4) {
-                    Button(action: { applyAction(action, messageId: messageId) }) {
-                        applyButtonLabel
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: { /* Ignore — no-op */ }) {
-                        ignoreButtonLabel
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(actionColor(action.type).opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(actionColor(action.type).opacity(0.15), lineWidth: 1)
-                )
-        )
-    }
-
-    @ViewBuilder
-    private var applyButtonLabel: some View {
-        Text("Apply")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(
-                Capsule().fill(CosmoColors.lavender)
-            )
-    }
-
-    @ViewBuilder
-    private var ignoreButtonLabel: some View {
-        Text("Ignore")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.white.opacity(0.4))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-    }
-
-    // MARK: - Typing Indicator
-
-    @ViewBuilder
-    private var brainstormTypingIndicator: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(CosmoColors.lavender.opacity(0.15))
-                    .frame(width: 22, height: 22)
-                Image(systemName: "brain")
-                    .font(.system(size: 10))
-                    .foregroundColor(CosmoColors.lavender)
-            }
-
-            BrainstormDotsView()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(CosmoColors.thinkspaceTertiary)
-                )
-
-            Spacer()
-        }
-    }
-
-    // MARK: - AI Input Bar
-
-    @ViewBuilder
-    private var aiInputBar: some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(Color.white.opacity(0.06))
-                .frame(height: 1)
-
-            HStack(spacing: 8) {
-                TextField("Ask your AI collaborator...", text: $chatInput)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.9))
-                    .focused($chatInputFocused)
-                    .onSubmit {
-                        sendChatMessage()
-                    }
-
-                Button(action: sendChatMessage) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(
-                            chatInput.trimmingCharacters(in: .whitespaces).isEmpty || aiEngine.isGenerating
-                                ? CosmoColors.lavender.opacity(0.3)
-                                : CosmoColors.lavender
-                        )
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Button(action: { generateOpusOutline() }) {
+                    opusOutlineButtonLabel
                 }
                 .buttonStyle(.plain)
-                .disabled(chatInput.trimmingCharacters(in: .whitespaces).isEmpty || aiEngine.isGenerating)
+
+                if let error = opusOutlineError {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange.opacity(0.8))
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+        }
+    }
+
+    @ViewBuilder
+    private var opusOutlineButtonLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 10, weight: .medium))
+            Text("Generate with Opus")
+                .font(DS.buttonText)
+        }
+        .foregroundColor(DS.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.accentSoft)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    private func generateOpusOutline() {
+        isGeneratingOpusOutline = true
+        opusOutlineError = nil
+
+        Task {
+            if let engine = writingEngine {
+                // Use unified engine — outline arrives via .unifiedEngineOutlineUpdate notification
+                await engine.suggestOutline()
+                await MainActor.run {
+                    if let error = engine.error {
+                        opusOutlineError = "Outline generation failed: \(error)"
+                    }
+                    isGeneratingOpusOutline = false
+                }
+            } else {
+                await MainActor.run {
+                    opusOutlineError = "Writing engine not initialized"
+                    isGeneratingOpusOutline = false
+                }
+            }
         }
     }
 
@@ -616,162 +428,8 @@ struct ContentBrainstormView: View {
         }
     }
 
-    private func loadRelatedAtoms() {
-        let query = state.coreIdea.isEmpty ? (atom.title ?? "") : state.coreIdea
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        isSearching = true
-        Task {
-            do {
-                let results = try await HybridSearchEngine.shared.search(
-                    query: query,
-                    limit: 8,
-                    entityTypes: [.idea, .research, .connection, .content]
-                )
-                await MainActor.run {
-                    let filtered = results.filter { $0.entityUUID != atom.uuid }
-                    for result in filtered {
-                        let ref = RelatedAtomRef(
-                            atomUUID: result.entityUUID ?? "",
-                            title: result.title,
-                            type: AtomType(rawValue: result.entityType.rawValue) ?? .idea,
-                            relevanceScore: result.combinedScore,
-                            preview: result.preview
-                        )
-                        state.addRelatedAtom(ref)
-                    }
-                    state.save()
-                    isSearching = false
-                }
-            } catch {
-                await MainActor.run {
-                    isSearching = false
-                }
-            }
-        }
-    }
-
-    private func syncAIContext() {
-        let metadata = atom.metadata
-        var metaDict: [String: Any] = [:]
-        if let metaStr = metadata,
-           let data = metaStr.data(using: .utf8),
-           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            metaDict = dict
-        }
-
-        let format = metaDict["contentFormat"] as? String ?? atom.contentType ?? ""
-        let platform = metaDict["platform"] as? String ?? ""
-        let framework = metaDict["recommendedFramework"] as? String ?? ""
-
-        let swipePreviews = state.relatedAtoms
-            .filter { $0.type == .research }
-            .prefix(3)
-            .map { $0.preview }
-
-        aiEngine.updateContext(
-            coreIdea: state.coreIdea,
-            outline: state.outline,
-            title: atom.title ?? "",
-            contentFormat: format,
-            platform: platform,
-            framework: framework,
-            swipePreviews: Array(swipePreviews)
-        )
-    }
-
-    private func sendChatMessage() {
-        let text = chatInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        chatInput = ""
-
-        Task {
-            await aiEngine.sendMessage(text)
-        }
-    }
-
-    private func applyAction(_ action: BrainstormAction, messageId: UUID) {
-        withAnimation(ProMotionSprings.snappy) {
-            switch action.type {
-            case .addOutlineItem:
-                state.addOutlineItem(action.payload)
-
-            case .editOutlineItem:
-                if let targetIndex = action.targetIndex,
-                   targetIndex >= 0 && targetIndex < state.sortedOutline.count {
-                    let item = state.sortedOutline[targetIndex]
-                    state.updateOutlineItem(id: item.id, title: action.payload)
-                }
-
-            case .reorderOutline:
-                let indices = action.payload
-                    .components(separatedBy: ",")
-                    .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    .map { $0 - 1 }
-
-                let sorted = state.sortedOutline
-                var reordered: [OutlineItem] = []
-                for idx in indices {
-                    if idx >= 0 && idx < sorted.count {
-                        reordered.append(sorted[idx])
-                    }
-                }
-                for item in sorted {
-                    if !reordered.contains(where: { $0.id == item.id }) {
-                        reordered.append(item)
-                    }
-                }
-                for (i, _) in reordered.enumerated() {
-                    if let idx = state.outline.firstIndex(where: { $0.id == reordered[i].id }) {
-                        state.outline[idx].sortOrder = i
-                    }
-                }
-
-            case .replaceOutline:
-                let items = action.payload
-                    .components(separatedBy: "|")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-
-                state.outline.removeAll()
-                for (i, title) in items.enumerated() {
-                    let item = OutlineItem(title: title, sortOrder: i)
-                    state.outline.append(item)
-                }
-
-            case .refineCoreIdea:
-                state.coreIdea = action.payload
-            }
-
-            state.lastModified = Date()
-            state.save()
-            aiEngine.markMessageApplied(messageId)
-            syncAIContext()
-        }
-    }
-
-    // MARK: - Action Helpers
-
-    private func actionIcon(_ type: BrainstormAction.ActionType) -> String {
-        switch type {
-        case .addOutlineItem: return "plus.circle"
-        case .editOutlineItem: return "pencil.circle"
-        case .reorderOutline: return "arrow.up.arrow.down"
-        case .replaceOutline: return "arrow.triangle.2.circlepath"
-        case .refineCoreIdea: return "sparkle"
-        }
-    }
-
-    private func actionColor(_ type: BrainstormAction.ActionType) -> Color {
-        switch type {
-        case .addOutlineItem: return CosmoColors.emerald
-        case .editOutlineItem: return CosmoColors.blockContent
-        case .reorderOutline: return CosmoColors.lavender
-        case .replaceOutline: return .orange
-        case .refineCoreIdea: return CosmoColors.lavender
-        }
-    }
 }
+
 
 // MARK: - Expandable Outline Item Row
 
@@ -801,12 +459,12 @@ private struct ExpandableOutlineItemRow: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(CosmoColors.thinkspaceTertiary)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .stroke(
-                            isExpanded ? CosmoColors.blockContent.opacity(0.15) : Color.white.opacity(0.06),
+                            isExpanded ? DS.borderActive : DS.border,
                             lineWidth: 1
                         )
                 )
@@ -826,12 +484,12 @@ private struct ExpandableOutlineItemRow: View {
             // Drag handle
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.2))
+                .foregroundColor(DS.textMuted)
 
             // Number
             Text("\(item.sortOrder + 1).")
-                .font(CosmoTypography.label)
-                .foregroundColor(.white.opacity(0.4))
+                .font(DS.timestamp)
+                .foregroundColor(DS.textMuted)
                 .frame(width: 20, alignment: .trailing)
 
             // Title (editable on double-click)
@@ -870,7 +528,7 @@ private struct ExpandableOutlineItemRow: View {
             TextField("", text: $editTitle)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .focused($titleFocused)
                 .onSubmit { commitTitleEdit() }
                 .onChange(of: titleFocused) { _, focused in
@@ -879,7 +537,7 @@ private struct ExpandableOutlineItemRow: View {
         } else {
             Text(item.title)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(DS.text)
                 .lineLimit(1)
                 .onTapGesture(count: 2) {
                     editTitle = item.title
@@ -893,12 +551,12 @@ private struct ExpandableOutlineItemRow: View {
     private func durationBadge(_ seconds: Int) -> some View {
         Text("~\(formattedDuration(seconds))")
             .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundColor(CosmoColors.blockContent.opacity(0.7))
+            .foregroundColor(DS.accent.opacity(0.7))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
                 Capsule()
-                    .fill(CosmoColors.blockContent.opacity(0.1))
+                    .fill(DS.accent.opacity(0.1))
             )
     }
 
@@ -906,7 +564,7 @@ private struct ExpandableOutlineItemRow: View {
     private var expandChevron: some View {
         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
             .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(.white.opacity(0.25))
+            .foregroundColor(DS.textMuted)
             .frame(width: 16)
     }
 
@@ -920,7 +578,7 @@ private struct ExpandableOutlineItemRow: View {
             }) {
                 Image(systemName: "pencil")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
@@ -928,7 +586,7 @@ private struct ExpandableOutlineItemRow: View {
             Button(action: onDelete) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
@@ -942,7 +600,7 @@ private struct ExpandableOutlineItemRow: View {
     private var expandedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Rectangle()
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.borderSubtle)
                 .frame(height: 1)
                 .padding(.horizontal, 12)
 
@@ -964,7 +622,7 @@ private struct ExpandableOutlineItemRow: View {
             } else {
                 Text(item.reasoning)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(DS.textSecondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
@@ -990,7 +648,7 @@ private struct ExpandableOutlineItemRow: View {
                 Text("Add notes, reasoning, or shooting details...")
                     .font(.system(size: 11))
             }
-            .foregroundColor(.white.opacity(0.25))
+            .foregroundColor(DS.textMuted)
         }
         .buttonStyle(.plain)
     }
@@ -999,17 +657,17 @@ private struct ExpandableOutlineItemRow: View {
     private var reasoningEditor: some View {
         TextEditor(text: $editReasoning)
             .font(.system(size: 12))
-            .foregroundColor(.white.opacity(0.7))
+            .foregroundColor(DS.textSecondary)
             .scrollContentBackground(.hidden)
             .focused($reasoningFocused)
             .frame(minHeight: 60, maxHeight: 120)
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.white.opacity(0.03))
+                    .fill(DS.borderSubtle)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(CosmoColors.blockContent.opacity(0.2), lineWidth: 1)
+                            .stroke(DS.accent.opacity(0.2), lineWidth: 1)
                     )
             )
             .padding(.horizontal, 44)
@@ -1043,106 +701,93 @@ private struct ExpandableOutlineItemRow: View {
     }
 }
 
-// MARK: - Related Atom Card (kept for potential sidebar usage)
+// MARK: - Hook Item Row
 
-private struct RelatedAtomCard: View {
-    let ref: RelatedAtomRef
-    let onRemove: () -> Void
+private struct HookItemRow: View {
+    let hook: String
+    let index: Int
+    let onUpdate: (String) -> Void
+    let onDelete: () -> Void
 
+    @State private var isEditing = false
+    @State private var editText = ""
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: ref.type.iconName)
-                    .font(.system(size: 11))
-                    .foregroundColor(typeColor)
+        HStack(spacing: 8) {
+            // Hook number
+            Text("\(index + 1).")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.textMuted)
+                .frame(width: 20, alignment: .trailing)
 
-                Text(ref.title)
-                    .font(CosmoTypography.label)
-                    .foregroundColor(.white.opacity(0.85))
-                    .lineLimit(1)
-
-                Spacer()
-
-                if isHovered {
-                    Button(action: onRemove) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.white.opacity(0.4))
+            if isEditing {
+                TextField("", text: $editText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .focused($isFocused)
+                    .onSubmit { commitEdit() }
+                    .onChange(of: isFocused) { _, focused in
+                        if !focused { commitEdit() }
                     }
-                    .buttonStyle(.plain)
-                    .transition(.opacity)
-                }
+            } else {
+                Text(hook)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
+                    .onTapGesture(count: 2) {
+                        editText = hook
+                        isEditing = true
+                        isFocused = true
+                    }
             }
 
-            Text(ref.preview)
-                .font(CosmoTypography.caption)
-                .foregroundColor(.white.opacity(0.4))
-                .lineLimit(2)
+            Spacer(minLength: 4)
 
-            HStack(spacing: 4) {
-                Text(ref.type.displayName)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(typeColor.opacity(0.8))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(typeColor.opacity(0.15), in: Capsule())
+            if isHovered {
+                Button(action: {
+                    editText = hook
+                    isEditing = true
+                    isFocused = true
+                }) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
 
-                Spacer()
-
-                Text("\(Int(ref.relevanceScore * 100))% match")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.3))
+                Button(action: onDelete) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(CosmoColors.thinkspaceTertiary)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(isHovered ? 0.12 : 0.06), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         )
         .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) {
-                isHovered = hovering
-            }
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
     }
 
-    private var typeColor: Color {
-        switch ref.type {
-        case .idea: return CosmoColors.blockNote
-        case .research: return CosmoColors.blockResearch
-        case .connection: return CosmoColors.blockConnection
-        case .content: return CosmoColors.blockContent
-        default: return .white.opacity(0.5)
+    private func commitEdit() {
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            onUpdate(trimmed)
         }
-    }
-}
-
-// MARK: - Brainstorm Dots View (Typing Indicator)
-
-private struct BrainstormDotsView: View {
-    @State private var animating = false
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(CosmoColors.lavender)
-                    .frame(width: 5, height: 5)
-                    .opacity(animating ? 1 : 0.3)
-                    .animation(
-                        .easeInOut(duration: 0.5)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.15),
-                        value: animating
-                    )
-            }
-        }
-        .onAppear { animating = true }
+        isEditing = false
     }
 }

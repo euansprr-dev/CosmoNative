@@ -1,12 +1,13 @@
 // CosmoOS/Cosmo/HybridSearchEngine.swift
 // Hybrid BM25 + Vector Search for Telepathic Voice Assistant
 // Combines fast keyword search with semantic understanding
+// Uses DaemonXPCClient for real 768d embeddings, truncated to 256d Matryoshka
 
 import Foundation
 import Accelerate
 import GRDB
 
-/// Hybrid search engine combining BM25 keyword search with MLX vector similarity
+/// Hybrid search engine combining BM25 keyword search with vector similarity
 /// Achieves both speed (BM25 pre-filter) and semantic understanding (vector re-ranking)
 @MainActor
 final class HybridSearchEngine: ObservableObject {
@@ -15,8 +16,10 @@ final class HybridSearchEngine: ObservableObject {
     // MARK: - Dependencies
 
     private let database = CosmoDatabase.shared
-    private let mlxService = MLXEmbeddingService.shared
     private let semanticEngine = SemanticSearchEngine.shared
+
+    /// Vector dimension used for search (Matryoshka truncation)
+    private let vectorDimension = VectorConfig.matryoshkaDimension  // 256
 
     // MARK: - Configuration
 
@@ -103,12 +106,17 @@ final class HybridSearchEngine: ObservableObject {
             )
         }
 
-        // Stage 2: Generate query embedding for vector similarity
+        // Stage 2: Generate query embedding for vector similarity via DaemonXPCClient
         let queryVector: [Float]
         do {
-            queryVector = try await mlxService.embed(query)
+            let fullVector = try await DaemonXPCClient.shared.embed(text: query)
+            // Truncate 768d → 256d Matryoshka to match stored vectors
+            queryVector = Array(fullVector.prefix(vectorDimension))
+            if fullVector.count != vectorDimension {
+                print("  📐 Truncated query vector \(fullVector.count)d → \(queryVector.count)d")
+            }
         } catch {
-            print("  ⚠️ MLX embedding failed, using BM25 only: \(error.localizedDescription)")
+            print("  ⚠️ Embedding failed, using BM25 only: \(error.localizedDescription)")
             return bm25Candidates.prefix(limit).map { candidate in
                 SearchResult(
                     entityType: EntityType(rawValue: candidate.entityType) ?? .idea,
@@ -297,7 +305,9 @@ final class HybridSearchEngine: ObservableObject {
         limit: Int,
         entityTypes: [EntityType]?
     ) async throws -> [SearchResult] {
-        let queryVector = try await mlxService.embed(query)
+        let fullVector = try await DaemonXPCClient.shared.embed(text: query)
+        // Truncate 768d → 256d Matryoshka to match stored vectors
+        let queryVector = Array(fullVector.prefix(vectorDimension))
         return try await pureVectorSearch(
             queryVector: queryVector,
             limit: limit,
@@ -339,15 +349,20 @@ final class HybridSearchEngine: ObservableObject {
                 }
             }
 
-            guard let vectorData = chunk.vector else { continue }
-            let chunkVector = decodeVector(vectorData)
+            guard let vectorData = chunk.vector,
+                  let chunkVec = decodeVector(vectorData) else { continue }
 
-            // Skip incompatible dimensions
-            guard let chunkVec = chunkVector, chunkVec.count == queryVector.count else {
-                continue
+            // Handle dimension mismatch by truncating the larger vector
+            let (a, b): ([Float], [Float])
+            if chunkVec.count == queryVector.count {
+                (a, b) = (queryVector, chunkVec)
+            } else if chunkVec.count > queryVector.count {
+                (a, b) = (queryVector, Array(chunkVec.prefix(queryVector.count)))
+            } else {
+                (a, b) = (Array(queryVector.prefix(chunkVec.count)), chunkVec)
             }
 
-            let similarity = cosineSimilarity(queryVector, chunkVec)
+            let similarity = cosineSimilarity(a, b)
 
             if similarity >= minSimilarity {
                 results.append((
@@ -411,12 +426,23 @@ final class HybridSearchEngine: ObservableObject {
 
             for chunk in chunks {
                 guard let vectorData = chunk.vector,
-                      let chunkVector = decodeVector(vectorData),
-                      chunkVector.count == queryVector.count else {
+                      let chunkVector = decodeVector(vectorData) else {
                     continue
                 }
 
-                let similarity = cosineSimilarity(queryVector, chunkVector)
+                // Handle dimension mismatch by truncating the larger vector
+                let (a, b): ([Float], [Float])
+                if chunkVector.count == queryVector.count {
+                    (a, b) = (queryVector, chunkVector)
+                } else if chunkVector.count > queryVector.count {
+                    (a, b) = (queryVector, Array(chunkVector.prefix(queryVector.count)))
+                    print("  ⚠️ Truncated stored vector \(chunkVector.count)d → \(queryVector.count)d for \(entityType):\(entityId)")
+                } else {
+                    (a, b) = (Array(queryVector.prefix(chunkVector.count)), chunkVector)
+                    print("  ⚠️ Truncated query vector \(queryVector.count)d → \(chunkVector.count)d for \(entityType):\(entityId)")
+                }
+
+                let similarity = cosineSimilarity(a, b)
                 maxSimilarity = max(maxSimilarity, similarity)
             }
 
@@ -438,36 +464,35 @@ final class HybridSearchEngine: ObservableObject {
             return results
         }
 
-        return results.map { result in
-            var boostedResult = result
+        var boostedResults: [SearchResult] = []
 
-            // Check similarity to context vector
-            Task {
-                let contextSimilarity = await getVectorSimilarity(
-                    entityType: result.entityType.rawValue,
+        for result in results {
+            let contextSimilarity = await getVectorSimilarity(
+                entityType: result.entityType.rawValue,
+                entityId: result.entityId,
+                queryVector: contextVector
+            )
+
+            // Boost score if similar to editing context
+            if contextSimilarity > 0.5 {
+                let boost = Double(contextSimilarity) * 0.2  // Up to 20% boost
+                boostedResults.append(SearchResult(
+                    entityType: result.entityType,
                     entityId: result.entityId,
-                    queryVector: contextVector
-                )
-
-                // Boost score if similar to editing context
-                if contextSimilarity > 0.5 {
-                    let boost = Double(contextSimilarity) * 0.2  // Up to 20% boost
-                    boostedResult = SearchResult(
-                        entityType: result.entityType,
-                        entityId: result.entityId,
-                        entityUUID: result.entityUUID,
-                        title: result.title,
-                        preview: result.preview,
-                        bm25Score: result.bm25Score,
-                        vectorSimilarity: result.vectorSimilarity,
-                        combinedScore: result.combinedScore + boost,
-                        matchReason: .contextRelevant
-                    )
-                }
+                    entityUUID: result.entityUUID,
+                    title: result.title,
+                    preview: result.preview,
+                    bm25Score: result.bm25Score,
+                    vectorSimilarity: result.vectorSimilarity,
+                    combinedScore: result.combinedScore + boost,
+                    matchReason: .contextRelevant
+                ))
+            } else {
+                boostedResults.append(result)
             }
-
-            return boostedResult
         }
+
+        return boostedResults
     }
 
     // MARK: - Vector Utilities
@@ -476,7 +501,8 @@ final class HybridSearchEngine: ObservableObject {
         let floatSize = MemoryLayout<Float>.size
         let elementCount = data.count / floatSize
 
-        guard [384, 768, 1024].contains(elementCount) else {
+        guard [256, 384, 768, 1024].contains(elementCount) else {
+            print("  ⚠️ Vector dimension mismatch: got \(elementCount)d, expected 256/384/768/1024")
             return nil
         }
 

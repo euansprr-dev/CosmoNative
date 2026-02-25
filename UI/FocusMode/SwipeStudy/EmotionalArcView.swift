@@ -41,7 +41,7 @@ struct EmotionalArcView: View {
             Text("EMOTIONAL ARC")
                 .font(.system(size: 13, weight: .bold))
                 .tracking(1.2)
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .textCase(.uppercase)
 
             if dataPoints.isEmpty {
@@ -51,10 +51,10 @@ struct EmotionalArcView: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
             guard !hasAppeared else { return }
@@ -82,7 +82,7 @@ struct EmotionalArcView: View {
                             path.move(to: CGPoint(x: 0, y: y))
                             path.addLine(to: CGPoint(x: width, y: y))
                         }
-                        .stroke(Color.white.opacity(0.04), lineWidth: 1)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
                     }
 
                     // Line path
@@ -231,7 +231,7 @@ struct EmotionalArcView: View {
     private var placeholderView: some View {
         Text("Analysis pending...")
             .font(.system(size: 13))
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(DS.textMuted)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
     }
@@ -295,7 +295,7 @@ private struct EmotionalArcTooltip: View {
 
                 Text(point.emotion.displayName)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(DS.text)
             }
 
             // Accent bar
@@ -308,22 +308,22 @@ private struct EmotionalArcTooltip: View {
             HStack(spacing: 4) {
                 Text("Intensity")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
                 Text(String(format: "%.1f", point.intensity))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(DS.text)
             }
 
             // Position row
             HStack(spacing: 4) {
                 Text("Position")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
                 Text("\(Int(point.position * 100))% through content")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(DS.text)
             }
 
             // Transcript excerpt
@@ -331,17 +331,17 @@ private struct EmotionalArcTooltip: View {
                 Text(excerpt)
                     .font(.system(size: 11))
                     .italic()
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(10)
         .frame(width: 190)
-        .background(Color(hex: "#1A1A25"))
+        .background(DS.surfaceCard)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 }
@@ -352,7 +352,7 @@ private struct EmotionalArcTooltip: View {
 struct EmotionalArcView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
             EmotionalArcView(
                 dataPoints: [
                     EmotionDataPoint(position: 0.0, intensity: 0.6, emotion: .curiosity),

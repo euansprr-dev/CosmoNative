@@ -396,7 +396,7 @@ public struct TimeBlockCard: View {
         .foregroundColor(PlannerumColors.textTertiary)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(Color.white.opacity(0.08))
+        .background(DS.border)
         .clipShape(Capsule())
     }
 
@@ -466,8 +466,8 @@ public struct TimeBlockCard: View {
 
     private var cardBackground: some View {
         ZStack {
-            // Base glass layer - white @ 6% as per plan
-            Color.white.opacity(0.06)
+            // Base glass layer
+            DS.border
 
             // Ultra thin material for blur effect
             RoundedRectangle(cornerRadius: PlannerumLayout.blockCornerRadius)
@@ -488,7 +488,7 @@ public struct TimeBlockCard: View {
             VStack {
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(0.08),
+                        DS.border,
                         Color.clear
                     ],
                     startPoint: .top,
@@ -570,6 +570,37 @@ public struct CompactTimeBlockCard: View {
         }
         .frame(width: size, height: size)
     }
+}
+
+// MARK: - Preview
+
+#Preview("Time Block Card") {
+    let mockBlock = ScheduleBlockViewModel(
+        id: "preview-1",
+        title: "Draft Plannerum Specification",
+        startTime: Date(),
+        endTime: Date().addingTimeInterval(2.5 * 3600),
+        blockType: .deepWork,
+        status: .scheduled,
+        isCompleted: false,
+        projectUuid: nil,
+        projectName: "CosmoOS",
+        linkedAtomIds: [],
+        linkedTaskTitles: ["Fix auth bug", "Review PR #42"],
+        difficulty: 2.0,
+        isCoreObjective: true
+    )
+    
+    TimeBlockCard(
+        block: mockBlock,
+        width: 340,
+        isHovered: false,
+        isSelected: false,
+        onTap: {}
+    )
+    .padding(20)
+    .background(Color(red: 15/255, green: 15/255, blue: 20/255))
+    .preferredColorScheme(.dark)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

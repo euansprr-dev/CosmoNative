@@ -23,7 +23,8 @@ final class SwipeAnalyzer: ObservableObject {
         analysisProgress = 0
 
         let text = extractText(from: atom)
-        let title = atom.title
+        // Use the full hook (up to 500 chars) for hook analysis, not the truncated title (120 chars)
+        let title = atom.hook ?? atom.title
 
         guard !text.isEmpty else {
             isAnalyzing = false
@@ -221,13 +222,36 @@ final class SwipeAnalyzer: ObservableObject {
             }
         }
 
-        // Check for list pattern: starts with number
-        if let first = hookText.trimmingCharacters(in: .whitespaces).first, first.isNumber {
-            let listConfidence = 0.75
-            if listConfidence > bestConfidence {
-                bestType = .list
-                bestConfidence = listConfidence
+        // Check for list pattern: number followed by list-indicator words
+        if let first = lower.trimmingCharacters(in: .whitespaces).first, first.isNumber {
+            let leadingDigits = lower.prefix(while: { $0.isNumber })
+            let afterNumber = lower.dropFirst(leadingDigits.count)
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ".):- "))
+                .trimmingCharacters(in: .whitespaces)
+
+            let listIndicators = ["things", "ways", "tips", "reasons", "steps",
+                                  "habits", "rules", "mistakes", "lessons",
+                                  "signs", "hacks", "secrets", "facts"]
+            let startsWithListWord = listIndicators.contains(where: { afterNumber.hasPrefix($0) })
+
+            let number = Int(leadingDigits) ?? 0
+            let hasStoryIndicators = ["babe", "i ", "i'm", "my ", "when", "her:"].contains(where: { lower.contains($0) })
+
+            if startsWithListWord {
+                let listConf = 0.85
+                if listConf > bestConfidence {
+                    bestType = .list
+                    bestConfidence = listConf
+                }
+            } else if number >= 1 && number <= 20 && !hasStoryIndicators {
+                let listConf = 0.55
+                if listConf > bestConfidence {
+                    bestType = .list
+                    bestConfidence = listConf
+                }
             }
+            // Numbers > 20 without list indicators: likely a statistic, age, price — don't classify as list
         }
 
         // Check for numbers in text (boost statistic/boldClaim)
@@ -489,19 +513,25 @@ final class SwipeAnalyzer: ObservableObject {
         let words = transcript.split(separator: " ")
         let truncated = words.prefix(4000).joined(separator: " ")
 
+        // Build canonical beat list for the prompt
+        let canonicalBeats = BeatPatternService.shared.canonicalLabelsForPrompt
+
         let prompt = """
         You are a content structure analyst. Analyze this video transcript and return a JSON object.
 
         Title: \(title)
         Transcript (first 4000 words): \(truncated)
 
+        IMPORTANT: For section labels, use ONLY these canonical beat labels: \(canonicalBeats)
+        If a section doesn't fit any canonical label, use the format "Uncategorized: YourProposedLabel".
+
         Return ONLY valid JSON with no markdown formatting:
         {
           "frameworkType": "aida" | "pas" | "bab" | "storyLoop" | "escalationArc" | "listicle" | "tutorial" | "caseStudy" | "mythBusting" | "beforeAfter" | "dayInLife" | "interview" | null,
           "frameworkDescription": "If no standard framework matches, describe the structure in one sentence. Otherwise null.",
           "sections": [
-            {"label": "Hook", "purpose": "Creates curiosity gap about...", "sizePercent": 0.12, "emotion": "curiosity"},
-            {"label": "Problem", "purpose": "Establishes the pain point...", "sizePercent": 0.25, "emotion": "frustration"}
+            {"label": "BoldClaim", "purpose": "Creates curiosity gap about...", "sizePercent": 0.12, "emotion": "curiosity"},
+            {"label": "PainAmplification", "purpose": "Establishes the pain point...", "sizePercent": 0.25, "emotion": "frustration"}
           ],
           "emotionalArc": [
             {"position": 0.0, "emotion": "curiosity", "intensity": 0.8},
@@ -633,6 +663,16 @@ final class SwipeAnalyzer: ObservableObject {
             hookType: merged.hookType,
             frameworkType: merged.frameworkType
         )
+
+        // Beat normalization: map section labels to canonical beats and compute structural fingerprint
+        if let sections = merged.sections, !sections.isEmpty {
+            let rawLabels = sections.map { $0.label }
+            let beatService = BeatPatternService.shared
+            let normalized = beatService.normalizeBeats(rawLabels: rawLabels)
+            merged.normalizedBeats = normalized
+            merged.beatFingerprint = beatService.computeStructuralFingerprint(normalizedBeats: normalized)
+            beatService.trackUsage(beats: normalized)
+        }
 
         merged.analysisVersion = 2
 

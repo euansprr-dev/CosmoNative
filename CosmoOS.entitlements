@@ -29,5 +29,9 @@
     <!-- Accessibility for global hotkeys -->
     <key>com.apple.security.temporary-exception.apple-events</key>
     <true/>
+
+    <!-- Allow increased memory for ML model hosting in XPC daemon -->
+    <key>com.apple.developer.kernel.increased-memory-limit</key>
+    <true/>
 </dict>
 </plist>

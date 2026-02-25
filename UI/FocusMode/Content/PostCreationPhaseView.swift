@@ -59,7 +59,7 @@ struct PostCreationPhaseView: View {
             Text("PLATFORM")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.8)
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(DS.textMuted)
 
             platformPills
         }
@@ -70,7 +70,7 @@ struct PostCreationPhaseView: View {
             Text("SCHEDULE FOR")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.8)
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(DS.textMuted)
 
             DatePicker(
                 "",
@@ -81,7 +81,7 @@ struct PostCreationPhaseView: View {
             .datePickerStyle(.graphical)
             .colorScheme(.dark)
             .padding(16)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
         }
 
         // Predicted reach
@@ -114,11 +114,11 @@ struct PostCreationPhaseView: View {
             Text(text)
                 .font(.system(size: 14, weight: isPrimary ? .semibold : .medium))
         }
-        .foregroundColor(isPrimary ? .white : .white.opacity(0.8))
+        .foregroundColor(isPrimary ? DS.text : DS.text)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .background(
-            isPrimary ? AnyShapeStyle(accentColor) : AnyShapeStyle(Color.white.opacity(0.08)),
+            isPrimary ? AnyShapeStyle(accentColor) : AnyShapeStyle(DS.border),
             in: RoundedRectangle(cornerRadius: 12)
         )
     }
@@ -130,16 +130,16 @@ struct PostCreationPhaseView: View {
                 Text("PREDICTED REACH")
                     .font(.system(size: 9, weight: .bold))
                     .tracking(0.8)
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
 
                 if let predicted = metadata?.predictedReach {
                     Text(formatNumber(predicted))
                         .font(.system(size: 24, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                 } else {
                     Text("--")
                         .font(.system(size: 24, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
 
@@ -150,7 +150,7 @@ struct PostCreationPhaseView: View {
                     Text("EST. ENGAGEMENT")
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.8)
-                        .foregroundColor(.white.opacity(0.35))
+                        .foregroundColor(DS.textMuted)
 
                     Text(String(format: "%.1f%%", engagement))
                         .font(.system(size: 18, weight: .semibold, design: .monospaced))
@@ -159,7 +159,7 @@ struct PostCreationPhaseView: View {
             }
         }
         .padding(16)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Published View
@@ -179,7 +179,7 @@ struct PostCreationPhaseView: View {
                 Text("POST URL")
                     .font(.system(size: 9, weight: .bold))
                     .tracking(0.8)
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
 
                 HStack(spacing: 8) {
                     Image(systemName: "link")
@@ -189,13 +189,13 @@ struct PostCreationPhaseView: View {
                     TextField("Paste post URL here...", text: $postURL)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                 }
                 .padding(12)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
             }
 
@@ -209,7 +209,7 @@ struct PostCreationPhaseView: View {
                     Text("Track Performance")
                         .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(accentColor, in: RoundedRectangle(cornerRadius: 12))
@@ -217,7 +217,7 @@ struct PostCreationPhaseView: View {
             .buttonStyle(.plain)
         }
         .padding(20)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -245,7 +245,7 @@ struct PostCreationPhaseView: View {
                     Text(transition, style: .relative)
                         .font(.system(size: 11))
                 }
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -295,10 +295,10 @@ struct PostCreationPhaseView: View {
                 Text("Archive Content")
                     .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(.white.opacity(0.5))
+            .foregroundColor(DS.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
@@ -311,10 +311,10 @@ struct PostCreationPhaseView: View {
                 .font(.system(size: 12, weight: .bold))
                 .tracking(1)
         }
-        .foregroundColor(.orange)
+        .foregroundColor(DS.orange)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
         .frame(maxWidth: .infinity)
     }
 
@@ -324,11 +324,11 @@ struct PostCreationPhaseView: View {
             Text("ENTER METRICS")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.8)
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(DS.textMuted)
 
             Text("Enter your post metrics from the platform to track performance.")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 metricField(label: "Impressions", text: $impressionsText, icon: "eye")
@@ -354,7 +354,7 @@ struct PostCreationPhaseView: View {
                     Text("Save Metrics")
                         .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(accentColor, in: RoundedRectangle(cornerRadius: 12))
@@ -363,7 +363,7 @@ struct PostCreationPhaseView: View {
             .disabled(isSavingPerformance)
         }
         .padding(20)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -375,18 +375,18 @@ struct PostCreationPhaseView: View {
                     .foregroundColor(accentColor.opacity(0.7))
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
             }
 
             TextField("0", text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(10)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         }
     }
@@ -402,7 +402,7 @@ struct PostCreationPhaseView: View {
             Text("LIFECYCLE SUMMARY")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.8)
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(DS.textMuted)
 
             // Creation date
             archivedRow(
@@ -411,7 +411,7 @@ struct PostCreationPhaseView: View {
                 valueView: AnyView(
                     Text(archivedCreationDate, style: .date)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
                 )
             )
 
@@ -422,7 +422,7 @@ struct PostCreationPhaseView: View {
                 valueView: AnyView(
                     Text(state.lastModified, style: .date)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
                 )
             )
 
@@ -434,7 +434,7 @@ struct PostCreationPhaseView: View {
                 valueView: AnyView(
                     Text("\(wc)")
                         .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                 )
             )
 
@@ -467,7 +467,7 @@ struct PostCreationPhaseView: View {
             }
         }
         .padding(20)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
 
         // Performance summary (if available)
         if let perf = atom.metadataValue(as: ContentPerformanceMetadata.self) {
@@ -475,7 +475,7 @@ struct PostCreationPhaseView: View {
                 Text("PERFORMANCE SNAPSHOT")
                     .font(.system(size: 9, weight: .bold))
                     .tracking(0.8)
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     metricCard(label: "Reach", value: formatNumber(perf.reach), icon: "person.2")
@@ -488,7 +488,7 @@ struct PostCreationPhaseView: View {
                 }
             }
             .padding(20)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
         }
 
         // Repurpose button
@@ -501,7 +501,7 @@ struct PostCreationPhaseView: View {
                 Text("Repurpose Content")
                     .font(.system(size: 14, weight: .semibold))
             }
-            .foregroundColor(.white)
+            .foregroundColor(DS.text)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(accentColor, in: RoundedRectangle(cornerRadius: 12))
@@ -520,14 +520,14 @@ struct PostCreationPhaseView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                 valueView
             }
 
             Spacer()
         }
         .padding(14)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var archivedCreationDate: Date {
@@ -556,7 +556,7 @@ struct PostCreationPhaseView: View {
                 .foregroundColor(accentColor)
             Text(title)
                 .font(.system(size: 20, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
             Spacer()
         }
     }
@@ -585,11 +585,11 @@ struct PostCreationPhaseView: View {
                 Text(platform.displayName)
                     .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
             }
-            .foregroundColor(isSelected ? .white : .white.opacity(0.5))
+            .foregroundColor(isSelected ? DS.text : DS.textSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                isSelected ? accentColor.opacity(0.3) : Color.white.opacity(0.06),
+                isSelected ? accentColor.opacity(0.3) : DS.border,
                 in: Capsule()
             )
         }
@@ -604,15 +604,15 @@ struct PostCreationPhaseView: View {
 
             Text(value)
                 .font(.system(size: 20, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
 
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Actions
@@ -747,3 +747,6 @@ struct PostCreationPhaseView: View {
         return "\(value)"
     }
 }
+
+// MARK: - Preview
+

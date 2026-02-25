@@ -28,6 +28,9 @@ struct ResearchFocusModeView: View {
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
     @State private var showResearchAgentSheet = false
+    @State private var showSidebar = false
+    @State private var showSettings = false
+    @State private var rightClickMonitor: Any?
 
     // MARK: - Initialization
 
@@ -42,68 +45,109 @@ struct ResearchFocusModeView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            // Infinite canvas with content
-            InfiniteCanvasView(
-                viewportState: $viewportState,
-                showGrid: true,
-                anchoredContent: {
-                    anchoredContentStack
-                },
-                floatingContent: {
-                    floatingPanelsLayer
-                }
-            )
-
-            // Focus connection lines layer (universal linking)
-            FocusConnectionLinesLayer(
-                connectManager: focusConnectManager,
-                focusAtomUUID: atom.uuid
-            )
-
-            // Top bar overlay
-            VStack {
-                topBar
-                Spacer()
-            }
-
-            // Radial menu (on right-click)
-            if let menuPosition = viewModel.radialMenuPosition {
-                RadialMenuView(
-                    position: menuPosition,
-                    onSelect: handleRadialAction,
-                    onDismiss: {
-                        viewModel.radialMenuPosition = nil
+        ZStack(alignment: .trailing) {
+            ZStack {
+                // Infinite canvas with content
+                InfiniteCanvasView(
+                    viewportState: $viewportState,
+                    showGrid: true,
+                    anchoredContent: {
+                        anchoredContentStack
+                    },
+                    floatingContent: {
+                        floatingPanelsLayer
                     }
                 )
+
+                // Focus connection lines layer (universal linking)
+                FocusConnectionLinesLayer(
+                    connectManager: focusConnectManager,
+                    focusAtomUUID: atom.uuid
+                )
+
+                // Top bar overlay
+                VStack {
+                    topBar
+                    Spacer()
+                }
+
+                // Radial menu (on right-click)
+                if let menuPosition = viewModel.radialMenuPosition {
+                    RadialMenuView(
+                        position: menuPosition,
+                        onSelect: handleRadialAction,
+                        onDismiss: {
+                            viewModel.radialMenuPosition = nil
+                        },
+                        customActions: Self.focusModeActions
+                    )
+                }
+            }
+
+            // Research Intelligence Sidebar (overlays on top)
+            if showSidebar {
+                HStack(spacing: 0) {
+                    Divider().background(DS.border)
+
+                    ResearchSidebarView(
+                        atom: atom,
+                        state: $viewModel.state,
+                        isVisible: showSidebar
+                    )
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .focusBlockContextMenu(
-            manager: floatingBlocksManager,
-            ownerAtomUUID: atom.uuid
-        )
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 8) {
+                // Sidebar toggle
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(showSidebar ? OnyxColors.Dimension.knowledge : DS.textSecondary)
+                        .padding(8)
+                        .background(
+                            showSidebar ? OnyxColors.Dimension.knowledge.opacity(0.15) : DS.border,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, showSidebar ? 340 : 16)
+            .padding(.top, 16)
+            .transition(.opacity)
+            .animation(ProMotionSprings.snappy, value: showSidebar)
+        }
         .onAppear {
             loadState()
             listenForAtomPicker()
+            setupRightClickMonitor()
+            // Register context provider for global Cosmo window
+            let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             saveState()
             floatingBlocksManager.saveImmediately()
+            removeRightClickMonitor()
         }
-        // Right-click for radial menu
+        // Deselect panels on background click
         .onTapGesture(count: 1) {
-            // Deselect all panels on background click
             panelManager.deselectAll()
         }
-        .gesture(
-            TapGesture(count: 1)
-                .modifiers(.control)
-                .onEnded { _ in
-                    // Control-click opens radial menu at mouse location
-                    // Note: Getting actual mouse position requires NSEvent
-                    viewModel.radialMenuPosition = CGPoint(x: 400, y: 300)
-                }
-        )
         // Keyboard shortcuts
         .onKeyPress(.escape) {
             if viewModel.radialMenuPosition != nil {
@@ -128,6 +172,25 @@ struct ResearchFocusModeView: View {
         .sheet(isPresented: $showCommandK) {
             CommandKView()
                 .frame(minWidth: 900, minHeight: 600)
+        }
+        // Cmd+K single-click: add as floating block
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
+            guard let uuid = notification.userInfo?["atomUUID"] as? String else { return }
+            let title = notification.userInfo?["title"] as? String ?? "Untitled"
+            let typeRaw = notification.userInfo?["atomType"] as? String ?? AtomType.idea.rawValue
+            let atomType = AtomType(rawValue: typeRaw) ?? .idea
+            showCommandK = false
+            floatingBlocksManager.addBlock(
+                linkedAtomUUID: uuid,
+                linkedAtomType: atomType,
+                title: title,
+                position: CGPoint(x: 200, y: 200)
+            )
+        }
+        // Settings sheet
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
         }
         // Research Agent sheet
         .sheet(isPresented: $showResearchAgentSheet) {
@@ -291,7 +354,7 @@ struct ResearchFocusModeView: View {
                         viewModel.createHighlightAnnotation(sectionID: sectionID, type: type, selectedText: selectedText, range: range)
                     }
                 )
-                .frame(width: 520) // Narrower now that annotations only go right
+                .frame(width: 560)
             }
         }
     }
@@ -343,17 +406,17 @@ struct ResearchFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
             // Title
             Text(atom.title ?? "Research")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(1)
 
             // Type badge
@@ -378,50 +441,28 @@ struct ResearchFocusModeView: View {
                 Text("\(viewModel.state.allAnnotations.count)")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.white.opacity(0.6))
+            .foregroundColor(DS.textSecondary)
 
-            // Add Research Agent button
-            Button {
-                showResearchAgentSheet = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 12))
-                    Text("Research Agent")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(Color(hex: "#06B6D4"))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(hex: "#06B6D4").opacity(0.15), in: Capsule())
-            }
-            .buttonStyle(.plain)
-
-            // Command-K button
-            Button {
-                showCommandK = true
-            } label: {
+            // Floating block count
+            if !floatingBlocksManager.blocks.isEmpty {
                 HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
+                    Image(systemName: "square.on.square")
                         .font(.system(size: 11))
-                    Text("⌘K")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    Text("\(floatingBlocksManager.blocks.count)")
+                        .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .foregroundColor(DS.textSecondary)
             }
-            .buttonStyle(.plain)
+
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(
             LinearGradient(
                 colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
-                    CosmoColors.thinkspaceVoid.opacity(0.4),
+                    DS.bg.opacity(0.95),
+                    DS.bg.opacity(0.8),
+                    DS.bg.opacity(0.4),
                     .clear
                 ],
                 startPoint: .top,
@@ -432,38 +473,102 @@ struct ResearchFocusModeView: View {
         , alignment: .top)
     }
 
+    // MARK: - Focus Mode Radial Actions
+
+    /// 8-item radial menu for focus modes (Note/Idea/Task/Content/Research/Connection/Agent/Database)
+    private static let focusModeActions: [RadialAction] = [
+        RadialAction(icon: "note.text", label: "Note", color: Color(hex: "#F97316"), type: .createNote),
+        RadialAction(icon: "lightbulb.fill", label: "Idea", color: Color(hex: "#818CF8"), type: .createIdea),
+        RadialAction(icon: "checkmark.circle.fill", label: "Task", color: Color(hex: "#22C55E"), type: .createTask),
+        RadialAction(icon: "doc.text.fill", label: "Content", color: Color(hex: "#3B82F6"), type: .createContent),
+        RadialAction(icon: "magnifyingglass", label: "Research", color: Color(hex: "#10B981"), type: .createResearch),
+        RadialAction(icon: "link.circle.fill", label: "Connection", color: Color(hex: "#8B5CF6"), type: .createConnection),
+        RadialAction(icon: "brain.head.profile", label: "Agent", color: Color(hex: "#06B6D4"), type: .researchAgent),
+        RadialAction(icon: "tray.full.fill", label: "Database", color: Color(hex: "#64748B"), type: .fromDatabase),
+    ]
+
+    // MARK: - Right-Click Monitor
+
+    private func setupRightClickMonitor() {
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            guard let window = event.window else { return event }
+
+            let windowPoint = event.locationInWindow
+            let windowHeight = window.frame.height
+
+            // Convert to SwiftUI coordinates (flip Y)
+            let screenPoint = CGPoint(
+                x: windowPoint.x,
+                y: windowHeight - windowPoint.y
+            )
+
+            // Convert screen coordinates to canvas coordinates
+            // Inverse of: screen = canvas * zoom + offset
+            let canvasPoint = CGPoint(
+                x: (screenPoint.x - viewportState.offset.x) / viewportState.zoomScale,
+                y: (screenPoint.y - viewportState.offset.y) / viewportState.zoomScale
+            )
+
+            viewModel.lastTapPosition = canvasPoint
+            viewModel.radialMenuPosition = screenPoint
+
+            return nil // Consume the event
+        }
+    }
+
+    private func removeRightClickMonitor() {
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitor = nil
+        }
+    }
+
     // MARK: - Helpers
 
     private func handleRadialAction(_ action: RadialAction) {
         viewModel.radialMenuPosition = nil
+        let position = viewModel.lastTapPosition
 
         switch action.type {
         case .createNote:
-            // Create note atom and add as panel
             Task {
                 if let noteAtom = await viewModel.createNote() {
-                    addPanelForAtom(noteAtom, at: viewModel.lastTapPosition)
+                    addPanelForAtom(noteAtom, at: position)
+                }
+            }
+
+        case .createIdea:
+            Task {
+                if let ideaAtom = await viewModel.createIdea() {
+                    addPanelForAtom(ideaAtom, at: position)
+                }
+            }
+
+        case .createTask:
+            Task {
+                if let taskAtom = await viewModel.createTask() {
+                    addPanelForAtom(taskAtom, at: position)
                 }
             }
 
         case .createContent:
             Task {
                 if let contentAtom = await viewModel.createContent() {
-                    addPanelForAtom(contentAtom, at: viewModel.lastTapPosition)
+                    addPanelForAtom(contentAtom, at: position)
                 }
             }
 
         case .createResearch:
             Task {
                 if let researchAtom = await viewModel.createResearch() {
-                    addPanelForAtom(researchAtom, at: viewModel.lastTapPosition)
+                    addPanelForAtom(researchAtom, at: position)
                 }
             }
 
         case .createConnection:
             Task {
                 if let connectionAtom = await viewModel.createConnection() {
-                    addPanelForAtom(connectionAtom, at: viewModel.lastTapPosition)
+                    addPanelForAtom(connectionAtom, at: position)
                 }
             }
 
@@ -830,6 +935,24 @@ class ResearchFocusModeViewModel: ObservableObject {
         return try? await AtomRepository.shared.create(note)
     }
 
+    func createIdea() async -> Atom? {
+        let idea = Atom.new(
+            type: .idea,
+            title: "New Idea",
+            body: ""
+        )
+        return try? await AtomRepository.shared.create(idea)
+    }
+
+    func createTask() async -> Atom? {
+        let task = Atom.new(
+            type: .task,
+            title: "New Task",
+            body: ""
+        )
+        return try? await AtomRepository.shared.create(task)
+    }
+
     func createContent() async -> Atom? {
         let content = Atom.new(
             type: .content,
@@ -1088,23 +1211,23 @@ struct ResearchAgentInputSheet: View {
 
                 Text("Research Agent")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 Spacer()
             }
 
             Text("Ask a question and the Research Agent will search the web and synthesize findings.")
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Query input
             TextField("What would you like to research?", text: $query, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(12)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
                 .focused($isFocused)
                 .lineLimit(3...6)
 
@@ -1114,7 +1237,7 @@ struct ResearchAgentInputSheet: View {
                     onCancel()
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
@@ -1139,7 +1262,7 @@ struct ResearchAgentInputSheet: View {
         }
         .padding(24)
         .frame(width: 450)
-        .background(Color(hex: "#1A1A25"))
+        .background(DS.surfaceCard)
         .onAppear {
             isFocused = true
         }
@@ -1182,7 +1305,7 @@ struct ResearchAgentPanelView: View {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -1190,11 +1313,11 @@ struct ResearchAgentPanelView: View {
             // Query
             Text(result.query)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(DS.borderActive)
 
             // Content based on status
             switch result.status {
@@ -1257,16 +1380,16 @@ struct ResearchAgentPanelView: View {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(Color.red)
+                    .foregroundColor(DS.red)
                 Text("Failed")
                     .font(.system(size: 9))
-                    .foregroundColor(Color.red)
+                    .foregroundColor(DS.red)
             }
 
         case .pending:
             Text("Pending")
                 .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
         }
     }
 
@@ -1279,7 +1402,7 @@ struct ResearchAgentPanelView: View {
 
             Text("Searching sources...")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -1290,7 +1413,7 @@ struct ResearchAgentPanelView: View {
             // Summary
             Text(result.summary)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(DS.text)
                 .lineLimit(isExpanded ? nil : 4)
 
             // Citations count
@@ -1301,7 +1424,7 @@ struct ResearchAgentPanelView: View {
                     Text("\(result.citations.count) sources")
                         .font(.system(size: 10))
                 }
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
             }
 
             // Actions
@@ -1340,11 +1463,11 @@ struct ResearchAgentPanelView: View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 24))
-                .foregroundColor(Color.red.opacity(0.7))
+                .foregroundColor(DS.red.opacity(0.7))
 
             Text("Research failed. Please try again.")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 12) {
@@ -1353,7 +1476,7 @@ struct ResearchAgentPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
 
                 Button("Retry") {
                     // Would retry query
@@ -1370,7 +1493,7 @@ struct ResearchAgentPanelView: View {
     private var pendingContent: some View {
         Text("Waiting to start...")
             .font(.system(size: 12))
-            .foregroundColor(.white.opacity(0.5))
+            .foregroundColor(DS.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
     }
@@ -1379,7 +1502,7 @@ struct ResearchAgentPanelView: View {
 
     private var panelBackground: some View {
         ZStack {
-            Color(hex: "#1A1A25")
+            DS.surfaceCard
             LinearGradient(
                 colors: [agentColor.opacity(0.03), Color.clear],
                 startPoint: .topLeading,
@@ -1391,9 +1514,9 @@ struct ResearchAgentPanelView: View {
     private var borderColor: Color {
         switch result.status {
         case .complete: return Color(hex: "#22C55E").opacity(0.5) // Green
-        case .failed: return Color.red.opacity(0.5)
+        case .failed: return DS.red.opacity(0.5)
         case .running: return agentColor.opacity(0.3)
-        case .pending: return Color.white.opacity(0.1)
+        case .pending: return DS.borderActive
         }
     }
 }
@@ -1452,3 +1575,48 @@ struct ResearchFocusModeView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class ResearchContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private weak var viewModel: ResearchFocusModeViewModel?
+
+    init(atom: Atom, viewModel: ResearchFocusModeViewModel) {
+        self.atom = atom
+        self.viewModel = viewModel
+    }
+
+    var contextType: CosmoContextType { .researchFocusMode }
+
+    var contextSummary: String {
+        "Research: \(atom.title ?? "Untitled")"
+    }
+
+    var contextData: CosmoContextData {
+        var viewData: [String: String] = [:]
+
+        if let sections = viewModel?.state.transcriptSections, !sections.isEmpty {
+            let fullTranscript = sections.map { $0.text }.joined(separator: " ")
+            viewData["transcript"] = String(fullTranscript.prefix(1000))
+            viewData["transcriptSectionCount"] = "\(sections.count)"
+            let annotationCount = sections.reduce(0) { $0 + $1.annotations.count }
+            if annotationCount > 0 {
+                viewData["annotationCount"] = "\(annotationCount)"
+            }
+        }
+        if let url = atom.url {
+            viewData["sourceURL"] = url
+        }
+
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "research",
+            currentAtomTitle: atom.title,
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}

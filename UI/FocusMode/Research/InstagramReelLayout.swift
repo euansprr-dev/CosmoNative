@@ -55,7 +55,7 @@ struct InstagramReelLayout: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
+                            .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
 
                 // Corner connection dots
@@ -97,10 +97,10 @@ struct InstagramReelLayout: View {
                         VStack(spacing: 12) {
                             Image(systemName: "video.slash")
                                 .font(.system(size: 32))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(DS.textSecondary)
                             Text("Could not load video")
                                 .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.6))
+                                .foregroundColor(DS.textSecondary)
                         }
                     )
             }
@@ -133,7 +133,7 @@ struct InstagramReelLayout: View {
                                 .tint(.white)
                             Text("Refreshing video link...")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundColor(DS.textSecondary)
                         }
                     )
             }
@@ -186,7 +186,7 @@ struct InstagramReelLayout: View {
                 ZStack(alignment: .leading) {
                     // Track
                     Capsule()
-                        .fill(Color.white.opacity(0.15))
+                        .fill(DS.borderActive)
                         .frame(height: 4)
 
                     // Progress
@@ -221,13 +221,13 @@ struct InstagramReelLayout: View {
             HStack {
                 Text(formatTime(currentTimestamp))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
                 Text(formatTime(duration ?? 0))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
         .padding(.horizontal, 8)
@@ -238,7 +238,7 @@ struct InstagramReelLayout: View {
         let xOffset = width * ratio
 
         return Circle()
-            .fill(CosmoColors.lavender)
+            .fill(DS.accent)
             .frame(width: 6, height: 6)
             .offset(x: xOffset - 3)
             .onTapGesture {
@@ -256,17 +256,17 @@ struct InstagramReelLayout: View {
             // Instagram icon
             Image(systemName: "camera.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             // Username
             if let username = instagramData.authorUsername {
                 Text("@\(username)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             }
 
             Text("·")
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
             // Type badge
             Text("Reel")
@@ -321,11 +321,11 @@ struct InstagramReelLayout: View {
                 Text("TRANSCRIPT & ANNOTATIONS")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.8)
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
 
                 Text("Manual transcription · \(sectionCount) sections · \(annotationCount) annotations")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -340,10 +340,10 @@ struct InstagramReelLayout: View {
                     Text("Add Section")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.1), in: Capsule())
+                .background(DS.borderActive, in: Capsule())
             }
             .buttonStyle(.plain)
         }
@@ -354,15 +354,15 @@ struct InstagramReelLayout: View {
         VStack(spacing: 12) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 28))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
             Text("No transcript yet")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             Text("Press S while watching to add a section at the current timestamp")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .padding(.vertical, 40)
@@ -486,13 +486,13 @@ struct ManualTranscriptSectionView: View {
             HStack {
                 Text(section.displayTimeRange)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(isActive ? CosmoColors.emerald : .white.opacity(0.5))
+                    .foregroundColor(isActive ? CosmoColors.emerald : DS.textSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(
                         isActive
                             ? CosmoColors.emerald.opacity(0.15)
-                            : Color.white.opacity(0.05),
+                            : DS.border,
                         in: Capsule()
                     )
 
@@ -506,7 +506,7 @@ struct ManualTranscriptSectionView: View {
                         } label: {
                             Image(systemName: "pencil")
                                 .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(DS.textSecondary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -517,18 +517,18 @@ struct ManualTranscriptSectionView: View {
             if isEditing {
                 TextEditor(text: $editText)
                     .font(.system(size: 13))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 60)
                     .padding(8)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
 
                 HStack {
                     Button("Cancel") {
                         isEditing = false
                     }
                     .buttonStyle(.plain)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
 
                     Spacer()
 
@@ -543,7 +543,7 @@ struct ManualTranscriptSectionView: View {
             } else {
                 Text("\"\(section.text)\"")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
                     .italic()
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
@@ -571,7 +571,7 @@ struct ManualTranscriptSectionView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isActive ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
+                .fill(isActive ? DS.border : DS.borderSubtle)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(
@@ -628,7 +628,7 @@ struct AnnotationBubbleView: View {
                 // Content
                 Text(annotation.content)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             }
 
             Spacer()
@@ -644,7 +644,7 @@ struct AnnotationBubbleView: View {
                             .font(.system(size: 10))
                     }
                 }
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .buttonStyle(.plain)
             }
         }
@@ -663,3 +663,4 @@ struct AnnotationBubbleView: View {
         }
     }
 }
+

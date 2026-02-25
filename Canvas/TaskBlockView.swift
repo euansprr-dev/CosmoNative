@@ -193,10 +193,15 @@ struct TaskBlockView: View {
     }
 
     private func openFocusMode() {
+        let entityId = task?.id ?? block.entityId
+        guard entityId > 0 else {
+            print("⚠️ TaskBlockView.openFocusMode: no backing atom (entityId=\(entityId)), skipping")
+            return
+        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
-            userInfo: ["type": EntityType.task, "id": task?.id ?? block.entityId]
+            userInfo: ["type": EntityType.task, "id": entityId]
         )
     }
 
@@ -611,4 +616,19 @@ struct TaskFooter: View {
         relativeFormatter.unitsStyle = .abbreviated
         return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
+}
+
+// MARK: - Preview
+
+#Preview("Task Block") {
+    ZStack {
+        CosmoColors.thinkspaceVoid
+            .ignoresSafeArea()
+
+        TaskBlockView(
+            block: CanvasBlock.previewTaskBlock()
+        )
+        .environmentObject(BlockExpansionManager())
+    }
+    .frame(width: 400, height: 250)
 }

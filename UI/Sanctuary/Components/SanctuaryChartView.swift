@@ -45,7 +45,7 @@ struct ChartPeriodSelector: View {
                 } label: {
                     Text(period.displayName)
                         .font(.system(size: 11, weight: selected == period ? .semibold : .medium))
-                        .foregroundColor(selected == period ? .white : SanctuaryColors.textMuted)
+                        .foregroundColor(selected == period ? .white : DS.textMuted)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(
@@ -59,7 +59,7 @@ struct ChartPeriodSelector: View {
         .padding(3)
         .background(
             Capsule()
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.borderSubtle)
         )
     }
 }
@@ -106,7 +106,7 @@ struct SanctuaryLineChart: View {
                         refPath.addLine(to: CGPoint(x: canvasSize.width, y: y))
                         context.stroke(
                             refPath,
-                            with: .color(Color.white.opacity(0.08)),
+                            with: .color(DS.border),
                             style: StrokeStyle(lineWidth: 0.5, dash: [4, 4])
                         )
                     }
@@ -239,7 +239,7 @@ struct SanctuaryLineChart: View {
             if let first = dataPoints.first?.0 {
                 Text(formatAxisDate(first))
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(SanctuaryColors.textMuted)
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -248,7 +248,7 @@ struct SanctuaryLineChart: View {
                let mid = dataPoints[safe: dataPoints.count / 2]?.0 {
                 Text(formatAxisDate(mid))
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(SanctuaryColors.textMuted)
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -256,7 +256,7 @@ struct SanctuaryLineChart: View {
             if let last = dataPoints.last?.0 {
                 Text(formatAxisDate(last))
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(SanctuaryColors.textMuted)
+                    .foregroundColor(DS.textMuted)
             }
         }
         .frame(height: 16)
@@ -315,7 +315,7 @@ struct SanctuaryBarChart: View {
 
                     Text(item.0)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(SanctuaryColors.textMuted)
+                        .foregroundColor(DS.textMuted)
                 }
             }
         }
@@ -357,7 +357,7 @@ struct SanctuaryChartView_Previews: PreviewProvider {
             }
         }
         .padding(24)
-        .background(Color(hex: "141422"))
+        .background(DS.bg)
         .preferredColorScheme(.dark)
     }
 }

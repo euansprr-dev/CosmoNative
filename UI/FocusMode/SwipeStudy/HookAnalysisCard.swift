@@ -27,7 +27,7 @@ struct HookAnalysisCard: View {
             Text(analysis.hookText ?? "No hook detected")
                 .font(.system(size: 20, weight: .semibold))
                 .tracking(-0.3)
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(4)
 
             // Pills row
@@ -83,12 +83,12 @@ struct HookAnalysisCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Hook Score")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
 
                     if let wordCount = analysis.hookWordCount {
                         Text("\(wordCount) words")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(DS.textMuted)
                     }
                 }
 
@@ -105,7 +105,7 @@ struct HookAnalysisCard: View {
 
                     Text(reason)
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 10)
@@ -120,10 +120,10 @@ struct HookAnalysisCard: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
             guard !hasAppeared else { return }
@@ -154,7 +154,7 @@ struct HookAnalysisCard: View {
 struct HookAnalysisCard_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
             HookAnalysisCard(
                 analysis: SwipeAnalysis(
                     hookText: "Stop scrolling. This one technique changed how I write every single hook.",

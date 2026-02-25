@@ -78,7 +78,7 @@ struct ResearchCoreView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(isHovered ? 0.2 : 0.1), lineWidth: 1)
+                .stroke(isHovered ? DS.borderActive : DS.borderActive.opacity(0.8), lineWidth: 1)
         )
         .shadow(
             color: Color.black.opacity(0.3),
@@ -122,10 +122,10 @@ struct ResearchCoreView: View {
                         Text("Copy")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08), in: Capsule())
+                    .background(DS.border, in: Capsule())
                 }
                 .buttonStyle(.plain)
 
@@ -137,17 +137,17 @@ struct ResearchCoreView: View {
                         Text("Open")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08), in: Capsule())
+                    .background(DS.border, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
     }
 
     // MARK: - Content Area
@@ -182,7 +182,7 @@ struct ResearchCoreView: View {
             // Title
             Text(atom.title ?? "Untitled Research")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             // Metadata row
@@ -190,23 +190,23 @@ struct ResearchCoreView: View {
                 if let author = source?.author ?? source?.channelName {
                     Text(author)
                         .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 if let platform = source?.platform {
                     Text("·")
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                     Text(platform)
                         .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 if let durationStr = source?.durationString {
                     Text("·")
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                     Text(durationStr)
                         .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
             }
         }
@@ -261,7 +261,7 @@ struct ResearchCoreView: View {
                             }
                             Text("Open Video")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white.opacity(0.8))
+                                .foregroundColor(DS.text)
                         }
                     }
                     .buttonStyle(.plain)
@@ -274,7 +274,7 @@ struct ResearchCoreView: View {
 
     private var videoPlaceholder: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(Color.white.opacity(0.05))
+            .fill(DS.border)
             .frame(height: 240)
             .overlay(
                 VStack(spacing: 12) {
@@ -284,7 +284,7 @@ struct ResearchCoreView: View {
 
                     Text("Video content")
                         .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
             )
     }
@@ -344,7 +344,7 @@ struct ResearchCoreView: View {
             if let body = atom.body, !body.isEmpty {
                 Text(body)
                     .font(.system(size: 14))
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(10)
             }
         }
@@ -356,7 +356,7 @@ struct ResearchCoreView: View {
         VStack(spacing: 12) {
             // PDF preview placeholder
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.05))
+                .fill(DS.border)
                 .frame(height: 300)
                 .overlay(
                     VStack(spacing: 12) {
@@ -366,7 +366,7 @@ struct ResearchCoreView: View {
 
                         Text("PDF Document")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.6))
+                            .foregroundColor(DS.textSecondary)
 
                         Button("Open PDF") {
                             onOpenInBrowser()
@@ -401,14 +401,14 @@ struct ResearchCoreView: View {
                     if let author = source?.author {
                         Text(author)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(DS.text)
                     }
 
                     // Platform badge
                     if let platform = source?.platform {
                         Text("@\(platform.lowercased())")
                             .font(.system(size: 12))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                     }
                 }
 
@@ -419,12 +419,12 @@ struct ResearchCoreView: View {
             if let body = atom.body, !body.isEmpty {
                 Text(body)
                     .font(.system(size: 15))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(DS.text)
                     .lineLimit(8)
             }
         }
         .padding(16)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Generic Content
@@ -440,20 +440,20 @@ struct ResearchCoreView: View {
 
                     Text(url)
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
             }
 
             // Body preview
             if let body = atom.body, !body.isEmpty {
                 Text(body)
                     .font(.system(size: 14))
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(6)
             }
 
@@ -486,13 +486,13 @@ struct ResearchCoreView: View {
             HStack {
                 Text(formatTimestamp(currentTimestamp))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
                 Text(formatTimestamp(duration))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
         .padding(.horizontal, 16)
@@ -508,7 +508,7 @@ struct ResearchCoreView: View {
 
     private var panelBackground: some View {
         ZStack {
-            Color(hex: "#1A1A25")
+            DS.surfaceCard
 
             LinearGradient(
                 colors: [
@@ -551,7 +551,7 @@ struct TimelineProgressView: View {
             ZStack(alignment: .leading) {
                 // Track background
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.15))
+                    .fill(DS.borderActive)
                     .frame(height: 4)
 
                 // Progress fill
@@ -614,7 +614,7 @@ struct TimelineMarkerView: View {
             .frame(width: isHovered ? 10 : 6, height: isHovered ? 10 : 6)
             .overlay(
                 Circle()
-                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                    .stroke(DS.textSecondary, lineWidth: 1)
             )
             .shadow(color: marker.type.color.opacity(0.5), radius: isHovered ? 6 : 2)
             .onHover { hovering in
@@ -816,7 +816,7 @@ struct YouTubeFocusModePlayer: NSViewRepresentable {
 struct ResearchCoreView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             ResearchCoreView(

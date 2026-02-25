@@ -4,6 +4,7 @@
 // Opened from SanctuaryView's gear icon as a .sheet with frame(width: 720, height: 540)
 
 import SwiftUI
+import AppKit
 
 // MARK: - Connection Status
 
@@ -30,20 +31,26 @@ enum ConnectionStatus: String {
 
 enum SettingsTab: String, CaseIterable {
     case connections = "Connections"
+    case profiles = "Profiles"
     case voice = "Voice"
     case apiKeys = "API Keys"
+    case aiIntelligence = "AI Intelligence"
     case aiStatus = "AI Status"
     case cosmoAgent = "Cosmo Agent"
+    case skillsAndPrompts = "Skills & Prompts"
     case shortcuts = "Shortcuts"
     case about = "About"
 
     var icon: String {
         switch self {
         case .connections: return "link"
+        case .profiles: return "person.2.fill"
         case .voice: return "waveform"
         case .apiKeys: return "key.fill"
+        case .aiIntelligence: return "text.book.closed.fill"
         case .aiStatus: return "brain"
         case .cosmoAgent: return "sparkles.rectangle.stack"
+        case .skillsAndPrompts: return "brain.head.profile"
         case .shortcuts: return "keyboard"
         case .about: return "info.circle"
         }
@@ -77,6 +84,13 @@ struct SanctuarySettingsView: View {
     @State private var openRouterKey: String = ""
     @State private var youtubeAPIKey: String = ""
     @State private var perplexityKey: String = ""
+
+    // AI Intelligence
+    @StateObject private var promptStore = PromptTemplateStore.shared
+    @State private var showResetMethodologyAlert = false
+    @State private var showResetOutlineAlert = false
+    @State private var showResetDraftAlert = false
+    @State private var showResetCollaboratorAlert = false
 
     // AI Diagnostics
     @State private var smokeTestResult: String? = nil
@@ -186,14 +200,20 @@ struct SanctuarySettingsView: View {
                 switch selectedTab {
                 case .connections:
                     connectionsTab
+                case .profiles:
+                    ProfileManagementTab()
                 case .voice:
                     voiceTab
                 case .apiKeys:
                     apiKeysTab
+                case .aiIntelligence:
+                    aiIntelligenceTab
                 case .aiStatus:
                     aiStatusTab
                 case .cosmoAgent:
                     CosmoAgentSettingsTab()
+                case .skillsAndPrompts:
+                    SkillsAndPromptsSettingsTab()
                 case .shortcuts:
                     shortcutsTab
                 case .about:
@@ -373,6 +393,475 @@ struct SanctuarySettingsView: View {
 
             Spacer()
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MARK: - AI Intelligence Tab
+    // ═══════════════════════════════════════════════════════════════
+
+    private var aiIntelligenceTab: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
+            Text("AI Intelligence")
+                .font(SanctuaryTypography.titleMedium)
+                .foregroundColor(SanctuaryColors.Text.primary)
+
+            Text("Configure the AI content strategy engine")
+                .font(SanctuaryTypography.bodyMedium)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+
+            // AI Methodology section
+            aiMethodologySection
+
+            // Pipeline prompt sections
+            outlinePromptSection
+            draftPromptSection
+            collaboratorPromptSection
+
+            // Model Preferences section
+            modelPreferencesSection
+
+            Spacer(minLength: SanctuaryLayout.Spacing.lg)
+        }
+        .alert("Reset Methodology", isPresented: $showResetMethodologyAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                promptStore.resetToDefault()
+            }
+        } message: {
+            Text("This will replace your custom methodology with the default playbook. This cannot be undone.")
+        }
+        .alert("Reset Outline Prompt", isPresented: $showResetOutlineAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                promptStore.resetOutlineToDefault()
+            }
+        } message: {
+            Text("This will replace your custom outline prompt with the default. This cannot be undone.")
+        }
+        .alert("Reset Draft Prompt", isPresented: $showResetDraftAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                promptStore.resetDraftToDefault()
+            }
+        } message: {
+            Text("This will replace your custom draft prompt with the default. This cannot be undone.")
+        }
+        .alert("Reset Collaborator Prompt", isPresented: $showResetCollaboratorAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                promptStore.resetCollaboratorToDefault()
+            }
+        } message: {
+            Text("This will replace your custom collaborator prompt with the default. This cannot be undone.")
+        }
+    }
+
+    private var aiMethodologySection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(CosmoColors.cosmoAI)
+
+                Text("AI METHODOLOGY")
+                    .font(SanctuaryTypography.label)
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1.5)
+
+                Spacer()
+
+                Text("\(promptStore.tokenCount()) tokens")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Text.muted)
+            }
+
+            Text("The foundational content strategy playbook injected into all AI generations. Edit to customize the AI's understanding of virality, copywriting, and content architecture.")
+                .font(SanctuaryTypography.bodySmall)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .lineLimit(3)
+
+            // Text editor using NSViewRepresentable for proper editing
+            MethodologyTextEditor(text: Binding(
+                get: { promptStore.methodology },
+                set: {
+                    promptStore.methodology = $0
+                    promptStore.isDirty = true
+                }
+            ))
+            .frame(height: 200)
+            .background(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .fill(SanctuaryColors.Glass.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .stroke(promptStore.isDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+
+            // Action buttons
+            HStack(spacing: SanctuaryLayout.Spacing.md) {
+                Button(action: { promptStore.saveMethodology() }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text("Save Changes")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(promptStore.isDirty ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!promptStore.isDirty)
+
+                Button(action: { showResetMethodologyAlert = true }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12))
+                        Text("Reset to Default")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(SanctuaryColors.Glass.secondary)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(glassCard)
+    }
+
+    private var outlinePromptSection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                Image(systemName: "list.bullet.rectangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(CosmoColors.cosmoAI)
+
+                Text("OUTLINE GENERATION PROMPT")
+                    .font(SanctuaryTypography.label)
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1.5)
+
+                Spacer()
+
+                Text("\(promptStore.outlineTokenCount()) tokens")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Text.muted)
+            }
+
+            Text("Instructions sent to the AI when generating content outlines. Controls beat pattern analysis, section structure, and hook variant generation.")
+                .font(SanctuaryTypography.bodySmall)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .lineLimit(3)
+
+            MethodologyTextEditor(text: Binding(
+                get: { promptStore.outlinePrompt },
+                set: {
+                    promptStore.outlinePrompt = $0
+                    promptStore.isOutlineDirty = true
+                }
+            ))
+            .frame(height: 200)
+            .background(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .fill(SanctuaryColors.Glass.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .stroke(promptStore.isOutlineDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+
+            HStack(spacing: SanctuaryLayout.Spacing.md) {
+                Button(action: { promptStore.saveOutlinePrompt() }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text("Save Changes")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(promptStore.isOutlineDirty ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!promptStore.isOutlineDirty)
+
+                Button(action: { showResetOutlineAlert = true }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12))
+                        Text("Reset to Default")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(SanctuaryColors.Glass.secondary)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(glassCard)
+    }
+
+    private var draftPromptSection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                Image(systemName: "doc.richtext.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(CosmoColors.cosmoAI)
+
+                Text("DRAFT GENERATION PROMPT")
+                    .font(SanctuaryTypography.label)
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1.5)
+
+                Spacer()
+
+                Text("\(promptStore.draftTokenCount()) tokens")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Text.muted)
+            }
+
+            Text("Requirements and evaluation format sent when generating full drafts. The outline, format instructions, and self-correction rules are injected automatically around this prompt.")
+                .font(SanctuaryTypography.bodySmall)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .lineLimit(3)
+
+            MethodologyTextEditor(text: Binding(
+                get: { promptStore.draftPrompt },
+                set: {
+                    promptStore.draftPrompt = $0
+                    promptStore.isDraftDirty = true
+                }
+            ))
+            .frame(height: 200)
+            .background(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .fill(SanctuaryColors.Glass.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .stroke(promptStore.isDraftDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+
+            HStack(spacing: SanctuaryLayout.Spacing.md) {
+                Button(action: { promptStore.saveDraftPrompt() }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text("Save Changes")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(promptStore.isDraftDirty ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!promptStore.isDraftDirty)
+
+                Button(action: { showResetDraftAlert = true }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12))
+                        Text("Reset to Default")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(SanctuaryColors.Glass.secondary)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(glassCard)
+    }
+
+    private var collaboratorPromptSection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(CosmoColors.cosmoAI)
+
+                Text("AI COLLABORATOR PROMPT")
+                    .font(SanctuaryTypography.label)
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1.5)
+
+                Spacer()
+
+                Text("\(promptStore.collaboratorTokenCount()) tokens")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Text.muted)
+            }
+
+            Text("The identity and behavior preamble for the AI collaborator chat. Content context, hooks, outline, and client profile are appended automatically.")
+                .font(SanctuaryTypography.bodySmall)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .lineLimit(3)
+
+            MethodologyTextEditor(text: Binding(
+                get: { promptStore.collaboratorPrompt },
+                set: {
+                    promptStore.collaboratorPrompt = $0
+                    promptStore.isCollaboratorDirty = true
+                }
+            ))
+            .frame(height: 200)
+            .background(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .fill(SanctuaryColors.Glass.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .stroke(promptStore.isCollaboratorDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+
+            HStack(spacing: SanctuaryLayout.Spacing.md) {
+                Button(action: { promptStore.saveCollaboratorPrompt() }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text("Save Changes")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(promptStore.isCollaboratorDirty ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!promptStore.isCollaboratorDirty)
+
+                Button(action: { showResetCollaboratorAlert = true }) {
+                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12))
+                        Text("Reset to Default")
+                            .font(SanctuaryTypography.label)
+                    }
+                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .fill(SanctuaryColors.Glass.secondary)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(glassCard)
+    }
+
+    private var modelPreferencesSection: some View {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                Image(systemName: "cpu.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(CosmoColors.lavender)
+
+                Text("MODEL ROUTING")
+                    .font(SanctuaryTypography.label)
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1.5)
+            }
+
+            VStack(spacing: 0) {
+                modelTierRow(tier: "Writer", model: "Claude Opus", description: "Long-form drafts, rewrites", color: CosmoColors.cosmoAI)
+                Rectangle().fill(SanctuaryColors.Glass.borderSubtle).frame(height: 1)
+                modelTierRow(tier: "Strategist", model: "Claude Sonnet", description: "Analysis, scoring, outlines", color: CosmoColors.lavender)
+                Rectangle().fill(SanctuaryColors.Glass.borderSubtle).frame(height: 1)
+                modelTierRow(tier: "Fast", model: "Gemini Flash", description: "Quick edits, suggestions", color: Color(hex: "#34D399"))
+            }
+            .background(
+                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    .fill(SanctuaryColors.Glass.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+        }
+        .padding(SanctuaryLayout.Spacing.md)
+        .background(glassCard)
+    }
+
+    @ViewBuilder
+    private func modelTierRow(tier: String, model: String, description: String, color: Color) -> some View {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(tier)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+            }
+
+            Spacer()
+
+            Text(model)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(color)
+                .padding(.horizontal, SanctuaryLayout.Spacing.sm)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(color.opacity(0.12))
+                )
+        }
+        .padding(.horizontal, SanctuaryLayout.Spacing.md)
+        .padding(.vertical, SanctuaryLayout.Spacing.sm + 2)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1571,6 +2060,71 @@ private struct SocialPlatformConnectionCard: View {
             return String(format: "%.1fK", Double(num) / 1_000)
         }
         return "\(num)"
+    }
+}
+
+// MARK: - Methodology Text Editor (NSViewRepresentable)
+
+/// NSTextView wrapper for proper text editing of the methodology document
+private struct MethodologyTextEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        guard let textView = scrollView.documentView as? NSTextView else {
+            return scrollView
+        }
+
+        textView.delegate = context.coordinator
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.isRichText = false
+        textView.usesFindBar = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.textColor = NSColor.white.withAlphaComponent(0.8)
+        textView.backgroundColor = .clear
+        textView.insertionPointColor = NSColor.white
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+
+        textView.string = text
+
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            let selectedRange = textView.selectedRange()
+            textView.string = text
+            if selectedRange.location + selectedRange.length <= text.count {
+                textView.setSelectedRange(selectedRange)
+            }
+        }
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text.wrappedValue = textView.string
+        }
     }
 }
 

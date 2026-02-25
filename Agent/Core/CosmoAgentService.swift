@@ -1,5 +1,5 @@
 // CosmoOS/Agent/Core/CosmoAgentService.swift
-// Main orchestrator for the Cosmo Agent system
+// Main orchestrator for the Cosmo Agent system — v2 with workflow planning
 
 import Foundation
 import Combine
@@ -15,6 +15,7 @@ class CosmoAgentService: ObservableObject {
     @Published var activeProvider: AgentProvider = .anthropic
     @Published var selectedModel: String = AgentProvider.anthropic.defaultModel
     @Published var lastError: String?
+    @Published var activeWorkflowPlan: WorkflowPlan?
 
     // MARK: - Dependencies
 
@@ -22,9 +23,38 @@ class CosmoAgentService: ObservableObject {
     private let toolRegistry = AgentToolRegistry.shared
     private let toolExecutor = AgentToolExecutor.shared
     private let contextAssembler = AgentContextAssembler.shared
+    private let workflowPlanner = AgentWorkflowPlanner.shared
 
-    /// Maximum tool call iterations per message to prevent infinite loops
-    private let maxToolIterations = 5
+    /// Maximum tool call iterations for simple intents (queries, captures, corrections)
+    private let baseMaxToolIterations = 8
+
+    /// Returns the max tool iterations for a given intent. Creative/analytical
+    /// intents that chain many tools (profile → swipes → beats → draft → score)
+    /// get a higher ceiling to avoid "ran out of processing steps" on complex requests.
+    private func maxToolIterations(for intent: AgentIntent) -> Int {
+        switch intent {
+        case .draft, .strategy, .brainstorm:
+            return 16
+        case .analyze, .execute, .debrief:
+            return 12
+        case .capture, .query, .plan, .correct, .reflect, .meta:
+            return baseMaxToolIterations
+        }
+    }
+
+    /// Per-conversation token tracking for cost guard
+    private var conversationTokenCounts: [String: Int] = [:]
+    private let tokenWarningThreshold = 20_000
+
+    /// Tracks the last generation tool output so the NEXT user message can be classified
+    /// as acceptance or rejection feedback for the learning system.
+    private var pendingFeedbackGenerationId: UUID?
+    /// Stores the last agent response text for learning system feedback tracking
+    private var lastAgentResponse: String?
+
+    /// Tracks active numbered items from the last tool result containing a results array,
+    /// so numbered references like "number one" can be resolved.
+    private var activeItemsContext: String?
 
     // MARK: - Init
 
@@ -74,11 +104,21 @@ class CosmoAgentService: ObservableObject {
         } else {
             apiKey = APIKeys.agentLLM
         }
-        llmProvider = LLMProviderFactory.create(
+        let baseProvider = LLMProviderFactory.create(
             provider: activeProvider,
             apiKey: apiKey,
             baseURL: APIKeys.agentLLMBaseURL
         )
+
+        // Wrap OpenRouter in failover — it supports multiple models on the same API
+        if activeProvider == .openRouter {
+            llmProvider = FailoverLLMProvider(
+                wrapping: baseProvider,
+                chain: .defaultChain
+            )
+        } else {
+            llmProvider = baseProvider
+        }
     }
 
     // MARK: - Connection Test
@@ -101,15 +141,32 @@ class CosmoAgentService: ObservableObject {
         }
     }
 
+    // MARK: - Summarize (Internal LLM access for memory service)
+
+    /// Simple LLM completion without tools, used by ConversationMemoryService.
+    /// Defaults to Haiku tier for cost efficiency — summarization is a simple extraction task.
+    func summarize(messages: [AgentMessage], tier: AgentModelTier = .sensor) async throws -> String? {
+        guard let provider = llmProvider else { return nil }
+        let response = try await provider.complete(
+            messages: messages,
+            tools: nil,
+            model: selectedModel,
+            tier: tier
+        )
+        return response.content
+    }
+
     // MARK: - Process Message (Main Entry Point)
 
     /// Process a user message through the full agent pipeline:
-    /// classify intent -> load context -> tool loop -> return response
+    /// classify intent -> check complexity -> route to workflow or direct -> return response
     func processMessage(
         _ text: String,
         conversationId: String? = nil,
-        source: MessageSource = .inApp
-    ) async -> String {
+        source: MessageSource = .inApp,
+        tierOverride: AgentModelTier? = nil,
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+    ) async -> (String, AgentContextTrace) {
         isProcessing = true
         lastError = nil
         defer { isProcessing = false }
@@ -117,64 +174,234 @@ class CosmoAgentService: ObservableObject {
         guard let provider = llmProvider else {
             let msg = "Cosmo Agent is not configured. Please set up an AI provider in Settings."
             lastError = msg
-            return msg
+            return (msg, AgentContextTrace())
         }
 
-        // 1. Classify intent
-        let intent = classifyIntent(text)
+        // 0. Fast-path: intercept "Idea for [client]: [title]" and "Idea: [title]" patterns.
+        // Creates the idea directly without calling the LLM — zero latency, zero API cost.
+        if let fastResult = await tryFastIdeaCapture(text) {
+            return (fastResult, AgentContextTrace())
+        }
 
-        // 2. Load or create conversation
+        // 1. Check for active workflow interactions
+        if let chatId = conversationId, let plan = workflowPlanner.activeWorkflows[chatId] {
+            if plan.status == .proposed {
+                let response = await handleWorkflowResponse(text: text, chatId: chatId)
+                return (response, AgentContextTrace())
+            }
+        }
+
+        // 2. Classify intent (fast keyword heuristic + complexity detection)
+        let classification = classifyIntent(text)
+
+        // 3. Load or create conversation
         var conversation: AgentConversation
         if let convId = conversationId,
            let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
             conversation = existing
         } else if let convId = conversationId {
-            // External source (Telegram) — key the conversation by the provided ID
-            // so subsequent messages find the same conversation
             conversation = AgentConversation(id: convId, source: source)
         } else {
             conversation = AgentConversation(source: source)
         }
 
-        // 3. Add user message
+        // 4. Topic-based session boundary detection for Telegram (WP8)
+        // When the user starts a new content piece in an existing long conversation,
+        // compress the old conversation into a summary and start fresh.
+        if source == .telegram || source == .whatsapp {
+            let shouldRotate = detectSessionBoundary(text: text, intent: classification.intent, conversation: conversation)
+            if shouldRotate {
+                await rotateConversationSession(&conversation)
+            }
+        }
+
+        // 5. Add user message
         conversation.append(.user(text))
 
-        // 4. Get preferences
+        // 6. Escalate intent if conversation has creative history
+        // Prevents mid-conversation regression from Opus to Haiku when giving
+        // creative direction without explicit draft keywords
+        let effectiveIntent = escalateIntentFromConversation(classification.intent, conversation: conversation)
+
+        // 7. Route to direct tool execution for all sources
+        // The LLM handles multi-step operations naturally through its tool loop
+        // (maxToolIterations = 8). No need for workflow plan approval gates.
+        return await processSimpleMessage(
+            text: text,
+            intent: effectiveIntent,
+            conversation: &conversation,
+            provider: provider,
+            tierOverride: tierOverride,
+            onToolActivity: onToolActivity
+        )
+    }
+
+    // MARK: - Simple Message Processing
+
+    private func processSimpleMessage(
+        text: String,
+        intent: AgentIntent,
+        conversation: inout AgentConversation,
+        provider: LLMProvider,
+        tierOverride: AgentModelTier? = nil,
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+    ) async -> (String, AgentContextTrace) {
+        // --- Feedback classification for previous generation ---
+        if let _ = pendingFeedbackGenerationId {
+            let lower = text.lowercased()
+            let rejectionSignals = ["try again", "redo", "change", "not quite", "wrong", "no,",
+                                    "no.", "different", "rewrite", "too ", "less ", "more "]
+            let acceptanceSignals = ["looks good", "perfect", "yes", "love it", "great",
+                                     "send it", "next", "continue", "awesome", "nice", "ship it"]
+            let isRejection = rejectionSignals.contains { lower.contains($0) }
+            let isAcceptance = acceptanceSignals.contains { lower.contains($0) }
+
+            let accepted = isAcceptance || !isRejection
+            let agentOutput = lastAgentResponse ?? ""
+            let userFeedback = text
+
+            Task {
+                await AgentOutcomeTracker.shared.trackSuggestionAcceptance(
+                    suggestion: agentOutput,
+                    userFeedback: userFeedback,
+                    accepted: accepted,
+                    category: intent.rawValue
+                )
+            }
+            pendingFeedbackGenerationId = nil
+            lastAgentResponse = nil
+        }
+
+        // Get preferences
         let preferences = await PreferenceLearningEngine.shared.getAllPreferences(scope: nil)
 
-        // 5. Get tools for intent
-        let tools = toolRegistry.toolsForIntent(intent)
+        // Get tools for intent (source-gated: Telegram vs in-app UX tools)
+        let tools = toolRegistry.toolsForIntent(intent, source: conversation.source)
 
-        // 6. Assemble system prompt
+        // Assemble system prompt with intent-aware context (cached/dynamic split)
         let systemPrompt = await contextAssembler.assembleSystemPrompt(
             conversation: conversation,
             preferences: preferences,
-            tools: tools
+            tools: tools,
+            intent: intent,
+            activeItemsContext: activeItemsContext
         )
 
-        // 7. Build message array for LLM
-        var llmMessages: [AgentMessage] = [.system(systemPrompt)]
+        // Build message array for LLM (no system message — passed separately for caching)
+        var llmMessages: [AgentMessage] = []
 
-        // Add conversation history (last 20 messages to stay within context)
-        let historyWindow = Array(conversation.messages.suffix(20))
+        // Add conversation history with token-aware windowing (WP3)
+        // For lightweight intents (capture/correct), use a smaller window and aggressively
+        // truncate tool results to prevent heavy writing context from overwhelming Haiku.
+        let lightweightIntents: Set<AgentIntent> = [.capture, .correct, .meta]
+        let rawWindow: [AgentMessage]
+        if lightweightIntents.contains(intent) {
+            rawWindow = buildLightweightWindow(conversation.messages)
+        } else {
+            rawWindow = buildTokenAwareWindow(conversation.messages)
+        }
+        // Sanitize to remove orphaned tool_result messages whose tool_use was truncated
+        let historyWindow = sanitizeToolPairs(rawWindow)
         llmMessages.append(contentsOf: historyWindow)
 
-        // 8. Tool loop — iterate until the LLM returns a text-only response
+        // --- Intent-based model tier routing ---
+        let modelTier: AgentModelTier
+        if let override = tierOverride {
+            modelTier = override
+        } else {
+            switch intent {
+            case .capture, .plan, .query, .correct:
+                modelTier = .sensor      // Haiku — data operations, lookups, captures
+            case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
+                modelTier = .strategist  // Sonnet — analytical reasoning, strategy
+            case .brainstorm, .draft:
+                modelTier = .strategist  // Sonnet — outer loop only coordinates tools; creative writing happens in UnifiedWritingEngine's inner loop
+            }
+        }
+
+        // Context trace — accumulates tool call summaries for transparency
+        var contextTrace = AgentContextTrace()
+
+        // Populate skills transparency from assembled prompt
+        let appliedSkills = contextAssembler.lastInjectedSkills
+        if !appliedSkills.isEmpty {
+            var byIntent: [String: Int] = [:]
+            for s in appliedSkills {
+                byIntent[s.intent ?? "universal", default: 0] += 1
+            }
+            contextTrace.skillsApplied = appliedSkills.count
+            contextTrace.skillsSummary = byIntent.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+        }
+
+        // Update failover chain for the current model tier (OpenRouter only)
+        if let failoverProvider = provider as? FailoverLLMProvider {
+            let tierChain = ModelFailoverChain.chain(for: modelTier)
+            // Re-wrap the inner provider with the tier-appropriate chain
+            let updatedProvider = FailoverLLMProvider(
+                wrapping: failoverProvider,
+                chain: tierChain
+            )
+            // Use updatedProvider for completions in this call
+            return await executeToolLoop(
+                provider: updatedProvider,
+                llmMessages: &llmMessages,
+                tools: tools,
+                modelTier: modelTier,
+                systemPrompt: systemPrompt,
+                intent: intent,
+                conversation: &conversation,
+                contextTrace: &contextTrace,
+                onToolActivity: onToolActivity
+            )
+        }
+
+        return await executeToolLoop(
+            provider: provider,
+            llmMessages: &llmMessages,
+            tools: tools,
+            modelTier: modelTier,
+            systemPrompt: systemPrompt,
+            intent: intent,
+            conversation: &conversation,
+            contextTrace: &contextTrace,
+            onToolActivity: onToolActivity
+        )
+    }
+
+    /// Execute the LLM tool loop, iterating until the LLM returns text-only or the limit is reached.
+    private func executeToolLoop(
+        provider: LLMProvider,
+        llmMessages: inout [AgentMessage],
+        tools: [LLMToolDefinition],
+        modelTier: AgentModelTier,
+        systemPrompt: SystemPrompt,
+        intent: AgentIntent,
+        conversation: inout AgentConversation,
+        contextTrace: inout AgentContextTrace,
+        onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
+    ) async -> (String, AgentContextTrace) {
+        // Tool loop — iterate until the LLM returns a text-only response
+        let iterationLimit = maxToolIterations(for: intent)
         var iterations = 0
         var finalResponse = ""
 
-        while iterations < maxToolIterations {
+        // Pass the activity callback to the tool executor so context-loading
+        // sub-tools (load_client_profile, load_swipe, etc.) can stream progress
+        toolExecutor.onToolActivity = onToolActivity
+
+        while iterations < iterationLimit {
             iterations += 1
 
             do {
                 let response = try await provider.complete(
                     messages: llmMessages,
                     tools: tools.isEmpty ? nil : tools,
-                    model: selectedModel
+                    model: selectedModel,
+                    tier: modelTier,
+                    systemPrompt: systemPrompt
                 )
 
                 if response.toolCalls.isEmpty {
-                    // No tool calls — this is the final text response
                     finalResponse = response.content ?? "I couldn't generate a response."
                     break
                 }
@@ -187,7 +414,13 @@ class CosmoAgentService: ObservableObject {
                 llmMessages.append(assistantMsg)
                 conversation.append(assistantMsg)
 
+                let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
                 for toolCall in response.toolCalls {
+                    // Emit tool activity started event
+                    let flatArgs = flattenArguments(toolCall.arguments)
+                    let displayLabel = toolDisplayLabel(for: toolCall.name, args: flatArgs)
+                    onToolActivity?(.started(name: toolCall.name, displayLabel: displayLabel, args: flatArgs))
+
                     let result: String
                     do {
                         result = try await toolExecutor.execute(
@@ -198,6 +431,10 @@ class CosmoAgentService: ObservableObject {
                         result = "{\"error\": \"\(error.localizedDescription)\"}"
                     }
 
+                    // Emit tool activity completed event
+                    let preview = extractResultSummary(result, toolName: toolCall.name)
+                    onToolActivity?(.completed(name: toolCall.name, displayLabel: displayLabel, resultPreview: preview))
+
                     // Track created atom UUIDs in conversation memory
                     if let data = result.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -207,6 +444,33 @@ class CosmoAgentService: ObservableObject {
                             conversation.linkedAtomUUIDs.append(uuid)
                         }
                     }
+
+                    // Track active items for numbered reference resolution
+                    if let data = result.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let results = json["results"] as? [[String: Any]],
+                       results.count >= 2 {
+                        var itemLines: [String] = ["[ACTIVE ITEMS from last tool result]"]
+                        for (i, item) in results.prefix(10).enumerated() {
+                            let title = item["title"] as? String ?? "Untitled"
+                            let uuid = item["uuid"] as? String ?? ""
+                            itemLines.append("\(i + 1). \(title) (uuid: \(uuid))")
+                        }
+                        activeItemsContext = itemLines.joined(separator: "\n")
+                    }
+
+                    // Flag generation tools for acceptance tracking on next user message
+                    if generationTools.contains(toolCall.name) {
+                        pendingFeedbackGenerationId = UUID()
+                    }
+
+                    // Accumulate context trace
+                    contextTrace.append(
+                        name: toolCall.name,
+                        flatArgs: flatArgs,
+                        resultSummary: preview,
+                        isEmpty: isEmptyResult(result)
+                    )
 
                     let toolMsg = AgentMessage.tool(callId: toolCall.id, content: result)
                     llmMessages.append(toolMsg)
@@ -224,24 +488,356 @@ class CosmoAgentService: ObservableObject {
             finalResponse = "I ran out of processing steps. Please try a simpler request."
         }
 
-        // 9. Save assistant response to conversation
+        // Emit all-done event for live activity UI
+        onToolActivity?(.allDone(totalCalls: contextTrace.toolCalls.count))
+
+        // Clear the callback on the executor to avoid stale references
+        toolExecutor.onToolActivity = nil
+
+        // Track token usage for cost guard (internal only — never shown to user)
+        let messageTokens = conversation.estimatedTokenCount
+        let convId = conversation.id
+        conversationTokenCounts[convId] = messageTokens
+
+        // Compress old tool results to reduce token usage in future messages
+        compressOldToolResults(&conversation)
+
+        // Save assistant response to conversation
         conversation.append(.assistant(finalResponse))
         currentConversation = conversation
 
-        // 10. Persist conversation to memory
+        // Store response for learning feedback on next user message
+        lastAgentResponse = finalResponse
+
+        // Persist conversation to memory
         await ConversationMemoryService.shared.saveConversation(conversation)
 
-        return finalResponse
+        return (finalResponse, contextTrace)
+    }
+
+    // MARK: - Streaming Message Processing
+
+    /// Process a user message with streaming text output via onChunk callback.
+    /// Tool execution runs normally (non-streamed); only the final LLM text response streams.
+    func processMessageStreaming(
+        _ text: String,
+        conversationId: String? = nil,
+        source: MessageSource = .telegram,
+        onChunk: @escaping @Sendable (String) -> Void
+    ) async -> (String, AgentContextTrace) {
+        isProcessing = true
+        lastError = nil
+        defer { isProcessing = false }
+
+        guard let provider = llmProvider else {
+            let msg = "Cosmo Agent is not configured. Please set up an AI provider in Settings."
+            lastError = msg
+            return (msg, AgentContextTrace())
+        }
+
+        // Load or create conversation
+        var conversation: AgentConversation
+        if let convId = conversationId,
+           let existing = await ConversationMemoryService.shared.loadConversation(id: convId) {
+            conversation = existing
+        } else if let convId = conversationId {
+            conversation = AgentConversation(id: convId, source: source)
+        } else {
+            conversation = AgentConversation(source: source)
+        }
+
+        // Session boundary for Telegram
+        if source == .telegram || source == .whatsapp {
+            let classification = classifyIntent(text)
+            if detectSessionBoundary(text: text, intent: classification.intent, conversation: conversation) {
+                await rotateConversationSession(&conversation)
+            }
+        }
+
+        conversation.append(.user(text))
+
+        let classification = classifyIntent(text)
+        let effectiveIntent = escalateIntentFromConversation(classification.intent, conversation: conversation)
+
+        let preferences = await PreferenceLearningEngine.shared.getAllPreferences(scope: nil)
+        let tools = toolRegistry.toolsForIntent(effectiveIntent, source: conversation.source)
+
+        let systemPrompt = await contextAssembler.assembleSystemPrompt(
+            conversation: conversation,
+            preferences: preferences,
+            tools: tools,
+            intent: effectiveIntent,
+            activeItemsContext: activeItemsContext
+        )
+
+        var llmMessages: [AgentMessage] = []
+        let lightweightIntents: Set<AgentIntent> = [.capture, .correct, .meta]
+        let rawWindow: [AgentMessage]
+        if lightweightIntents.contains(effectiveIntent) {
+            rawWindow = buildLightweightWindow(conversation.messages)
+        } else {
+            rawWindow = buildTokenAwareWindow(conversation.messages)
+        }
+        let historyWindow = sanitizeToolPairs(rawWindow)
+        llmMessages.append(contentsOf: historyWindow)
+
+        let modelTier: AgentModelTier
+        switch effectiveIntent {
+        case .capture, .plan, .query, .correct:
+            modelTier = .sensor
+        case .analyze, .strategy, .debrief, .reflect, .execute, .meta:
+            modelTier = .strategist
+        case .brainstorm, .draft:
+            modelTier = .strategist  // Sonnet — outer loop only coordinates tools; creative writing happens in UnifiedWritingEngine's inner loop
+        }
+
+        var contextTrace = AgentContextTrace()
+
+        // Tool loop with streaming on final text response
+        let iterationLimit = maxToolIterations(for: effectiveIntent)
+        var iterations = 0
+        var finalResponse = ""
+
+        // Resolve provider with tier-appropriate failover chain
+        let activeProvider: LLMProvider
+        if let failoverProvider = provider as? FailoverLLMProvider {
+            let tierChain = ModelFailoverChain.chain(for: modelTier)
+            activeProvider = FailoverLLMProvider(wrapping: failoverProvider, chain: tierChain)
+        } else {
+            activeProvider = provider
+        }
+
+        while iterations < iterationLimit {
+            iterations += 1
+
+            do {
+                let response: LLMResponse
+
+                // Check if we can stream: must be a streaming provider
+                if let streamingProvider = activeProvider as? StreamingLLMProvider {
+                    // Stream with full system prompt and tools
+                    response = try await streamingProvider.completeStreaming(
+                        messages: llmMessages,
+                        tools: tools.isEmpty ? nil : tools,
+                        model: selectedModel,
+                        tier: modelTier,
+                        systemPrompt: systemPrompt,
+                        onChunk: { chunk in
+                            onChunk(chunk)
+                        }
+                    )
+                } else {
+                    response = try await activeProvider.complete(
+                        messages: llmMessages,
+                        tools: tools.isEmpty ? nil : tools,
+                        model: selectedModel,
+                        tier: modelTier,
+                        systemPrompt: systemPrompt
+                    )
+                }
+
+                if response.toolCalls.isEmpty {
+                    finalResponse = response.content ?? "I couldn't generate a response."
+                    break
+                }
+
+                // Tool calls — execute non-streamed
+                let assistantMsg = AgentMessage.assistant(
+                    response.content ?? "",
+                    toolCalls: response.toolCalls
+                )
+                llmMessages.append(assistantMsg)
+                conversation.append(assistantMsg)
+
+                let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
+                for toolCall in response.toolCalls {
+                    let result: String
+                    do {
+                        result = try await toolExecutor.execute(
+                            toolName: toolCall.name,
+                            arguments: toolCall.arguments
+                        )
+                    } catch {
+                        result = "{\"error\": \"\(error.localizedDescription)\"}"
+                    }
+
+                    if let data = result.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let uuid = json["uuid"] as? String,
+                       json["success"] as? Bool == true {
+                        if !conversation.linkedAtomUUIDs.contains(uuid) {
+                            conversation.linkedAtomUUIDs.append(uuid)
+                        }
+                    }
+
+                    if generationTools.contains(toolCall.name) {
+                        pendingFeedbackGenerationId = UUID()
+                    }
+
+                    contextTrace.append(
+                        name: toolCall.name,
+                        flatArgs: flattenArguments(toolCall.arguments),
+                        resultSummary: extractResultSummary(result, toolName: toolCall.name),
+                        isEmpty: isEmptyResult(result)
+                    )
+
+                    let toolMsg = AgentMessage.tool(callId: toolCall.id, content: result)
+                    llmMessages.append(toolMsg)
+                    conversation.append(toolMsg)
+                }
+
+            } catch {
+                lastError = error.localizedDescription
+                finalResponse = "Sorry, I encountered an error: \(error.localizedDescription)"
+                break
+            }
+        }
+
+        if finalResponse.isEmpty {
+            finalResponse = "I ran out of processing steps. Please try a simpler request."
+        }
+
+        compressOldToolResults(&conversation)
+        conversation.append(.assistant(finalResponse))
+        currentConversation = conversation
+        lastAgentResponse = finalResponse
+        await ConversationMemoryService.shared.saveConversation(conversation)
+
+        return (finalResponse, contextTrace)
+    }
+
+    // MARK: - Workflow Response Handling
+
+    private func handleWorkflowResponse(text: String, chatId: String) async -> String {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespaces)
+
+        if lower == "approve" || lower == "go" || lower == "yes" || lower == "ok" {
+            guard var plan = workflowPlanner.activeWorkflows[chatId] else {
+                return "No active plan to approve."
+            }
+            plan.status = .approved
+            workflowPlanner.activeWorkflows[chatId] = plan
+
+            let result = await workflowPlanner.executeWorkflow(&plan, chatId: chatId)
+            workflowPlanner.activeWorkflows.removeValue(forKey: chatId)
+            activeWorkflowPlan = nil
+
+            return result
+        } else if lower == "cancel" || lower == "no" || lower == "stop" {
+            workflowPlanner.activeWorkflows.removeValue(forKey: chatId)
+            activeWorkflowPlan = nil
+            return "Plan cancelled. What would you like to do instead?"
+        } else {
+            return "I have a plan waiting for your approval. Reply 'approve' to proceed or 'cancel' to discard it."
+        }
     }
 
     // MARK: - Intent Classification
 
-    /// Classify user message intent using keyword heuristics.
-    /// This is fast and runs locally. The LLM refines via tool selection.
-    func classifyIntent(_ text: String) -> AgentIntent {
-        let lower = text.lowercased()
+    // MARK: - Fast Idea Capture
 
-        // Check for capture patterns first (most specific)
+    /// Intercepts "Idea for [client]: [title]" and "Idea: [title]" patterns.
+    /// Creates the idea atom directly without calling the LLM. Returns nil if the
+    /// message doesn't match the pattern (falls through to normal processing).
+    private func tryFastIdeaCapture(_ text: String) async -> String? {
+            let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Pattern 1: "Idea for [client]: [title + optional body]"
+            if lower.hasPrefix("idea for ") {
+                let afterPrefix = String(text.dropFirst("idea for ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                // Split on first ":" to get client name and idea content
+                guard let colonIdx = afterPrefix.firstIndex(of: ":") else { return nil }
+                let clientName = String(afterPrefix[afterPrefix.startIndex..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let ideaContent = String(afterPrefix[afterPrefix.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !ideaContent.isEmpty else { return nil }
+
+                // Extract title (first sentence or first line) and body (rest)
+                let (title, body) = splitIdeaTitleBody(ideaContent)
+
+                // Create the idea atom
+                let repo = AtomRepository.shared
+                let atom: Atom
+                do {
+                    atom = try await repo.create(type: .idea, title: title, body: body)
+                } catch {
+                    return nil  // Fall through to LLM
+                }
+
+                // Try to link to client profile
+                var clientNote = ""
+                if let clientAtom = try? await repo.fuzzyFindClient(query: clientName) {
+                    // Link idea to client via addingLink (returns new Atom)
+                    let link = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: clientAtom.uuid, entityType: "clientProfile")
+                    _ = try? await repo.update(uuid: atom.uuid) { a in
+                        let updated = a.addingLink(link)
+                        a.links = updated.links
+                    }
+                    clientNote = " for \(clientAtom.title ?? clientName)"
+                } else {
+                    clientNote = " for \(clientName)"
+                }
+
+                return "Saved idea\(clientNote): \"\(title)\""
+            }
+
+            // Pattern 2: "Idea: [title + optional body]"
+            if lower.hasPrefix("idea:") {
+                let ideaContent = String(text.dropFirst("idea:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !ideaContent.isEmpty else { return nil }
+
+                let (title, body) = splitIdeaTitleBody(ideaContent)
+
+                do {
+                    _ = try await AtomRepository.shared.create(type: .idea, title: title, body: body)
+                } catch {
+                    return nil
+                }
+
+                return "Saved idea: \"\(title)\""
+            }
+
+            return nil
+    }
+
+    /// Split idea content into title (first sentence/line) and body (rest).
+    private func splitIdeaTitleBody(_ content: String) -> (title: String, body: String?) {
+        // First try splitting on newline
+        if let newlineIdx = content.firstIndex(of: "\n") {
+            let title = String(content[content.startIndex..<newlineIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = String(content[content.index(after: newlineIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (title, body.isEmpty ? nil : body)
+        }
+        // If single line, use the whole thing as title (up to 200 chars)
+        if content.count > 200 {
+            let title = String(content.prefix(200))
+            return (title, content)
+        }
+        return (content, nil)
+    }
+
+    /// Classify user message intent using keyword heuristics with complexity detection.
+    func classifyIntent(_ text: String) -> AgentIntentClassification {
+        let lower = text.lowercased()
+        let intent = classifyIntentType(lower)
+        let complexity = detectComplexity(lower, intent: intent)
+
+        return AgentIntentClassification(
+            intent: intent,
+            complexity: complexity,
+            entities: extractEntities(lower),
+            confidence: 0.85
+        )
+    }
+
+    private func classifyIntentType(_ lower: String) -> AgentIntent {
+        // Check for quick idea capture patterns FIRST (highest priority)
+        // "Idea for Michael: 5 underrated locations..." → capture, not brainstorm
+        // "Idea: build a calculator app" → capture
+        if lower.hasPrefix("idea for ") || lower.hasPrefix("idea:") || lower.hasPrefix("task:") {
+            return .capture
+        }
+
+        // Check for capture patterns (most specific after idea prefix)
         let hasURL = lower.contains("http://") || lower.contains("https://") ||
                      lower.contains("youtu.be/") || lower.contains("youtube.com") ||
                      lower.contains("instagram.com") || lower.contains("x.com") ||
@@ -251,15 +847,66 @@ class CosmoAgentService: ObservableObject {
                                "snag this", "file this", "add to swipes", "swipe this",
                                "research this", "note this", "jot down"]
 
-        if lower.hasPrefix("idea:") || lower.hasPrefix("task:") ||
-           (lower.contains("idea") && containsAny(lower, ["save", "capture", "new idea", "jot down", "note this"])) ||
+        // Idea-from-swipe keywords — URL + idea-related language
+        let ideaSwipeKeywords = ["idea", "could do", "similar", "angle", "topic",
+                                 "great for", "inspiration", "we should", "let's try",
+                                 "perfect for", "good for", "try this"]
+
+        if (lower.contains("idea") && containsAny(lower, ["save", "capture", "new idea", "jot down", "note this"])) ||
            (lower.contains("save") && containsAny(lower, ["this", "that", "as"])) ||
-           (hasURL && containsAny(lower, captureKeywords)) {
+           (hasURL && containsAny(lower, captureKeywords)) ||
+           (hasURL && containsAny(lower, ideaSwipeKeywords)) {
             return .capture
         }
 
-        // Brainstorm
-        if containsAny(lower, ["brainstorm", "let's think", "what if", "spitball", "riff on", "explore ideas"]) {
+        // Strategy
+        if containsAny(lower, ["what should i create", "content plan", "weekly plan", "content strategy",
+                                "what to post", "what's next", "content gap", "what should i write"]) {
+            return .strategy
+        }
+
+        // Draft — expanded keywords for natural language coverage + creative feedback messages
+        if containsAny(lower, ["draft", "write a thread", "write a reel", "write about",
+                                "write this", "write for ", "writing this", "writing a ",
+                                "writing for ", "start writing", "want to write",
+                                "reel for ", "thread for ", "carousel for ",
+                                "create this reel", "create a reel",
+                                "create this thread", "create a thread",
+                                "create this carousel", "create a carousel",
+                                "make it punchier", "more punchy", "shorter", "longer",
+                                "condense", "expand", "rephrase", "rewrite",
+                                "generate an outline", "give me an outline", "write the draft",
+                                "generate hooks", "hook variants", "let's write",
+                                "make this a content piece", "let's draft this", "write this up",
+                                "let's make this", "i want to write",
+                                // Creative feedback — these routed to .query (Haiku) before
+                                "feedback on slide", "feedback on hook", "feedback on this",
+                                "feedback on section", "feedback on the", "what do you think of this",
+                                "what do you think about this", "thoughts on this hook",
+                                "thoughts on this slide", "does this hook work",
+                                "make it more ", "make this more ", "make this sound",
+                                "make it sound", "too formal", "too casual", "too salesy",
+                                "what structure", "what framework", "what's a good structure",
+                                "what's a good hook", "what's a good opening", "what angle",
+                                "hook ideas", "hook options", "opening ideas",
+                                "punch up", "tighten this", "clean this up",
+                                "check the flow", "does this flow", "how does this read"]) {
+            return .draft
+        }
+
+        // Analyze
+        if containsAny(lower, ["analyze", "analyse", "performance", "why did my", "underperform",
+                                "compare to", "review this draft", "persuasion", "audience",
+                                "engagement", "predict", "score this", "study this swipe"]) {
+            return .analyze
+        }
+
+        // Brainstorm — broad coverage for natural exploratory language
+        if containsAny(lower, ["brainstorm", "let's think", "think this through", "think through",
+                                "what if", "spitball", "riff on", "explore ideas",
+                                "let's explore", "riff on this", "what angles", "ideas for",
+                                "content ideas", "topic ideas", "angle ideas",
+                                "what are some ideas", "give me ideas", "let's brainstorm"]) {
             return .brainstorm
         }
 
@@ -274,7 +921,9 @@ class CosmoAgentService: ObservableObject {
         }
 
         // Execute / Advance
-        if containsAny(lower, ["advance", "complete", "finish", "publish", "move to next", "mark done", "start session"]) {
+        if containsAny(lower, ["advance", "complete", "finish", "publish", "move to next", "mark done",
+                                "start session", "activate",
+                                "activate this idea", "promote this idea", "turn this into content"]) {
             return .execute
         }
 
@@ -288,18 +937,123 @@ class CosmoAgentService: ObservableObject {
             return .reflect
         }
 
-        // Meta / Settings
-        if containsAny(lower, ["setting", "prefer", "remember that", "help", "configure", "how do i"]) {
+        // Meta / Settings / Standing Instructions / Lessons
+        if containsAny(lower, ["setting", "prefer", "remember that", "help", "configure", "how do i",
+                                "don't use", "stop using", "can you not", "don't do", "stop doing",
+                                "please don't", "instead of", "from now on", "always use",
+                                "never use", "going forward",
+                                "every day", "every morning", "every weekday", "every week",
+                                "standing instruction", "recurring", "remind me daily",
+                                "schedule a daily", "schedule a recurring",
+                                "lesson", "lessons", "save lesson", "save lessons",
+                                "learn this", "remember this rule", "what have you learned",
+                                "what lessons", "what rules"]) {
             return .meta
         }
 
-        // Default to query — asking about data
         return .query
+    }
+
+    /// Detect if a request is compound (needs multi-step workflow) or simple
+    private func detectComplexity(_ lower: String, intent: AgentIntent) -> RequestComplexity {
+        // Multi-step patterns
+        let compoundPatterns = [
+            "draft a thread", "write a thread about", "create content about",
+            "build a post", "full pipeline", "voice to content",
+            "activate my idea about", "activate idea",
+            "plan my week", "weekly content plan",
+            "draft.*using.*swipes", "research.*then.*draft",
+            "find.*swipes.*and.*write"
+        ]
+
+        for pattern in compoundPatterns {
+            if lower.range(of: pattern, options: .regularExpression) != nil {
+                return .compound
+            }
+        }
+
+        // Conjunction patterns suggesting multiple steps
+        if containsAny(lower, [" then ", " and then ", " after that ", " followed by ", " next "]) &&
+           lower.count > 50 {
+            return .compound
+        }
+
+        return .simple
+    }
+
+    /// Extract simple entities from the message
+    private func extractEntities(_ lower: String) -> [String: String] {
+        var entities: [String: String] = [:]
+
+        // Extract URLs
+        if let urlRange = lower.range(of: #"https?://\S+"#, options: .regularExpression) {
+            entities["url"] = String(lower[urlRange])
+        }
+
+        // Extract platform mentions
+        let platforms = ["twitter", "instagram", "youtube", "linkedin", "tiktok", "newsletter", "threads"]
+        for platform in platforms where lower.contains(platform) {
+            entities["platform"] = platform
+            break
+        }
+
+        return entities
+    }
+
+    // MARK: - Conversation-Aware Intent Escalation
+
+    /// Escalate intent based on conversation history. When a conversation has been
+    /// about creative work (draft/brainstorm) and the current message is generic (query),
+    /// maintain the creative intent to keep the right model tier and context active.
+    /// This prevents mid-conversation regression from Opus to Haiku when the user gives
+    /// creative direction without explicit draft keywords.
+    private func escalateIntentFromConversation(_ intent: AgentIntent, conversation: AgentConversation) -> AgentIntent {
+        // Only escalate from generic .query intent
+        guard intent == .query else { return intent }
+        guard !conversation.messages.isEmpty else { return intent }
+
+        // Check recent user messages for creative/drafting signals
+        let recentUserMessages = conversation.messages
+            .filter { $0.role == .user }
+            .suffix(5)
+
+        let creativeSignals = ["write", "writing", "draft", "reel", "thread", "carousel",
+                               "hook", "outline", "slide", "content piece", "angle",
+                               "brainstorm", "let's make", "punchier", "rewrite",
+                               "make it", "too formal", "too long", "too short"]
+
+        let hasCreativeHistory = recentUserMessages.contains { msg in
+            let lower = msg.content.lowercased()
+            return creativeSignals.contains { lower.contains($0) }
+        }
+
+        if hasCreativeHistory {
+            return .draft
+        }
+
+        // Check recent tool usage for creative tools
+        let recentAssistantMessages = conversation.messages
+            .filter { $0.role == .assistant }
+            .suffix(5)
+
+        let creativeTools: Set<String> = ["get_client_profile", "generate_outline",
+                                           "generate_draft", "generate_hooks", "create_content",
+                                           "get_beat_patterns", "revise_draft", "search_swipes",
+                                           "find_similar_swipes", "filter_swipes_by_taxonomy"]
+
+        let hasCreativeToolHistory = recentAssistantMessages.contains { msg in
+            msg.toolCalls?.contains { creativeTools.contains($0.name) } == true
+        }
+
+        if hasCreativeToolHistory {
+            return .draft
+        }
+
+        return intent
     }
 
     // MARK: - Confirm Action (Hard Tier)
 
-    /// Execute a previously pending confirmation
     func confirmAction(confirmationId: String) async -> String {
         guard let pending = toolExecutor.pendingConfirmations[confirmationId] else {
             return "Confirmation expired or not found."
@@ -317,12 +1071,10 @@ class CosmoAgentService: ObservableObject {
         }
     }
 
-    /// Reject a pending confirmation
     func rejectAction(confirmationId: String) {
         toolExecutor.pendingConfirmations.removeValue(forKey: confirmationId)
     }
 
-    /// Clean up expired confirmations (older than 5 minutes)
     func cleanExpiredConfirmations() {
         let cutoff = Date().addingTimeInterval(-300)
         toolExecutor.pendingConfirmations = toolExecutor.pendingConfirmations.filter {
@@ -332,19 +1084,360 @@ class CosmoAgentService: ObservableObject {
 
     // MARK: - Conversation Management
 
-    /// Start a new conversation, discarding the current one
     func newConversation(source: MessageSource = .inApp) {
         currentConversation = AgentConversation(source: source)
+        activeItemsContext = nil
     }
 
-    /// Load an existing conversation by ID
     func loadConversation(id: String) async {
         currentConversation = await ConversationMemoryService.shared.loadConversation(id: id)
+    }
+
+    // MARK: - Session Boundary Detection (WP8)
+
+    /// Detect when a Telegram conversation should start a fresh session.
+    /// Triggers when the user starts a new content piece in an existing long conversation.
+    private func detectSessionBoundary(text: String, intent: AgentIntent, conversation: AgentConversation) -> Bool {
+        // Only rotate for draft intent with "new" signals and long conversations
+        guard conversation.messages.count > 10 else { return false }
+
+        let lower = text.lowercased()
+
+        // Explicit reset command
+        if lower.hasPrefix("/new") { return true }
+
+        // New content signals with draft intent
+        if intent == .draft {
+            let newContentSignals = ["new post", "new thread", "new draft", "new reel",
+                                     "let's start", "next piece", "fresh draft",
+                                     "new carousel", "new content"]
+            return newContentSignals.contains { lower.contains($0) }
+        }
+
+        return false
+    }
+
+    /// Compress the current conversation into a summary and start fresh.
+    private func rotateConversationSession(_ conversation: inout AgentConversation) async {
+        // Generate a compact summary of the current conversation using Haiku
+        let messageText = conversation.messages.suffix(20).map { msg in
+            "\(msg.role == .user ? "User" : "Agent"): \(String(msg.content.prefix(150)))"
+        }.joined(separator: "\n")
+
+        var summary = conversation.summary ?? ""
+
+        if !messageText.isEmpty {
+            // Preserve creative decisions, client context, and content atoms — not just topics.
+            let prompt = """
+                Summarize this creative writing conversation for a ghostwriter AI. Be concise but preserve:
+                - Client name and platform (if mentioned)
+                - What content atoms/drafts were created (titles, UUIDs if present)
+                - Key creative decisions made (formats chosen, hooks agreed on, frameworks used)
+                - Feedback given and acted on (e.g., "hook was too salesy, shortened to 1 line")
+                - What was NOT working (so it's not repeated next session)
+
+                Conversation:
+                \(messageText)
+
+                Output: 3-5 sentences maximum. No headers. Plain text only.
+                """
+            do {
+                let messages = [
+                    AgentMessage(role: .system, content: "You are a creative writing assistant summarizer. Preserve writing decisions, rejected approaches, and client voice details. Respond with only the summary."),
+                    AgentMessage.user(prompt)
+                ]
+                if let newSummary = try await summarize(messages: messages, tier: .sensor) {
+                    summary = (summary.isEmpty ? "" : summary + " | ") + newSummary
+                }
+            } catch {
+                // Fallback: extractive summary
+                let userMsgs = conversation.messages.filter { $0.role == .user }
+                let topics = userMsgs.suffix(3).map { String($0.content.prefix(60)) }.joined(separator: "; ")
+                summary = (summary.isEmpty ? "" : summary + " | ") + "Previous: \(topics)"
+            }
+        }
+
+        // Store summary and clear messages for fresh session
+        conversation.summary = summary
+        conversation.messages = []
+
+        print("[CosmoAgent] Session rotated. Summary: \(summary.prefix(100))...")
+    }
+
+    // MARK: - Clear Conversation (Public)
+
+    /// Clears the conversation context for a given chat. Rotates the session
+    /// (summarizes + clears messages) so old context is preserved as a summary
+    /// but won't be sent to the LLM for future messages.
+    func clearConversation(chatId: String, source: MessageSource) async {
+        guard var conversation = await ConversationMemoryService.shared.loadConversation(id: chatId) else { return }
+        await rotateConversationSession(&conversation)
+        await ConversationMemoryService.shared.saveConversation(conversation)
+    }
+
+    // MARK: - Context Trace Helpers
+
+    /// Converts tool arguments dictionary to flat string-keyed display values
+    private func flattenArguments(_ args: [String: Any]) -> [String: String] {
+        var flat: [String: String] = [:]
+        for (key, value) in args {
+            if let str = value as? String {
+                flat[key] = str
+            } else if let num = value as? NSNumber {
+                flat[key] = num.stringValue
+            } else if let arr = value as? [String] {
+                flat[key] = arr.joined(separator: ", ")
+            } else {
+                flat[key] = "\(value)"
+            }
+        }
+        return flat
+    }
+
+    /// Extracts a human-readable summary from a tool result (capped at 200 chars)
+    private func extractResultSummary(_ result: String, toolName: String) -> String? {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(200))
+        }
+
+        // Client profile
+        if toolName == "get_client_profile",
+           let name = json["name"] as? String ?? json["clientName"] as? String {
+            return name
+        }
+
+        // Writing engine tools — surface the swipes they used internally
+        if toolName.hasPrefix("generate_") || toolName == "revise_draft" {
+            if let swipeTitles = json["swipesUsed"] as? [String], !swipeTitles.isEmpty {
+                let swipeInfo = swipeTitles.prefix(4).joined(separator: ", ")
+                let label = json["message"] as? String ?? toolName
+                return "\(String(label.prefix(60))) | Swipes: \(swipeInfo)"
+            }
+            if let message = json["message"] as? String {
+                return String(message.prefix(200))
+            }
+        }
+
+        // Search results with titles
+        if let results = json["results"] as? [[String: Any]] {
+            let titles = results.prefix(4).compactMap { $0["title"] as? String }.filter { !$0.isEmpty }
+            if titles.isEmpty { return "0 results" }
+            return titles.joined(separator: ", ")
+        }
+
+        // Scorecard
+        if let score = json["overallScore"] as? Double {
+            return "Score: \(String(format: "%.1f", score))/10"
+        }
+
+        // Title-bearing results (e.g. get_swipe_analysis returns atom with title)
+        if let title = json["title"] as? String, !title.isEmpty {
+            return title
+        }
+
+        // Count-based results
+        if let count = json["count"] as? Int {
+            return "\(count) results"
+        }
+
+        // Success message
+        if let message = json["message"] as? String {
+            return String(message.prefix(200))
+        }
+
+        return nil
+    }
+
+    /// Returns a human-readable display label for a tool call, used by live activity UI
+    private func toolDisplayLabel(for toolName: String, args: [String: String]) -> String {
+        switch toolName {
+        case "search_swipes": return "Searching swipes for \"\(args["query"] ?? "")\""
+        case "search_ideas": return "Searching ideas for \"\(args["query"] ?? "")\""
+        case "get_idea": return "Reading idea"
+        case "get_swipe_analysis": return "Analyzing swipe"
+        case "get_client_profile": return "Loading client profile \"\(args["client_name"] ?? args["name"] ?? "")\""
+        case "get_content": return "Reading content"
+        case "get_content_pipeline": return "Checking content pipeline"
+        case "generate_outline": return "Generating outline"
+        case "generate_draft": return "Writing draft"
+        case "generate_hooks": return "Generating hook variants"
+        case "revise_draft": return "Revising draft"
+        case "score_draft": return "Scoring draft"
+        case "get_beat_patterns": return "Analyzing beat patterns"
+        case "capture_swipe": return "Capturing swipe"
+        case "create_content": return "Creating content"
+        case "create_idea": return "Creating idea"
+        case "web_search": return "Searching the web for \"\(args["query"] ?? "")\""
+        case "list_all_swipes": return "Loading swipe library"
+        case "filter_swipes_by_taxonomy": return "Filtering swipes"
+        case "find_similar_swipes": return "Finding similar swipes"
+        case "get_calendar_blocks": return "Checking calendar"
+        case "save_lessons": return "Saving lessons"
+        case "get_lessons": return "Loading lessons"
+        default:
+            return toolName.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// Checks whether a tool result represents an empty/no-data response
+    private func isEmptyResult(_ result: String) -> Bool {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        if let count = json["count"] as? Int, count == 0 { return true }
+        if let results = json["results"] as? [Any], results.isEmpty { return true }
+        return false
     }
 
     // MARK: - Helpers
 
     private func containsAny(_ text: String, _ keywords: [String]) -> Bool {
         keywords.contains { text.contains($0) }
+    }
+
+    // MARK: - Token-Aware History Window (WP3)
+
+    /// Build a token-aware history window. If estimated tokens exceed 10K,
+    /// progressively reduce window size while keeping at least 6 messages.
+    private func buildTokenAwareWindow(_ messages: [AgentMessage]) -> [AgentMessage] {
+        // Start with up to 12 messages
+        var window = Array(messages.suffix(12))
+        let estimatedTokens = window.reduce(0) { $0 + ($1.content.count / 4) }
+
+        if estimatedTokens > 10_000 {
+            // First reduction: 8 messages
+            window = Array(messages.suffix(8))
+            let tokens8 = window.reduce(0) { $0 + ($1.content.count / 4) }
+
+            if tokens8 > 10_000 {
+                // Second reduction: 6 messages
+                window = Array(messages.suffix(6))
+                let tokens6 = window.reduce(0) { $0 + ($1.content.count / 4) }
+
+                if tokens6 > 10_000 {
+                    // Final reduction: minimum 4 messages
+                    window = Array(messages.suffix(4))
+                }
+            }
+        }
+
+        return window
+    }
+
+    /// Lightweight window for simple intents (capture, correct, meta).
+    /// Only includes the last 4 messages and aggressively truncates tool results
+    /// to prevent writing-heavy context from confusing Haiku on simple operations.
+    private func buildLightweightWindow(_ messages: [AgentMessage]) -> [AgentMessage] {
+        // Take only the last 4 messages — just enough for immediate context
+        let window = Array(messages.suffix(4))
+
+        // Truncate any tool results to compact summaries
+        return window.map { msg in
+            if msg.role == .tool && msg.content.count > 300 {
+                return AgentMessage(
+                    role: .tool,
+                    content: compactToolResultSummary(msg.content),
+                    toolCallId: msg.toolCallId
+                )
+            }
+            return msg
+        }
+    }
+
+    // MARK: - Tool Result Compression (WP2)
+
+    /// Compress old tool results in conversation history to reduce token usage.
+    /// Keeps the 2 most recent tool result pairs intact, compresses older ones
+    /// to compact summaries (title/type/count extraction from JSON).
+    private func compressOldToolResults(_ conversation: inout AgentConversation) {
+        let messages = conversation.messages
+
+        // Find indices of all tool result messages
+        var toolResultIndices: [Int] = []
+        for (index, msg) in messages.enumerated() {
+            if msg.role == .tool {
+                toolResultIndices.append(index)
+            }
+        }
+
+        // Keep the last 2 tool results (approximately 1 tool call exchange) intact
+        guard toolResultIndices.count > 2 else { return }
+        let indicesToCompress = Set(toolResultIndices.dropLast(2))
+
+        var newMessages: [AgentMessage] = []
+        for (index, msg) in messages.enumerated() {
+            if indicesToCompress.contains(index) && msg.content.count > 200 {
+                // Compress this tool result to a compact summary
+                let summary = compactToolResultSummary(msg.content)
+                let compressed = AgentMessage(
+                    role: .tool,
+                    content: summary,
+                    toolCallId: msg.toolCallId
+                )
+                newMessages.append(compressed)
+            } else {
+                newMessages.append(msg)
+            }
+        }
+
+        conversation.messages = newMessages
+    }
+
+    /// Extract key fields from a tool result JSON to create a compact summary.
+    private func compactToolResultSummary(_ content: String) -> String {
+        guard let data = content.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // Not JSON — just truncate
+            return "[Previously retrieved: \(String(content.prefix(80)))...]"
+        }
+
+        var parts: [String] = []
+
+        // Extract common fields
+        if let title = json["title"] as? String { parts.append("title: \(title)") }
+        if let uuid = json["uuid"] as? String { parts.append("uuid: \(uuid.prefix(8))...") }
+        if let success = json["success"] as? Bool { parts.append("success: \(success)") }
+        if let count = json["count"] as? Int { parts.append("count: \(count)") }
+        if let type = json["type"] as? String { parts.append("type: \(type)") }
+
+        // Handle arrays (search results)
+        if let results = json["results"] as? [[String: Any]] {
+            let titles = results.prefix(3).compactMap { $0["title"] as? String }
+            parts.append("results(\(results.count)): \(titles.joined(separator: ", "))")
+        }
+
+        if let error = json["error"] as? String { parts.append("error: \(error)") }
+
+        if parts.isEmpty {
+            return "[Previously retrieved data. Full data available via tools.]"
+        }
+        return "[Previously retrieved: \(parts.joined(separator: "; ")). Full data available via tools.]"
+    }
+
+    /// Remove orphaned tool_result messages whose corresponding tool_use assistant
+    /// message was truncated by the history window. The Anthropic API requires every
+    /// tool_result to have a matching tool_use in the preceding assistant message.
+    private func sanitizeToolPairs(_ messages: [AgentMessage]) -> [AgentMessage] {
+        // Collect all tool call IDs defined by assistant messages in this window
+        var availableToolCallIds = Set<String>()
+        for msg in messages {
+            if msg.role == .assistant, let calls = msg.toolCalls {
+                for call in calls {
+                    availableToolCallIds.insert(call.id)
+                }
+            }
+        }
+
+        // Filter out tool messages that reference a tool_use not in this window
+        return messages.filter { msg in
+            if msg.role == .tool, let callId = msg.toolCallId {
+                return availableToolCallIds.contains(callId)
+            }
+            return true
+        }
     }
 }

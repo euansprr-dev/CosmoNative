@@ -18,14 +18,14 @@ struct AnnotationTypePickerPopover: View {
             // Header label
             Text("Annotate:")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
 
             // Selected text preview (truncated)
             Text("\"\(selectedText.prefix(60))\(selectedText.count > 60 ? "..." : "")\"")
                 .font(.system(size: 11))
-                .foregroundColor(Color.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .italic()
                 .lineLimit(2)
 
@@ -58,10 +58,10 @@ struct AnnotationTypePickerPopover: View {
         .frame(width: 220)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: NSColor(red: 0.1, green: 0.1, blue: 0.15, alpha: 1.0)))
+                .fill(DS.surfaceElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(DS.borderActive, lineWidth: 1)
                 )
         )
     }

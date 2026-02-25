@@ -321,10 +321,10 @@ public final class StreakTrackingEngine: Sendable {
 
         let placeholders = atomTypes.map { _ in "?" }.joined(separator: ", ")
         let sql = """
-            SELECT DISTINCT date(createdAt) as activeDate
+            SELECT DISTINCT date(created_at) as activeDate
             FROM atoms
             WHERE type IN (\(placeholders))
-            AND isDeleted = 0
+            AND is_deleted = 0
         """
 
         let dateStrings = try String.fetchAll(db, sql: sql, arguments: StatementArguments(Array(atomTypes)))

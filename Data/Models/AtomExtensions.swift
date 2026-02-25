@@ -320,16 +320,28 @@ extension Atom {
         )
     }
 
-    /// Set rich content for research
+    /// Set rich content for research.
+    /// Uses raw JSON dictionary to preserve sibling keys (swipeAnalysis, transcriptComments, etc.)
+    /// that would otherwise be lost by typed Codable encoding.
     mutating func setRichContent(_ richContent: ResearchRichContent) {
-        var structured = structuredData(as: ResearchStructured.self) ?? ResearchStructured()
+        // Parse existing structured as raw dictionary to preserve all keys
+        var dict: [String: Any] = [:]
+        if let existingStr = self.structured,
+           let data = existingStr.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
+        }
+
+        // Update only the autoMetadata key
         if let encoded = try? JSONEncoder().encode(richContent),
            let jsonString = String(data: encoded, encoding: .utf8) {
-            structured.autoMetadata = jsonString
+            dict["autoMetadata"] = jsonString
         }
-        if let structuredEncoded = try? JSONEncoder().encode(structured),
-           let structuredString = String(data: structuredEncoded, encoding: .utf8) {
-            self.structured = structuredString
+
+        // Re-encode preserving all keys
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            self.structured = jsonStr
         }
     }
 
@@ -555,6 +567,86 @@ extension Atom {
            let json = String(data: encoded, encoding: .utf8) {
             model.referencesData = json
             setMentalModel(model)
+        }
+    }
+}
+
+// MARK: - Connection Co-Dev Metadata Extensions
+
+extension Atom {
+    /// Profile IDs linked to this connection (stored in metadata JSON)
+    var connectionLinkedProfileIds: [String] {
+        guard let metaStr = self.metadata,
+              let data = metaStr.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ids = json["linkedProfileIds"] as? [String] else {
+            return []
+        }
+        return ids
+    }
+
+    /// Set linked profile IDs on the connection metadata
+    mutating func setConnectionLinkedProfileIds(_ ids: [String]) {
+        var dict: [String: Any] = [:]
+        if let metaStr = self.metadata,
+           let data = metaStr.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
+        }
+        dict["linkedProfileIds"] = ids
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            self.metadata = jsonStr
+        }
+    }
+
+    /// Connection maturity level (stored in metadata JSON)
+    var connectionMaturityLevel: String? {
+        guard let metaStr = self.metadata,
+              let data = metaStr.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json["maturityLevel"] as? String
+    }
+
+    /// Set maturity level on the connection metadata
+    mutating func setConnectionMaturityLevel(_ level: String) {
+        var dict: [String: Any] = [:]
+        if let metaStr = self.metadata,
+           let data = metaStr.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
+        }
+        dict["maturityLevel"] = level
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            self.metadata = jsonStr
+        }
+    }
+
+    /// Usage count for this connection in content (stored in metadata JSON)
+    var connectionUsageCount: Int {
+        guard let metaStr = self.metadata,
+              let data = metaStr.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return 0
+        }
+        return json["usageCount"] as? Int ?? 0
+    }
+
+    /// Set usage count on the connection metadata
+    mutating func setConnectionUsageCount(_ count: Int) {
+        var dict: [String: Any] = [:]
+        if let metaStr = self.metadata,
+           let data = metaStr.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
+        }
+        dict["usageCount"] = count
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            self.metadata = jsonStr
         }
     }
 }

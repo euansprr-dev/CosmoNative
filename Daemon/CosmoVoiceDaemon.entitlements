@@ -9,5 +9,9 @@
     <!-- File access for caching models -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+
+    <!-- Allow increased memory usage for ML models (FunctionGemma, embeddings, WhisperKit) -->
+    <key>com.apple.developer.kernel.increased-memory-limit</key>
+    <true/>
 </dict>
 </plist>

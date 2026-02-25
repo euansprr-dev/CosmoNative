@@ -164,14 +164,14 @@ struct FloatingPanelView: View {
 
             // Divider
             Rectangle()
-                .fill(Color.white.opacity(0.1))
+                .fill(DS.borderActive)
                 .frame(height: 1)
 
             // Preview text
             if let preview = content.preview, !preview.isEmpty {
                 Text(preview)
                     .font(.system(size: 12))
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(3)
             }
 
@@ -185,7 +185,7 @@ struct FloatingPanelView: View {
                         Text("\(content.annotationCount)")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                 }
 
                 // Linked count
@@ -196,7 +196,7 @@ struct FloatingPanelView: View {
                         Text("\(content.linkedCount) linked")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                 }
 
                 Spacer()
@@ -260,18 +260,18 @@ struct FloatingPanelView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("SUMMARY")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .tracking(1)
 
                     Text(preview)
                         .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(6)
                 }
             }
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(DS.borderActive)
 
             // Stats footer
             HStack {
@@ -291,7 +291,7 @@ struct FloatingPanelView: View {
                 Spacer()
                 Text("Double-click to open Focus Mode")
                     .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
             }
         }
@@ -318,23 +318,23 @@ struct FloatingPanelView: View {
             if let author = content.metadata.author {
                 Text(author)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
 
             if let platform = content.metadata.platform {
                 Text("·")
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                 Text(platform)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
 
             if let duration = content.metadata.duration {
                 Text("·")
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                 Text(duration)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
     }
@@ -354,7 +354,7 @@ struct FloatingPanelView: View {
                         // Play button overlay
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 40))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(DS.text)
                             .shadow(radius: 10)
                     )
             case .failure, .empty:
@@ -380,10 +380,10 @@ struct FloatingPanelView: View {
             Text(value)
                 .font(.system(size: 10))
         }
-        .foregroundColor(Color.white.opacity(0.5))
+        .foregroundColor(DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.05), in: Capsule())
+        .background(DS.borderSubtle, in: Capsule())
     }
 
     private var moreButton: some View {
@@ -392,7 +392,7 @@ struct FloatingPanelView: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
                 .frame(width: 28, height: 28)
         }
         .menuStyle(.borderlessButton)
@@ -403,7 +403,7 @@ struct FloatingPanelView: View {
     private var panelBackground: some View {
         ZStack {
             // Base color
-            Color(hex: "#1A1A25")
+            DS.surfaceCard
 
             // Subtle gradient
             LinearGradient(
@@ -420,7 +420,7 @@ struct FloatingPanelView: View {
     private var selectionOverlay: some View {
         RoundedRectangle(cornerRadius: 16)
             .stroke(
-                panel.isSelected ? config.accentColor : Color.white.opacity(isHovered ? 0.2 : 0.1),
+                panel.isSelected ? config.accentColor : isHovered ? DS.textMuted : DS.borderActive,
                 lineWidth: panel.isSelected ? 2 : 1
             )
     }
@@ -535,7 +535,7 @@ struct FloatingPanelView: View {
 struct FloatingPanelView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             FloatingPanelPreviewWrapper()

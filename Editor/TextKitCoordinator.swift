@@ -832,9 +832,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 8
 
+            let textColor = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+
             textView.typingAttributes = [
                 .font: NSFont.systemFont(ofSize: parent.fontSize),
-                .foregroundColor: NSColor(CosmoColors.textPrimary),
+                .foregroundColor: textColor,
                 .paragraphStyle: paragraphStyle
             ]
         }
@@ -940,7 +942,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard let textStorage = textView.textStorage else { return }
 
             let font = level == 1 ? NSFont.systemFont(ofSize: 28, weight: .bold) : NSFont.systemFont(ofSize: 22, weight: .semibold)
-            let color = NSColor(CosmoColors.textPrimary)
+            let color = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
 
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
@@ -983,7 +985,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     let newLineRange = (textView.string as NSString).lineRange(for: NSRange(location: lineRange.location, length: 0))
                     let normalAttrs: [NSAttributedString.Key: Any] = [
                         .font: NSFont.systemFont(ofSize: parent.fontSize),
-                        .foregroundColor: NSColor(CosmoColors.textPrimary)
+                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
                     ]
                     if newLineRange.length > 0 {
                         textStorage.addAttributes(normalAttrs, range: newLineRange)
@@ -1074,9 +1076,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
             }
             
-            let textColor = NSColor(CosmoColors.textPrimary)
-            let secondaryColor = NSColor(CosmoColors.textSecondary)
-            let tertiaryColor = NSColor(CosmoColors.textTertiary)
+            let textColor = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+            let secondaryColor = parent.darkMode ? NSColor.white.withAlphaComponent(0.7) : NSColor(CosmoColors.textSecondary)
+            let tertiaryColor = parent.darkMode ? NSColor.white.withAlphaComponent(0.4) : NSColor(CosmoColors.textTertiary)
 
             switch command.type {
             case .heading1:

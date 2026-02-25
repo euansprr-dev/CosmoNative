@@ -22,6 +22,18 @@
     <dict>
         <key>ServiceType</key>
         <string>Application</string>
+        <key>JoinExistingSession</key>
+        <true/>
+        <key>RunLoopType</key>
+        <string>dispatch_main</string>
+    </dict>
+    <!-- Raise Jetsam memory limits so macOS doesn't kill the daemon for ML model usage -->
+    <key>JetsamProperties</key>
+    <dict>
+        <key>ActiveSoftMemoryLimit</key>
+        <integer>4096</integer>
+        <key>InactiveHardMemoryLimit</key>
+        <integer>4096</integer>
     </dict>
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>

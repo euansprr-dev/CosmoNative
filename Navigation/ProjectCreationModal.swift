@@ -318,3 +318,14 @@ struct SecondaryButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
+
+// MARK: - Previews
+
+#Preview("Project Creation Modal") {
+    @Previewable @State var isPresented = true
+    
+    ProjectCreationModal(
+        isPresented: $isPresented,
+        onProjectCreated: { _ in }
+    )
+}

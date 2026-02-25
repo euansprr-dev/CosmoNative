@@ -270,11 +270,11 @@ public struct PhysiologicalDimensionView: View {
                     Text("Connect Health")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(OnyxColors.DimensionVivid.physiological)
                 )
             }

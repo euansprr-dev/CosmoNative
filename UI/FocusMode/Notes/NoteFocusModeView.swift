@@ -56,7 +56,7 @@ struct NoteFocusModeView: View {
     var body: some View {
         ZStack {
             // Full-bleed dark background
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             // Main content
@@ -79,7 +79,7 @@ struct NoteFocusModeView: View {
 
                             // Divider
                             Rectangle()
-                                .fill(Color.white.opacity(0.08))
+                                .fill(DS.border)
                                 .frame(height: 1)
                                 .frame(maxWidth: CosmoTypography.optimalReadingWidth)
 
@@ -129,6 +129,9 @@ struct NoteFocusModeView: View {
                     contentAppeared = true
                 }
             }
+            // Register context provider for global Cosmo window
+            let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.title }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
             // never fires (e.g. atom deleted between load and observation start)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -165,10 +168,10 @@ struct NoteFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -198,8 +201,8 @@ struct NoteFocusModeView: View {
         .background(
             LinearGradient(
                 colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
+                    DS.bg.opacity(0.95),
+                    DS.bg.opacity(0.8),
                     .clear
                 ],
                 startPoint: .top,
@@ -212,25 +215,28 @@ struct NoteFocusModeView: View {
 
     private var titleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ZStack(alignment: .leading) {
+            TextField("", text: $title, onEditingChanged: { editing in
+                withAnimation(ProMotionSprings.hover) {
+                    isTitleFocused = editing
+                }
+                withAnimation(ProMotionSprings.bouncy) {
+                    titleUnderlineProgress = editing ? 1 : 0
+                }
+            })
+            .textFieldStyle(.plain)
+            .font(OnyxTypography.viewTitle)
+            .foregroundColor(.white)
+            .tracking(OnyxTypography.viewTitleTracking)
+            .onChange(of: title) { _, _ in
+                if !isInitialLoad { triggerAutoSave() }
+            }
+            .overlay(alignment: .leading) {
                 if title.isEmpty {
                     Text("Untitled Note")
-                        .font(CosmoTypography.display)
-                        .foregroundColor(.white.opacity(0.25))
-                }
-                TextField("", text: $title, onEditingChanged: { editing in
-                    withAnimation(ProMotionSprings.hover) {
-                        isTitleFocused = editing
-                    }
-                    withAnimation(ProMotionSprings.bouncy) {
-                        titleUnderlineProgress = editing ? 1 : 0
-                    }
-                })
-                .textFieldStyle(.plain)
-                .font(CosmoTypography.display)
-                .foregroundColor(.white)
-                .onChange(of: title) { _, _ in
-                    if !isInitialLoad { triggerAutoSave() }
+                        .font(OnyxTypography.viewTitle)
+                        .tracking(OnyxTypography.viewTitleTracking)
+                        .foregroundColor(DS.textMuted)
+                        .allowsHitTesting(false)
                 }
             }
 
@@ -270,7 +276,7 @@ struct NoteFocusModeView: View {
             // Date
             Text(createdAt, format: .dateTime.month(.wide).day().year())
                 .font(CosmoTypography.body)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             // Tags
             if !tags.isEmpty {
@@ -278,15 +284,15 @@ struct NoteFocusModeView: View {
                     ForEach(tags.prefix(3), id: \.self) { tag in
                         Text(tag)
                             .font(CosmoTypography.caption)
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(DS.textSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .background(DS.border, in: Capsule())
                     }
                     if tags.count > 3 {
                         Text("+\(tags.count - 3)")
                             .font(CosmoTypography.caption)
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(DS.textMuted)
                     }
                 }
             }
@@ -301,10 +307,10 @@ struct NoteFocusModeView: View {
                     Text(tags.isEmpty ? "Add tags" : "Edit")
                         .font(CosmoTypography.caption)
                 }
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.white.opacity(0.06), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -323,18 +329,18 @@ struct NoteFocusModeView: View {
             Spacer()
             Text("\(wordCount) words")
                 .font(CosmoTypography.caption)
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
             Text("·")
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
             Text("\(plainContent.count) chars")
                 .font(CosmoTypography.caption)
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
             Spacer()
         }
         .padding(.vertical, 12)
         .background(
             LinearGradient(
-                colors: [.clear, CosmoColors.thinkspaceVoid],
+                colors: [.clear, DS.bg],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -365,7 +371,7 @@ struct NoteFocusModeView: View {
             Text(saveState == .saving ? "Saving..." : "Saved")
                 .font(CosmoTypography.caption)
         }
-        .foregroundColor(saveState == .saved ? CosmoColors.blockNote : .white.opacity(0.5))
+        .foregroundColor(saveState == .saved ? CosmoColors.blockNote : DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
@@ -373,7 +379,7 @@ struct NoteFocusModeView: View {
                 .fill(
                     saveState == .saved
                         ? CosmoColors.blockNote.opacity(0.15)
-                        : Color.white.opacity(0.08)
+                        : DS.border
                 )
         )
     }
@@ -439,7 +445,7 @@ struct NoteFocusModeView: View {
                     if fetchedAtom.content != plainContent || fetchedAtom.title != title {
                         title = fetchedAtom.title ?? ""
                         plainContent = fetchedAtom.content
-                        attributedContent = CosmoMarkdown.parse(fetchedAtom.content, fontSize: 15)
+                        attributedContent = CosmoMarkdown.parse(fetchedAtom.content, fontSize: 15, darkMode: true)
                         tags = fetchedAtom.tagsList
                         if let date = ISO8601DateFormatter().date(from: fetchedAtom.createdAt) {
                             createdAt = date
@@ -543,4 +549,46 @@ struct NoteFocusModeView: View {
             }
         }
     }
+}
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class NoteContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private let titleRef: () -> String
+    private let contentRef: () -> String
+    private let tagsRef: () -> [String]
+
+    init(atom: Atom, titleRef: @escaping () -> String, contentRef: @escaping () -> String, tagsRef: @escaping () -> [String]) {
+        self.atom = atom
+        self.titleRef = titleRef
+        self.contentRef = contentRef
+        self.tagsRef = tagsRef
+    }
+
+    var contextType: CosmoContextType { .noteFocusMode }
+
+    var contextSummary: String {
+        let title = titleRef()
+        let words = contentRef().split(separator: " ").count
+        return "Note: \(title.isEmpty ? "Untitled" : title) (\(words) words)"
+    }
+
+    var contextData: CosmoContextData {
+        let content = contentRef()
+        let tags = tagsRef()
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "note",
+            currentAtomTitle: titleRef(),
+            viewSpecificData: [
+                "wordCount": "\(content.split(separator: " ").count)",
+                "tags": tags.joined(separator: ", "),
+                "contentPreview": String(content.prefix(500))
+            ]
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
 }

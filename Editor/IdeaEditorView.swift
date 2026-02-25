@@ -624,3 +624,15 @@ struct InlineSaveBadge: View {
         }
     }
 }
+
+// MARK: - Preview
+
+#Preview("Idea Editor - Focus") {
+    IdeaEditorView(ideaId: nil, presentation: .focus)
+        .frame(width: 800, height: 600)
+}
+
+#Preview("Idea Editor - Embedded") {
+    IdeaEditorView(ideaId: nil, presentation: .embedded)
+        .frame(width: 400, height: 300)
+}

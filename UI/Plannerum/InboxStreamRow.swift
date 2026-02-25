@@ -271,7 +271,7 @@ public struct InboxStreamRow: View {
                                     .fill(
                                         activeFilter == filter
                                             ? stream.type.color.opacity(0.15)
-                                            : Color.white.opacity(0.05)
+                                            : DS.border
                                     )
                             )
                             .overlay(

@@ -351,7 +351,7 @@ public final class HealthKitSyncService: ObservableObject {
                 let existingAtom = try? await database.read { db in
                     try Atom
                         .filter(Column("type") == AtomType.hrvReading.rawValue)
-                        .filter(Column("createdAt") == quantitySample.startDate.ISO8601Format())
+                        .filter(Column("created_at") == quantitySample.startDate.ISO8601Format())
                         .fetchOne(db)
                 }
 
@@ -594,7 +594,7 @@ public final class HealthKitSyncService: ObservableObject {
                 let exists = try await database.read { db in
                     try Atom
                         .filter(Column("type") == atom.type.rawValue)
-                        .filter(Column("createdAt") == atom.createdAt)
+                        .filter(Column("created_at") == atom.createdAt)
                         .fetchOne(db) != nil
                 }
 

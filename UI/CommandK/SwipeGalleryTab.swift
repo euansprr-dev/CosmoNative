@@ -1,78 +1,77 @@
 // CosmoOS/UI/CommandK/SwipeGalleryTab.swift
 // Swipe Gallery tab for Command-K overlay
-// Gold-accented gallery of captured swipe files with cards, grouping, and filters
+// Masonry card grid matching Library design, with platform-based card sizing
 
 import SwiftUI
+import AVFoundation
+import AppKit
 
 // MARK: - SwipeGalleryTab
 
-/// Main gallery view shown when the Swipe Gallery tab is active in Command-K
 struct SwipeGalleryTab: View {
 
     @ObservedObject var viewModel: CommandKViewModel
     let searchQuery: String
 
-    // Stagger animation trigger
     @State private var hasAppeared = false
+
+    private let gold = Color(hex: "#FFD700")
 
     var body: some View {
         ZStack {
-            // Void background
-            Color(hex: "#0A0A0F")
+            DS.bg
 
-            if filteredItems.isEmpty {
-                emptyState
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 24) {
-                        // Collection stats
-                        if !viewModel.swipeGalleryItems.isEmpty {
-                            collectionStatsRow
-                                .padding(.top, 4)
-                        }
+            VStack(spacing: 0) {
+                filterBar
 
-                        // Swipe-specific filter chips
-                        swipeFilterChips
-                            .padding(.top, 8)
+                Divider().background(DS.borderActive)
 
-                        // Content: grouped or flat
-                        if viewModel.swipeGrouping == .recent || viewModel.swipeGrouping == .score {
-                            // Flat list as horizontal scroll
-                            flatGallerySection
-                        } else {
-                            // Grouped sections
-                            ForEach(Array(groupedItems.enumerated()), id: \.element.name) { groupIndex, group in
-                                SwipeGroupSection(title: group.name, count: group.items.count) {
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        LazyHStack(spacing: 16) {
-                                            ForEach(Array(group.items.enumerated()), id: \.element.id) { itemIndex, item in
-                                                SwipeGalleryCard(
-                                                    item: item,
-                                                    appearDelay: Double(groupIndex * 4 + itemIndex) * 0.04,
-                                                    hasAppeared: hasAppeared
-                                                )
-                                            }
-                                        }
-                                        .padding(.horizontal, 24)
-                                    }
-                                    .frame(height: 260)
+                if filteredItems.isEmpty {
+                    emptyState
+                } else {
+                    GeometryReader { geometry in
+                        let columnCount = max(2, Int(geometry.size.width / (220 + 16)))
+                        let totalSpacing = CGFloat(columnCount - 1) * 16 + 48
+                        let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
+
+                        ScrollView {
+                            SwipeMasonryLayout(columnCount: columnCount, spacing: 16) {
+                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                                    SwipeGalleryCard(item: item, cardWidth: cardWidth, viewModel: viewModel)
+                                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                                        .animation(
+                                            ProMotionSprings.cardEntrance.delay(Double(index % 12) * 0.03),
+                                            value: filteredItems.count
+                                        )
                                 }
                             }
+                            .padding(24)
+                            .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
                         }
                     }
-                    .padding(.bottom, 24)
                 }
+            }
+
+            // Floating selection bar
+            if viewModel.isMultiSelectActive {
+                VStack {
+                    Spacer()
+                    SelectionBar(viewModel: viewModel, accentColor: gold) {
+                        batchDeleteSelectedSwipes()
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         .onAppear {
             if viewModel.swipeGalleryItems.isEmpty {
-                Task {
-                    await viewModel.loadSwipeGallery()
-                }
+                Task { await viewModel.loadSwipeGallery() }
             }
-            withAnimation(ProMotionSprings.gentle) {
-                hasAppeared = true
-            }
+            withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+            // Register context provider for global Cosmo window
+            let provider = SwipeGalleryContextProvider(viewModel: viewModel, filteredCountRef: { [self] in self.filteredItems.count }, searchQuery: searchQuery)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("swipeDeleted"))) { notification in
             if let uuid = notification.userInfo?["uuid"] as? String {
@@ -83,12 +82,26 @@ struct SwipeGalleryTab: View {
         }
     }
 
+    // MARK: - Batch Delete
+
+    private func batchDeleteSelectedSwipes() {
+        let uuids = Array(viewModel.selectedUUIDs)
+        Task {
+            for uuid in uuids {
+                try? await SwipeFileEngine.shared.deleteSwipe(atomUUID: uuid)
+            }
+        }
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.swipeGalleryItems.removeAll { uuids.contains($0.atomUUID) }
+            viewModel.clearSelection()
+        }
+    }
+
     // MARK: - Filtered Items
 
     private var filteredItems: [SwipeGalleryItem] {
         var items = viewModel.swipeGalleryItems
 
-        // Apply search filter
         if !searchQuery.isEmpty {
             let q = searchQuery.lowercased()
             items = items.filter { item in
@@ -100,17 +113,14 @@ struct SwipeGalleryTab: View {
             }
         }
 
-        // Apply platform filter
         if let platformFilter = viewModel.swipePlatformFilter {
             items = items.filter { $0.platformName == platformFilter }
         }
 
-        // Apply hook type filter
         if let hookFilter = viewModel.swipeHookTypeFilter {
             items = items.filter { $0.hookType == hookFilter }
         }
 
-        // Apply narrative style filter (multi-select intersection)
         if !viewModel.swipeNarrativeFilters.isEmpty {
             items = items.filter { item in
                 guard let narrative = item.primaryNarrative else { return false }
@@ -118,7 +128,6 @@ struct SwipeGalleryTab: View {
             }
         }
 
-        // Apply content format filter (multi-select intersection)
         if !viewModel.swipeContentFormatFilters.isEmpty {
             items = items.filter { item in
                 guard let format = item.swipeContentFormat else { return false }
@@ -126,17 +135,14 @@ struct SwipeGalleryTab: View {
             }
         }
 
-        // Apply niche filter
         if let nicheFilter = viewModel.swipeNicheFilter {
             items = items.filter { $0.niche == nicheFilter }
         }
 
-        // Apply creator filter
         if let creatorFilter = viewModel.swipeCreatorFilter {
             items = items.filter { $0.creatorName == creatorFilter }
         }
 
-        // Apply sort
         switch viewModel.swipeSortMode {
         case .score:
             items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
@@ -149,10 +155,69 @@ struct SwipeGalleryTab: View {
         return items
     }
 
-    // MARK: - Collection Stats
+    // MARK: - Filter Bar (Library style)
 
-    private var totalSwipeCount: Int {
-        viewModel.swipeGalleryItems.count
+    private var filterBar: some View {
+        HStack(spacing: 12) {
+            statsLabel
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    platformMenu
+                    hookTypeMenu
+                    narrativeMenu
+                    formatMenu
+
+                    if !viewModel.availableNiches.isEmpty {
+                        nicheMenu
+                    }
+                    if !viewModel.availableCreators.isEmpty {
+                        creatorMenu
+                    }
+
+                    filterSeparator
+
+                    sortMenu
+
+                    if hasActiveFilters {
+                        clearButton
+                    }
+                }
+            }
+
+            creatorsButton
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+    }
+
+    private var filterSeparator: some View {
+        Rectangle()
+            .fill(DS.borderActive)
+            .frame(width: 1, height: 20)
+    }
+
+    // MARK: - Stats Label
+
+    private var statsLabel: some View {
+        HStack(spacing: 6) {
+            Text("\(viewModel.swipeGalleryItems.count)")
+                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .foregroundColor(DS.text)
+            Text("swipes")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.textSecondary)
+
+            if let avg = averageHookScore {
+                Rectangle().fill(DS.borderActive).frame(width: 1, height: 16)
+                Text(String(format: "%.1f", avg))
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .foregroundColor(averageScoreColor)
+                Text("avg")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+            }
+        }
     }
 
     private var averageHookScore: Double? {
@@ -161,389 +226,327 @@ struct SwipeGalleryTab: View {
         return scores.reduce(0, +) / Double(scores.count)
     }
 
-    private var topHookType: SwipeHookType? {
-        let types = viewModel.swipeGalleryItems.compactMap(\.hookType)
-        let counts = Dictionary(types.map { ($0, 1) }, uniquingKeysWith: +)
-        return counts.max(by: { $0.value < $1.value })?.key
-    }
-
-    private var blindSpotHookType: SwipeHookType? {
-        let presentTypes = Set(viewModel.swipeGalleryItems.compactMap(\.hookType))
-        return SwipeHookType.allCases.first { !presentTypes.contains($0) }
-    }
-
     private var averageScoreColor: Color {
         guard let score = averageHookScore else { return Color(hex: "#64748B") }
-        if score >= 8.0 { return Color(hex: "#10B981") }  // Green
-        if score >= 5.0 { return Color(hex: "#3B82F6") }  // Blue
-        return Color(hex: "#64748B")                        // Slate
+        if score >= 8.0 { return Color(hex: "#10B981") }
+        if score >= 5.0 { return Color(hex: "#3B82F6") }
+        return Color(hex: "#64748B")
     }
 
-    private var collectionStatsRow: some View {
-        HStack(spacing: 16) {
-            // Total count
-            HStack(spacing: 4) {
-                Text("\(totalSwipeCount)")
-                    .font(.system(size: 13, weight: .bold).monospacedDigit())
-                    .foregroundColor(.white.opacity(0.8))
-                Text("swipes")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.5))
-            }
-
-            // Divider
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 1, height: 20)
-
-            // Average score
-            if let avg = averageHookScore {
-                HStack(spacing: 4) {
-                    Text("Avg")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
-                    Text(String(format: "%.1f", avg))
-                        .font(.system(size: 13, weight: .bold).monospacedDigit())
-                        .foregroundColor(averageScoreColor)
-                }
-
-                // Divider
-                Rectangle()
-                    .fill(Color.white.opacity(0.1))
-                    .frame(width: 1, height: 20)
-            }
-
-            // Top hook type
-            if let topHook = topHookType {
-                HStack(spacing: 5) {
-                    Image(systemName: topHook.iconName)
-                        .font(.system(size: 10))
-                    Text(topHook.displayName)
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundColor(topHook.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(topHook.color.opacity(0.15))
-                )
-
-                // Divider (only if blind spot follows)
-                if blindSpotHookType != nil {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.1))
-                        .frame(width: 1, height: 20)
-                }
-            }
-
-            // Blind spot
-            if let blindSpot = blindSpotHookType {
-                HStack(spacing: 4) {
-                    Text("Gap:")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color(hex: "#FFD700").opacity(0.5))
-                    Text(blindSpot.displayName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Color(hex: "#FFD700").opacity(0.5))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .strokeBorder(
-                            Color(hex: "#FFD700").opacity(0.3),
-                            style: StrokeStyle(lineWidth: 1, dash: [4, 3])
-                        )
-                )
-            }
-
-            Spacer()
-
-            // Creators button
-            Button {
-                NotificationCenter.default.post(
-                    name: Notification.Name("openCreatorDatabase"),
-                    object: nil
-                )
-                NotificationCenter.default.post(
-                    name: CosmoNotification.NodeGraph.closeCommandK,
-                    object: nil
-                )
-            } label: {
-                creatorsButtonLabel
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
-        .frame(height: 44)
-        .background(Color(hex: "#0A0A0F"))
-    }
+    // MARK: - Dropdown Helper
 
     @ViewBuilder
-    private var creatorsButtonLabel: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "person.crop.rectangle.fill")
+    private func filterDropdownLabel(_ title: String, isActive: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
                 .font(.system(size: 10))
-            Text("Creators")
-                .font(.system(size: 12, weight: .semibold))
         }
-        .foregroundColor(Color(hex: "#FFD700"))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .foregroundColor(isActive ? DS.text : DS.textSecondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(
-            Capsule()
-                .fill(Color(hex: "#FFD700").opacity(0.12))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color(hex: "#FFD700").opacity(0.3), lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isActive ? gold.opacity(0.15) : DS.border)
         )
     }
 
-    // MARK: - Grouped Items
+    // MARK: - Platform Menu
 
-    private var groupedItems: [(name: String, items: [SwipeGalleryItem])] {
-        let items = filteredItems
-
-        switch viewModel.swipeGrouping {
-        case .narrativeStyle:
-            var groups: [NarrativeStyle: [SwipeGalleryItem]] = [:]
-            var ungrouped: [SwipeGalleryItem] = []
-            for item in items {
-                if let narrative = item.primaryNarrative {
-                    groups[narrative, default: []].append(item)
-                } else {
-                    ungrouped.append(item)
+    private var platformMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipePlatformFilter = nil
+            } label: {
+                HStack {
+                    Text("All Platforms")
+                    if viewModel.swipePlatformFilter == nil { Image(systemName: "checkmark") }
                 }
             }
-            var result = groups.map { (name: $0.key.displayName, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            if !ungrouped.isEmpty {
-                result.append((name: "Unclassified", items: ungrouped))
-            }
-            return result
-
-        case .contentType:
-            var groups: [ContentFormat: [SwipeGalleryItem]] = [:]
-            var ungrouped: [SwipeGalleryItem] = []
-            for item in items {
-                if let format = item.swipeContentFormat {
-                    groups[format, default: []].append(item)
-                } else {
-                    ungrouped.append(item)
+            Divider()
+            ForEach(["YouTube", "Instagram", "X", "Threads", "Website"], id: \.self) { platform in
+                Button {
+                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == platform ? nil : platform
+                } label: {
+                    HStack {
+                        Text(platform)
+                        if viewModel.swipePlatformFilter == platform {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
             }
-            var result = groups.map { (name: $0.key.displayName, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            if !ungrouped.isEmpty {
-                result.append((name: "Unclassified", items: ungrouped))
-            }
-            return result
+        } label: {
+            filterDropdownLabel(
+                viewModel.swipePlatformFilter ?? "Platform",
+                isActive: viewModel.swipePlatformFilter != nil
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
 
-        case .hookType:
-            var groups: [SwipeHookType: [SwipeGalleryItem]] = [:]
-            var ungrouped: [SwipeGalleryItem] = []
-            for item in items {
-                if let hookType = item.hookType {
-                    groups[hookType, default: []].append(item)
-                } else {
-                    ungrouped.append(item)
+    // MARK: - Hook Type Menu
+
+    private var hookTypeMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipeHookTypeFilter = nil
+            } label: {
+                HStack {
+                    Text("All Hook Types")
+                    if viewModel.swipeHookTypeFilter == nil { Image(systemName: "checkmark") }
                 }
             }
-            var result = groups.map { (name: $0.key.displayName, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            if !ungrouped.isEmpty {
-                result.append((name: "Uncategorized", items: ungrouped))
-            }
-            return result
-
-        case .platform:
-            var groups: [String: [SwipeGalleryItem]] = [:]
-            for item in items {
-                let key = item.platformName
-                groups[key, default: []].append(item)
-            }
-            var result = groups.map { (name: $0.key, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            return result
-
-        case .creator:
-            var groups: [String: [SwipeGalleryItem]] = [:]
-            var ungrouped: [SwipeGalleryItem] = []
-            for item in items {
-                if let name = item.creatorName, !name.isEmpty {
-                    groups[name, default: []].append(item)
-                } else {
-                    ungrouped.append(item)
+            Divider()
+            ForEach(SwipeHookType.allCases, id: \.rawValue) { hookType in
+                Button {
+                    viewModel.swipeHookTypeFilter = viewModel.swipeHookTypeFilter == hookType ? nil : hookType
+                } label: {
+                    HStack {
+                        Text(hookType.displayName)
+                        if viewModel.swipeHookTypeFilter == hookType {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
             }
-            var result = groups.map { (name: $0.key, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            if !ungrouped.isEmpty {
-                result.append((name: "Unknown Creator", items: ungrouped))
-            }
-            return result
+        } label: {
+            filterDropdownLabel(
+                viewModel.swipeHookTypeFilter?.displayName ?? "Hook Type",
+                isActive: viewModel.swipeHookTypeFilter != nil
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
 
-        case .niche:
-            var groups: [String: [SwipeGalleryItem]] = [:]
-            var ungrouped: [SwipeGalleryItem] = []
-            for item in items {
-                if let niche = item.niche, !niche.isEmpty {
-                    groups[niche, default: []].append(item)
-                } else {
-                    ungrouped.append(item)
+    // MARK: - Narrative Menu (multi-select)
+
+    private var narrativeMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipeNarrativeFilters.removeAll()
+            } label: {
+                HStack {
+                    Text("All Narratives")
+                    if viewModel.swipeNarrativeFilters.isEmpty { Image(systemName: "checkmark") }
                 }
             }
-            var result = groups.map { (name: $0.key, items: $0.value) }
-            result.sort { $0.items.count > $1.items.count }
-            if !ungrouped.isEmpty {
-                result.append((name: "No Niche", items: ungrouped))
+            Divider()
+            ForEach(NarrativeStyle.allCases, id: \.rawValue) { style in
+                Button {
+                    if viewModel.swipeNarrativeFilters.contains(style) {
+                        viewModel.swipeNarrativeFilters.remove(style)
+                    } else {
+                        viewModel.swipeNarrativeFilters.insert(style)
+                    }
+                } label: {
+                    narrativeMenuItemLabel(style)
+                }
             }
-            return result
+        } label: {
+            narrativeDropdownLabel
+        }
+        .menuStyle(.borderlessButton)
+    }
 
-        case .recent, .score:
-            return [(name: "All Swipes", items: items)]
+    @ViewBuilder
+    private func narrativeMenuItemLabel(_ style: NarrativeStyle) -> some View {
+        HStack {
+            Image(systemName: style.icon)
+            Text(style.displayName)
+            if viewModel.swipeNarrativeFilters.contains(style) {
+                Spacer()
+                Image(systemName: "checkmark")
+            }
         }
     }
 
-    // MARK: - Flat Gallery Section
-
-    private var flatGallerySection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 16) {
-                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                    SwipeGalleryCard(
-                        item: item,
-                        appearDelay: Double(index) * 0.04,
-                        hasAppeared: hasAppeared
-                    )
-                }
-            }
-            .padding(.horizontal, 24)
-        }
-        .frame(height: 260)
+    private var narrativeDropdownLabel: some View {
+        let active = !viewModel.swipeNarrativeFilters.isEmpty
+        let title = active
+            ? "\(viewModel.swipeNarrativeFilters.count) Narrative\(viewModel.swipeNarrativeFilters.count > 1 ? "s" : "")"
+            : "Narrative"
+        return filterDropdownLabel(title, isActive: active)
     }
 
-    // MARK: - Swipe Filter Chips
+    // MARK: - Format Menu (multi-select)
 
-    private var swipeFilterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                // Platform filters
-                swipeChip(title: "All", isSelected: viewModel.swipePlatformFilter == nil) {
-                    viewModel.swipePlatformFilter = nil
-                }
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(width: 1, height: 24)
-
-                swipeChip(title: "YouTube", isSelected: viewModel.swipePlatformFilter == "YouTube") {
-                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == "YouTube" ? nil : "YouTube"
-                }
-                swipeChip(title: "Instagram", isSelected: viewModel.swipePlatformFilter == "Instagram") {
-                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == "Instagram" ? nil : "Instagram"
-                }
-                swipeChip(title: "X", isSelected: viewModel.swipePlatformFilter == "X") {
-                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == "X" ? nil : "X"
-                }
-                swipeChip(title: "Threads", isSelected: viewModel.swipePlatformFilter == "Threads") {
-                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == "Threads" ? nil : "Threads"
-                }
-                swipeChip(title: "Website", isSelected: viewModel.swipePlatformFilter == "Website") {
-                    viewModel.swipePlatformFilter = viewModel.swipePlatformFilter == "Website" ? nil : "Website"
-                }
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(width: 1, height: 24)
-
-                // Hook type dropdown
-                hookTypeMenu
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(width: 1, height: 24)
-
-                // Sort mode
-                sortMenu
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(width: 1, height: 24)
-
-                // Grouping
-                groupingMenu
-
-                // Narrative filter (if any narratives exist)
-                if !viewModel.swipeGalleryItems.compactMap(\.primaryNarrative).isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(width: 1, height: 24)
-
-                    narrativeFilterMenu
-                }
-
-                // Content format filter
-                if !viewModel.swipeGalleryItems.compactMap(\.swipeContentFormat).isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(width: 1, height: 24)
-
-                    contentFormatFilterMenu
-                }
-
-                // Niche filter
-                if !viewModel.availableNiches.isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(width: 1, height: 24)
-
-                    nicheFilterMenu
-                }
-
-                // Creator filter
-                if !viewModel.availableCreators.isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(width: 1, height: 24)
-
-                    creatorFilterMenu
-                }
-
-                // Active filter count / clear
-                if hasActiveFilters {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.15))
-                        .frame(width: 1, height: 24)
-
-                    clearFiltersButton
+    private var formatMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipeContentFormatFilters.removeAll()
+            } label: {
+                HStack {
+                    Text("All Formats")
+                    if viewModel.swipeContentFormatFilters.isEmpty { Image(systemName: "checkmark") }
                 }
             }
-            .padding(.horizontal, 24)
+            Divider()
+            ForEach(ContentFormat.allCases, id: \.rawValue) { format in
+                Button {
+                    if viewModel.swipeContentFormatFilters.contains(format) {
+                        viewModel.swipeContentFormatFilters.remove(format)
+                    } else {
+                        viewModel.swipeContentFormatFilters.insert(format)
+                    }
+                } label: {
+                    formatMenuItemLabel(format)
+                }
+            }
+        } label: {
+            formatDropdownLabel
         }
-        .frame(height: 52)
+        .menuStyle(.borderlessButton)
     }
+
+    @ViewBuilder
+    private func formatMenuItemLabel(_ format: ContentFormat) -> some View {
+        HStack {
+            Image(systemName: format.icon)
+            Text(format.displayName)
+            if viewModel.swipeContentFormatFilters.contains(format) {
+                Spacer()
+                Image(systemName: "checkmark")
+            }
+        }
+    }
+
+    private var formatDropdownLabel: some View {
+        let active = !viewModel.swipeContentFormatFilters.isEmpty
+        let title = active
+            ? "\(viewModel.swipeContentFormatFilters.count) Format\(viewModel.swipeContentFormatFilters.count > 1 ? "s" : "")"
+            : "Format"
+        return filterDropdownLabel(title, isActive: active)
+    }
+
+    // MARK: - Niche Menu
+
+    private var nicheMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipeNicheFilter = nil
+            } label: {
+                HStack {
+                    Text("All Niches")
+                    if viewModel.swipeNicheFilter == nil { Image(systemName: "checkmark") }
+                }
+            }
+            Divider()
+            ForEach(viewModel.availableNiches, id: \.self) { niche in
+                Button {
+                    viewModel.swipeNicheFilter = viewModel.swipeNicheFilter == niche ? nil : niche
+                } label: {
+                    HStack {
+                        Text(niche)
+                        if viewModel.swipeNicheFilter == niche {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            filterDropdownLabel(
+                viewModel.swipeNicheFilter ?? "Niche",
+                isActive: viewModel.swipeNicheFilter != nil
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    // MARK: - Creator Menu
+
+    private var creatorMenu: some View {
+        Menu {
+            Button {
+                viewModel.swipeCreatorFilter = nil
+            } label: {
+                HStack {
+                    Text("All Creators")
+                    if viewModel.swipeCreatorFilter == nil { Image(systemName: "checkmark") }
+                }
+            }
+            Divider()
+            ForEach(viewModel.availableCreators, id: \.name) { creator in
+                Button {
+                    viewModel.swipeCreatorFilter = viewModel.swipeCreatorFilter == creator.name ? nil : creator.name
+                } label: {
+                    HStack {
+                        Text(creator.name)
+                        if viewModel.swipeCreatorFilter == creator.name {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            filterDropdownLabel(
+                viewModel.swipeCreatorFilter ?? "Creator",
+                isActive: viewModel.swipeCreatorFilter != nil
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    // MARK: - Sort Menu
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(SwipeSortMode.allCases, id: \.self) { mode in
+                Button {
+                    viewModel.swipeSortMode = mode
+                } label: {
+                    HStack {
+                        Text(mode.displayName)
+                        if viewModel.swipeSortMode == mode {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(viewModel.swipeSortMode.displayName)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10))
+            }
+            .foregroundColor(DS.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(DS.border)
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    // MARK: - Active Filters
 
     private var hasActiveFilters: Bool {
+        viewModel.swipePlatformFilter != nil ||
+        viewModel.swipeHookTypeFilter != nil ||
         !viewModel.swipeNarrativeFilters.isEmpty ||
         !viewModel.swipeContentFormatFilters.isEmpty ||
         viewModel.swipeNicheFilter != nil ||
-        viewModel.swipeCreatorFilter != nil ||
-        viewModel.swipePlatformFilter != nil ||
-        viewModel.swipeHookTypeFilter != nil
+        viewModel.swipeCreatorFilter != nil
     }
 
-    private var clearFiltersButton: some View {
+    private var clearButton: some View {
         Button {
+            viewModel.swipePlatformFilter = nil
+            viewModel.swipeHookTypeFilter = nil
             viewModel.swipeNarrativeFilters.removeAll()
             viewModel.swipeContentFormatFilters.removeAll()
             viewModel.swipeNicheFilter = nil
             viewModel.swipeCreatorFilter = nil
-            viewModel.swipePlatformFilter = nil
-            viewModel.swipeHookTypeFilter = nil
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "xmark.circle.fill")
@@ -551,347 +554,49 @@ struct SwipeGalleryTab: View {
                 Text("Clear")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(Color(hex: "#FFD700").opacity(0.8))
+            .foregroundColor(gold.opacity(0.8))
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: "#FFD700").opacity(0.1))
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(gold.opacity(0.1))
             )
         }
         .buttonStyle(.plain)
     }
 
-    private var narrativeFilterMenu: some View {
-        Menu {
-            ForEach(NarrativeStyle.allCases, id: \.rawValue) { style in
-                Button {
-                    toggleNarrativeFilter(style)
-                } label: {
-                    narrativeMenuLabel(style)
-                }
-            }
+    // MARK: - Creators Button
+
+    private var creatorsButton: some View {
+        Button {
+            NotificationCenter.default.post(
+                name: Notification.Name("openCreatorDatabase"),
+                object: nil
+            )
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.closeCommandK,
+                object: nil
+            )
         } label: {
-            narrativeFilterMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    @ViewBuilder
-    private func narrativeMenuLabel(_ style: NarrativeStyle) -> some View {
-        let isSelected = viewModel.swipeNarrativeFilters.contains(style)
-        HStack {
-            Image(systemName: style.icon)
-            Text(style.displayName)
-            if isSelected {
-                Spacer()
-                Image(systemName: "checkmark")
+            HStack(spacing: 5) {
+                Image(systemName: "person.crop.rectangle.fill")
+                    .font(.system(size: 10))
+                Text("Creators")
+                    .font(.system(size: 12, weight: .semibold))
             }
-        }
-    }
-
-    private var narrativeFilterMenuLabel: some View {
-        let active = !viewModel.swipeNarrativeFilters.isEmpty
-        return HStack(spacing: 4) {
-            Image(systemName: "text.book.closed.fill")
-                .font(.system(size: 10))
-            Text(active ? "\(viewModel.swipeNarrativeFilters.count) Narrative\(viewModel.swipeNarrativeFilters.count > 1 ? "s" : "")" : "Narrative")
-                .font(.system(size: 12, weight: .medium))
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-        }
-        .foregroundColor(active ? .white : .white.opacity(0.7))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(active ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(
-                            active ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    private func toggleNarrativeFilter(_ style: NarrativeStyle) {
-        if viewModel.swipeNarrativeFilters.contains(style) {
-            viewModel.swipeNarrativeFilters.remove(style)
-        } else {
-            viewModel.swipeNarrativeFilters.insert(style)
-        }
-    }
-
-    private var contentFormatFilterMenu: some View {
-        Menu {
-            ForEach(ContentFormat.allCases, id: \.rawValue) { format in
-                Button {
-                    toggleContentFormatFilter(format)
-                } label: {
-                    formatMenuLabel(format)
-                }
-            }
-        } label: {
-            contentFormatFilterMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    @ViewBuilder
-    private func formatMenuLabel(_ format: ContentFormat) -> some View {
-        let isSelected = viewModel.swipeContentFormatFilters.contains(format)
-        HStack {
-            Image(systemName: format.icon)
-            Text(format.displayName)
-            if isSelected {
-                Spacer()
-                Image(systemName: "checkmark")
-            }
-        }
-    }
-
-    private var contentFormatFilterMenuLabel: some View {
-        let active = !viewModel.swipeContentFormatFilters.isEmpty
-        return HStack(spacing: 4) {
-            Image(systemName: "rectangle.split.3x1.fill")
-                .font(.system(size: 10))
-            Text(active ? "\(viewModel.swipeContentFormatFilters.count) Format\(viewModel.swipeContentFormatFilters.count > 1 ? "s" : "")" : "Format")
-                .font(.system(size: 12, weight: .medium))
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-        }
-        .foregroundColor(active ? .white : .white.opacity(0.7))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(active ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(
-                            active ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    private func toggleContentFormatFilter(_ format: ContentFormat) {
-        if viewModel.swipeContentFormatFilters.contains(format) {
-            viewModel.swipeContentFormatFilters.remove(format)
-        } else {
-            viewModel.swipeContentFormatFilters.insert(format)
-        }
-    }
-
-    private var nicheFilterMenu: some View {
-        Menu {
-            Button("All Niches") {
-                viewModel.swipeNicheFilter = nil
-            }
-            Divider()
-            ForEach(viewModel.availableNiches, id: \.self) { niche in
-                Button(niche) {
-                    viewModel.swipeNicheFilter = viewModel.swipeNicheFilter == niche ? nil : niche
-                }
-            }
-        } label: {
-            nicheFilterMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    private var nicheFilterMenuLabel: some View {
-        let active = viewModel.swipeNicheFilter != nil
-        return HStack(spacing: 4) {
-            Image(systemName: "tag.fill")
-                .font(.system(size: 10))
-            Text(viewModel.swipeNicheFilter ?? "Niche")
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-        }
-        .foregroundColor(active ? .white : .white.opacity(0.7))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(active ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(
-                            active ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    private var creatorFilterMenu: some View {
-        Menu {
-            Button("All Creators") {
-                viewModel.swipeCreatorFilter = nil
-            }
-            Divider()
-            ForEach(viewModel.availableCreators, id: \.name) { creator in
-                Button(creator.name) {
-                    viewModel.swipeCreatorFilter = viewModel.swipeCreatorFilter == creator.name ? nil : creator.name
-                }
-            }
-        } label: {
-            creatorFilterMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    private var creatorFilterMenuLabel: some View {
-        let active = viewModel.swipeCreatorFilter != nil
-        return HStack(spacing: 4) {
-            Image(systemName: "person.fill")
-                .font(.system(size: 10))
-            Text(viewModel.swipeCreatorFilter ?? "Creator")
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-        }
-        .foregroundColor(active ? .white : .white.opacity(0.7))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(active ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(
-                            active ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    private func swipeChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isSelected ? .white : .white.opacity(0.7))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isSelected ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(
-                                    isSelected ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                                    lineWidth: 1
-                                )
-                        )
-                )
+            .foregroundColor(gold)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(gold.opacity(0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(gold.opacity(0.3), lineWidth: 1)
+                    )
+            )
         }
         .buttonStyle(.plain)
-    }
-
-    private var hookTypeMenu: some View {
-        Menu {
-            Button("All Hook Types") {
-                viewModel.swipeHookTypeFilter = nil
-            }
-            Divider()
-            ForEach(SwipeHookType.allCases, id: \.rawValue) { hookType in
-                Button(hookType.displayName) {
-                    viewModel.swipeHookTypeFilter = viewModel.swipeHookTypeFilter == hookType ? nil : hookType
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 10))
-                Text(viewModel.swipeHookTypeFilter?.displayName ?? "Hook Type")
-                    .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundColor(viewModel.swipeHookTypeFilter != nil ? .white : .white.opacity(0.7))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(viewModel.swipeHookTypeFilter != nil ? Color(hex: "#FFD700").opacity(0.25) : Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(
-                                viewModel.swipeHookTypeFilter != nil ? Color(hex: "#FFD700").opacity(0.6) : Color.white.opacity(0.12),
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    private var sortMenu: some View {
-        Menu {
-            ForEach(SwipeSortMode.allCases, id: \.self) { mode in
-                Button(mode.displayName) {
-                    viewModel.swipeSortMode = mode
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(viewModel.swipeSortMode.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundColor(.white.opacity(0.7))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-    }
-
-    private var groupingMenu: some View {
-        Menu {
-            ForEach(SwipeGrouping.allCases, id: \.self) { mode in
-                Button(mode.displayName) {
-                    viewModel.swipeGrouping = mode
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 10))
-                Text(viewModel.swipeGrouping.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundColor(.white.opacity(0.7))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
     }
 
     // MARK: - Empty State
@@ -900,15 +605,58 @@ struct SwipeGalleryTab: View {
         VStack(spacing: 16) {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 48))
-                .foregroundColor(Color(hex: "#FFD700").opacity(0.3))
+                .foregroundColor(gold.opacity(0.3))
 
             Text("No swipes yet")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
 
             Text("Press \u{2318}\u{21E7}S to capture your first swipe")
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Masonry Layout (Pinterest-style waterfall)
+
+private struct SwipeMasonryLayout: Layout {
+    let columnCount: Int
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 800
+        let columnWidth = (width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount)
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+
+        for subview in subviews {
+            let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
+            columnHeights[shortestColumn] += size.height + spacing
+        }
+
+        let maxHeight = columnHeights.max() ?? 0
+        return CGSize(width: width, height: max(0, maxHeight - spacing))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columnWidth = (bounds.width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount)
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+
+        for subview in subviews {
+            let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            let x = bounds.minX + CGFloat(shortestColumn) * (columnWidth + spacing)
+            let y = bounds.minY + columnHeights[shortestColumn]
+
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: columnWidth, height: nil)
+            )
+
+            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
+            columnHeights[shortestColumn] += size.height + spacing
         }
     }
 }
@@ -918,125 +666,383 @@ struct SwipeGalleryTab: View {
 private struct SwipeGalleryCard: View {
 
     let item: SwipeGalleryItem
-    let appearDelay: Double
-    let hasAppeared: Bool
+    let cardWidth: CGFloat
+    var viewModel: CommandKViewModel?
 
     @State private var isHovered = false
     @State private var isPressed = false
     @State private var showDeleteAlert = false
+    @State private var localThumbnail: NSImage?
 
-    private let cardWidth: CGFloat = 170
-    private let cardHeight: CGFloat = 250
-    private let gold = Color(hex: "#FFD700")
+    private var isSelected: Bool {
+        viewModel?.selectedUUIDs.contains(item.atomUUID) ?? false
+    }
+
+    /// Whether this item has any displayable thumbnail (remote URL or local video fallback)
+    private var hasThumbnail: Bool {
+        item.thumbnailUrl != nil || localThumbnail != nil || item.instagramId != nil
+    }
+
+    /// Whether this is an Instagram reel
+    private var isReel: Bool {
+        switch item.platform {
+        case "instagramReel", "instagram_reel", "instagram":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether this is an Instagram carousel
+    private var isCarousel: Bool {
+        switch item.platform {
+        case "instagramCarousel", "instagram_carousel":
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Platform-Based Preview Height
+
+    /// Height of the info section below the preview (title + subtitle + badge + padding)
+    private let infoSectionHeight: CGFloat = 90
+
+    private var previewHeight: CGFloat {
+        if hasThumbnail {
+            switch item.platform {
+            case "youtube":
+                return cardWidth * 9 / 16                     // 16:9 landscape
+            case "youtubeShort", "youtube_short":
+                return min(cardWidth * 16 / 9, 420)           // 9:16 portrait
+            case "instagramReel", "instagram_reel":
+                return min(cardWidth * 16 / 9, 420)           // 9:16 portrait
+            case "instagramCarousel", "instagram_carousel":
+                return cardWidth * 5 / 4                      // 4:5 (native IG carousel)
+            case "instagramPost", "instagram_post":
+                return cardWidth * 5 / 4                      // 4:5 (native IG post)
+            case "instagram":
+                return cardWidth * 5 / 4                      // 4:5 (generic IG fallback)
+            default:
+                return cardWidth * 9 / 16                     // default landscape
+            }
+        } else {
+            // No thumbnail — compact text card
+            return 80
+        }
+    }
+
+    /// Total card height — fixed to prevent masonry layout miscalculation from async image loading
+    private var totalCardHeight: CGFloat {
+        previewHeight + infoSectionHeight
+    }
+
+    /// Platform-specific accent color for the preview gradient
+    private var platformAccentColor: Color {
+        switch item.platform {
+        case "youtube", "youtubeShort", "youtube_short":
+            return Color(hex: "#FF4444")
+        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
+             "instagram_reel", "instagram_post", "instagram_carousel":
+            return Color(hex: "#C13584")
+        case "xPost", "twitter", "x_post":
+            return Color(hex: "#1DA1F2")
+        case "threads":
+            return Color(hex: "#AAAAAA")
+        case "website":
+            return Color(hex: "#8FC7A2")
+        default:
+            return Color(hex: "#8FC7A2")
+        }
+    }
+
+    // MARK: - Body
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Thumbnail area (60% height)
-            thumbnailSection
-                .frame(height: cardHeight * 0.6)
+        VStack(alignment: .leading, spacing: 0) {
+            // Preview area — platform-based height
+            previewArea
+                .frame(height: previewHeight)
                 .clipped()
 
-            // Text content
-            VStack(alignment: .leading, spacing: 4) {
-                // Hook text
+            // Info area — matches Library card structure
+            VStack(alignment: .leading, spacing: 6) {
+                // Title (hook text)
                 Text(item.hookText ?? item.title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(DS.text)
                     .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Author + platform
-                HStack(spacing: 4) {
-                    if let author = item.author {
-                        Text("@\(author)")
-                    }
-                    if item.author != nil {
-                        Text("\u{00B7}")
-                    }
-                    Text(item.platformName)
-                }
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
-                .lineLimit(1)
+                // Subtitle (author + platform)
+                subtitleLabel
+
+                // Bottom row: hook type badge + date
+                bottomRowLabel
             }
-
-            // Bottom row: hook type pill + score
-            HStack(spacing: 6) {
-                if let hookType = item.hookType {
-                    hookTypePill(hookType)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 2)
-
-                if let score = item.hookScore {
-                    scoreCircle(score)
-                }
-            }
-            .frame(width: cardWidth - 20)
-
-            // Taxonomy badges row
-            taxonomyBadgesRow
+            .padding(12)
         }
-        .padding(10)
-        .frame(width: cardWidth, height: cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(hex: "#1A1A25"))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    isHovered ? gold.opacity(0.3) : Color.white.opacity(0.06),
-                    lineWidth: 1
-                )
-        )
+        .frame(height: totalCardHeight)
+        .clipped()
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cardSelectionOverlay(isSelected: isSelected, accentColor: Color(hex: "#FFD700"))
         .shadow(
-            color: isHovered ? gold.opacity(0.15) : .clear,
-            radius: isHovered ? 12 : 0,
-            y: isHovered ? 4 : 0
+            color: .black.opacity(isHovered ? 0.4 : 0.2),
+            radius: isHovered ? 16 : 8,
+            y: isHovered ? 8 : 4
         )
-        .scaleEffect(isPressed ? 0.95 : (isHovered ? 1.03 : 1.0))
-        .opacity(hasAppeared ? 1.0 : 0.0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(
-            ProMotionSprings.snappy.delay(appearDelay),
-            value: hasAppeared
-        )
-        .animation(ProMotionSprings.hover, value: isHovered)
+        .scaleEffect(isPressed ? 0.97 : (isHovered ? 1.02 : 1.0))
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
         .animation(ProMotionSprings.press, value: isPressed)
-        .onHover { hovering in
-            isHovered = hovering
-        }
+        .onHover { hovering in isHovered = hovering }
+        .contentShape(Rectangle())
         .onTapGesture {
-            // Open in focus mode
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": EntityType.research, "id": item.entityId]
-            )
-            // Close Command-K
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.closeCommandK,
-                object: nil
-            )
+            if NSEvent.modifierFlags.contains(.shift) {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel?.toggleSelection(item.atomUUID)
+                }
+            } else if viewModel?.isMultiSelectActive == true {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel?.clearSelection()
+                }
+            } else {
+                NotificationCenter.default.post(
+                    name: .enterFocusMode,
+                    object: nil,
+                    userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
+                )
+                NotificationCenter.default.post(
+                    name: CosmoNotification.NodeGraph.closeCommandK,
+                    object: nil
+                )
+            }
         }
         .onLongPressGesture(minimumDuration: 0.5, pressing: { pressing in
             isPressed = pressing
         }) {
-            // Add to canvas
             NotificationCenter.default.post(
                 name: Notification.Name("addSwipeToCanvas"),
                 object: nil,
                 userInfo: ["atomUUID": item.atomUUID]
             )
         }
-        .contextMenu {
+        .contextMenu { swipeCardContextMenu }
+        .alert(swipeDeleteAlertTitle, isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                batchDeleteSwipes()
+            }
+        } message: {
+            Text(swipeDeleteAlertMessage)
+        }
+        .onAppear {
+            // Pre-generate local thumbnail for Instagram items without a remote URL
+            if item.thumbnailUrl == nil && item.instagramId != nil {
+                generateLocalThumbnail()
+            }
+        }
+    }
+
+    // MARK: - Preview Area
+
+    @ViewBuilder
+    private var previewArea: some View {
+        ZStack {
+            // Gradient background (Library-style, using platform accent)
+            LinearGradient(
+                colors: [platformAccentColor.opacity(0.15), platformAccentColor.opacity(0.05)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            previewContent
+
+            // Overlay badges
+            VStack {
+                HStack(alignment: .top) {
+                    // Platform badge (top-left)
+                    HStack(spacing: 4) {
+                        Image(systemName: item.platformIcon)
+                            .font(.system(size: 9))
+                        Text(item.platformName)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundColor(DS.text)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.6)))
+
+                    Spacer()
+
+                    // Score badge (top-right)
+                    if let score = item.hookScore {
+                        Text(String(format: "%.1f", score))
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundColor(.white) // White on accent bg — exception
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(item.scoreColor.opacity(0.85)))
+                    }
+                }
+
+                Spacer()
+
+                // Duration badge (bottom-right)
+                if let duration = item.duration, duration > 0 {
+                    HStack {
+                        Spacer()
+                        Text(formatDuration(duration))
+                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .foregroundColor(DS.text)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.black.opacity(0.6)))
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let localThumb = localThumbnail {
+            // Local thumbnail generated from cached video
+            Image(nsImage: localThumb)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: previewHeight)
+                .clipped()
+        } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: previewHeight)
+                        .clipped()
+                case .failure:
+                    fallbackPreview
+                        .onAppear { generateLocalThumbnail() }
+                case .empty:
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(DS.textMuted)
+                @unknown default:
+                    fallbackPreview
+                        .onAppear { generateLocalThumbnail() }
+                }
+            }
+        } else {
+            fallbackPreview
+                .onAppear { generateLocalThumbnail() }
+        }
+    }
+
+    @ViewBuilder
+    private var fallbackPreview: some View {
+        VStack(spacing: 8) {
+            if let hookText = item.hookText, !hookText.isEmpty {
+                // Text preview (like Library's idea card)
+                Text(hookText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                Spacer(minLength: 0)
+            } else {
+                Spacer(minLength: 0)
+                Image(systemName: item.platformIcon)
+                    .font(.system(size: 32))
+                    .foregroundColor(platformAccentColor.opacity(0.5))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    // MARK: - Subtitle
+
+    @ViewBuilder
+    private var subtitleLabel: some View {
+        let parts = [item.author, item.platformName].compactMap { $0 }.filter { !$0.isEmpty }
+
+        if !parts.isEmpty {
+            Text(parts.joined(separator: " \u{00B7} "))
+                .font(.system(size: 12))
+                .foregroundColor(DS.textMuted)
+                .lineLimit(1)
+        }
+    }
+
+    // MARK: - Bottom Row
+
+    @ViewBuilder
+    private var bottomRowLabel: some View {
+        HStack {
+            if let hookType = item.hookType {
+                hookTypeBadgeLabel(hookType)
+            } else {
+                // Pending badge for unanalyzed swipes
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                    Text("Pending")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(Color(hex: "#64748B"))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(hex: "#64748B").opacity(0.12))
+                .clipShape(Capsule())
+            }
+
+            Spacer()
+
+            Text(relativeDate)
+                .font(.system(size: 11))
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func hookTypeBadgeLabel(_ hookType: SwipeHookType) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: hookType.iconName)
+                .font(.system(size: 10))
+            Text(hookType.displayName)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(hookType.color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(hookType.color.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    // MARK: - Selection-Aware Context Menu
+
+    @ViewBuilder
+    private var swipeCardContextMenu: some View {
+        let selCount = viewModel?.selectedUUIDs.count ?? 0
+
+        if isSelected && selCount > 1 {
+            Button(role: .destructive) {
+                showDeleteAlert = true
+            } label: {
+                Label("Delete \(selCount) Swipes", systemImage: "trash")
+            }
+        } else {
             Button {
                 NotificationCenter.default.post(
                     name: .enterFocusMode,
                     object: nil,
-                    userInfo: ["type": EntityType.research, "id": item.entityId]
+                    userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
                 )
                 NotificationCenter.default.post(
                     name: CosmoNotification.NodeGraph.closeCommandK,
@@ -1064,233 +1070,231 @@ private struct SwipeGalleryCard: View {
                 Label("Delete Swipe", systemImage: "trash")
             }
         }
-        .alert("Delete Swipe?", isPresented: $showDeleteAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                Task {
-                    try? await SwipeFileEngine.shared.deleteSwipe(atomUUID: item.atomUUID)
-                }
+    }
+
+    private var swipeDeleteAlertTitle: String {
+        let selCount = viewModel?.selectedUUIDs.count ?? 0
+        if isSelected && selCount > 1 {
+            return "Delete \(selCount) Swipes?"
+        }
+        return "Delete Swipe?"
+    }
+
+    private var swipeDeleteAlertMessage: String {
+        let selCount = viewModel?.selectedUUIDs.count ?? 0
+        if isSelected && selCount > 1 {
+            return "This will permanently remove \(selCount) swipe files."
+        }
+        return "This will permanently remove this swipe file."
+    }
+
+    private func batchDeleteSwipes() {
+        let uuidsToDelete: [String]
+        if isSelected, let vm = viewModel, vm.selectedUUIDs.count > 1 {
+            uuidsToDelete = Array(vm.selectedUUIDs)
+        } else {
+            uuidsToDelete = [item.atomUUID]
+        }
+
+        Task {
+            for uuid in uuidsToDelete {
+                try? await SwipeFileEngine.shared.deleteSwipe(atomUUID: uuid)
             }
-        } message: {
-            Text("This will permanently remove this swipe file.")
+        }
+
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel?.clearSelection()
         }
     }
 
-    // MARK: - Thumbnail
+    // MARK: - Card Background
 
-    private var thumbnailSection: some View {
+    private var cardBackground: some View {
         ZStack {
-            // Background gradient placeholder
-            LinearGradient(
-                colors: [Color(hex: "#1A1A25"), Color(hex: "#12121A")],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            // Thumbnail image or platform icon
-            if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: cardWidth - 20, height: cardHeight * 0.6)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .transition(.opacity.animation(ProMotionSprings.gentle))
-                    default:
-                        platformIconPlaceholder
-                    }
-                }
-            } else {
-                platformIconPlaceholder
-            }
-
-            // Platform badge (top-left)
-            VStack {
-                HStack {
-                    HStack(spacing: 4) {
-                        Image(systemName: item.platformIcon)
-                            .font(.system(size: 9))
-                    }
-                    .foregroundColor(.white.opacity(0.9))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.6))
-                    )
-
-                    Spacer()
-                }
-                Spacer()
-
-                // Duration badge (bottom-right)
-                if let duration = item.duration, duration > 0 {
-                    HStack {
-                        Spacer()
-                        Text(formatDuration(duration))
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule()
-                                    .fill(Color.black.opacity(0.6))
-                            )
-                    }
-                }
-            }
-            .padding(6)
+            DS.surfaceElevated
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    isHovered ? DS.borderActive : DS.border,
+                    lineWidth: 1
+                )
         }
-        .frame(width: cardWidth - 20, height: cardHeight * 0.6)
-        .clipped()
-    }
-
-    private var platformIconPlaceholder: some View {
-        Image(systemName: item.platformIcon)
-            .font(.system(size: 28))
-            .foregroundColor(.white.opacity(0.15))
-    }
-
-    // MARK: - Hook Type Pill
-
-    private func hookTypePill(_ hookType: SwipeHookType) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: hookType.iconName)
-                .font(.system(size: 8))
-            Text(hookType.displayName)
-                .font(.system(size: 9, weight: .medium))
-        }
-        .foregroundColor(hookType.color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(hookType.color.opacity(0.2))
-        )
-        .lineLimit(1)
-    }
-
-    // MARK: - Score Circle
-
-    private func scoreCircle(_ score: Double) -> some View {
-        ZStack {
-            Circle()
-                .strokeBorder(item.scoreColor, lineWidth: 2)
-                .frame(width: 24, height: 24)
-
-            Text(String(format: "%.1f", score))
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
-                .foregroundColor(item.scoreColor)
-        }
-    }
-
-    // MARK: - Taxonomy Badges
-
-    @ViewBuilder
-    private var taxonomyBadgesRow: some View {
-        let hasAnyTaxonomy = item.primaryNarrative != nil ||
-            item.swipeContentFormat != nil ||
-            item.creatorName != nil ||
-            item.niche != nil
-
-        if hasAnyTaxonomy {
-            HStack(spacing: 4) {
-                if let narrative = item.primaryNarrative {
-                    taxonomyBadge(narrative.displayName, color: narrative.color)
-                }
-                if let format = item.swipeContentFormat {
-                    taxonomyBadge(format.displayName, color: format.color)
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(width: cardWidth - 20)
-
-            if item.creatorName != nil || item.niche != nil {
-                HStack(spacing: 4) {
-                    if let creator = item.creatorName {
-                        Text(creator)
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
-                            .lineLimit(1)
-                    }
-                    if let niche = item.niche {
-                        Text(niche)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(gold.opacity(0.5))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(width: cardWidth - 20)
-            }
-        }
-    }
-
-    private func taxonomyBadge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(color.opacity(0.15))
-            )
-            .lineLimit(1)
     }
 
     // MARK: - Helpers
+
+    private var relativeDate: String {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = isoFormatter.date(from: item.createdAt)
+                ?? ISO8601DateFormatter().date(from: item.createdAt) else {
+            return item.createdAt
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
 
     private func formatDuration(_ seconds: Int) -> String {
         let mins = seconds / 60
         let secs = seconds % 60
         return String(format: "%d:%02d", mins, secs)
     }
-}
 
-// MARK: - SwipeGroupSection
+    // MARK: - Local Thumbnail Generation
 
-private struct SwipeGroupSection<Content: View>: View {
+    /// Try to generate a thumbnail from the local Instagram video cache
+    private func generateLocalThumbnail() {
+        guard localThumbnail == nil,
+              let shortcode = item.instagramId, !shortcode.isEmpty else { return }
 
-    let title: String
-    let count: Int
-    let content: () -> Content
-
-    init(title: String, count: Int, @ViewBuilder content: @escaping () -> Content) {
-        self.title = title
-        self.count = count
-        self.content = content
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header
-            HStack(spacing: 8) {
-                Text(title.uppercased())
-                    .font(.system(size: 13, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
-
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color(hex: "#FFD700").opacity(0.7))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color(hex: "#FFD700").opacity(0.15))
-                    )
-
-                Spacer()
+        Task.detached(priority: .utility) {
+            if let image = await Self.thumbnailFromCache(shortcode: shortcode) {
+                await MainActor.run { localThumbnail = image }
+                return
             }
-            .padding(.horizontal, 24)
-
-            // Content
-            content()
+            // No cached thumb and no video — try re-extracting from Instagram
+            // (fetches fresh CDN URLs and caches the first carousel/thumbnail image)
+            if let image = await Self.extractAndCacheThumbnail(shortcode: shortcode) {
+                await MainActor.run { localThumbnail = image }
+            }
         }
     }
+
+    /// Check disk cache, then try generating from cached video
+    private static func thumbnailFromCache(shortcode: String) async -> NSImage? {
+        let thumbCache = thumbnailCacheDir()
+        let thumbPath = thumbCache.appendingPathComponent("thumb-\(shortcode).jpg")
+        if FileManager.default.fileExists(atPath: thumbPath.path),
+           let cached = NSImage(contentsOf: thumbPath) {
+            return cached
+        }
+
+        // Try generating from cached video file
+        guard let videoURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) else {
+            return nil
+        }
+
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 600, height: 600)
+
+        do {
+            let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
+            let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+
+            if let tiffData = image.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                try? FileManager.default.createDirectory(at: thumbCache, withIntermediateDirectories: true)
+                try? jpegData.write(to: thumbPath)
+            }
+
+            return image
+        } catch {
+            return nil
+        }
+    }
+
+    /// Re-extract media from Instagram to get fresh URLs, download first image, cache it
+    private static func extractAndCacheThumbnail(shortcode: String) async -> NSImage? {
+        let igURL = URL(string: "https://www.instagram.com/p/\(shortcode)/")!
+
+        do {
+            let mediaData = try await InstagramMediaCache.shared.getMedia(for: igURL)
+
+            // Try carousel first image, then thumbnail
+            let imageURL: URL?
+            if let items = mediaData.carouselItems, !items.isEmpty,
+               let first = items.first(where: { $0.mediaType == .image }) ?? items.first {
+                imageURL = first.mediaURL
+            } else {
+                imageURL = mediaData.thumbnailURL
+            }
+
+            guard let downloadURL = imageURL else { return nil }
+            let (data, _) = try await URLSession.shared.data(from: downloadURL)
+            guard let nsImage = NSImage(data: data) else { return nil }
+
+            // Cache to disk
+            let thumbCache = thumbnailCacheDir()
+            let thumbPath = thumbCache.appendingPathComponent("thumb-\(shortcode).jpg")
+            if let tiffData = nsImage.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                try? FileManager.default.createDirectory(at: thumbCache, withIntermediateDirectories: true)
+                try? jpegData.write(to: thumbPath)
+            }
+
+            return nsImage
+        } catch {
+            return nil
+        }
+    }
+
+    private static func thumbnailCacheDir() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
+    }
+}
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class SwipeGalleryContextProvider: CosmoContextProvider {
+    private weak var viewModel: CommandKViewModel?
+    private let filteredCountRef: () -> Int
+    private let searchQuery: String
+
+    init(viewModel: CommandKViewModel, filteredCountRef: @escaping () -> Int, searchQuery: String) {
+        self.viewModel = viewModel
+        self.filteredCountRef = filteredCountRef
+        self.searchQuery = searchQuery
+    }
+
+    var contextType: CosmoContextType { .swipeGallery }
+
+    var contextSummary: String {
+        let total = viewModel?.swipeGalleryItems.count ?? 0
+        let filtered = filteredCountRef()
+        let sortLabel = viewModel?.swipeSortMode.rawValue ?? "recent"
+        if filtered == total {
+            return "\(total) swipes, sorted by \(sortLabel)"
+        }
+        return "\(filtered)/\(total) swipes (filtered), sorted by \(sortLabel)"
+    }
+
+    var contextData: CosmoContextData {
+        var filters: [String] = []
+        if let platform = viewModel?.swipePlatformFilter {
+            filters.append("platform: \(platform)")
+        }
+        if let hookType = viewModel?.swipeHookTypeFilter {
+            filters.append("hookType: \(hookType.rawValue)")
+        }
+        if let niche = viewModel?.swipeNicheFilter {
+            filters.append("niche: \(niche)")
+        }
+        if let creator = viewModel?.swipeCreatorFilter {
+            filters.append("creator: \(creator)")
+        }
+
+        return CosmoContextData(
+            viewSpecificData: [
+                "totalSwipes": "\(viewModel?.swipeGalleryItems.count ?? 0)",
+                "sortMode": viewModel?.swipeSortMode.rawValue ?? "recent"
+            ],
+            visibleItemCount: filteredCountRef(),
+            activeFilters: filters.isEmpty ? nil : filters
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}
+
+// MARK: - Preview
+
+#Preview("Swipe Gallery Tab") {
+    SwipeGalleryTab(viewModel: CommandKViewModel(), searchQuery: "")
+        .frame(width: 900, height: 600)
 }

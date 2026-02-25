@@ -230,9 +230,14 @@ final class IdeaInsightEngine: ObservableObject {
         }
 
         // Factor 3: Client preferences (if available)
-        if let clientAtom = clientProfile,
-           let clientMeta = clientAtom.metadataValue(as: ClientMetadata.self) {
-            if let preferredFormats = clientMeta.preferredFormats {
+        if let clientAtom = clientProfile {
+            if let richMeta = clientAtom.metadataValue(as: ClientProfileMetadata.self),
+               let bestFormats = richMeta.bestFormats {
+                for formatRaw in bestFormats {
+                    scores[formatRaw, default: 0] += 0.3
+                }
+            } else if let clientMeta = clientAtom.metadataValue(as: ClientMetadata.self),
+                      let preferredFormats = clientMeta.preferredFormats {
                 for formatRaw in preferredFormats {
                     scores[formatRaw, default: 0] += 0.3
                 }
@@ -436,7 +441,8 @@ final class IdeaInsightEngine: ObservableObject {
         """
 
         do {
-            let response = try await ResearchService.shared.analyzeContent(prompt: prompt)
+            // Use Haiku tier — hook generation is structured JSON extraction, doesn't need Sonnet
+            let response = try await ResearchService.shared.analyze(prompt: prompt, tier: .sensor)
             let cleaned = stripCodeFences(from: response)
 
             guard let data = cleaned.data(using: .utf8) else {

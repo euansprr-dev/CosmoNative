@@ -288,7 +288,7 @@ public struct FocusNowCard: View {
             .font(FocusNowTokens.buttonFont)
             .foregroundColor(PlannerumColors.textSecondary)
             .frame(width: FocusNowTokens.skipButtonWidth, height: FocusNowTokens.buttonHeight)
-            .background(isSkipButtonHovering ? Color.white.opacity(0.12) : FocusNowTokens.skipButton)
+            .background(isSkipButtonHovering ? DS.borderActive : FocusNowTokens.skipButton)
             .clipShape(RoundedRectangle(cornerRadius: FocusNowTokens.buttonCornerRadius, style: .continuous))
     }
 
@@ -358,8 +358,8 @@ public struct FocusNowCard: View {
             .strokeBorder(
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(isHovering ? 0.15 : 0.08),
-                        Color.white.opacity(isHovering ? 0.08 : 0.03)
+                        isHovering ? DS.borderActive : DS.border,
+                        isHovering ? DS.border : DS.borderSubtle
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing

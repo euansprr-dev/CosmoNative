@@ -224,6 +224,12 @@ enum CosmoNotification {
         static let emergencyMemoryUnload = Notification.Name("com.cosmo.ai.emergencyMemoryUnload")
     }
 
+    // MARK: - Intelligence Notifications
+    enum Intelligence {
+        static let crossReferencesUpdated = Notification.Name("com.cosmo.intelligence.crossReferencesUpdated")
+        static let connectionSuggestionsAvailable = Notification.Name("com.cosmo.intelligence.connectionSuggestionsAvailable")
+    }
+
     // MARK: - Glass Overlay Notifications
     enum Glass {
         static let clarificationSelected = Notification.Name("com.cosmo.glass.clarificationSelected")
@@ -252,6 +258,25 @@ enum CosmoNotification {
         static let openCommandK = Notification.Name("com.cosmo.nodegraph.openCommandK")
         static let closeCommandK = Notification.Name("com.cosmo.nodegraph.closeCommandK")
         static let openAtomFromCommandK = Notification.Name("com.cosmo.nodegraph.openAtomFromCommandK")
+
+        /// Canvas item management
+        static let addToCanvas = Notification.Name("com.cosmo.nodegraph.addToCanvas")
+
+        /// Add item as floating block to the currently active canvas/focus mode
+        static let addItemToCurrentCanvas = Notification.Name("com.cosmo.nodegraph.addItemToCurrentCanvas")
+    }
+
+    // MARK: - Telegram Notifications
+    enum Telegram {
+        /// Content was created or committed via Telegram writing session
+        static let contentCreated = Notification.Name("com.cosmo.telegram.contentCreated")
+    }
+
+    // MARK: - SwipeFile Notifications
+    enum SwipeFile {
+        /// Fired when a source type accumulates a multiple of 30 swipes globally.
+        /// userInfo: ["sourceType": String, "swipeCount": Int]
+        static let batchSwipeAnalysisTriggered = Notification.Name("com.cosmo.swipefile.batchSwipeAnalysisTriggered")
     }
 
     // MARK: - Daemon Notifications
@@ -292,6 +317,12 @@ enum CosmoNotification {
         // Data refresh
         static let dataRefreshed = Notification.Name("com.cosmo.scheduler.dataRefreshed")
         static let requestRefresh = Notification.Name("com.cosmo.scheduler.requestRefresh")
+    }
+
+    // MARK: - Cosmo Window Notifications
+    enum CosmoWindow {
+        static let toggle = Notification.Name("com.cosmo.window.toggle")
+        static let contextChanged = Notification.Name("com.cosmo.window.contextChanged")
     }
 }
 

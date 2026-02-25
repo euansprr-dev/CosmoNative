@@ -23,7 +23,6 @@ public struct PlannerumView: View {
     @State private var isEntering = true
     @State private var animationTimerCancellable: AnyCancellable?
     @State private var xpBarAnimationProgress: CGFloat = 0
-    @State private var livePulse: Bool = false
 
     // Staggered entry animation states (per plan: Animation Specifications)
     @State private var backgroundOpacity: Double = 0      // Background fades in (0.3s)
@@ -48,6 +47,7 @@ public struct PlannerumView: View {
 
     // Keyboard shortcut state
     @State private var showNewTaskSheet = false
+    @State private var showSettings = false
 
     // Callbacks
     let onDismiss: () -> Void
@@ -177,6 +177,9 @@ public struct PlannerumView: View {
                 await plannerumViewModel.refresh()
                 plannerumViewModel.startLiveUpdates()
             }
+            // Register context provider for global Cosmo window
+            let provider = PlannerumContextProvider(viewModeRef: { [self] in self.viewMode }, plannerumViewModel: plannerumViewModel, sessionManager: sessionManager)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             animationTimerCancellable?.cancel()
@@ -256,13 +259,29 @@ public struct PlannerumView: View {
                 showNewTaskSheet = false
             })
         }
+        .overlay(alignment: .topTrailing) {
+            Button(action: { showSettings = true }) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 16)
+            .padding(.top, 16)
+        }
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
+        }
     }
 
     // MARK: - Sanctuary-Style Header
 
     private var sanctuaryStyleHeader: some View {
         HStack(alignment: .top, spacing: 0) {
-            // Left side - Title and level info
+            // Left side - Title and escape hint
             VStack(alignment: .leading, spacing: PlannerumLayout.spacingSM) {
                 // Title - matches Sanctuary exactly
                 Text("Plannerum")
@@ -270,17 +289,24 @@ public struct PlannerumView: View {
                     .foregroundColor(OnyxColors.Text.primary)
                     .tracking(OnyxTypography.viewTitleTracking)
 
-                // Level badge
-                levelBadge
-
-                // XP progress bar
-                xpProgressBar
+                // Escape hint
+                HStack(spacing: 5) {
+                    Text("esc")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(DS.textMuted)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(DS.border, in: RoundedRectangle(cornerRadius: 3))
+                    Text("to go back")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(DS.textMuted)
+                }
             }
 
             Spacer()
 
-            // Right side - Live metrics panel
-            liveMetricsPanel
+            // Right side - Date + keyboard hints (replaces Live panel for cleaner header)
+            headerMetaPanel
         }
         .padding(.horizontal, PlannerumLayout.spacingXXL)
         .padding(.top, PlannerumLayout.spacingXL)
@@ -385,53 +411,45 @@ public struct PlannerumView: View {
         }
     }
 
-    // MARK: - Live Metrics Panel
+    private var headerMetaPanel: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            Text(PlannerumFormatters.dayFull.string(from: Date()))
+                .font(OnyxTypography.label)
+                .foregroundColor(OnyxColors.Text.secondary)
+                .tracking(OnyxTypography.labelTracking)
 
-    private var liveMetricsPanel: some View {
-        VStack(alignment: .trailing, spacing: PlannerumLayout.spacingSM) {
-            // Live indicator
-            HStack(spacing: PlannerumLayout.spacingSM) {
-                // Pulsing live dot
-                Circle()
-                    .fill(PlannerumColors.nowMarker)
-                    .frame(width: 8, height: 8)
-                    .overlay(
-                        Circle()
-                            .stroke(PlannerumColors.nowMarker.opacity(0.5), lineWidth: 2)
-                            .scaleEffect(livePulse ? 1.3 : 1.0)
-                            .opacity(livePulse ? 0 : 0.5)
-                    )
-
-                Text("Live")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(PlannerumColors.nowMarker)
-            }
-
-            // Metrics
-            VStack(alignment: .trailing, spacing: PlannerumLayout.spacingXS) {
-                metricRow(label: "Focus", value: "\(xpViewModel.focusScore)%", color: focusColor(xpViewModel.focusScore))
-                metricRow(label: "Energy", value: "\(xpViewModel.energyLevel)%", color: energyColor(xpViewModel.energyLevel))
+            HStack(spacing: 8) {
+                headerHintChip(label: "N", description: "New")
+                headerHintChip(label: "S", description: "Start")
+                headerHintChip(label: "⎵", description: "Done")
             }
         }
-        .padding(PlannerumLayout.spacingLG)
-        .background(PlannerumColors.glassPrimary)
-        .overlay(
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(PlannerumColors.glassBorder, lineWidth: 1)
+                .fill(OnyxColors.Elevation.raised.opacity(0.75))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(DS.border, lineWidth: 1)
+                )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onyxShadow(.resting)
     }
 
-    private func metricRow(label: String, value: String, color: Color) -> some View {
-        HStack(spacing: PlannerumLayout.spacingMD) {
+    private func headerHintChip(label: String, description: String) -> some View {
+        HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(OnyxColors.Text.primary)
+            Text(description)
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(OnyxColors.Text.tertiary)
-
-            Text(value)
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(OnyxColors.Text.secondary)
         }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(DS.borderSubtle)
+        .clipShape(Capsule())
     }
 
     // MARK: - View Mode Switcher Bar
@@ -761,7 +779,7 @@ public struct PlannerumView: View {
 
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.08), lineWidth: 4)
+                .stroke(DS.border, lineWidth: 4)
                 .frame(width: 56, height: 56)
 
             Circle()
@@ -1110,7 +1128,7 @@ public struct PlannerumView: View {
         .padding(PlannerumLayout.spacingMD)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
+                .fill(DS.borderSubtle)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -1150,7 +1168,7 @@ public struct PlannerumView: View {
         .padding(.vertical, PlannerumLayout.spacingXXL)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.02))
+                .fill(DS.borderSubtle)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -1167,22 +1185,6 @@ public struct PlannerumView: View {
         case "architect": return Color(red: 99/255, green: 102/255, blue: 241/255)
         case "seeker": return Color(red: 34/255, green: 197/255, blue: 94/255)
         default: return PlannerumColors.textSecondary
-        }
-    }
-
-    private func focusColor(_ score: Int) -> Color {
-        switch score {
-        case 0..<40: return Color(red: 239/255, green: 68/255, blue: 68/255)
-        case 40..<70: return Color(red: 245/255, green: 158/255, blue: 11/255)
-        default: return PlannerumColors.nowMarker
-        }
-    }
-
-    private func energyColor(_ level: Int) -> Color {
-        switch level {
-        case 0..<30: return Color(red: 239/255, green: 68/255, blue: 68/255)
-        case 30..<60: return Color(red: 245/255, green: 158/255, blue: 11/255)
-        default: return PlannerumColors.nowMarker
         }
     }
 
@@ -1258,7 +1260,6 @@ public struct PlannerumView: View {
         // XP bar animation (after header appears)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             animateXPBar()
-            startLivePulse()
         }
 
         // Mark entering as complete
@@ -1268,15 +1269,6 @@ public struct PlannerumView: View {
     private func animateXPBar() {
         withAnimation(.easeOut(duration: 0.5)) {
             xpBarAnimationProgress = 1.0
-        }
-    }
-
-    private func startLivePulse() {
-        withAnimation(
-            .easeInOut(duration: 1.5)
-            .repeatForever(autoreverses: false)
-        ) {
-            livePulse = true
         }
     }
 
@@ -1498,10 +1490,10 @@ struct QuickTaskSheet: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(DS.border)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                            .strokeBorder(DS.borderActive, lineWidth: 1)
                     )
             )
             .focused($isFocused)
@@ -1554,3 +1546,53 @@ struct PlannerumView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class PlannerumContextProvider: CosmoContextProvider {
+    private let viewModeRef: () -> PlannerumViewMode
+    private weak var plannerumViewModel: PlannerumViewModel?
+    private weak var sessionManager: ActiveSessionTimerManager?
+
+    init(viewModeRef: @escaping () -> PlannerumViewMode, plannerumViewModel: PlannerumViewModel, sessionManager: ActiveSessionTimerManager) {
+        self.viewModeRef = viewModeRef
+        self.plannerumViewModel = plannerumViewModel
+        self.sessionManager = sessionManager
+    }
+
+    var contextType: CosmoContextType { .plannerum }
+
+    var contextSummary: String {
+        let mode = viewModeRef()
+        return "Plannerum: \(mode.rawValue) view"
+    }
+
+    var contextData: CosmoContextData {
+        let mode = viewModeRef()
+        var viewData: [String: String] = [
+            "viewMode": mode.rawValue
+        ]
+
+        if let session = sessionManager?.currentSession {
+            viewData["activeSession"] = session.taskTitle
+            viewData["sessionType"] = session.sessionType.rawValue
+        }
+
+        viewData["todayTaskCount"] = "\(plannerumViewModel?.todayTasks.count ?? 0)"
+
+        return CosmoContextData(
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}
+
+// MARK: - Preview
+
+#Preview("Plannerum View") {
+    PlannerumView(onDismiss: {})
+        .frame(width: 1200, height: 800)
+        .preferredColorScheme(.dark)
+}

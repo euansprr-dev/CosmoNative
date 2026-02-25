@@ -234,7 +234,7 @@ public struct CognitiveWindowCard: View {
                 // Confidence badge
                 Text("\(Int(window.confidence))%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(confidenceColor)

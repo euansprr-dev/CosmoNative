@@ -1,6 +1,7 @@
 // CosmoOS/Editor/AIWritingAssistant.swift
-// AI-powered writing assistance via OpenRouter API
+// AI-powered writing assistance via ResearchService (Sonnet strategist tier)
 // Rewritten February 2026 — replaces deprecated LocalLLM stubs
+// Upgraded February 2026 — migrated from direct OpenRouter/Gemini to ResearchService
 
 import SwiftUI
 
@@ -69,8 +70,8 @@ class AIWritingAssistant: ObservableObject {
     /// Optional client profile atom for brand-aware writing. Set before calling actions.
     var clientProfileAtom: Atom?
 
-    private let baseURL = "https://openrouter.ai/api/v1"
-    private let model = "google/gemini-3-flash-preview"
+    /// Model tier for writing assistance — strategist (Sonnet) for balanced quality/speed.
+    private let modelTier: AgentModelTier = .strategist
 
     /// Returns profile context string if a client profile is set, empty otherwise.
     private var profileContextBlock: String {
@@ -135,7 +136,7 @@ class AIWritingAssistant: ObservableObject {
         defer { isProcessing = false }
 
         do {
-            let response = try await callAPI(systemPrompt: systemPrompt, userPrompt: userPrompt)
+            let response = try await callResearchService(systemPrompt: systemPrompt, userPrompt: userPrompt)
             let variants = response
                 .components(separatedBy: "---VARIANT---")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -158,7 +159,7 @@ class AIWritingAssistant: ObservableObject {
         }
     }
 
-    func continueWriting(text: String, outline: [String]? = nil, coreIdea: String? = nil) async -> AIWritingResult? {
+    func continueWriting(text: String, outline: [String]? = nil, coreIdea description: String? = nil) async -> AIWritingResult? {
         isProcessing = true
         error = nil
 
@@ -174,8 +175,8 @@ class AIWritingAssistant: ObservableObject {
             prompt += meta.toAIContextString() + "\nMatch this client's brand voice and style.\n\n"
         }
 
-        if let coreIdea = coreIdea, !coreIdea.isEmpty {
-            prompt += "Core idea: \(coreIdea)\n"
+        if let description = description, !description.isEmpty {
+            prompt += "Description: \(description)\n"
         }
         if let outline = outline, !outline.isEmpty {
             prompt += "Outline points to cover: \(outline.joined(separator: ", "))\n"
@@ -254,7 +255,7 @@ class AIWritingAssistant: ObservableObject {
         defer { isProcessing = false }
 
         do {
-            let response = try await callAPI(systemPrompt: systemPrompt, userPrompt: userPrompt)
+            let response = try await callResearchService(systemPrompt: systemPrompt, userPrompt: userPrompt)
             let suggested = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
             let result = AIWritingResult(
@@ -271,52 +272,14 @@ class AIWritingAssistant: ObservableObject {
         }
     }
 
-    private func callAPI(systemPrompt: String, userPrompt: String) async throws -> String {
-        guard let apiKey = APIKeys.openRouter, !apiKey.isEmpty else {
-            throw AIWritingError.noAPIKey
-        }
-
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("CosmoOS/1.0", forHTTPHeaderField: "HTTP-Referer")
-        request.setValue("CosmoOS Writing Assistant", forHTTPHeaderField: "X-Title")
-
-        let body: [String: Any] = [
-            "model": model,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": 0.5,
-            "max_tokens": 3000,
-            "stream": false
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIWritingError.invalidResponse
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw AIWritingError.apiError(statusCode: httpResponse.statusCode, message: errorText)
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw AIWritingError.parsingError
-        }
-
-        return content
+    /// Route all AI requests through ResearchService using the strategist (Sonnet) tier.
+    private func callResearchService(systemPrompt: String, userPrompt: String) async throws -> String {
+        return try await ResearchService.shared.analyze(
+            prompt: userPrompt,
+            systemPrompt: systemPrompt,
+            tier: modelTier,
+            maxTokens: 3000
+        )
     }
 }
 
@@ -331,7 +294,7 @@ enum AIWritingError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "No OpenRouter API key configured"
+            return "No API key configured for writing assistant"
         case .invalidResponse:
             return "Invalid response from writing API"
         case .apiError(let code, let message):

@@ -152,19 +152,25 @@ public struct HookSuggestion: Codable, Sendable, Equatable, Identifiable {
     public let hookType: SwipeHookType?
     public let inspiredBySwipeUUID: String?
     public var isSelected: Bool
+    public let sourceSwipeTitle: String?
+    public let estimatedScore: Double?
 
     public init(
         id: String = UUID().uuidString,
         hookText: String,
         hookType: SwipeHookType? = nil,
         inspiredBySwipeUUID: String? = nil,
-        isSelected: Bool = false
+        isSelected: Bool = false,
+        sourceSwipeTitle: String? = nil,
+        estimatedScore: Double? = nil
     ) {
         self.id = id
         self.hookText = hookText
         self.hookType = hookType
         self.inspiredBySwipeUUID = inspiredBySwipeUUID
         self.isSelected = isSelected
+        self.sourceSwipeTitle = sourceSwipeTitle
+        self.estimatedScore = estimatedScore
     }
 }
 

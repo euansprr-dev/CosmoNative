@@ -295,6 +295,9 @@ public struct SanctuaryView: View {
             // Note: choreographer.startContinuousAnimations() handles animation timing
             // We don't need a separate timer - animationPhase is updated by choreographer
             setupVoiceNotifications()
+            // Register context provider for global Cosmo window
+            let provider = SanctuaryContextProvider(dataProvider: dataProvider, dimensionIndexEngine: dimensionIndexEngine)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             // Stop animation timer if it exists
@@ -479,7 +482,7 @@ public struct SanctuaryView: View {
                 // White-only lines at low opacity (0.07)
                 context.stroke(
                     path,
-                    with: .color(Color.white.opacity(0.07)),
+                    with: .color(DS.border),
                     lineWidth: 0.5
                 )
             }
@@ -1022,4 +1025,49 @@ extension Notification.Name {
 
 #Preview {
     SanctuaryView()
+}
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class SanctuaryContextProvider: CosmoContextProvider {
+    private weak var dataProvider: SanctuaryDataProvider?
+    private weak var dimensionIndexEngine: DimensionIndexEngine?
+
+    init(dataProvider: SanctuaryDataProvider, dimensionIndexEngine: DimensionIndexEngine) {
+        self.dataProvider = dataProvider
+        self.dimensionIndexEngine = dimensionIndexEngine
+    }
+
+    var contextType: CosmoContextType { .sanctuary }
+
+    var contextSummary: String {
+        let level = dataProvider?.state?.cosmoIndex.level ?? 0
+        let rank = dataProvider?.state?.cosmoIndex.rank ?? "Unknown"
+        return "Sanctuary — Level \(level) (\(rank))"
+    }
+
+    var contextData: CosmoContextData {
+        var viewData: [String: String] = [:]
+
+        if let cosmoState = dataProvider?.state?.cosmoIndex {
+            viewData["level"] = "\(cosmoState.level)"
+            viewData["totalXP"] = "\(cosmoState.totalXP)"
+            viewData["rank"] = cosmoState.rank
+            viewData["xpProgress"] = String(format: "%.0f%%", cosmoState.xpProgress * 100)
+        }
+
+        // Include dimension scores from the index engine
+        if let indices = dimensionIndexEngine?.dimensionIndices {
+            for (dimension, index) in indices {
+                viewData["dimension_\(dimension.rawValue)"] = String(format: "%.0f", index.score)
+            }
+        }
+
+        return CosmoContextData(
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
 }

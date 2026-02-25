@@ -359,7 +359,7 @@ struct SanctuaryDimensionTransition_Previews: PreviewProvider {
                 VStack(spacing: 40) {
                     Text(manager.headerText)
                         .font(SanctuaryTypography.displayMedium)
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
 
                     // Simulated orbs
                     HStack(spacing: 60) {
@@ -384,14 +384,14 @@ struct SanctuaryDimensionTransition_Previews: PreviewProvider {
                         VStack {
                             Text("\(dim.displayName) View")
                                 .font(SanctuaryTypography.title)
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
 
                             Button("Back") {
                                 Task {
                                     await manager.transitionToHome()
                                 }
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(DS.text)
                         }
                         .sanctuaryTransitionContent(manager: manager)
                     }

@@ -130,11 +130,11 @@ public struct QuarterView: View {
             HStack(spacing: PlannerumLayout.spacingSM) {
                 Text(selectedQuarter.label)
                     .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .foregroundColor(PlannerumColors.textPrimary)
+                    .foregroundColor(DS.text)
 
                 Text("\(Calendar.current.component(.year, from: Date()))")
                     .font(.system(size: 32, weight: .light, design: .rounded))
-                    .foregroundColor(PlannerumColors.textTertiary)
+                    .foregroundColor(DS.textSecondary)
             }
             .tracking(8)
 
@@ -160,8 +160,8 @@ public struct QuarterView: View {
                     .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                     .foregroundColor(
                         isSelected
-                            ? PlannerumColors.textPrimary
-                            : PlannerumColors.textMuted
+                            ? DS.text
+                            : DS.textMuted
                     )
 
                 if isCurrent {
@@ -176,7 +176,7 @@ public struct QuarterView: View {
                     .fill(
                         isSelected
                             ? PlannerumColors.primary.opacity(0.2)
-                            : Color.white.opacity(0.05)
+                            : DS.borderSubtle
                     )
             )
             .overlay(
@@ -184,7 +184,7 @@ public struct QuarterView: View {
                     .strokeBorder(
                         isSelected
                             ? PlannerumColors.primary.opacity(0.4)
-                            : Color.white.opacity(0.08),
+                            : DS.border,
                         lineWidth: 1
                     )
             )
@@ -204,7 +204,7 @@ public struct QuarterView: View {
         return VStack(alignment: .leading, spacing: PlannerumLayout.spacingLG) {
             Text("Core Objectives")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundColor(PlannerumColors.textMuted)
+                .foregroundColor(DS.textMuted)
                 .tracking(3)
 
             VStack(spacing: PlannerumLayout.spacingMD) {
@@ -221,14 +221,14 @@ public struct QuarterView: View {
             .padding(PlannerumLayout.spacingLG)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white.opacity(0.04))
+                    .fill(DS.borderSubtle)
                     .background(
                         RoundedRectangle(cornerRadius: 20)
                             .fill(.ultraThinMaterial.opacity(0.15))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                            .strokeBorder(DS.border, lineWidth: 1)
                     )
             )
         }
@@ -251,13 +251,13 @@ public struct QuarterView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(objective.title)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(PlannerumColors.textPrimary)
+                        .foregroundColor(DS.text)
                         .lineLimit(1)
 
                     // Value label
                     Text("\(Int(objective.currentValue)) / \(Int(objective.targetValue)) \(objective.unit)")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(PlannerumColors.textTertiary)
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 Spacer()
@@ -276,7 +276,7 @@ public struct QuarterView: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(DS.border)
                         .frame(height: 8)
 
                     RoundedRectangle(cornerRadius: 4)
@@ -323,11 +323,11 @@ public struct QuarterView: View {
         .padding(PlannerumLayout.spacingMD)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(isHovered ? 0.08 : 0.04))
+                .fill(isHovered ? DS.border : DS.borderSubtle)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .strokeBorder(
-                            isHovered ? accentColor.opacity(0.3) : Color.white.opacity(0.08),
+                            isHovered ? accentColor.opacity(0.3) : DS.border,
                             lineWidth: 1
                         )
                 )
@@ -375,12 +375,12 @@ public struct QuarterView: View {
         HStack(spacing: 4) {
             Text(value)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(PlannerumColors.textSecondary)
+                .foregroundColor(DS.textSecondary)
 
             if !label.isEmpty {
                 Text(label)
                     .font(.system(size: 11))
-                    .foregroundColor(PlannerumColors.textMuted)
+                    .foregroundColor(DS.textMuted)
             }
         }
     }
@@ -394,12 +394,12 @@ public struct QuarterView: View {
             VStack(spacing: 6) {
                 Text("Set your quarterly goals to track long-term progress.")
                     .font(.system(size: 14))
-                    .foregroundColor(PlannerumColors.textSecondary)
+                    .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.center)
 
                 Text("Objectives connect to real data sources and update automatically.")
                     .font(.system(size: 12))
-                    .foregroundColor(PlannerumColors.textMuted)
+                    .foregroundColor(DS.textMuted)
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: 320)
@@ -465,7 +465,7 @@ public struct QuarterView: View {
         return VStack(alignment: .leading, spacing: PlannerumLayout.spacingLG) {
             Text("Quarter Trajectory")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundColor(PlannerumColors.textMuted)
+                .foregroundColor(DS.textMuted)
                 .tracking(3)
 
             VStack(spacing: PlannerumLayout.spacingMD) {
@@ -479,10 +479,10 @@ public struct QuarterView: View {
             .padding(PlannerumLayout.spacingLG)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white.opacity(0.04))
+                    .fill(DS.borderSubtle)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                            .strokeBorder(DS.border, lineWidth: 1)
                     )
             )
         }
@@ -502,7 +502,7 @@ public struct QuarterView: View {
         return VStack(spacing: PlannerumLayout.spacingMD) {
             ZStack {
                 Circle()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 4)
+                    .stroke(DS.border, lineWidth: 4)
                     .frame(width: 56, height: 56)
 
                 Circle()
@@ -516,17 +516,17 @@ public struct QuarterView: View {
 
                 Text("\(daysOfData)/7")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundColor(PlannerumColors.textSecondary)
+                    .foregroundColor(DS.textSecondary)
             }
 
             VStack(spacing: 4) {
                 Text("Collecting data...")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(PlannerumColors.textPrimary)
+                    .foregroundColor(DS.text)
 
                 Text("\(remaining) more day\(remaining == 1 ? "" : "s") until trajectory is available")
                     .font(.system(size: 13))
-                    .foregroundColor(PlannerumColors.textTertiary)
+                    .foregroundColor(DS.textSecondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -557,7 +557,7 @@ public struct QuarterView: View {
                 var path = Path()
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: width, y: y))
-                context.stroke(path, with: .color(Color.white.opacity(0.04)), lineWidth: 1)
+                context.stroke(path, with: .color(DS.borderSubtle), lineWidth: 1)
             }
 
             for i in 0...verticalLines {
@@ -565,7 +565,7 @@ public struct QuarterView: View {
                 var path = Path()
                 path.move(to: CGPoint(x: x, y: 0))
                 path.addLine(to: CGPoint(x: x, y: height))
-                context.stroke(path, with: .color(Color.white.opacity(0.04)), lineWidth: 1)
+                context.stroke(path, with: .color(DS.borderSubtle), lineWidth: 1)
             }
         }
     }
@@ -618,7 +618,7 @@ public struct QuarterView: View {
                     .frame(width: 10, height: 10)
                     .overlay(
                         Circle()
-                            .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
+                            .strokeBorder(DS.textMuted, lineWidth: 2)
                     )
                     .shadow(color: PlannerumColors.primary.opacity(0.5), radius: 4, x: 0, y: 0)
                     .position(x: x, y: y)
@@ -626,7 +626,7 @@ public struct QuarterView: View {
 
                 Text(formatXP(point.xp))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(PlannerumColors.textSecondary)
+                    .foregroundColor(DS.textSecondary)
                     .position(x: x, y: y - 18)
                     .opacity(chartAnimationProgress > CGFloat(index) / CGFloat(pointsCount) ? 1 : 0)
             }
@@ -638,7 +638,7 @@ public struct QuarterView: View {
             ForEach(selectedQuarter.months, id: \.self) { month in
                 Text(month)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(PlannerumColors.textMuted)
+                    .foregroundColor(DS.textMuted)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -694,14 +694,14 @@ struct AddObjectiveSheet: View {
             HStack {
                 Text(isEditMode ? "Edit Objective" : "Add Core Objective")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(PlannerumColors.textPrimary)
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundColor(PlannerumColors.textMuted)
+                        .foregroundColor(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             }
@@ -718,14 +718,14 @@ struct AddObjectiveSheet: View {
                         TextField("e.g., Complete 100 Deep Work Sessions", text: $title)
                             .textFieldStyle(.plain)
                             .font(.system(size: 14))
-                            .foregroundColor(PlannerumColors.textPrimary)
+                            .foregroundColor(DS.text)
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white.opacity(0.06))
+                                    .fill(DS.border)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 10)
-                                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                                            .strokeBorder(DS.borderActive, lineWidth: 1)
                                     )
                             )
                     }
@@ -745,14 +745,14 @@ struct AddObjectiveSheet: View {
                             TextField("100", text: $targetValue)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 14, design: .monospaced))
-                                .foregroundColor(PlannerumColors.textPrimary)
+                                .foregroundColor(DS.text)
                                 .padding(12)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color.white.opacity(0.06))
+                                        .fill(DS.border)
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 10)
-                                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                                                .strokeBorder(DS.borderActive, lineWidth: 1)
                                         )
                                 )
                         }
@@ -761,14 +761,14 @@ struct AddObjectiveSheet: View {
                             TextField("sessions", text: $unit)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 14))
-                                .foregroundColor(PlannerumColors.textPrimary)
+                                .foregroundColor(DS.text)
                                 .padding(12)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color.white.opacity(0.06))
+                                        .fill(DS.border)
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 10)
-                                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                                                .strokeBorder(DS.borderActive, lineWidth: 1)
                                         )
                                 )
                         }
@@ -814,7 +814,7 @@ struct AddObjectiveSheet: View {
             .padding(24)
         }
         .frame(width: 480, height: 600)
-        .background(PlannerumColors.voidPrimary)
+        .background(DS.bg)
         .onChange(of: selectedDataSource) { _, newSource in
             Task {
                 previewValue = await objectiveEngine.previewValue(for: newSource)
@@ -856,7 +856,7 @@ struct AddObjectiveSheet: View {
         }) {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(isSelected ? PlannerumColors.primary : Color.white.opacity(0.1))
+                    .fill(isSelected ? PlannerumColors.primary : DS.borderActive)
                     .frame(width: 8, height: 8)
 
                 Text(source.displayName)
@@ -881,7 +881,7 @@ struct AddObjectiveSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Current Progress")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(PlannerumColors.textMuted)
+                .foregroundColor(DS.textMuted)
                 .tracking(2)
 
             HStack(spacing: 12) {
@@ -892,7 +892,7 @@ struct AddObjectiveSheet: View {
 
                     Text("current \(unit)")
                         .font(.system(size: 12))
-                        .foregroundColor(PlannerumColors.textTertiary)
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 Spacer()
@@ -902,11 +902,11 @@ struct AddObjectiveSheet: View {
                     VStack(alignment: .trailing, spacing: 4) {
                         Text("\(Int(pct * 100))%")
                             .font(.system(size: 20, weight: .bold, design: .monospaced))
-                            .foregroundColor(PlannerumColors.textSecondary)
+                            .foregroundColor(DS.textSecondary)
 
                         Text("of target")
                             .font(.system(size: 12))
-                            .foregroundColor(PlannerumColors.textTertiary)
+                            .foregroundColor(DS.textSecondary)
                     }
                 }
             }
@@ -914,7 +914,7 @@ struct AddObjectiveSheet: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.borderSubtle)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(PlannerumColors.primary.opacity(0.2), lineWidth: 1)
@@ -926,7 +926,7 @@ struct AddObjectiveSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(PlannerumColors.textMuted)
+                .foregroundColor(DS.textMuted)
                 .tracking(2)
 
             content()
@@ -1042,7 +1042,7 @@ public struct TrajectoryPoint {
 struct QuarterView_Previews: PreviewProvider {
     static var previews: some View {
         QuarterView()
-            .background(PlannerumColors.voidPrimary)
+            .background(DS.bg)
             .preferredColorScheme(.dark)
     }
 }

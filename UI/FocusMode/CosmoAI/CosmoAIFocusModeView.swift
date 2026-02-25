@@ -1,6 +1,7 @@
 // CosmoOS/UI/FocusMode/CosmoAI/CosmoAIFocusModeView.swift
 // Full-screen deep AI workspace for Cosmo AI blocks
-// Opened via double-tap on a Cosmo AI block on the canvas
+// Unified with CosmoAgentService — full tool access, @ mentions, live tool activity
+// February 2026
 
 import SwiftUI
 
@@ -10,6 +11,7 @@ struct CosmoAIFocusModeView: View {
 
     @StateObject private var viewModel: CosmoAIFocusModeViewModel
     @FocusState private var isInputFocused: Bool
+    @State private var inputText = ""
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -20,13 +22,13 @@ struct CosmoAIFocusModeView: View {
     var body: some View {
         ZStack {
             // Background
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             // Subtle ambient purple glow
             RadialGradient(
                 colors: [
-                    CosmoColors.thinkspacePurple.opacity(0.05),
+                    DS.accent.opacity(0.05),
                     Color.clear
                 ],
                 center: .center,
@@ -47,7 +49,7 @@ struct CosmoAIFocusModeView: View {
 
                     CosmoAIConversationPanel(viewModel: viewModel)
 
-                    inputBar
+                    inputArea
                 }
                 .frame(maxWidth: .infinity)
 
@@ -67,16 +69,16 @@ struct CosmoAIFocusModeView: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(Color.white.opacity(0.06)))
+                    .background(Circle().fill(DS.border))
             }
             .buttonStyle(.plain)
 
             HStack(spacing: 6) {
                 Image(systemName: "brain")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(CosmoColors.thinkspacePurple)
+                    .foregroundColor(DS.accent)
                 Text("Cosmo AI")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white)
@@ -92,41 +94,23 @@ struct CosmoAIFocusModeView: View {
                     Text("\(viewModel.connectedAtomUUIDs.count) connected")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(CosmoColors.thinkspacePurple.opacity(0.7))
+                .foregroundColor(DS.accent.opacity(0.7))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(CosmoColors.thinkspacePurple.opacity(0.1)))
+                .background(Capsule().fill(DS.accent.opacity(0.1)))
             }
 
-            // Mode pills
-            HStack(spacing: 6) {
-                ForEach(CosmoMode.allCases, id: \.rawValue) { mode in
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            viewModel.currentMode = mode
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: mode.icon)
-                                .font(.system(size: 9))
-                            Text(mode.rawValue)
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        .foregroundColor(viewModel.currentMode == mode ? .white : mode.color.opacity(0.7))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(viewModel.currentMode == mode ? mode.color.opacity(0.3) : Color.white.opacity(0.04))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
+            // Token usage estimate
+            if !viewModel.messages.isEmpty {
+                let tokenCount = viewModel.messages.reduce(0) { $0 + ($1.content.count / 4) }
+                Text("\(tokenCount) tokens")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(DS.textMuted)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(CosmoColors.thinkspaceSecondary.opacity(0.5))
+        .background(DS.surface.opacity(0.5))
     }
 
     // MARK: - Context Chips
@@ -136,17 +120,17 @@ struct CosmoAIFocusModeView: View {
                 ForEach(viewModel.contextSources) { source in
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(mentionColor(for: source.type))
+                            .fill(CosmoMentionColors.color(for: source.type))
                             .frame(width: 5, height: 5)
                         Text(source.title)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(DS.textSecondary)
                             .lineLimit(1)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.white.opacity(0.04)))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.06), lineWidth: 1))
+                    .background(Capsule().fill(DS.borderSubtle))
+                    .overlay(Capsule().stroke(DS.border, lineWidth: 1))
                 }
             }
             .padding(.horizontal, 20)
@@ -154,51 +138,176 @@ struct CosmoAIFocusModeView: View {
         }
     }
 
-    // MARK: - Input Bar
-    private var inputBar: some View {
-        HStack(spacing: 12) {
-            // Mode indicator
-            Image(systemName: viewModel.currentMode.icon)
-                .font(.system(size: 12))
-                .foregroundColor(viewModel.currentMode.color)
+    // MARK: - Input Area
+    private var inputArea: some View {
+        VStack(spacing: 0) {
+            // Separator
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
 
-            // Text input
-            ZStack(alignment: .leading) {
-                if viewModel.inputText.isEmpty {
-                    Text("Ask Cosmo anything...")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.25))
+            VStack(spacing: 0) {
+                // Mention overlay
+                if viewModel.showMentionOverlay {
+                    CosmoMentionOverlay(
+                        isVisible: $viewModel.showMentionOverlay,
+                        searchText: $viewModel.mentionSearchText,
+                        onSelect: { atom in
+                            viewModel.addMention(atom)
+                            if let atIndex = inputText.lastIndex(of: "@") {
+                                inputText = String(inputText[inputText.startIndex..<atIndex])
+                            }
+                        },
+                        onDismiss: {
+                            viewModel.showMentionOverlay = false
+                            viewModel.mentionSearchText = ""
+                        }
+                    )
+                    .frame(maxHeight: 300)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                TextField("", text: $viewModel.inputText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14))
-                    .foregroundColor(.white)
-                    .focused($isInputFocused)
-                    .onSubmit {
-                        Task { await viewModel.sendMessage() }
-                    }
-            }
 
-            // Send button
+                // Mentioned atom chips
+                if !viewModel.mentionedAtoms.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(viewModel.mentionedAtoms, id: \.uuid) { atom in
+                                mentionChip(atom)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                    .frame(height: 28)
+                    .padding(.top, 6)
+                }
+
+                // Input bar
+                HStack(spacing: 8) {
+                    // @ mention button
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            viewModel.showMentionOverlay.toggle()
+                        }
+                    } label: {
+                        Text("@")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(viewModel.showMentionOverlay ? DS.accent : DS.textMuted)
+                            .frame(width: 28, height: 28)
+                            .background(viewModel.showMentionOverlay ? DS.accent.opacity(0.1) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+
+                    // Text input
+                    ZStack(alignment: .leading) {
+                        if inputText.isEmpty {
+                            Text("Ask Cosmo anything...")
+                                .font(.system(size: 14))
+                                .foregroundColor(DS.textMuted)
+                        }
+                        TextField("", text: $inputText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .focused($isInputFocused)
+                            .onSubmit {
+                                sendCurrentMessage()
+                            }
+                            .onChange(of: inputText) { newValue in
+                                if newValue.hasSuffix("@") && !viewModel.showMentionOverlay {
+                                    withAnimation(ProMotionSprings.snappy) {
+                                        viewModel.showMentionOverlay = true
+                                        viewModel.mentionSearchText = ""
+                                    }
+                                }
+                                if viewModel.showMentionOverlay {
+                                    if let atIndex = newValue.lastIndex(of: "@") {
+                                        let afterAt = String(newValue[newValue.index(after: atIndex)...])
+                                        viewModel.mentionSearchText = afterAt
+                                    }
+                                }
+                            }
+                    }
+
+                    // Model selector
+                    modelSelector
+
+                    // Send button
+                    Button {
+                        sendCurrentMessage()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(inputText.isEmpty || viewModel.isProcessing ? DS.textMuted : DS.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(inputText.isEmpty || viewModel.isProcessing)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+            }
+            .background(DS.surface)
+        }
+    }
+
+    // MARK: - Model Selector
+    private var modelSelector: some View {
+        Menu {
+            Button("Auto") { viewModel.modelOverride = nil }
+            Divider()
+            Button("Haiku") { viewModel.modelOverride = .sensor }
+            Button("Sonnet") { viewModel.modelOverride = .strategist }
+            Button("Opus") { viewModel.modelOverride = .writer }
+        } label: {
+            Text(modelLabel)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(DS.borderSubtle))
+        }
+    }
+
+    private var modelLabel: String {
+        switch viewModel.modelOverride {
+        case .sensor: return "Haiku"
+        case .strategist: return "Sonnet"
+        case .writer: return "Opus"
+        case nil: return "Auto"
+        default: return "Auto"
+        }
+    }
+
+    // MARK: - Mention Chip
+    private func mentionChip(_ atom: Atom) -> some View {
+        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .idea
+        return HStack(spacing: 4) {
+            Image(systemName: atom.type.iconName)
+                .font(.system(size: 9))
+            Text(atom.title ?? "Untitled")
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
             Button {
-                Task { await viewModel.sendMessage() }
+                viewModel.removeMention(atom)
             } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(viewModel.inputText.isEmpty ? .white.opacity(0.15) : CosmoColors.thinkspacePurple)
+                Image(systemName: "xmark")
+                    .font(.system(size: 7, weight: .bold))
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.inputText.isEmpty || viewModel.isGenerating)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(CosmoColors.thinkspaceSecondary)
-        .overlay(
-            Rectangle()
-                .fill(Color.white.opacity(0.04))
-                .frame(height: 1),
-            alignment: .top
-        )
+        .foregroundColor(CosmoMentionColors.color(for: entityType))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(CosmoMentionColors.pillBackground(for: entityType))
+        .clipShape(Capsule())
+    }
+
+    // MARK: - Send
+    private func sendCurrentMessage() {
+        viewModel.inputText = inputText
+        inputText = ""
+        viewModel.showMentionOverlay = false
+        Task { await viewModel.sendMessage() }
     }
 
     // MARK: - Surfaced Atoms Panel
@@ -207,7 +316,7 @@ struct CosmoAIFocusModeView: View {
             HStack {
                 Text("Related")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -224,28 +333,16 @@ struct CosmoAIFocusModeView: View {
                 .padding(.horizontal, 12)
             }
         }
-        .background(CosmoColors.thinkspaceSecondary.opacity(0.3))
+        .background(DS.surface.opacity(0.3))
         .overlay(
             Rectangle()
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.borderSubtle)
                 .frame(width: 1),
             alignment: .leading
         )
     }
-
-    private func mentionColor(for type: EntityType) -> Color {
-        switch type {
-        case .idea: return CosmoMentionColors.idea
-        case .content: return CosmoMentionColors.content
-        case .research: return CosmoMentionColors.research
-        case .connection: return CosmoMentionColors.connection
-        case .cosmoAI: return CosmoMentionColors.cosmoAI
-        case .task: return CosmoMentionColors.task
-        case .note: return CosmoMentionColors.note
-        default: return .white
-        }
-    }
 }
+
 
 // MARK: - Surfaced Atom Card
 
@@ -261,17 +358,17 @@ private struct SurfacedAtomCard: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(mentionColor(for: entityType))
+                    .fill(CosmoMentionColors.color(for: entityType))
                     .frame(width: 6, height: 6)
                 Text(entityType.rawValue.uppercased())
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(mentionColor(for: entityType).opacity(0.7))
+                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.7))
                 Spacer()
                 if isHovered {
                     Button(action: onRemove) {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white.opacity(0.3))
+                            .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -279,21 +376,21 @@ private struct SurfacedAtomCard: View {
 
             Text(atom.title ?? "Untitled")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             if let body = atom.body, !body.isEmpty {
                 Text(body.prefix(100))
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
                     .lineLimit(3)
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(CosmoColors.thinkspaceTertiary))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceElevated))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(isHovered ? 0.08 : 0.04), lineWidth: 1)
+                .stroke(isHovered ? DS.border : DS.borderSubtle, lineWidth: 1)
         )
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) {
@@ -302,19 +399,6 @@ private struct SurfacedAtomCard: View {
                 object: nil,
                 userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
             )
-        }
-    }
-
-    private func mentionColor(for type: EntityType) -> Color {
-        switch type {
-        case .idea: return CosmoMentionColors.idea
-        case .content: return CosmoMentionColors.content
-        case .research: return CosmoMentionColors.research
-        case .connection: return CosmoMentionColors.connection
-        case .cosmoAI: return CosmoMentionColors.cosmoAI
-        case .task: return CosmoMentionColors.task
-        case .note: return CosmoMentionColors.note
-        default: return .white
         }
     }
 }

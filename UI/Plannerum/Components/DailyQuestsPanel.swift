@@ -139,7 +139,7 @@ public struct DailyQuestsPanel: View {
             .foregroundColor(allDone ? DailyQuestsTokens.completeCheck : PlannerumColors.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.05))
+            .background(DS.border)
             .clipShape(Capsule())
     }
 
@@ -196,7 +196,7 @@ public struct DailyQuestsPanel: View {
         VStack(spacing: 12) {
             ForEach(0..<3, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(DS.border)
                     .frame(height: DailyQuestsTokens.questRowHeight)
             }
         }
@@ -300,7 +300,7 @@ struct LiveQuestRow: View {
         .padding(.horizontal, 12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isHovering ? Color.white.opacity(0.05) : Color.clear)
+                .fill(isHovering ? DS.border : Color.clear)
         )
         .overlay(completionGlowOverlay)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -353,7 +353,7 @@ struct LiveQuestRow: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(8)
-                .background(Color.white.opacity(0.06))
+                .background(DS.border)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
             HStack {
@@ -648,7 +648,7 @@ struct QuestRow: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 12)
-            .background(isHovering ? Color.white.opacity(0.05) : Color.clear)
+            .background(isHovering ? DS.border : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .opacity(isLocked ? 0.5 : 1.0)
             .overlay(lockedOverlay)

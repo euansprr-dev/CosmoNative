@@ -17,6 +17,66 @@ protocol LLMProvider: Sendable {
         tools: [LLMToolDefinition]?,
         model: String?
     ) async throws -> LLMResponse
+
+    /// Tier-aware completion: when a ModelTier is provided, it overrides the model parameter
+    /// with the tier's model ID and uses the tier's max tokens.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?
+    ) async throws -> LLMResponse
+
+    /// Completion with structured system prompt for prompt caching.
+    /// The cached portion of the system prompt is marked with cache_control
+    /// so providers can cache the static identity text across requests.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse
+}
+
+// MARK: - Default Implementations
+
+extension LLMProvider {
+    /// Default implementation: resolves tier to model ID and delegates to the base `complete`.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await complete(messages: messages, tools: tools, model: resolvedModel)
+    }
+
+    /// Default implementation: injects system prompt as a regular system message.
+    /// Providers that support cache_control (Anthropic) should override this.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        var allMessages = [AgentMessage.system(systemPrompt.combined)]
+        allMessages.append(contentsOf: messages)
+        return try await complete(messages: allMessages, tools: tools, model: model)
+    }
+
+    /// Combined tier + systemPrompt completion. When a tier is provided, it overrides
+    /// the model parameter with the tier's model ID.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await complete(messages: messages, tools: tools, model: resolvedModel, systemPrompt: systemPrompt)
+    }
 }
 
 // MARK: - LLM Response
@@ -70,6 +130,7 @@ enum LLMProviderError: Error, LocalizedError {
     case apiError(String)
     case networkError(Error)
     case unsupportedFeature(String)
+    case serviceUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -83,7 +144,88 @@ enum LLMProviderError: Error, LocalizedError {
             return "Network error: \(error.localizedDescription)"
         case .unsupportedFeature(let feature):
             return "Feature not supported by this provider: \(feature)"
+        case .serviceUnavailable(let message):
+            return message
         }
+    }
+
+    /// Extract HTTP status code from apiError strings (e.g., "Anthropic 429: ...")
+    var httpStatusCode: Int? {
+        switch self {
+        case .apiError(let message):
+            // Pattern: "Provider NNN: ..."
+            let parts = message.split(separator: " ")
+            for part in parts {
+                if let code = Int(part.trimmingCharacters(in: .punctuationCharacters)),
+                   (400...599).contains(code) {
+                    return code
+                }
+            }
+            return nil
+        case .networkError:
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this error is retryable (server-side or rate limit)
+    var isRetryable: Bool {
+        switch self {
+        case .networkError:
+            return true
+        case .serviceUnavailable:
+            return true
+        case .apiError:
+            guard let code = httpStatusCode else { return false }
+            return [429, 500, 502, 503, 529].contains(code)
+        default:
+            return false
+        }
+    }
+}
+
+// MARK: - Circuit Breaker
+
+/// Tracks consecutive LLM API failures and opens the circuit after a threshold,
+/// preventing a flood of requests to a downed service. Resets after a cooldown period.
+final class LLMCircuitBreaker: @unchecked Sendable {
+    static let shared = LLMCircuitBreaker()
+
+    private var failureCount = 0
+    private var lastFailureTime: Date?
+    private let failureThreshold = 3
+    private let resetTimeout: TimeInterval = 60  // 1 minute cooldown
+
+    private let lock = NSLock()
+
+    /// Whether the circuit is open (too many recent failures)
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard failureCount >= failureThreshold else { return false }
+        if let lastFailure = lastFailureTime,
+           Date().timeIntervalSince(lastFailure) > resetTimeout {
+            // Cooldown elapsed — reset to half-open (allow one attempt)
+            failureCount = 0
+            return false
+        }
+        return true
+    }
+
+    func recordSuccess() {
+        lock.lock()
+        defer { lock.unlock() }
+        failureCount = 0
+        lastFailureTime = nil
+    }
+
+    func recordFailure() {
+        lock.lock()
+        defer { lock.unlock() }
+        failureCount += 1
+        lastFailureTime = Date()
+        print("[CircuitBreaker] Failure #\(failureCount)")
     }
 }
 
@@ -214,6 +356,122 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         return try parseAnthropicResponse(data)
     }
 
+    /// Override with prompt caching support. Sends the system prompt as an array
+    /// of content blocks, marking the static identity portion with cache_control
+    /// so Anthropic caches it across requests (90% cost reduction on cached tokens).
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.anthropic.defaultModel
+        let url = URL(string: "\(baseURL)/messages")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+
+        // Build system as array of content blocks with cache_control on the static portion
+        var systemBlocks: [[String: Any]] = [
+            [
+                "type": "text",
+                "text": systemPrompt.cached,
+                "cache_control": ["type": "ephemeral"]
+            ]
+        ]
+        if !systemPrompt.dynamic.isEmpty {
+            systemBlocks.append([
+                "type": "text",
+                "text": systemPrompt.dynamic
+            ])
+        }
+
+        // Build conversation messages (same as base complete)
+        var conversationMessages: [[String: Any]] = []
+        for msg in messages {
+            if msg.role == .system { continue } // System handled via systemBlocks
+
+            var msgDict: [String: Any] = ["role": anthropicRole(msg.role)]
+
+            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
+                var contentBlocks: [[String: Any]] = []
+                if !msg.content.isEmpty {
+                    contentBlocks.append(["type": "text", "text": msg.content])
+                }
+                for call in calls {
+                    var toolUseBlock: [String: Any] = [
+                        "type": "tool_use",
+                        "id": call.id,
+                        "name": call.name
+                    ]
+                    if let inputData = call.argumentsJSON.data(using: .utf8),
+                       let inputObj = try? JSONSerialization.jsonObject(with: inputData) {
+                        toolUseBlock["input"] = inputObj
+                    } else {
+                        toolUseBlock["input"] = [String: Any]()
+                    }
+                    contentBlocks.append(toolUseBlock)
+                }
+                msgDict["content"] = contentBlocks
+            } else if msg.role == .tool {
+                msgDict["role"] = "user"
+                msgDict["content"] = [
+                    [
+                        "type": "tool_result",
+                        "tool_use_id": msg.toolCallId ?? "",
+                        "content": msg.content
+                    ] as [String: Any]
+                ]
+            } else {
+                msgDict["content"] = msg.content
+            }
+
+            conversationMessages.append(msgDict)
+        }
+
+        // Resolve max_tokens based on model (Opus=16384, Sonnet=8192, Haiku=4096)
+        let isOpus = resolvedModel.contains("opus")
+        let isSonnet = resolvedModel.contains("sonnet")
+        let resolvedMaxTokens = isOpus ? 16384 : (isSonnet ? 8192 : 4096)
+
+        var body: [String: Any] = [
+            "model": resolvedModel,
+            "system": systemBlocks,
+            "messages": conversationMessages,
+            "max_tokens": resolvedMaxTokens
+        ]
+
+        if let tools = tools, !tools.isEmpty {
+            var toolDicts = tools.map { $0.toAnthropicDict() }
+            // Cache tool definitions — they're static across requests
+            if var lastTool = toolDicts.last {
+                lastTool["cache_control"] = ["type": "ephemeral"]
+                toolDicts[toolDicts.count - 1] = lastTool
+            }
+            body["tools"] = toolDicts
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await performRequest(request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMProviderError.invalidResponse
+        }
+
+        if httpResponse.statusCode != 200 {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw LLMProviderError.apiError("Anthropic \(httpResponse.statusCode): \(errorText)")
+        }
+
+        return try parseAnthropicResponse(data)
+    }
+
     private func parseAnthropicResponse(_ data: Data) throws -> LLMResponse {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw LLMProviderError.invalidResponse
@@ -322,10 +580,20 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
             openAIMessages.append(msgDict)
         }
 
+        // Resolve max_tokens based on model tier
+        let baseMaxTokens: Int
+        if resolvedModel.contains("opus") {
+            baseMaxTokens = 16384
+        } else if resolvedModel.contains("sonnet") {
+            baseMaxTokens = 8192
+        } else {
+            baseMaxTokens = 4096
+        }
+
         var body: [String: Any] = [
             "model": resolvedModel,
             "messages": openAIMessages,
-            "max_tokens": 4096
+            "max_tokens": baseMaxTokens
         ]
 
         if let tools = tools, !tools.isEmpty {
@@ -356,7 +624,19 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
             throw LLMProviderError.invalidResponse
         }
 
-        let content = message["content"] as? String
+        // Handle both string content and array content blocks (Anthropic thinking format)
+        let content: String?
+        if let strContent = message["content"] as? String {
+            content = strContent
+        } else if let blocks = message["content"] as? [[String: Any]] {
+            // Extract only text blocks, skip thinking blocks
+            content = blocks
+                .filter { ($0["type"] as? String) == "text" }
+                .compactMap { $0["text"] as? String }
+                .joined(separator: "\n")
+        } else {
+            content = nil
+        }
         var toolCalls: [AgentToolCall] = []
 
         if let rawToolCalls = message["tool_calls"] as? [[String: Any]] {
@@ -373,6 +653,14 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
         let usage = json["usage"] as? [String: Any]
         let inputTokens = usage?["prompt_tokens"] as? Int ?? 0
         let outputTokens = usage?["completion_tokens"] as? Int ?? 0
+
+        // Log cache metrics for monitoring
+        if let promptDetails = usage?["prompt_tokens_details"] as? [String: Any] {
+            let cached = promptDetails["cached_tokens"] as? Int ?? 0
+            if cached > 0 {
+                print("📦 [LLM Cache] Hit: \(cached) cached tokens out of \(inputTokens) total (\(inputTokens > 0 ? Int(Double(cached) / Double(inputTokens) * 100) : 0)%)")
+            }
+        }
 
         return LLMResponse(
             content: content,
@@ -512,13 +800,687 @@ final class OllamaProvider: LLMProvider, @unchecked Sendable {
     }
 }
 
+// MARK: - Failover LLM Provider
+
+/// Wraps any LLMProvider with failover chain support.
+/// On retryable errors (429, 500, 502, 503, 529, network errors),
+/// retries on the current model up to its maxRetries, then falls over
+/// to the next model in the chain. Non-retryable errors (400, 401)
+/// propagate immediately.
+final class FailoverLLMProvider: LLMProvider, @unchecked Sendable {
+    let providerType: AgentProvider
+    private let inner: LLMProvider
+    private let chain: ModelFailoverChain
+
+    /// After a complete() call, reflects which model was actually used
+    private(set) var lastUsedModel: String?
+    /// True if the response came from a fallback model, not the primary
+    private(set) var failoverOccurred: Bool = false
+
+    /// The raw (non-failover) provider for external access when re-wrapping with a new chain
+    var baseProvider: LLMProvider { inner }
+
+    init(wrapping provider: LLMProvider, chain: ModelFailoverChain) {
+        // Unwrap nested FailoverLLMProviders to avoid double-failover
+        if let failover = provider as? FailoverLLMProvider {
+            self.inner = failover.inner
+        } else {
+            self.inner = provider
+        }
+        self.providerType = provider.providerType
+        self.chain = chain
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?
+    ) async throws -> LLMResponse {
+        return try await completeWithFailover(messages: messages, tools: tools, model: model) { provider, msgs, tls, mdl in
+            try await provider.complete(messages: msgs, tools: tls, model: mdl)
+        }
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?
+    ) async throws -> LLMResponse {
+        // When a tier is set, the chain is already tier-appropriate;
+        // resolve the primary model from the tier
+        let resolvedModel = tier?.modelId ?? model
+        return try await completeWithFailover(messages: messages, tools: tools, model: resolvedModel) { provider, msgs, tls, mdl in
+            try await provider.complete(messages: msgs, tools: tls, model: mdl)
+        }
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        return try await completeWithFailover(messages: messages, tools: tools, model: model) { provider, msgs, tls, mdl in
+            try await provider.complete(messages: msgs, tools: tls, model: mdl, systemPrompt: systemPrompt)
+        }
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await completeWithFailover(messages: messages, tools: tools, model: resolvedModel) { provider, msgs, tls, mdl in
+            try await provider.complete(messages: msgs, tools: tls, model: mdl, systemPrompt: systemPrompt)
+        }
+    }
+
+    // MARK: - Core Failover Logic
+
+    private typealias CompletionBlock = (LLMProvider, [AgentMessage], [LLMToolDefinition]?, String?) async throws -> LLMResponse
+
+    private func completeWithFailover(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        completion: CompletionBlock
+    ) async throws -> LLMResponse {
+        failoverOccurred = false
+        lastUsedModel = model
+
+        // Find the starting index in the chain that matches the requested model
+        let startIndex = chain.models.firstIndex { $0.modelId == model } ?? 0
+
+        var lastError: Error?
+
+        for chainIndex in startIndex..<chain.models.count {
+            let failoverModel = chain.models[chainIndex]
+            let isFailover = chainIndex > startIndex
+
+            if isFailover {
+                failoverOccurred = true
+                print("[Failover] Falling over to \(failoverModel.label) (\(failoverModel.modelId))")
+            }
+
+            for attempt in 0...failoverModel.maxRetries {
+                if attempt > 0 {
+                    // Exponential backoff: 0.5s, 1.0s
+                    let delay = 0.5 * pow(2.0, Double(attempt - 1))
+                    print("[Failover] Retry \(attempt)/\(failoverModel.maxRetries) for \(failoverModel.label) after \(delay)s")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                do {
+                    let response = try await completion(inner, messages, tools, failoverModel.modelId)
+                    lastUsedModel = failoverModel.modelId
+                    return response
+                } catch let error as LLMProviderError {
+                    lastError = error
+
+                    // Non-retryable errors propagate immediately
+                    if !error.isRetryable {
+                        throw error
+                    }
+
+                    print("[Failover] \(failoverModel.label) attempt \(attempt) failed: \(error.localizedDescription)")
+                } catch {
+                    lastError = error
+                    // Network-level errors are retryable
+                    print("[Failover] \(failoverModel.label) attempt \(attempt) network error: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // All models in the chain exhausted
+        throw lastError ?? LLMProviderError.serviceUnavailable("All models in failover chain exhausted.")
+    }
+}
+
+// MARK: - Streaming Support
+
+/// Callback for streaming text chunks
+typealias StreamingCallback = @Sendable (String) -> Void
+
+/// Protocol extension for providers that support streaming
+protocol StreamingLLMProvider: LLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse
+}
+
+extension StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await completeStreaming(messages: messages, tools: tools, model: resolvedModel, onChunk: onChunk)
+    }
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        // Default: inject system prompt as first message and delegate
+        var allMessages = [AgentMessage.system(systemPrompt.combined)]
+        allMessages.append(contentsOf: messages)
+        return try await completeStreaming(messages: allMessages, tools: tools, model: resolvedModel, onChunk: onChunk)
+    }
+}
+
+/// Streaming implementation for Anthropic
+extension AnthropicProvider: StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        // For now, delegate to non-streaming and deliver the full response as one chunk.
+        // Full SSE streaming can be implemented when needed for long-form generation.
+        let response = try await complete(messages: messages, tools: tools, model: model)
+        if let content = response.content {
+            onChunk(content)
+        }
+        return response
+    }
+}
+
+// MARK: - OpenAI Provider: Prompt Caching for OpenRouter/Anthropic
+
+extension OpenAIProvider {
+    /// Override with prompt caching support for OpenRouter's Anthropic models.
+    /// Sends the system prompt as structured content blocks with `cache_control`,
+    /// so the static identity portion is cached across requests (90% cost reduction).
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.openai.defaultModel
+        let url = URL(string: "\(baseURL)/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        var openAIMessages: [[String: Any]] = []
+
+        // Build system message with cache_control content blocks for Anthropic models on OpenRouter
+        let isAnthropicModel = resolvedModel.hasPrefix("anthropic/")
+        if isAnthropicModel {
+            // Structured content blocks with cache_control for OpenRouter's Anthropic passthrough
+            var contentBlocks: [[String: Any]] = [
+                [
+                    "type": "text",
+                    "text": systemPrompt.cached,
+                    "cache_control": ["type": "ephemeral"]
+                ]
+            ]
+            if !systemPrompt.dynamic.isEmpty {
+                contentBlocks.append([
+                    "type": "text",
+                    "text": systemPrompt.dynamic
+                ])
+            }
+            openAIMessages.append([
+                "role": "system",
+                "content": contentBlocks
+            ])
+        } else {
+            // Non-Anthropic models: plain text system message
+            openAIMessages.append([
+                "role": "system",
+                "content": systemPrompt.combined
+            ])
+        }
+
+        // Build conversation messages (skip any system messages in the array)
+        for msg in messages {
+            if msg.role == .system { continue }
+
+            var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
+
+            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
+                msgDict["content"] = msg.content.isEmpty ? NSNull() : msg.content
+                var toolCallDicts: [[String: Any]] = []
+                for call in calls {
+                    toolCallDicts.append([
+                        "id": call.id,
+                        "type": "function",
+                        "function": [
+                            "name": call.name,
+                            "arguments": call.argumentsJSON
+                        ] as [String: Any]
+                    ])
+                }
+                msgDict["tool_calls"] = toolCallDicts
+            } else if msg.role == .tool {
+                msgDict["tool_call_id"] = msg.toolCallId ?? ""
+                msgDict["content"] = msg.content
+            } else {
+                msgDict["content"] = msg.content
+            }
+
+            openAIMessages.append(msgDict)
+        }
+
+        // Resolve max_tokens based on model tier (detected from model ID)
+        let isOpus = resolvedModel.contains("opus")
+        let isSonnet = resolvedModel.contains("sonnet")
+        let resolvedMaxTokens = isOpus ? 16384 : (isSonnet ? 8192 : 4096)
+
+        var body: [String: Any] = [
+            "model": resolvedModel,
+            "messages": openAIMessages,
+            "max_tokens": resolvedMaxTokens
+        ]
+
+        if let tools = tools, !tools.isEmpty {
+            var toolDicts = tools.map { $0.toOpenAIDict() }
+            // Cache tool definitions — they're static across requests
+            if var lastTool = toolDicts.last {
+                lastTool["cache_control"] = ["type": "ephemeral"]
+                toolDicts[toolDicts.count - 1] = lastTool
+            }
+            body["tools"] = toolDicts
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await performRequest(request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMProviderError.invalidResponse
+        }
+
+        if httpResponse.statusCode != 200 {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
+        }
+
+        return try parseOpenAIResponse(data)
+    }
+}
+
+/// Streaming implementation for OpenAI-compatible providers (real SSE)
+extension OpenAIProvider: StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.openai.defaultModel
+        let url = URL(string: "\(baseURL)/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        var openAIMessages: [[String: Any]] = []
+        for msg in messages {
+            var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
+            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
+                msgDict["content"] = msg.content.isEmpty ? NSNull() : msg.content
+                var toolCallDicts: [[String: Any]] = []
+                for call in calls {
+                    toolCallDicts.append([
+                        "id": call.id,
+                        "type": "function",
+                        "function": [
+                            "name": call.name,
+                            "arguments": call.argumentsJSON
+                        ] as [String: Any]
+                    ])
+                }
+                msgDict["tool_calls"] = toolCallDicts
+            } else if msg.role == .tool {
+                msgDict["tool_call_id"] = msg.toolCallId ?? ""
+                msgDict["content"] = msg.content
+            } else {
+                msgDict["content"] = msg.content
+            }
+            openAIMessages.append(msgDict)
+        }
+
+        let resolvedMaxTokens: Int
+        if resolvedModel.contains("opus") { resolvedMaxTokens = 16384 }
+        else if resolvedModel.contains("sonnet") { resolvedMaxTokens = 8192 }
+        else { resolvedMaxTokens = 4096 }
+
+        var body: [String: Any] = [
+            "model": resolvedModel,
+            "messages": openAIMessages,
+            "max_tokens": resolvedMaxTokens,
+            "stream": true
+        ]
+
+        // Include tools in streaming — the SSE parser accumulates tool call deltas
+        if let tools = tools, !tools.isEmpty {
+            var toolDicts = tools.map { $0.toOpenAIDict() }
+            // Cache tool definitions — they're static across requests
+            if var lastTool = toolDicts.last {
+                lastTool["cache_control"] = ["type": "ephemeral"]
+                toolDicts[toolDicts.count - 1] = lastTool
+            }
+            body["tools"] = toolDicts
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        // Use URLSession bytes API for SSE streaming
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMProviderError.invalidResponse
+        }
+
+        if httpResponse.statusCode != 200 {
+            // Collect error body
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+                if errorData.count > 4096 { break }
+            }
+            let errorText = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
+        }
+
+        var fullContent = ""
+        var toolCalls: [AgentToolCall] = []
+        var inputTokens = 0
+        var outputTokens = 0
+
+        // Accumulate partial tool calls by index
+        var partialToolCalls: [Int: (id: String, name: String, args: String)] = [:]
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data: ") else { continue }
+            let payload = String(line.dropFirst(6))
+            if payload == "[DONE]" { break }
+
+            guard let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any] else {
+                continue
+            }
+
+            // Text content delta
+            if let content = delta["content"] as? String, !content.isEmpty {
+                fullContent += content
+                onChunk(content)
+            }
+
+            // Tool call deltas (accumulated across multiple SSE events)
+            if let tcDeltas = delta["tool_calls"] as? [[String: Any]] {
+                for tcDelta in tcDeltas {
+                    let index = tcDelta["index"] as? Int ?? 0
+                    if let id = tcDelta["id"] as? String {
+                        let funcDict = tcDelta["function"] as? [String: Any]
+                        let name = funcDict?["name"] as? String ?? ""
+                        partialToolCalls[index] = (id: id, name: name, args: "")
+                    }
+                    if let funcDict = tcDelta["function"] as? [String: Any],
+                       let argChunk = funcDict["arguments"] as? String {
+                        var partial = partialToolCalls[index] ?? (id: "", name: "", args: "")
+                        partial.args += argChunk
+                        partialToolCalls[index] = partial
+                    }
+                }
+            }
+
+            // Usage (some providers include it in the last chunk)
+            if let usage = json["usage"] as? [String: Any] {
+                inputTokens = usage["prompt_tokens"] as? Int ?? inputTokens
+                outputTokens = usage["completion_tokens"] as? Int ?? outputTokens
+
+                // Log cache metrics for monitoring
+                if let promptDetails = usage["prompt_tokens_details"] as? [String: Any] {
+                    let cached = promptDetails["cached_tokens"] as? Int ?? 0
+                    if cached > 0 {
+                        print("📦 [LLM Cache] Stream hit: \(cached) cached tokens out of \(inputTokens) total (\(inputTokens > 0 ? Int(Double(cached) / Double(inputTokens) * 100) : 0)%)")
+                    }
+                }
+            }
+        }
+
+        // Assemble accumulated tool calls
+        for index in partialToolCalls.keys.sorted() {
+            if let tc = partialToolCalls[index] {
+                toolCalls.append(AgentToolCall(id: tc.id, name: tc.name, argumentsJSON: tc.args.isEmpty ? "{}" : tc.args))
+            }
+        }
+
+        return LLMResponse(
+            content: fullContent.isEmpty ? nil : fullContent,
+            toolCalls: toolCalls,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
+    }
+}
+
+/// Streaming with system prompt for OpenAI-compatible providers
+extension OpenAIProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model ?? AgentProvider.openai.defaultModel
+
+        // Build messages with system prompt prepended
+        let isAnthropicModel = resolvedModel.hasPrefix("anthropic/")
+        var allMessages: [AgentMessage] = []
+
+        if isAnthropicModel {
+            // For Anthropic models on OpenRouter, include system prompt as structured blocks
+            // by falling back to non-streaming with prompt caching for the first tool-calling pass
+            allMessages.append(.system(systemPrompt.combined))
+        } else {
+            allMessages.append(.system(systemPrompt.combined))
+        }
+
+        // Add conversation messages (skip any system messages already in the array)
+        for msg in messages where msg.role != .system {
+            allMessages.append(msg)
+        }
+
+        return try await completeStreaming(
+            messages: allMessages,
+            tools: tools,
+            model: resolvedModel,
+            onChunk: onChunk
+        )
+    }
+}
+
+/// Streaming support for FailoverLLMProvider — delegates to inner if it supports streaming
+extension FailoverLLMProvider: StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        guard let streamingInner = inner as? StreamingLLMProvider else {
+            // Fallback: non-streaming complete + deliver as single chunk
+            let response = try await complete(messages: messages, tools: tools, model: model)
+            if let content = response.content {
+                onChunk(content)
+            }
+            return response
+        }
+
+        failoverOccurred = false
+        lastUsedModel = model
+
+        let startIndex = chain.models.firstIndex { $0.modelId == model } ?? 0
+        var lastError: Error?
+
+        for chainIndex in startIndex..<chain.models.count {
+            let failoverModel = chain.models[chainIndex]
+            if chainIndex > startIndex {
+                failoverOccurred = true
+                print("[Failover/Stream] Falling over to \(failoverModel.label)")
+            }
+
+            for attempt in 0...failoverModel.maxRetries {
+                if attempt > 0 {
+                    let delay = 0.5 * pow(2.0, Double(attempt - 1))
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                do {
+                    let response = try await streamingInner.completeStreaming(
+                        messages: messages,
+                        tools: tools,
+                        model: failoverModel.modelId,
+                        onChunk: onChunk
+                    )
+                    lastUsedModel = failoverModel.modelId
+                    return response
+                } catch let error as LLMProviderError where error.isRetryable {
+                    lastError = error
+                    print("[Failover/Stream] \(failoverModel.label) attempt \(attempt) failed: \(error.localizedDescription)")
+                } catch let error as LLMProviderError {
+                    throw error // Non-retryable
+                } catch {
+                    lastError = error
+                }
+            }
+        }
+
+        throw lastError ?? LLMProviderError.serviceUnavailable("All models in failover chain exhausted.")
+    }
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        guard let streamingInner = inner as? StreamingLLMProvider else {
+            // Fallback: non-streaming complete with system prompt
+            let response = try await complete(messages: messages, tools: tools, model: model, systemPrompt: systemPrompt)
+            if let content = response.content {
+                onChunk(content)
+            }
+            return response
+        }
+
+        failoverOccurred = false
+        let resolvedModel = tier?.modelId ?? model
+        lastUsedModel = resolvedModel
+
+        let startIndex = chain.models.firstIndex { $0.modelId == resolvedModel } ?? 0
+        var lastError: Error?
+
+        for chainIndex in startIndex..<chain.models.count {
+            let failoverModel = chain.models[chainIndex]
+            if chainIndex > startIndex {
+                failoverOccurred = true
+                print("[Failover/Stream] Falling over to \(failoverModel.label)")
+            }
+
+            for attempt in 0...failoverModel.maxRetries {
+                if attempt > 0 {
+                    let delay = 0.5 * pow(2.0, Double(attempt - 1))
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                do {
+                    let response = try await streamingInner.completeStreaming(
+                        messages: messages,
+                        tools: tools,
+                        model: failoverModel.modelId,
+                        tier: nil,
+                        systemPrompt: systemPrompt,
+                        onChunk: onChunk
+                    )
+                    lastUsedModel = failoverModel.modelId
+                    return response
+                } catch let error as LLMProviderError where error.isRetryable {
+                    lastError = error
+                    print("[Failover/Stream] \(failoverModel.label) attempt \(attempt) failed: \(error.localizedDescription)")
+                } catch let error as LLMProviderError {
+                    throw error
+                } catch {
+                    lastError = error
+                }
+            }
+        }
+
+        throw lastError ?? LLMProviderError.serviceUnavailable("All models in failover chain exhausted.")
+    }
+}
+
 // MARK: - Shared Networking
 
-/// Shared URLSession helper used by all providers
+/// Shared URLSession helper used by all providers.
+/// Checks the circuit breaker before making the request and records success/failure.
 private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    let breaker = LLMCircuitBreaker.shared
+
+    if breaker.isOpen {
+        throw LLMProviderError.serviceUnavailable(
+            "AI service is temporarily unavailable after repeated failures. Please try again in a minute."
+        )
+    }
+
     do {
-        return try await URLSession.shared.data(for: request)
+        let result = try await URLSession.shared.data(for: request)
+        if let http = result.1 as? HTTPURLResponse, http.statusCode >= 200 && http.statusCode < 500 {
+            // 2xx-4xx are valid server responses (not network failures)
+            breaker.recordSuccess()
+        }
+        return result
     } catch {
+        breaker.recordFailure()
         throw LLMProviderError.networkError(error)
     }
 }

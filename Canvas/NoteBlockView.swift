@@ -19,6 +19,9 @@ struct NoteBlockView: View {
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
 
+    // Prevents GRDB observation updates from triggering auto-save
+    @State private var isSyncingFromDB = false
+
     // GRDB observation
     @State private var observationCancellable: AnyCancellable?
 
@@ -64,11 +67,11 @@ struct NoteBlockView: View {
     private var displayTitle: String {
         // Use title field, or fall back to first line of content
         if !noteTitle.isEmpty {
-            return String(noteTitle.prefix(40))
+            return noteTitle
         }
         if let firstLine = noteText.components(separatedBy: .newlines).first,
            !firstLine.isEmpty {
-            return String(firstLine.prefix(40))
+            return firstLine
         }
         return "Untitled Note"
     }
@@ -78,45 +81,41 @@ struct NoteBlockView: View {
     private var noteContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Title field
-            ZStack(alignment: .topLeading) {
-                // Placeholder
-                if noteTitle.isEmpty {
-                    Text("Heading")
-                        .font(.system(size: 24, weight: .regular, design: .serif))
-                        .italic()
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .allowsHitTesting(false)
+            TextField("", text: $noteTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 24, weight: .regular, design: .serif))
+                .foregroundColor(DS.text)
+                .focused($isTitleFocused)
+                .onSubmit {
+                    isBodyFocused = true
                 }
-
-                // Title text field
-                TextField("", text: $noteTitle)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 24, weight: .regular, design: .serif))
-                    .foregroundColor(.white)
-                    .focused($isTitleFocused)
-                    .onSubmit {
-                        isBodyFocused = true
+                .overlay(alignment: .topLeading) {
+                    if noteTitle.isEmpty && !isTitleFocused {
+                        Text("Heading")
+                            .font(.system(size: 24, weight: .regular, design: .serif))
+                            .italic()
+                            .foregroundColor(DS.textMuted)
+                            .allowsHitTesting(false)
                     }
-            }
+                }
 
             // Body text editor
-            ZStack(alignment: .topLeading) {
-                // Placeholder
-                if noteText.isEmpty && !isBodyFocused {
-                    Text("Press / for commands...")
-                        .font(.system(size: 15))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .allowsHitTesting(false)
+            TextEditor(text: $noteText)
+                .font(.system(size: 15))
+                .foregroundColor(DS.text)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .focused($isBodyFocused)
+                .overlay(alignment: .topLeading) {
+                    if noteText.isEmpty && !isBodyFocused {
+                        Text("Press / for commands...")
+                            .font(.system(size: 15))
+                            .foregroundColor(DS.textMuted)
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                    }
                 }
-
-                // Body text editor
-                TextEditor(text: $noteText)
-                    .font(.system(size: 15))
-                    .foregroundColor(.white)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .focused($isBodyFocused)
-            }
             .frame(maxHeight: .infinity)
 
             // Timestamp at bottom
@@ -125,17 +124,17 @@ struct NoteBlockView: View {
                     Spacer()
                     Text(formatTimestamp(timestamp))
                         .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onChange(of: noteTitle) { _, _ in
-            scheduleAutoSave()
+            if !isSyncingFromDB { scheduleAutoSave() }
         }
         .onChange(of: noteText) { _, _ in
-            scheduleAutoSave()
+            if !isSyncingFromDB { scheduleAutoSave() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isTitleFocused = false
@@ -200,9 +199,16 @@ struct NoteBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { fetchedAtom in
                     guard let atom = fetchedAtom else { return }
-                    if atom.title != noteTitle || atom.body != noteText {
-                        noteTitle = atom.title ?? ""
-                        noteText = atom.body ?? ""
+                    let newTitle = atom.title ?? ""
+                    let newBody = atom.body ?? ""
+                    // Only update state if values actually changed (nil-safe)
+                    guard newTitle != noteTitle || newBody != noteText else { return }
+                    isSyncingFromDB = true
+                    noteTitle = newTitle
+                    noteText = newBody
+                    // Defer clearing the flag so onChange handlers see it
+                    DispatchQueue.main.async {
+                        isSyncingFromDB = false
                     }
                 }
             )

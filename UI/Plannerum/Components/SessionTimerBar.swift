@@ -96,7 +96,7 @@ struct SessionTimerBar: View {
         .clipShape(RoundedRectangle(cornerRadius: Layout.cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: Layout.cornerRadius)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
     }
@@ -335,4 +335,13 @@ struct SessionTimerBar: View {
             pulsePhase = .pi * 2
         }
     }
+}
+
+// MARK: - Preview
+
+#Preview("Session Timer Bar") {
+    SessionTimerBar(engine: DeepWorkSessionEngine())
+        .frame(width: 800, height: 100)
+        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
+        .preferredColorScheme(.dark)
 }

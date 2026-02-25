@@ -261,3 +261,21 @@ class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
+
+// MARK: - Previews
+
+#Preview("Cosmo Input Dock") {
+    CosmoInputDock()
+        .frame(width: 450)
+        .padding()
+}
+
+#Preview("Quick Suggestions") {
+    QuickSuggestions(onSelect: { _ in })
+        .frame(width: 500)
+        .padding()
+}
+
+#Preview("Cosmo Chat Sheet") {
+    CosmoChatSheet()
+}

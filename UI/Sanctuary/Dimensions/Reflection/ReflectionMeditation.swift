@@ -217,7 +217,7 @@ public struct MeditationPanel: View {
                     Text("Start Session")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(.horizontal, SanctuaryLayout.Spacing.lg)
                 .padding(.vertical, SanctuaryLayout.Spacing.sm)
                 .background(
@@ -478,7 +478,7 @@ public struct MeditationTimerView: View {
             Button(action: { isActive.toggle() }) {
                 Image(systemName: isActive ? "pause.fill" : "play.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .frame(width: 70, height: 70)
                     .background(
                         Circle()

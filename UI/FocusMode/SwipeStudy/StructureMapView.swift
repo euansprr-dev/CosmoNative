@@ -30,7 +30,7 @@ struct StructureMapView: View {
             Text("STRUCTURE")
                 .font(.system(size: 13, weight: .bold))
                 .tracking(1.2)
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .textCase(.uppercase)
 
             if validSections.isEmpty {
@@ -40,10 +40,10 @@ struct StructureMapView: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
             guard !hasAppeared else { return }
@@ -63,7 +63,7 @@ struct StructureMapView: View {
                         .font(.system(size: 11, weight: .semibold))
                     Text(fw.description)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .lineLimit(1)
                 }
                 .foregroundColor(fw.color)
@@ -82,7 +82,7 @@ struct StructureMapView: View {
                 HStack(spacing: spacing) {
                     ForEach(Array(validSections.enumerated()), id: \.element.id) { index, section in
                         let relSize = section.relativeSize(totalLength: totalLength)
-                        let blockWidth = max(50, usableWidth * CGFloat(relSize))
+                        let blockWidth = usableWidth * CGFloat(relSize)
                         let blockColor = section.emotion?.color ?? defaultColor(for: index)
                         let isHovered = hoveredSection == section.id
 
@@ -95,7 +95,7 @@ struct StructureMapView: View {
                                         VStack(spacing: 2) {
                                             Text(section.label)
                                                 .font(.system(size: 10, weight: .medium))
-                                                .foregroundColor(.white)
+                                                .foregroundColor(DS.text)
                                                 .lineLimit(2)
                                                 .multilineTextAlignment(.center)
                                         }
@@ -108,7 +108,7 @@ struct StructureMapView: View {
                                                     Spacer()
                                                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                                                         .font(.system(size: 8))
-                                                        .foregroundColor(.white.opacity(0.3))
+                                                        .foregroundColor(DS.textMuted)
                                                 }
                                                 Spacer()
                                             }
@@ -119,7 +119,7 @@ struct StructureMapView: View {
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 6)
                                         .stroke(
-                                            isHovered ? Color.white.opacity(0.15) : blockColor.opacity(0.3),
+                                            isHovered ? DS.borderActive : blockColor.opacity(0.3),
                                             lineWidth: 1
                                         )
                                 )
@@ -142,7 +142,7 @@ struct StructureMapView: View {
                             // Purpose label
                             Text(section.purpose)
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.3))
+                                .foregroundColor(DS.textMuted)
                                 .lineLimit(1)
                         }
                         .frame(width: blockWidth)
@@ -191,7 +191,7 @@ struct StructureMapView: View {
     private var placeholderView: some View {
         Text("Structure analysis pending...")
             .font(.system(size: 13))
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(DS.textMuted)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
     }
@@ -203,7 +203,7 @@ struct StructureMapView: View {
 struct StructureMapView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
             StructureMapView(
                 frameworkType: .aida,
                 sections: [

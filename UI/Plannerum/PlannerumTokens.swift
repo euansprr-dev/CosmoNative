@@ -100,41 +100,41 @@ public struct PlannerumColors {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Open/unscheduled time
-    public static let openTime = Color.white.opacity(0.03)
+    public static let openTime = DS.borderSubtle
 
     /// Past time (dimmed)
     public static let pastTime = Color.white.opacity(0.015)
 
-    /// Hour labels
-    public static let hourLabel = Color.white.opacity(0.4)
+    /// Hour labels → DS.textMuted
+    public static let hourLabel = DS.textMuted
 
-    /// Hour grid lines
-    public static let hourLine = Color.white.opacity(0.06)
+    /// Hour grid lines → DS.border
+    public static let hourLine = DS.border
 
-    /// Half-hour lines (subtle)
-    public static let halfHourLine = Color.white.opacity(0.03)
+    /// Half-hour lines (subtle) → DS.borderSubtle
+    public static let halfHourLine = DS.borderSubtle
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SURFACE COLORS - Glass morphism
+    // SURFACE COLORS - Glass morphism (referencing DS base tokens)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Primary background (Onyx void)
-    public static let voidPrimary = OnyxColors.Elevation.void
+    /// Primary background → DS.bg
+    public static let voidPrimary = DS.bg
 
-    /// Secondary background (Onyx base)
-    public static let voidSecondary = OnyxColors.Elevation.base
+    /// Secondary background → DS.surface
+    public static let voidSecondary = DS.surface
 
-    /// Glass surface primary (#12121A)
-    public static let glassPrimary = Color(red: 18/255, green: 18/255, blue: 26/255).opacity(0.9)
+    /// Glass surface primary → DS.surface with opacity
+    public static let glassPrimary = DS.surface.opacity(0.9)
 
-    /// Glass surface secondary (#18182A)
-    public static let glassSecondary = Color(red: 24/255, green: 24/255, blue: 42/255).opacity(0.85)
+    /// Glass surface secondary → DS.surfaceElevated with opacity
+    public static let glassSecondary = DS.surfaceElevated.opacity(0.85)
 
-    /// Glass border
-    public static let glassBorder = Color.white.opacity(0.06)
+    /// Glass border → DS.border
+    public static let glassBorder = DS.border
 
-    /// Glass border hover
-    public static let glassBorderHover = Color.white.opacity(0.12)
+    /// Glass border hover → DS.borderActive
+    public static let glassBorderHover = DS.borderActive
 
     // ─────────────────────────────────────────────────────────────────────────
     // XP COLORS
@@ -146,8 +146,8 @@ public struct PlannerumColors {
     /// Alias for xpGold
     public static let xpPrimary = OnyxColors.Accent.amber
 
-    /// Alias for voidPrimary
-    public static let background = voidPrimary
+    /// Alias for voidPrimary → DS.bg
+    public static let background = DS.bg
 
     /// XP glow
     public static let xpGlow = OnyxColors.Accent.amber.opacity(0.4)
@@ -156,14 +156,14 @@ public struct PlannerumColors {
     public static let xpTracer = OnyxColors.Accent.amber
 
     // ─────────────────────────────────────────────────────────────────────────
-    // TEXT COLORS
+    // TEXT COLORS (referencing DS base tokens)
     // ─────────────────────────────────────────────────────────────────────────
 
-    public static let textPrimary = OnyxColors.Text.primary
-    public static let textSecondary = OnyxColors.Text.secondary
-    public static let textTertiary = OnyxColors.Text.tertiary
-    public static let textMuted = OnyxColors.Text.muted
-    public static let textDisabled = Color.white.opacity(0.2)
+    public static let textPrimary = DS.text
+    public static let textSecondary = DS.textSecondary
+    public static let textTertiary = DS.textSecondary  // maps to DS secondary
+    public static let textMuted = DS.textMuted
+    public static let textDisabled = DS.textMuted
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -870,17 +870,17 @@ public struct FocusNowTokens {
 
     // MARK: - Colors
 
-    /// Card gradient start
-    public static let gradientStart = Color(red: 24/255, green: 24/255, blue: 42/255).opacity(0.95)
+    /// Card gradient start → DS.surfaceElevated
+    public static let gradientStart = DS.surfaceElevated.opacity(0.95)
 
-    /// Card gradient end
-    public static let gradientEnd = Color(red: 18/255, green: 18/255, blue: 32/255).opacity(0.9)
+    /// Card gradient end → DS.surface
+    public static let gradientEnd = DS.surface.opacity(0.9)
 
     /// Primary action button color
     public static let primaryButton = PlannerumColors.primary
 
-    /// Skip button background
-    public static let skipButton = Color.white.opacity(0.08)
+    /// Skip button background → DS.border
+    public static let skipButton = DS.border
 
     /// Energy match excellent
     public static let energyExcellent = Color(red: 34/255, green: 197/255, blue: 94/255)
@@ -897,8 +897,8 @@ public struct FocusNowTokens {
     /// Deadline approaching
     public static let deadlineApproaching = Color(red: 245/255, green: 158/255, blue: 11/255)
 
-    /// Context message background
-    public static let contextBackground = Color.white.opacity(0.05)
+    /// Context message background → DS.borderSubtle
+    public static let contextBackground = DS.borderSubtle
 
     // MARK: - Typography
 
@@ -970,11 +970,11 @@ public struct DailyQuestsTokens {
 
     // MARK: - Colors
 
-    /// Panel background
-    public static let background = Color(red: 18/255, green: 18/255, blue: 28/255).opacity(0.9)
+    /// Panel background → DS.surface
+    public static let background = DS.surface.opacity(0.9)
 
-    /// Progress bar background
-    public static let progressBackground = Color.white.opacity(0.08)
+    /// Progress bar background → DS.border
+    public static let progressBackground = DS.border
 
     /// Main quest progress fill
     public static let mainQuestProgress = PlannerumColors.primary
@@ -1058,11 +1058,11 @@ public struct NowViewTokens {
 
     // MARK: - Colors
 
-    /// Row background default
-    public static let rowBackground = Color.white.opacity(0.03)
+    /// Row background default → DS.borderSubtle
+    public static let rowBackground = DS.borderSubtle
 
-    /// Row background hover
-    public static let rowBackgroundHover = Color.white.opacity(0.06)
+    /// Row background hover → DS.border
+    public static let rowBackgroundHover = DS.border
 
     /// Checkbox unchecked border
     public static let checkboxBorder = Color.white.opacity(0.3)
@@ -1088,8 +1088,8 @@ public struct NowViewTokens {
     /// Due today background
     public static let dueTodayBackground = Color(red: 251/255, green: 146/255, blue: 60/255).opacity(0.15)
 
-    /// Time badge background
-    public static let timeBadgeBackground = Color.white.opacity(0.08)
+    /// Time badge background → DS.border
+    public static let timeBadgeBackground = DS.border
 
     /// Completed task opacity
     public static let completedOpacity: Double = 0.4
@@ -1170,29 +1170,29 @@ public struct UpcomingSectionTokens {
 
     // MARK: - Colors
 
-    /// Column background
-    public static let columnBackground = Color.white.opacity(0.03)
+    /// Column background → DS.borderSubtle
+    public static let columnBackground = DS.borderSubtle
 
     /// Today column highlight
     public static let todayHighlight = PlannerumColors.primary.opacity(0.1)
 
-    /// Tomorrow column background
-    public static let tomorrowBackground = Color.white.opacity(0.04)
+    /// Tomorrow column background → DS.borderSubtle
+    public static let tomorrowBackground = DS.borderSubtle
 
     /// Weekend column background
-    public static let weekendBackground = Color(red: 139/255, green: 92/255, blue: 246/255).opacity(0.05)
+    public static let weekendBackground = DS.accent.opacity(0.05)
 
-    /// Day header text
-    public static let dayHeaderText = Color.white.opacity(0.9)
+    /// Day header text → DS.text
+    public static let dayHeaderText = DS.text
 
-    /// Day header text secondary
-    public static let dayHeaderTextSecondary = Color.white.opacity(0.5)
+    /// Day header text secondary → DS.textSecondary
+    public static let dayHeaderTextSecondary = DS.textSecondary
 
     /// Today badge color
     public static let todayBadge = PlannerumColors.primary
 
-    /// Task count badge
-    public static let taskCountBadge = Color.white.opacity(0.1)
+    /// Task count badge → DS.borderActive
+    public static let taskCountBadge = DS.borderActive
 
     /// Has deadline indicator
     public static let deadlineIndicator = Color(red: 251/255, green: 146/255, blue: 60/255)
@@ -1264,8 +1264,8 @@ public struct PlannerumHeaderTokens {
 
     // MARK: - Colors
 
-    /// XP bar background
-    public static let xpBarBackground = Color.white.opacity(0.08)
+    /// XP bar background → DS.border
+    public static let xpBarBackground = DS.border
 
     /// XP bar fill gradient start
     public static let xpBarFillStart = OnyxColors.Accent.amber
@@ -1273,8 +1273,8 @@ public struct PlannerumHeaderTokens {
     /// XP bar fill gradient end
     public static let xpBarFillEnd = OnyxColors.Accent.amber.opacity(0.7)
 
-    /// Level badge background
-    public static let levelBadgeBackground = Color(red: 24/255, green: 24/255, blue: 42/255)
+    /// Level badge background → DS.surfaceElevated
+    public static let levelBadgeBackground = DS.surfaceElevated
 
     /// Level badge border
     public static let levelBadgeBorder = OnyxColors.Accent.amber
@@ -1346,8 +1346,8 @@ public struct SessionTimerTokens {
     /// Timer background (paused)
     public static let pausedBackground = Color(red: 245/255, green: 158/255, blue: 11/255).opacity(0.15)
 
-    /// Progress ring track
-    public static let progressTrack = Color.white.opacity(0.1)
+    /// Progress ring track → DS.borderActive
+    public static let progressTrack = DS.borderActive
 
     /// Progress ring fill (running)
     public static let progressFillRunning = Color(red: 34/255, green: 197/255, blue: 94/255)

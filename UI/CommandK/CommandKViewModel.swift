@@ -44,15 +44,6 @@ public final class CommandKViewModel: ObservableObject {
     /// Filter counts by type (computed from unfiltered results)
     @Published public private(set) var filterCounts: [AtomType: Int] = [:]
 
-    /// Constellation nodes for visualization
-    @Published public private(set) var constellationNodes: [ConstellationNode] = []
-
-    /// Constellation edges for visualization
-    @Published public private(set) var constellationEdges: [ConstellationEdge] = []
-
-    /// Hovered node UUID for graph highlighting
-    @Published public var hoveredNodeId: String?
-
     /// Error message (if any)
     @Published public var errorMessage: String?
 
@@ -97,6 +88,28 @@ public final class CommandKViewModel: ObservableObject {
     /// Whether swipe gallery has been loaded
     private var swipeGalleryLoaded = false
 
+    // MARK: - Multi-Select State
+
+    /// UUIDs of cards selected via Shift+Click across gallery tabs
+    @Published var selectedUUIDs: Set<String> = []
+
+    /// Whether multi-select mode is active (at least one card selected)
+    var isMultiSelectActive: Bool { !selectedUUIDs.isEmpty }
+
+    /// Toggle a card's selection state (Shift+Click)
+    func toggleSelection(_ uuid: String) {
+        if selectedUUIDs.contains(uuid) {
+            selectedUUIDs.remove(uuid)
+        } else {
+            selectedUUIDs.insert(uuid)
+        }
+    }
+
+    /// Clear all card selections
+    func clearSelection() {
+        selectedUUIDs.removeAll()
+    }
+
     // MARK: - Idea Gallery State
 
     /// Idea gallery items loaded from idea atoms
@@ -113,13 +126,27 @@ public final class CommandKViewModel: ObservableObject {
     /// Maximum results to display
     private let maxResults = 25
 
-    /// Canvas size for constellation layout
-    public var constellationSize: CGSize = CGSize(width: 600, height: 400)
+    /// Whether we're showing recents (empty query)
+    @Published var isShowingRecents: Bool = false
+
+    /// Whether AI re-ranking has been applied
+    @Published var isAIRanked: Bool = false
+
+    /// Grouped results by atom type (ordered by best score)
+    @Published var groupedResults: [(type: AtomType, results: [RankedResult])] = []
+
+    /// Flat ordered list for keyboard navigation (across groups)
+    @Published var flatNavigableResults: [RankedResult] = []
+
+    /// Currently selected index in flatNavigableResults for keyboard nav
+    @Published var selectedResultIndex: Int = -1
+
+    /// Active #type prefix filter parsed from query
+    @Published var activeTypePrefix: AtomType? = nil
 
     // MARK: - Dependencies
 
     private let hybridSearch = HybridSearchEngine.shared
-    private let queryEngine = GraphQueryEngine()
     private var cancellables = Set<AnyCancellable>()
     private var searchTask: Task<Void, Never>?
 
@@ -156,29 +183,69 @@ public final class CommandKViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Parse #type prefix from query and return (stripped query, type filter)
+    private func parseTypePrefix(_ rawQuery: String) -> (query: String, typeFilter: AtomType?) {
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespaces)
+        let prefixMap: [String: AtomType] = [
+            "#idea": .idea,
+            "#task": .task,
+            "#swipe": .research,
+            "#content": .content,
+            "#research": .research,
+            "#connection": .connection,
+            "#project": .project,
+        ]
+        for (prefix, type) in prefixMap {
+            if trimmed.lowercased().hasPrefix(prefix) {
+                let stripped = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                return (stripped, type)
+            }
+        }
+        return (trimmed, nil)
+    }
+
     /// Perform search with current query using HybridSearchEngine
     public func performSearch(query: String) async {
         // Cancel previous search
         searchTask?.cancel()
 
-        // Handle empty query - show hot context
-        if query.trimmingCharacters(in: .whitespaces).isEmpty {
-            await showHotContext()
+        // Parse #type prefix
+        let parsed = parseTypePrefix(query)
+        let searchQuery = parsed.query
+        let prefixType = parsed.typeFilter
+
+        // Update prefix filter state
+        if let pt = prefixType {
+            activeTypePrefix = pt
+            if !selectedTypeFilters.contains(pt) {
+                selectedTypeFilters = [pt]
+            }
+        } else {
+            activeTypePrefix = nil
+        }
+
+        // Handle empty query - show recents
+        if searchQuery.isEmpty && prefixType == nil {
+            await showRecents()
             return
         }
 
         // Skip search in task creation mode
         if isTaskCreationMode {
             results = []
+            isShowingRecents = false
             currentPhase = .idle
             return
         }
 
+        isShowingRecents = false
         currentPhase = .searching
+
+        let effectiveQuery = searchQuery.isEmpty ? "" : searchQuery
 
         // Check cache first
         let cacheKey = QueryResultCache.cacheKey(
-            query: query,
+            query: effectiveQuery,
             contextType: FocusContextDetector.shared.currentContext.type.rawValue,
             focusAtomUUID: FocusContextDetector.shared.currentContext.focusAtomUUID,
             typeFilter: nil  // Cache unfiltered, apply filters client-side
@@ -189,7 +256,6 @@ public final class CommandKViewModel: ObservableObject {
             computeFilterCounts()
             applyFiltersToResults()
             currentPhase = .instant
-            await updateConstellation()
             return
         }
 
@@ -198,7 +264,7 @@ public final class CommandKViewModel: ObservableObject {
             do {
                 // Use HybridSearchEngine for semantic + keyword search
                 let hybridResults = try await hybridSearch.search(
-                    query: query,
+                    query: effectiveQuery.isEmpty ? query : effectiveQuery,
                     context: nil,
                     limit: maxResults * 2,  // Get more for filtering
                     entityTypes: nil  // Don't filter at search level, do it client-side for counts
@@ -241,6 +307,7 @@ public final class CommandKViewModel: ObservableObject {
 
                 // Update state
                 if !Task.isCancelled {
+                    isAIRanked = false
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
@@ -249,8 +316,46 @@ public final class CommandKViewModel: ObservableObject {
                     // Cache unfiltered results
                     await QueryResultCache.shared.set(rankedResults, for: cacheKey)
 
-                    // Update constellation
-                    await updateConstellation()
+                    // Fire AI re-ranker asynchronously (results reorder after 1-2s)
+                    let queryForReRank = effectiveQuery.isEmpty ? query : effectiveQuery
+                    let reRankInputs = rankedResults.prefix(25).map { r in
+                        ReRankInput(
+                            uuid: r.atomUUID,
+                            type: r.atomType.rawValue,
+                            title: r.title,
+                            preview: r.snippet ?? "",
+                            score: r.relevance
+                        )
+                    }
+                    Task {
+                        if let reRanked = await SearchReRanker.shared.reRank(
+                            query: queryForReRank,
+                            results: reRankInputs
+                        ) {
+                            // Rebuild results with AI-boosted semantic weights
+                            let aiScoreMap = Dictionary(uniqueKeysWithValues: reRanked.map { ($0.uuid, $0.blendedScore) })
+                            let reRankedResults = unfilteredResults.map { r in
+                                if let aiScore = aiScoreMap[r.atomUUID] {
+                                    return RankedResult(
+                                        atomUUID: r.atomUUID,
+                                        atomType: r.atomType,
+                                        title: r.title,
+                                        snippet: r.snippet,
+                                        semanticWeight: aiScore,
+                                        structuralWeight: r.structuralWeight,
+                                        recencyWeight: r.recencyWeight,
+                                        usageWeight: r.usageWeight,
+                                        updatedAt: r.updatedAt,
+                                        accessCount: r.accessCount
+                                    )
+                                }
+                                return r
+                            }
+                            unfilteredResults = reRankedResults.sorted()
+                            applyFiltersToResults()
+                            isAIRanked = true
+                        }
+                    }
                 }
             } catch {
                 if !Task.isCancelled {
@@ -278,7 +383,7 @@ public final class CommandKViewModel: ObservableObject {
                     structuralWeight: 0.5,
                     recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
                     usageWeight: 0.5,
-                    updatedAt: atom.updatedAt ?? "",
+                    updatedAt: atom.updatedAt,
                     accessCount: 0
                 ))
             }
@@ -288,7 +393,6 @@ public final class CommandKViewModel: ObservableObject {
             computeFilterCounts()
             applyFiltersToResults()
             currentPhase = .complete
-            await updateConstellation()
 
         } catch {
             errorMessage = "Search failed: \(error.localizedDescription)"
@@ -314,6 +418,7 @@ public final class CommandKViewModel: ObservableObject {
                 .filter { selectedTypeFilters.contains($0.atomType) }
                 .prefix(maxResults))
         }
+        buildGroupedResults()
     }
 
     /// Fetch atom UUID from entity type and ID
@@ -340,35 +445,15 @@ public final class CommandKViewModel: ObservableObject {
         }
     }
 
-    /// Fetch atom data (title, snippet) for a list of UUIDs
-    private func fetchAtomData(uuids: [String]) async -> [String: AtomInfo] {
-        var result: [String: AtomInfo] = [:]
 
-        for uuid in uuids {
-            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                result[uuid] = AtomInfo(
-                    title: atom.title ?? "Untitled",
-                    snippet: atom.body?.prefix(100).description
-                )
-            }
-        }
-
-        return result
-    }
-
-    /// Lightweight struct for atom display info
-    private struct AtomInfo {
-        let title: String
-        let snippet: String?
-    }
-
-    /// Show hot context when query is empty - queries atoms table directly
-    private func showHotContext() async {
+    /// Show recent atoms when query is empty
+    private func showRecents() async {
         currentPhase = .searching
+        isShowingRecents = true
 
         do {
-            // Query atoms directly from the database (not graph_nodes)
-            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 25)
+            // Fetch 8 most recent user-facing atoms
+            let recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 8)
 
             // Build results from actual atoms
             var combinedResults: [RankedResult] = []
@@ -382,7 +467,7 @@ public final class CommandKViewModel: ObservableObject {
                     structuralWeight: 0.5,
                     recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
                     usageWeight: 0.5,
-                    updatedAt: atom.updatedAt ?? "",
+                    updatedAt: atom.updatedAt,
                     accessCount: 0
                 ))
             }
@@ -393,114 +478,79 @@ public final class CommandKViewModel: ObservableObject {
             applyFiltersToResults()
             currentPhase = .complete
 
-            await updateConstellation()
-
         } catch {
-            errorMessage = "Failed to load hot context: \(error.localizedDescription)"
+            errorMessage = "Failed to load recents: \(error.localizedDescription)"
             currentPhase = .idle
         }
     }
 
-    // MARK: - Constellation
-
-    /// Update constellation visualization from current results
-    private func updateConstellation() async {
-        guard !results.isEmpty else {
-            constellationNodes = []
-            constellationEdges = []
-            return
+    /// Build grouped results from current filtered results
+    private func buildGroupedResults() {
+        // Group by atom type
+        var groups: [AtomType: [RankedResult]] = [:]
+        for result in results {
+            groups[result.atomType, default: []].append(result)
         }
 
-        // Get the focus node (first result or current context focus)
-        let centerUUID = FocusContextDetector.shared.currentContext.focusAtomUUID
-            ?? results.first?.atomUUID
-            ?? ""
+        // Sort each group by relevance descending (already sorted, but ensure)
+        for key in groups.keys {
+            groups[key]?.sort()
+        }
 
-        // Fetch neighborhood for constellation
-        do {
-            let neighborhood = try await queryEngine.getNeighborhood(
-                of: centerUUID,
-                depth: 2,
-                maxNodesPerLevel: 10
-            )
+        // Order sections by highest-scoring result in each group
+        let sorted = groups.sorted { lhs, rhs in
+            let lhsBest = lhs.value.first?.relevance ?? 0
+            let rhsBest = rhs.value.first?.relevance ?? 0
+            return lhsBest > rhsBest
+        }
 
-            // Compute layout
-            let positions = ConstellationLayoutEngine.computeLayout(
-                neighborhood: neighborhood,
-                canvasSize: constellationSize
-            )
+        groupedResults = sorted.map { (type: $0.key, results: $0.value) }
 
-            // Collect all node UUIDs for title lookup
-            var allNodeUUIDs: [String] = [centerUUID]
-            for level in neighborhood.levels {
-                for neighbor in level {
-                    allNodeUUIDs.append(neighbor.node.atomUUID)
-                }
-            }
+        // Build flat navigable list (for keyboard navigation across groups)
+        flatNavigableResults = sorted.flatMap { $0.value }
 
-            // Fetch titles for all nodes
-            let atomData = await fetchAtomData(uuids: allNodeUUIDs)
-
-            // Create nodes
-            var nodes: [ConstellationNode] = []
-
-            // Add center node
-            if let centerNode = try? await queryEngine.fetchNode(atomUUID: centerUUID),
-               let centerType = centerNode.type {
-                let centerTitle = atomData[centerUUID]?.title ?? "Untitled"
-                nodes.append(ConstellationNode(
-                    atomUUID: centerUUID,
-                    atomType: centerType,
-                    title: centerTitle,
-                    position: positions[centerUUID] ?? CGPoint(x: constellationSize.width / 2, y: constellationSize.height / 2),
-                    pageRank: centerNode.pageRank,
-                    degree: centerNode.totalDegree
-                ))
-            }
-
-            // Add neighbor nodes
-            for level in neighborhood.levels {
-                for neighbor in level {
-                    guard let type = neighbor.node.type,
-                          let position = positions[neighbor.node.atomUUID] else { continue }
-
-                    let nodeTitle = atomData[neighbor.node.atomUUID]?.title ?? "Untitled"
-                    nodes.append(ConstellationNode(
-                        atomUUID: neighbor.node.atomUUID,
-                        atomType: type,
-                        title: nodeTitle,
-                        position: position,
-                        pageRank: neighbor.node.pageRank,
-                        degree: neighbor.node.totalDegree
-                    ))
-                }
-            }
-
-            // Create edges
-            var edges: [ConstellationEdge] = []
-            for level in neighborhood.levels {
-                for neighbor in level {
-                    guard let sourcePos = positions[centerUUID],
-                          let targetPos = positions[neighbor.node.atomUUID] else { continue }
-
-                    edges.append(ConstellationEdge(
-                        sourceUUID: centerUUID,
-                        targetUUID: neighbor.node.atomUUID,
-                        weight: neighbor.weight,
-                        edgeType: neighbor.edgeType,
-                        sourcePosition: sourcePos,
-                        targetPosition: targetPos
-                    ))
-                }
-            }
-
-            constellationNodes = nodes
-            constellationEdges = edges
-
-        } catch {
-            print("⚠️ Failed to update constellation: \(error)")
+        // Reset selection
+        selectedResultIndex = flatNavigableResults.isEmpty ? -1 : 0
+        if let first = flatNavigableResults.first {
+            selectedNodeId = first.atomUUID
         }
     }
+
+    /// Quick-create an atom from search query
+    func quickCreate(type: AtomType) {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let parsed = parseTypePrefix(trimmed)
+        let name = parsed.query.isEmpty ? trimmed : parsed.query
+        guard !name.isEmpty else { return }
+
+        Task {
+            let atom: Atom
+            switch type {
+            case .idea:
+                atom = Atom.new(type: .idea, title: name, body: nil, metadata: nil)
+            case .task:
+                var taskMeta = TaskMetadata()
+                taskMeta.intent = TaskIntent.general.rawValue
+                var metadataString: String?
+                if let data = try? JSONEncoder().encode(taskMeta),
+                   let json = String(data: data, encoding: .utf8) {
+                    metadataString = json
+                }
+                atom = Atom.new(type: .task, title: name, body: nil, metadata: metadataString)
+            case .connection:
+                atom = Atom.new(type: .connection, title: name, body: nil, metadata: nil)
+            default:
+                atom = Atom.new(type: type, title: name, body: nil, metadata: nil)
+            }
+
+            let _ = try? await AtomRepository.shared.create(atom)
+        }
+
+        // Clear query and close
+        query = ""
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
 
     // MARK: - Selection
 
@@ -587,28 +637,26 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Navigate selection up
     public func selectPrevious() {
-        guard !results.isEmpty else { return }
+        guard !flatNavigableResults.isEmpty else { return }
 
-        if let current = selectedNodeId,
-           let index = results.firstIndex(where: { $0.atomUUID == current }),
-           index > 0 {
-            selectedNodeId = results[index - 1].atomUUID
+        if selectedResultIndex > 0 {
+            selectedResultIndex -= 1
         } else {
-            selectedNodeId = results.last?.atomUUID
+            selectedResultIndex = flatNavigableResults.count - 1
         }
+        selectedNodeId = flatNavigableResults[selectedResultIndex].atomUUID
     }
 
     /// Navigate selection down
     public func selectNext() {
-        guard !results.isEmpty else { return }
+        guard !flatNavigableResults.isEmpty else { return }
 
-        if let current = selectedNodeId,
-           let index = results.firstIndex(where: { $0.atomUUID == current }),
-           index < results.count - 1 {
-            selectedNodeId = results[index + 1].atomUUID
+        if selectedResultIndex < flatNavigableResults.count - 1 {
+            selectedResultIndex += 1
         } else {
-            selectedNodeId = results.first?.atomUUID
+            selectedResultIndex = 0
         }
+        selectedNodeId = flatNavigableResults[selectedResultIndex].atomUUID
     }
 
     // MARK: - Filter
@@ -645,33 +693,6 @@ public final class CommandKViewModel: ObservableObject {
     /// Total count across all types
     public var totalCount: Int {
         unfilteredResults.count
-    }
-
-    // MARK: - Hover
-
-    /// Set hovered node for graph highlighting
-    public func setHoveredNode(_ uuid: String?) {
-        hoveredNodeId = uuid
-    }
-
-    /// Check if a node or its edges should be highlighted
-    public func isNodeHighlighted(_ uuid: String) -> Bool {
-        guard let hoveredId = hoveredNodeId else { return false }
-
-        // Highlight the hovered node
-        if uuid == hoveredId { return true }
-
-        // Highlight connected nodes
-        return constellationEdges.contains { edge in
-            (edge.sourceUUID == hoveredId && edge.targetUUID == uuid) ||
-            (edge.targetUUID == hoveredId && edge.sourceUUID == uuid)
-        }
-    }
-
-    /// Check if an edge should be highlighted
-    public func isEdgeHighlighted(_ edge: ConstellationEdge) -> Bool {
-        guard let hoveredId = hoveredNodeId else { return false }
-        return edge.sourceUUID == hoveredId || edge.targetUUID == hoveredId
     }
 
     // MARK: - Swipe Gallery
@@ -744,11 +765,13 @@ public final class CommandKViewModel: ObservableObject {
                 }
             }
 
-            // Convert to gallery items
+            // Convert to gallery items — exclude activated ideas (they're content pieces now)
+            let activatedStatuses: Set<IdeaStatus> = [.inProduction, .published, .archived]
             var items: [IdeaGalleryItem] = []
             for atom in ideaAtoms {
                 let clientName = atom.ideaClientUUID.flatMap { clientNameCache[$0] }
-                if let galleryItem = atom.toIdeaGalleryItem(clientName: clientName) {
+                if let galleryItem = atom.toIdeaGalleryItem(clientName: clientName),
+                   !activatedStatuses.contains(galleryItem.status) {
                     items.append(galleryItem)
                 }
             }
@@ -784,10 +807,7 @@ public final class CommandKViewModel: ObservableObject {
         unfilteredResults = []
         filterCounts = [:]
         selectedNodeId = nil
-        hoveredNodeId = nil
         currentPhase = .idle
-        constellationNodes = []
-        constellationEdges = []
         errorMessage = nil
         selectedTypeFilters.removeAll()
         swipeGalleryItems = []
@@ -799,8 +819,14 @@ public final class CommandKViewModel: ObservableObject {
         swipeNicheFilter = nil
         swipeCreatorFilter = nil
         swipeSortMode = .score
+        selectedUUIDs.removeAll()
         ideaGalleryItems = []
         ideaGalleryLoaded = false
+        isShowingRecents = false
+        groupedResults = []
+        flatNavigableResults = []
+        selectedResultIndex = -1
+        activeTypePrefix = nil
     }
 }
 

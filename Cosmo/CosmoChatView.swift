@@ -438,3 +438,49 @@ struct ChatInputBar: View {
 extension Notification.Name {
     static let openEntity = Notification.Name("openEntity")
 }
+
+// MARK: - Previews
+
+#Preview("Cosmo Chat View") {
+    CosmoChatView()
+        .frame(width: 500, height: 600)
+}
+
+#Preview("Chat Header") {
+    ChatHeader(
+        isResearching: false,
+        researchProgress: 0,
+        onClear: {}
+    )
+    .frame(width: 400)
+}
+
+#Preview("Chat Header - Researching") {
+    ChatHeader(
+        isResearching: true,
+        researchProgress: 0.45,
+        onClear: {}
+    )
+    .frame(width: 400)
+}
+
+#Preview("Cosmo Avatar") {
+    CosmoAvatar()
+        .padding()
+}
+
+#Preview("Message Bubble - User") {
+    MessageBubble(content: "Hello Cosmo!", isUser: true)
+        .padding()
+}
+
+#Preview("Message Bubble - Assistant") {
+    MessageBubble(content: "Hello! How can I help you today?", isUser: false)
+        .padding()
+}
+
+#Preview("Processing Indicator") {
+    ProcessingIndicator()
+        .frame(width: 400)
+        .padding()
+}

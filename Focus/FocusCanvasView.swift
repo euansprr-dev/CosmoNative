@@ -304,20 +304,22 @@ struct FocusCanvasView: View {
     private func loadAtomForFocusMode() {
         Task {
             do {
-                if entity.id > 0, let atom = try await AtomRepository.shared.fetch(id: entity.id) {
+                guard entity.id > 0 else {
+                    print("❌ loadAtomForFocusMode: invalid entity id \(entity.id), closing focus mode")
+                    await MainActor.run { closeFocusMode() }
+                    return
+                }
+                if let atom = try await AtomRepository.shared.fetch(id: entity.id) {
                     await MainActor.run {
                         loadedAtom = atom
                     }
                 } else {
-                    // Entity has no backing atom (id <= 0) — create one
-                    let atomType = AtomType(rawValue: entity.type.rawValue) ?? .idea
-                    let newAtom = try await AtomRepository.shared.create(type: atomType, title: "Untitled \(entity.type.rawValue.capitalized)")
-                    await MainActor.run {
-                        loadedAtom = newAtom
-                    }
+                    print("❌ loadAtomForFocusMode: atom not found for id \(entity.id), closing focus mode")
+                    await MainActor.run { closeFocusMode() }
                 }
             } catch {
                 print("❌ loadAtomForFocusMode failed: \(error)")
+                await MainActor.run { closeFocusMode() }
             }
         }
     }

@@ -93,12 +93,34 @@ struct CanvasBlock: Identifiable, Codable {
             size = CGSize(width: 320, height: 240)
         case .research:
             if atom.isSwipeFileAtom {
-                size = CGSize(width: 340, height: 380)
+                // Detect media type for aspect ratio sizing
+                let swipeMediaType = Self.detectMediaType(atom: atom)
+                switch swipeMediaType {
+                case .reel:
+                    size = CGSize(width: 220, height: 420)     // 9:16 + transcript bar
+                case .youtube:
+                    size = CGSize(width: 320, height: 230)     // 16:9 + transcript bar
+                case .carousel:
+                    size = CGSize(width: 300, height: 350)     // 1:1 + transcript bar
+                case .generic:
+                    size = CGSize(width: 340, height: 380)     // Current swipe size
+                }
             } else {
-                size = CGSize(width: 320, height: 340)
+                // Detect media type for regular research too
+                let researchMediaType = Self.detectMediaType(atom: atom)
+                switch researchMediaType {
+                case .reel:
+                    size = CGSize(width: 220, height: 420)
+                case .youtube:
+                    size = CGSize(width: 320, height: 230)
+                case .carousel:
+                    size = CGSize(width: 300, height: 350)
+                case .generic:
+                    size = CGSize(width: 320, height: 340)     // Current research size
+                }
             }
         case .content:
-            size = CGSize(width: 300, height: 220)
+            size = CGSize(width: 320, height: 340)
         case .connection:
             size = CGSize(width: 340, height: 400)
         default:
@@ -132,7 +154,47 @@ struct CanvasBlock: Identifiable, Codable {
         case .research:
             let researchWrapper = ResearchWrapper(atom: atom)
             metadata["type"] = researchWrapper.researchType ?? ""
-            metadata["url"] = researchWrapper.url ?? ""
+
+            // Extract URL with fallback to structured JSON fields
+            var resolvedURL = researchWrapper.url ?? ""
+            if resolvedURL.isEmpty,
+               let structuredStr = atom.structured,
+               let structuredData = structuredStr.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: structuredData) as? [String: Any] {
+                resolvedURL = json["url"] as? String
+                    ?? json["source_url"] as? String
+                    ?? json["resolvedURL"] as? String
+                    ?? ""
+            }
+            metadata["url"] = resolvedURL
+
+            // Extract platform, author, thumbnail from structured autoMetadata
+            if let structuredStr = atom.structured,
+               let structuredData = structuredStr.data(using: .utf8),
+               let outer = try? JSONSerialization.jsonObject(with: structuredData) as? [String: Any],
+               let autoMetaStr = outer["autoMetadata"] as? String,
+               let autoMetaData = autoMetaStr.data(using: .utf8),
+               let autoMeta = try? JSONSerialization.jsonObject(with: autoMetaData) as? [String: Any] {
+                if let platform = autoMeta["sourceType"] as? String, !platform.isEmpty {
+                    metadata["platform"] = platform
+                }
+                if let author = autoMeta["author"] as? String, !author.isEmpty {
+                    metadata["author"] = author
+                }
+            }
+
+            // Fallback platform to contentSource from research metadata
+            if metadata["platform"] == nil || metadata["platform"]?.isEmpty == true {
+                if let contentSource = researchWrapper.contentSource, !contentSource.isEmpty {
+                    metadata["platform"] = contentSource
+                }
+            }
+
+            // Thumbnail from research metadata
+            if let thumbnail = atom.thumbnailUrl, !thumbnail.isEmpty {
+                metadata["thumbnail"] = thumbnail
+            }
+
             if atom.isSwipeFileAtom {
                 metadata["isSwipeFile"] = "true"
                 if let hookType = atom.swipeAnalysis?.hookType?.rawValue {
@@ -251,6 +313,157 @@ struct CanvasBlock: Identifiable, Codable {
                 "created": ISO8601DateFormatter().string(from: Date())
             ]
         )
+    }
+
+    // MARK: - Preview Factory Methods
+
+    /// Create a preview idea block (for SwiftUI previews)
+    static func previewIdeaBlock(position: CGPoint = CGPoint(x: 200, y: 200)) -> CanvasBlock {
+        return CanvasBlock(
+            position: position,
+            size: CGSize(width: 280, height: 180),
+            entityType: .idea,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: "Brilliant idea for a new feature",
+            subtitle: "This could revolutionize how users interact with the app...",
+            metadata: [
+                "tags": "innovation, product, ux",
+                "updated": ISO8601DateFormatter().string(from: Date())
+            ]
+        )
+    }
+
+    /// Create a preview content block (for SwiftUI previews)
+    static func previewContentBlock(position: CGPoint = CGPoint(x: 200, y: 200)) -> CanvasBlock {
+        return CanvasBlock(
+            position: position,
+            size: CGSize(width: 320, height: 340),
+            entityType: .content,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: "How to Build Better Habits",
+            subtitle: "A guide to sustainable behavior change...",
+            metadata: [
+                "status": "draft",
+                "currentStep": "brainstorm",
+                "updated": ISO8601DateFormatter().string(from: Date())
+            ]
+        )
+    }
+
+    /// Create a preview task block (for SwiftUI previews)
+    static func previewTaskBlock(position: CGPoint = CGPoint(x: 200, y: 200)) -> CanvasBlock {
+        return CanvasBlock(
+            position: position,
+            size: CGSize(width: 280, height: 120),
+            entityType: .task,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: "Review pull request",
+            subtitle: "Check the new authentication flow implementation",
+            metadata: [
+                "status": "pending",
+                "priority": "high",
+                "updated": ISO8601DateFormatter().string(from: Date())
+            ]
+        )
+    }
+
+    /// Create a preview connection block (for SwiftUI previews)
+    static func previewConnectionBlock(position: CGPoint = CGPoint(x: 200, y: 200)) -> CanvasBlock {
+        return CanvasBlock(
+            position: position,
+            size: CGSize(width: 340, height: 400),
+            entityType: .connection,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: "Design System Principles",
+            subtitle: "Core concepts linking visual hierarchy, spacing, and typography...",
+            metadata: [
+                "type": "connection",
+                "updated": ISO8601DateFormatter().string(from: Date())
+            ]
+        )
+    }
+
+    /// Create a preview research block (for SwiftUI previews)
+    static func previewResearchBlock(position: CGPoint = CGPoint(x: 200, y: 200), isSwipeFile: Bool = false) -> CanvasBlock {
+        var metadata: [String: String] = [
+            "type": "article",
+            "url": "https://example.com/article",
+            "updated": ISO8601DateFormatter().string(from: Date())
+        ]
+        if isSwipeFile {
+            metadata["isSwipeFile"] = "true"
+            metadata["hookType"] = "curiosity"
+            metadata["hookScore"] = "8.5"
+        }
+        return CanvasBlock(
+            position: position,
+            size: isSwipeFile ? CGSize(width: 340, height: 380) : CGSize(width: 320, height: 340),
+            entityType: .research,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: isSwipeFile ? "Viral Marketing Breakdown" : "The Future of AI Interfaces",
+            subtitle: "Key insights and patterns to study...",
+            metadata: metadata
+        )
+    }
+}
+
+// MARK: - Media Type Detection
+
+extension CanvasBlock {
+    /// Media type for aspect-ratio-aware block sizing
+    enum MediaType {
+        case reel       // 9:16 (Instagram Reel, TikTok)
+        case youtube    // 16:9 (YouTube, generic video)
+        case carousel   // 1:1 (Instagram Carousel)
+        case generic    // No specific media (article, note)
+    }
+
+    /// Detect media type from an Atom's structured JSON and URL
+    static func detectMediaType(atom: Atom) -> MediaType {
+        // Check structured JSON for source type and slides
+        guard let structured = atom.structured,
+              let data = structured.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // Fall back to URL-based detection
+            let url = atom.url ?? ""
+            return detectMediaTypeFromURL(url)
+        }
+
+        let sourceType = json["source_type"] as? String ?? json["platform"] as? String ?? ""
+
+        // Carousel detection
+        if json["instagramSlides"] != nil || json["slides"] != nil {
+            return .carousel
+        }
+
+        // Reel detection
+        if sourceType == "instagram_reel" || sourceType == "tiktok" {
+            return .reel
+        }
+
+        // URL-based detection
+        let url = json["url"] as? String ?? json["resolvedURL"] as? String ?? json["source_url"] as? String ?? atom.url ?? ""
+        return detectMediaTypeFromURL(url)
+    }
+
+    /// Detect media type from a URL string alone
+    static func detectMediaTypeFromURL(_ url: String) -> MediaType {
+        let lower = url.lowercased()
+        if lower.contains("youtube.com") || lower.contains("youtu.be") {
+            return .youtube
+        }
+        if lower.contains("tiktok.com") {
+            return .reel
+        }
+        if lower.contains("instagram.com") {
+            return .reel  // Default IG to reel unless carousel detected above
+        }
+        return .generic
     }
 }
 

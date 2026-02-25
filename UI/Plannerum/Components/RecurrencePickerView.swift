@@ -160,8 +160,8 @@ public struct RecurrencePickerView: View {
             isSelected
                 ? PlannerumColors.primary.opacity(0.15)
                 : isHovered
-                    ? Color.white.opacity(0.06)
-                    : Color.white.opacity(0.03)
+                    ? DS.border
+                    : DS.borderSubtle
         )
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
@@ -204,7 +204,7 @@ public struct RecurrencePickerView: View {
             .background(
                 isSelected
                     ? PlannerumColors.primary
-                    : Color.white.opacity(0.05)
+                    : DS.border
             )
             .clipShape(Circle())
     }
@@ -266,7 +266,7 @@ public struct RecurrencePickerView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.05))
+                            .background(DS.border)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
 
                         Text("times")
@@ -303,7 +303,7 @@ public struct RecurrencePickerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 

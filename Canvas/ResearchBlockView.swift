@@ -169,7 +169,7 @@ struct ResearchBlockView: View {
             // Title
             Text(block.title.isEmpty ? "Untitled Research" : block.title)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             // Metadata row
@@ -296,7 +296,7 @@ struct ResearchBlockView: View {
                     }
                     Text("Open")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(DS.text)
                 }
             }
             .buttonStyle(.plain)
@@ -318,7 +318,7 @@ struct ResearchBlockView: View {
 
                 Text(contentType)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
             }
         }
         .frame(height: 158)
@@ -330,7 +330,7 @@ struct ResearchBlockView: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(
                     LinearGradient(
-                        colors: [accentColor.opacity(0.12), Color.white.opacity(0.04)],
+                        colors: [accentColor.opacity(0.12), DS.borderSubtle],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -359,7 +359,7 @@ struct ResearchBlockView: View {
 
                     Text("Transcript & Notes")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
 
                     Spacer()
                 }
@@ -387,26 +387,26 @@ struct ResearchBlockView: View {
             if let author = author {
                 Text(author)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
             }
 
             if let platform = platform {
                 if author != nil {
                     Text("\u{00B7}")
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
                 Text(platform)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
 
             if let duration = duration {
                 Text("\u{00B7}")
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                 Text(duration)
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
     }
@@ -433,7 +433,7 @@ struct ResearchBlockView: View {
             if let created = block.metadata["created"] {
                 Text(formatTimestamp(created))
                     .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
         }
     }
@@ -470,6 +470,10 @@ struct ResearchBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
+        guard block.entityId > 0 else {
+            print("⚠️ ResearchBlockView.openFocusMode: no backing atom (entityId=\(block.entityId)), skipping")
+            return
+        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,

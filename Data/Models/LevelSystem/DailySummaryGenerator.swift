@@ -397,8 +397,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let xpEvents = try Row.fetchAll(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'xp_event'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         var total = 0
@@ -465,8 +465,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
             SELECT COUNT(*) FROM atoms
             WHERE type = 'task'
             AND metadata LIKE '%"isCompleted":true%'
-            AND updatedAt >= ? AND updatedAt < ?
-            AND isDeleted = 0
+            AND updated_at >= ? AND updated_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Deep work minutes (from focus sessions)
@@ -475,8 +475,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
                 CAST(json_extract(metadata, '$.durationMinutes') AS INTEGER)
             ), 0) FROM atoms
             WHERE type IN ('focus_session', 'deep_work_block')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Words written
@@ -485,32 +485,32 @@ public final class DailySummaryGenerator: @unchecked Sendable {
                 CAST(json_extract(metadata, '$.wordCount') AS INTEGER)
             ), 0) FROM atoms
             WHERE type = 'writing_session'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Journal entries
         let journals = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'journal_entry'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Research items
         let research = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'research'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Ideas captured
         let ideas = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'idea'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         return ActivityMetrics(
@@ -536,17 +536,17 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let avgHRV = try Double.fetchOne(db, sql: """
             SELECT AVG(CAST(json_extract(metadata, '$.hrvMs') AS REAL)) FROM atoms
             WHERE type = 'hrv_reading'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         // Sleep data (from most recent sleep record)
         let sleepRow = try Row.fetchOne(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'sleep_record'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
-            ORDER BY createdAt DESC
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
+            ORDER BY created_at DESC
             LIMIT 1
         """, arguments: [start, end])
 
@@ -565,9 +565,9 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let readinessScore = try Double.fetchOne(db, sql: """
             SELECT CAST(json_extract(metadata, '$.overallScore') AS REAL) FROM atoms
             WHERE type = 'readiness_score'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
-            ORDER BY createdAt DESC
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
+            ORDER BY created_at DESC
             LIMIT 1
         """, arguments: [start, end])
 
@@ -575,8 +575,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let workouts = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'workout'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         return HealthMetrics(
@@ -606,7 +606,7 @@ public final class DailySummaryGenerator: @unchecked Sendable {
             SELECT COALESCE(MAX(CAST(json_extract(metadata, '$.currentStreak') AS INTEGER)), 0)
             FROM atoms
             WHERE type = 'streak_event'
-            AND isDeleted = 0
+            AND is_deleted = 0
         """) ?? 0
 
         var extended: [String] = []
@@ -641,8 +641,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
                     FROM atoms
                     WHERE type = 'streak_event'
                     AND metadata LIKE ?
-                    AND isDeleted = 0
-                    ORDER BY createdAt DESC
+                    AND is_deleted = 0
+                    ORDER BY created_at DESC
                     LIMIT 1
                 """, arguments: ["%\"\(dimension)\"%"]) ?? 0
 
@@ -688,8 +688,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let count = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN (\(typeList))
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         return count > 0
@@ -734,8 +734,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
         let badgeRows = try Row.fetchAll(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'badge_unlocked'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         var unlocked: [BadgeUnlockSummary] = []
@@ -798,16 +798,16 @@ public final class DailySummaryGenerator: @unchecked Sendable {
             SELECT COUNT(*) FROM atoms
             WHERE type = 'daily_quest'
             AND metadata LIKE '%"isComplete":true%'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Total quests for the day
         let total = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'daily_quest'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // XP earned from quests
@@ -816,8 +816,8 @@ public final class DailySummaryGenerator: @unchecked Sendable {
             FROM atoms
             WHERE type = 'daily_quest'
             AND metadata LIKE '%"isComplete":true%'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         return QuestInfo(completed: completed, total: total, xpEarned: xp)

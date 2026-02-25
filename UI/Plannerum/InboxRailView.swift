@@ -190,10 +190,10 @@ public struct InboxRailView: View {
         .background(
             // Each card gets its own glass background
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.05))
+                .fill(DS.border)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        .strokeBorder(DS.border, lineWidth: 1)
                 )
         )
         .onHover { hovering in

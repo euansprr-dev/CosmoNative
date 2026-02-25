@@ -45,7 +45,7 @@ public struct UpcomingSection: View {
                 }
             }
         }
-        .background(Color.white.opacity(0.02))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: UpcomingSectionTokens.cornerRadius, style: .continuous)
@@ -170,7 +170,7 @@ struct DayColumn: View {
                         .foregroundColor(OnyxColors.Text.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08))
+                        .background(DS.border)
                         .clipShape(Capsule())
                 }
             }
@@ -205,7 +205,7 @@ struct DayColumn: View {
         }
         .padding(UpcomingSectionTokens.padding)
         .frame(height: UpcomingSectionTokens.dayHeaderHeight)
-        .background(Color.white.opacity(0.02))
+        .background(DS.borderSubtle)
     }
 
     // MARK: - More Tasks Indicator
@@ -224,7 +224,7 @@ struct DayColumn: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.miniCardRadius, style: .continuous))
     }
 
@@ -305,7 +305,7 @@ struct MiniTaskCard: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
             .frame(height: UpcomingSectionTokens.miniCardHeight)
-            .background(isHovering ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
+            .background(isHovering ? DS.border : DS.borderSubtle)
             .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.miniCardRadius, style: .continuous))
         }
         .buttonStyle(.plain)

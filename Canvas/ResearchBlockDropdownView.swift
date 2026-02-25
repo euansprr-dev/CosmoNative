@@ -58,17 +58,17 @@ struct ResearchBlockDropdownView: View {
 
             // Divider
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.border)
                 .frame(height: 1)
 
             // Content
             tabContent
         }
-        .background(Color.white.opacity(0.04))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
             loadData()
@@ -91,7 +91,7 @@ struct ResearchBlockDropdownView: View {
                         Text(tab.label)
                             .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(selectedTab == tab ? accentColor : Color.white.opacity(0.4))
+                    .foregroundColor(selectedTab == tab ? accentColor : DS.textMuted)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
                     .background(
@@ -135,7 +135,7 @@ struct ResearchBlockDropdownView: View {
                                 // Text
                                 Text(entry.text)
                                     .font(.system(size: 10))
-                                    .foregroundColor(Color.white.opacity(0.65))
+                                    .foregroundColor(DS.textSecondary)
                                     .lineLimit(3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -152,7 +152,7 @@ struct ResearchBlockDropdownView: View {
                         .tint(accentColor)
                     Text("Loading transcript...")
                         .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(DS.textMuted)
                 }
                 .frame(maxWidth: .infinity, minHeight: 60)
             } else {
@@ -192,7 +192,7 @@ struct ResearchBlockDropdownView: View {
                         .tint(accentColor)
                     Text("Loading annotations...")
                         .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(DS.textMuted)
                 }
                 .frame(maxWidth: .infinity, minHeight: 60)
             } else {
@@ -251,12 +251,12 @@ struct ResearchBlockDropdownView: View {
                         if !annotation.content.isEmpty {
                             Text(annotation.content)
                                 .font(.system(size: 10))
-                                .foregroundColor(Color.white.opacity(0.6))
+                                .foregroundColor(DS.textSecondary)
                                 .lineLimit(2)
                         } else {
                             Text("(empty)")
                                 .font(.system(size: 10))
-                                .foregroundColor(Color.white.opacity(0.25))
+                                .foregroundColor(DS.textMuted)
                                 .italic()
                         }
                     }
@@ -273,11 +273,11 @@ struct ResearchBlockDropdownView: View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 16))
-                .foregroundColor(Color.white.opacity(0.15))
+                .foregroundColor(DS.textMuted)
 
             Text(message)
                 .font(.system(size: 10))
-                .foregroundColor(Color.white.opacity(0.25))
+                .foregroundColor(DS.textMuted)
         }
         .frame(maxWidth: .infinity, minHeight: 60)
     }

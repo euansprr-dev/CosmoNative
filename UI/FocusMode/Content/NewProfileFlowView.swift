@@ -1,0 +1,1238 @@
+// CosmoOS/UI/FocusMode/Content/NewProfileFlowView.swift
+// Multi-step wizard for creating and editing client profiles
+// February 2026
+
+import SwiftUI
+import PDFKit
+import UniformTypeIdentifiers
+
+// MARK: - New Profile Flow View
+
+struct NewProfileFlowView: View {
+    @Environment(\.dismiss) private var dismiss
+    let existingAtom: Atom?
+    let onSave: (Atom) -> Void
+
+    @State private var currentStep = 1
+
+    // Step 1: Identity
+    @State private var clientName = ""
+    @State private var handle = ""
+    @State private var primaryPlatform: SocialPlatform = .instagram
+
+    // Step 2: Documents
+    @State private var documents: [ProfileDocument] = []
+    @State private var selectedDocCategory: ProfileDocumentCategory = .story
+    @State private var showGuidedStory = false
+    @State private var showPasteModal = false
+    @State private var showWriteModal = false
+    @State private var pasteText = ""
+    @State private var pasteTitle = ""
+    @State private var writeText = ""
+    @State private var writeTitle = ""
+
+    // Step 3: Generation
+    @State private var isGenerating = false
+    @State private var generationProgress = ""
+    @State private var intelligenceModel: ClientIntelligenceModel?
+    @State private var generationError: String?
+
+    // Step 4: Overrides
+    @State private var overrides: [IntelligenceOverride] = []
+    @State private var editingMetricId: UUID?  // unused, kept for compat
+    @State private var editingMetricKey = ""
+    @State private var editingMetricValue = ""
+
+    @State private var isSaving = false
+
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().background(DS.border)
+            stepIndicator
+            Divider().background(DS.border)
+            stepContent
+            Divider().background(DS.border)
+            bottomNavigation
+        }
+        .frame(width: 620, height: 720)
+        .background(DS.surface)
+        .cornerRadius(DS.radiusLarge)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusLarge)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .onAppear { loadExisting() }
+        .sheet(isPresented: $showGuidedStory) {
+            GuidedStoryCreatorView { document in
+                documents.append(document)
+            }
+        }
+        .sheet(isPresented: $showPasteModal) {
+            pasteTextModal
+        }
+        .sheet(isPresented: $showWriteModal) {
+            writeInAppModal
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.crop.rectangle.stack.fill")
+                .font(.system(size: 16))
+                .foregroundColor(DS.accent)
+
+            Text(existingAtom == nil ? "New Profile" : "Edit Profile")
+                .font(DS.cardTitle)
+                .foregroundColor(DS.text)
+
+            Spacer()
+
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(DS.buttonText)
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: 28, height: 28)
+                    .background(DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    // MARK: - Step Indicator
+
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(1...4, id: \.self) { step in
+                stepDot(step: step)
+                if step < 4 {
+                    stepConnector(completed: currentStep > step)
+                }
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private func stepDot(step: Int) -> some View {
+        let isActive = currentStep == step
+        let isCompleted = currentStep > step
+
+        VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .fill(isCompleted ? DS.accent : (isActive ? DS.accent.opacity(0.3) : DS.border))
+                    .frame(width: 28, height: 28)
+
+                if isCompleted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                } else {
+                    Text("\(step)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isActive ? DS.text : DS.textMuted)
+                }
+            }
+
+            Text(stepName(step))
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(isActive ? DS.textSecondary : DS.textMuted)
+        }
+    }
+
+    private func stepConnector(completed: Bool) -> some View {
+        Rectangle()
+            .fill(completed ? DS.accent.opacity(0.5) : DS.border)
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 4)
+            .offset(y: -8)
+    }
+
+    private func stepName(_ step: Int) -> String {
+        switch step {
+        case 1: return "Identity"
+        case 2: return "Documents"
+        case 3: return "Generate"
+        case 4: return "Review"
+        default: return ""
+        }
+    }
+
+    // MARK: - Step Content
+
+    @ViewBuilder
+    private var stepContent: some View {
+        ScrollView {
+            switch currentStep {
+            case 1: step1Identity
+            case 2: step2Documents
+            case 3: step3Generate
+            case 4: step4Review
+            default: EmptyView()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Step 1: Identity
+
+    private var step1Identity: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            sectionLabel("CLIENT IDENTITY")
+
+            identityField(label: "Client Name", placeholder: "Brand or creator name", text: $clientName, required: true)
+            identityField(label: "Handle", placeholder: "@handle", text: $handle)
+
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("Primary Platform")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
+                    ForEach(SocialPlatform.allCases, id: \.self) { platform in
+                        platformSelectionButton(platform)
+                    }
+                }
+            }
+
+        }
+        .padding(24)
+    }
+
+    @ViewBuilder
+    private func identityField(label: String, placeholder: String, text: Binding<String>, required: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                fieldLabel(label)
+                if required {
+                    Text("*")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(DS.red.opacity(0.6))
+                }
+            }
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(DS.sectionDesc)
+                .foregroundColor(DS.text)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func platformSelectionButton(_ platform: SocialPlatform) -> some View {
+        let isSelected = primaryPlatform == platform
+        Button(action: { primaryPlatform = platform }) {
+            platformSelectionLabel(platform, isSelected: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func platformSelectionLabel(_ platform: SocialPlatform, isSelected: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: platform.iconName)
+                .font(.system(size: 10))
+            Text(platform.displayName)
+                .font(DS.timestamp)
+        }
+        .foregroundColor(isSelected ? DS.text : DS.textSecondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(isSelected ? DS.accent.opacity(0.3) : DS.borderSubtle)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(isSelected ? DS.accent.opacity(0.5) : DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Step 2: Documents
+
+    private var step2Documents: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionLabel("UPLOAD DOCUMENTS")
+
+            Text("Upload your brand story, top-performing content, and voice guides to train the AI model.")
+                .font(DS.cardMeta)
+                .foregroundColor(DS.textSecondary)
+
+            documentCategoryTabs
+            documentsForCategory
+            documentActionButtons
+        }
+        .padding(24)
+    }
+
+    private var documentCategoryTabs: some View {
+        let categories = ProfileDocumentCategory.allCases
+        let topRow = Array(categories.prefix(3))    // Story, Reels, Threads
+        let bottomRow = Array(categories.dropFirst(3)) // Voice Guide, Underperforming Reels/Threads
+
+        return VStack(spacing: 2) {
+            HStack(spacing: 2) {
+                ForEach(topRow, id: \.self) { category in
+                    documentCategoryTab(category)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            HStack(spacing: 2) {
+                ForEach(bottomRow, id: \.self) { category in
+                    documentCategoryTab(category)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    @ViewBuilder
+    private func documentCategoryTab(_ category: ProfileDocumentCategory) -> some View {
+        let isSelected = selectedDocCategory == category
+        let count = documents.filter { $0.category == category }.count
+
+        Button(action: { selectedDocCategory = category }) {
+            documentCategoryTabLabel(category, isSelected: isSelected, count: count)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func documentCategoryTabLabel(_ category: ProfileDocumentCategory, isSelected: Bool, count: Int) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: category.iconName)
+                .font(.system(size: 10))
+            Text(category.displayName)
+                .font(DS.timestamp)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(isSelected ? DS.text : DS.textMuted)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? DS.accent.opacity(0.4) : DS.border)
+                    )
+            }
+        }
+        .foregroundColor(isSelected ? DS.text : DS.textSecondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? DS.accent.opacity(0.2) : Color.clear)
+        )
+    }
+
+    private var documentsForCategory: some View {
+        let filtered = documents.filter { $0.category == selectedDocCategory }
+
+        return VStack(spacing: 8) {
+            if filtered.isEmpty {
+                emptyDocumentState
+            } else {
+                ForEach(filtered) { doc in
+                    documentCard(doc)
+                }
+            }
+        }
+    }
+
+    private var emptyDocumentState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: selectedDocCategory.iconName)
+                .font(.system(size: 24))
+                .foregroundColor(DS.borderActive)
+
+            Text("No \(selectedDocCategory.displayName.lowercased()) documents yet")
+                .font(DS.cardMeta)
+                .foregroundColor(DS.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                .foregroundColor(DS.border)
+        )
+    }
+
+    @ViewBuilder
+    private func documentCard(_ doc: ProfileDocument) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: doc.filename != nil ? "doc.text.fill" : "text.alignleft")
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.accent.opacity(0.7))
+
+                Text(doc.title.isEmpty ? (doc.filename ?? "Untitled") : doc.title)
+                    .font(DS.buttonText)
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(doc.content.count) chars")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+
+                Button(action: { removeDocument(doc.id) }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(DS.cardMeta)
+                        .foregroundColor(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !doc.content.isEmpty {
+                Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+            }
+        }
+        .padding(10)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    private var documentActionButtons: some View {
+        HStack(spacing: 10) {
+            Button(action: { openDocumentPicker() }) {
+                actionButtonLabel(icon: "doc.badge.plus", text: "Upload .docx")
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+                pasteText = ""
+                pasteTitle = ""
+                showPasteModal = true
+            }) {
+                actionButtonLabel(icon: "doc.on.clipboard", text: "Paste Text")
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+                writeText = ""
+                writeTitle = ""
+                showWriteModal = true
+            }) {
+                actionButtonLabel(icon: "square.and.pencil", text: "Write in App")
+            }
+            .buttonStyle(.plain)
+
+            if selectedDocCategory == .story {
+                Button(action: { showGuidedStory = true }) {
+                    actionButtonLabel(icon: "list.bullet.rectangle", text: "Guided Template")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionButtonLabel(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(text)
+                .font(DS.timestamp)
+        }
+        .foregroundColor(DS.accent.opacity(0.8))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(DS.accentSoft)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(DS.accent.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Step 3: Generate
+
+    private var step3Generate: some View {
+        VStack(spacing: 24) {
+            sectionLabel("GENERATE INTELLIGENCE MODEL")
+
+            let storyCount = documents.filter { $0.category == .story }.count
+            let reelCount = documents.filter { $0.category == .reel }.count
+            let threadCount = documents.filter { $0.category == .thread }.count
+            let underReelCount = documents.filter { $0.category == .underperformingReel }.count
+            let underThreadCount = documents.filter { $0.category == .underperformingThread }.count
+            let underperformerCount = underReelCount + underThreadCount
+            let highPerformerCount = reelCount + threadCount
+            let canGenerate = storyCount >= 1 && highPerformerCount >= 3
+
+            VStack(alignment: .leading, spacing: 8) {
+                requirementRow(label: "Brand Story document", met: storyCount >= 1, detail: "\(storyCount) uploaded")
+                requirementRow(label: "High-performing content (min 3 reels + threads)", met: highPerformerCount >= 3, detail: "\(reelCount) reels, \(threadCount) threads")
+                requirementRow(
+                    label: "Underperforming content (for Failure Fingerprint)",
+                    met: underperformerCount >= 2,
+                    detail: underperformerCount > 0 ? "\(underReelCount) reels, \(underThreadCount) threads" : "optional"
+                )
+            }
+            .padding(14)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+
+            if underperformerCount == 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.accent.opacity(0.6))
+                    Text("Add underperforming content in Step 2 to generate a Failure Fingerprint — the AI will compare what works vs what doesn't across 8 dimensions.")
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+
+            if isGenerating {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(DS.accent)
+
+                    Text(generationProgress)
+                        .font(DS.buttonText)
+                        .foregroundColor(DS.textSecondary)
+                        .animation(.easeInOut, value: generationProgress)
+                }
+                .padding(.vertical, 20)
+            } else if let model = intelligenceModel {
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(DS.green)
+
+                    Text("Intelligence Model Generated")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text("Generated at \(model.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+
+                    // Failure fingerprint summary
+                    if let fp = model.failureFingerprint, !fp.rules.isEmpty {
+                        failureFingerprintSummary(fp)
+                    }
+
+                    Button(action: { Task { await generateModel() } }) {
+                        Text("Regenerate")
+                            .font(DS.timestamp)
+                            .foregroundColor(DS.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+                .padding(.vertical, 16)
+            } else {
+                Button(action: { Task { await generateModel() } }) {
+                    generateButtonLabel(canGenerate: canGenerate)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canGenerate)
+            }
+
+            if let error = generationError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.orange)
+                    Text(error)
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.orange.opacity(0.9))
+                        .lineLimit(3)
+                }
+            }
+        }
+        .padding(24)
+    }
+
+    @ViewBuilder
+    private func requirementRow(label: String, met: Bool, detail: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: met ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 13))
+                .foregroundColor(met ? DS.green : DS.textMuted)
+
+            Text(label)
+                .font(DS.cardMeta)
+                .foregroundColor(DS.textSecondary)
+
+            Spacer()
+
+            Text(detail)
+                .font(DS.timestamp)
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func generateButtonLabel(canGenerate: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13))
+            Text("Generate Intelligence Model")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(canGenerate ? CosmoColors.cosmoAI : DS.border)
+        )
+    }
+
+    // MARK: - Step 4: Review
+
+    private var step4Review: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let model = intelligenceModel {
+                IntelligenceModelView(
+                    model: Binding(
+                        get: { model },
+                        set: { intelligenceModel = $0 }
+                    ),
+                    overrides: $overrides,
+                    editingMetricId: $editingMetricId,
+                    editingMetricKey: $editingMetricKey,
+                    editingMetricValue: $editingMetricValue,
+                    showUpdateButton: false
+                )
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 28))
+                        .foregroundColor(DS.textMuted)
+
+                    Text("No intelligence model generated yet")
+                        .font(DS.sectionDesc)
+                        .foregroundColor(DS.textMuted)
+
+                    Text("Go back to Step 3 to generate one, or save the profile without it.")
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            }
+        }
+        .padding(24)
+    }
+
+    // MARK: - Bottom Navigation
+
+    private var bottomNavigation: some View {
+        HStack {
+            if currentStep > 1 {
+                Button(action: { withAnimation(.spring(response: 0.3)) { currentStep -= 1 } }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Back")
+                            .font(DS.sectionDesc)
+                    }
+                    .foregroundColor(DS.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            if currentStep == 2 {
+                Button(action: { withAnimation(.spring(response: 0.3)) { currentStep = 3 } }) {
+                    Text("Skip")
+                        .font(DS.buttonText)
+                        .foregroundColor(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+            }
+
+            if currentStep == 3 && intelligenceModel == nil && !isGenerating {
+                Button(action: { withAnimation(.spring(response: 0.3)) { currentStep = 4 } }) {
+                    Text("Skip")
+                        .font(DS.buttonText)
+                        .foregroundColor(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+            }
+
+            if currentStep < 4 {
+                Button(action: { withAnimation(.spring(response: 0.3)) { currentStep += 1 } }) {
+                    nextButtonLabel
+                }
+                .buttonStyle(.plain)
+                .disabled(currentStep == 1 && clientName.trimmingCharacters(in: .whitespaces).isEmpty)
+            } else {
+                Button(action: { Task { await saveProfile() } }) {
+                    doneButtonLabel
+                }
+                .buttonStyle(.plain)
+                .disabled(clientName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private var nextButtonLabel: some View {
+        let isDisabled = currentStep == 1 && clientName.trimmingCharacters(in: .whitespaces).isEmpty
+        HStack(spacing: 4) {
+            Text("Next")
+                .font(.system(size: 13, weight: .semibold))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(isDisabled ? DS.border : DS.accent)
+        )
+    }
+
+    @ViewBuilder
+    private var doneButtonLabel: some View {
+        HStack(spacing: 6) {
+            if isSaving {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .tint(.white)
+            }
+            Text(existingAtom == nil ? "Create Profile" : "Save Changes")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.accent)
+        )
+    }
+
+    // MARK: - Paste Text Modal
+
+    private var pasteTextModal: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Paste Text")
+                    .font(DS.navTitle)
+                    .foregroundColor(DS.text)
+                Spacer()
+                Button("Cancel") { showPasteModal = false }
+                    .font(DS.cardMeta)
+                    .foregroundColor(DS.textSecondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(16)
+
+            Divider().background(DS.border)
+
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Title (optional)", text: $pasteTitle)
+                    .textFieldStyle(.plain)
+                    .font(DS.sectionDesc)
+                    .foregroundColor(DS.text)
+                    .padding(10)
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+
+                ZStack(alignment: .topLeading) {
+                    if pasteText.isEmpty {
+                        Text("Paste your content here...")
+                            .font(DS.cardMeta)
+                            .foregroundColor(DS.textMuted)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                    }
+                    TextEditor(text: $pasteText)
+                        .font(DS.cardMeta)
+                        .foregroundColor(DS.text)
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .frame(height: 200)
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            }
+            .padding(16)
+
+            Divider().background(DS.border)
+
+            HStack {
+                Spacer()
+                Button(action: {
+                    let doc = ProfileDocument(
+                        category: selectedDocCategory,
+                        title: pasteTitle.isEmpty ? "Pasted content" : pasteTitle,
+                        content: pasteText
+                    )
+                    documents.append(doc)
+                    showPasteModal = false
+                }) {
+                    pasteAddButtonLabel
+                }
+                .buttonStyle(.plain)
+                .disabled(pasteText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(16)
+        }
+        .frame(width: 500, height: 400)
+        .background(DS.surface)
+        .cornerRadius(DS.radiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var pasteAddButtonLabel: some View {
+        Text("Add")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(pasteText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.border : DS.accent)
+            )
+    }
+
+    // MARK: - Write In App Modal
+
+    private var writeInAppModal: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Write Document")
+                    .font(DS.navTitle)
+                    .foregroundColor(DS.text)
+                Spacer()
+                Button("Cancel") { showWriteModal = false }
+                    .font(DS.cardMeta)
+                    .foregroundColor(DS.textSecondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(16)
+
+            Divider().background(DS.border)
+
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Document title", text: $writeTitle)
+                    .textFieldStyle(.plain)
+                    .font(DS.sectionDesc)
+                    .foregroundColor(DS.text)
+                    .padding(10)
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+
+                ZStack(alignment: .topLeading) {
+                    if writeText.isEmpty {
+                        Text("Start writing...")
+                            .font(DS.cardMeta)
+                            .foregroundColor(DS.textMuted)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                    }
+                    TextEditor(text: $writeText)
+                        .font(DS.cardMeta)
+                        .foregroundColor(DS.text)
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .frame(minHeight: 250)
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            }
+            .padding(16)
+
+            Divider().background(DS.border)
+
+            HStack {
+                Spacer()
+                Button(action: {
+                    let doc = ProfileDocument(
+                        category: selectedDocCategory,
+                        title: writeTitle.isEmpty ? "Written document" : writeTitle,
+                        content: writeText
+                    )
+                    documents.append(doc)
+                    showWriteModal = false
+                }) {
+                    writeSaveButtonLabel
+                }
+                .buttonStyle(.plain)
+                .disabled(writeText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(16)
+        }
+        .frame(width: 520, height: 480)
+        .background(DS.surface)
+        .cornerRadius(DS.radiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var writeSaveButtonLabel: some View {
+        Text("Save")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(writeText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.border : DS.accent)
+            )
+    }
+
+    // MARK: - Shared Components
+
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title)
+            .dsSectionLabel()
+    }
+
+    private func fieldLabel(_ label: String) -> some View {
+        Text(label)
+            .font(DS.buttonText)
+            .foregroundColor(DS.textSecondary)
+    }
+
+    // MARK: - Failure Fingerprint Summary
+
+    @ViewBuilder
+    private func failureFingerprintSummary(_ fp: FailureFingerprint) -> some View {
+        let highCount = fp.rules.filter { $0.severity == .high }.count
+        let medCount = fp.rules.filter { $0.severity == .medium }.count
+
+        HStack(spacing: 10) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 12))
+                .foregroundColor(.red.opacity(0.8))
+
+            Text("Failure Fingerprint: \(fp.rules.count) rules")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.text)
+
+            if highCount > 0 {
+                Text("\(highCount) HIGH")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.red.opacity(0.12)))
+            }
+            if medCount > 0 {
+                Text("\(medCount) MED")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.12)))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(Color.red.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(Color.red.opacity(0.15), lineWidth: 1)
+                )
+        )
+        .padding(.top, 4)
+    }
+
+    // MARK: - Actions
+
+    private func openDocumentPicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+
+        var allowedTypes: [UTType] = [.pdf, .plainText]
+        if let docx = UTType("org.openxmlformats.wordprocessingml.document") {
+            allowedTypes.append(docx)
+        }
+        panel.allowedContentTypes = allowedTypes
+
+        panel.begin { response in
+            guard response == .OK else { return }
+            for url in panel.urls {
+                let content = extractText(from: url)
+                guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                let doc = ProfileDocument(
+                    category: selectedDocCategory,
+                    title: url.deletingPathExtension().lastPathComponent,
+                    content: content,
+                    filename: url.lastPathComponent
+                )
+                documents.append(doc)
+            }
+        }
+    }
+
+    private func extractText(from url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "txt":
+            return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        case "pdf":
+            guard let doc = PDFDocument(url: url) else { return "" }
+            var text = ""
+            for i in 0..<doc.pageCount {
+                if let page = doc.page(at: i), let pageText = page.string {
+                    text += pageText + "\n"
+                }
+            }
+            return text
+        case "docx", "doc":
+            return extractDocxText(from: url)
+        default:
+            return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        }
+    }
+
+    private func extractDocxText(from url: URL) -> String {
+        guard let data = try? Data(contentsOf: url) else { return "" }
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        do {
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            let zipPath = tempDir.appendingPathComponent("doc.zip")
+            try data.write(to: zipPath)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            process.arguments = ["-o", zipPath.path, "-d", tempDir.path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            let docXML = tempDir.appendingPathComponent("word/document.xml")
+            guard let xmlString = try? String(contentsOf: docXML, encoding: .utf8) else { return "" }
+            let stripped = xmlString.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            return stripped.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        } catch {
+            return ""
+        }
+    }
+
+    private func removeDocument(_ id: UUID) {
+        documents.removeAll { $0.id == id }
+    }
+
+    /// Infer whether content is a reel (short-form) or thread (long-form) based on length heuristics.
+    private func inferDocCategory(from content: String) -> ProfileDocumentCategory {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentenceCount = trimmed.components(separatedBy: CharacterSet(charactersIn: ".!?"))
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .count
+        if trimmed.count < 500 || sentenceCount < 5 { return .reel }
+        return .thread
+    }
+
+    private func generateModel() async {
+        isGenerating = true
+        generationError = nil
+
+        let underperformerCount = documents.filter { $0.category.isUnderperformer }.count
+        var stages = [
+            "Analyzing voice patterns...",
+            "Extracting performance data...",
+            "Building audience model..."
+        ]
+        if underperformerCount > 0 {
+            stages.append("Comparing top vs underperforming content...")
+        }
+        stages.append("Finalizing...")
+
+        do {
+            // Build a temporary atom with documents to pass to the engine
+            let trimmedName = clientName.trimmingCharacters(in: .whitespaces)
+            let metadata = ClientProfileMetadata(
+                clientId: existingAtom.flatMap { $0.metadataValue(as: ClientProfileMetadata.self)?.clientId } ?? UUID().uuidString,
+                clientName: trimmedName,
+                platforms: [primaryPlatform],
+                activeStatus: true,
+                handle: handle.isEmpty ? nil : handle,
+                documents: documents,
+                primaryPlatform: primaryPlatform
+            )
+
+            var tempAtom = existingAtom ?? Atom.new(type: .clientProfile, title: trimmedName, body: nil)
+            tempAtom.metadata = metadata.toJSON()
+
+            for stage in stages {
+                generationProgress = stage
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+
+            let model = try await ClientIntelligenceEngine.shared.generateModel(profile: tempAtom)
+            intelligenceModel = model
+            isGenerating = false
+
+            withAnimation(.spring(response: 0.3)) {
+                currentStep = 4
+            }
+        } catch {
+            isGenerating = false
+            generationError = error.localizedDescription
+        }
+    }
+
+    private func loadExisting() {
+        guard let atom = existingAtom else { return }
+        clientName = atom.title ?? ""
+
+        if let meta = atom.metadataValue(as: ClientProfileMetadata.self) {
+            handle = meta.handle ?? ""
+            if let pp = meta.primaryPlatform {
+                primaryPlatform = pp
+            } else if let first = meta.platforms.first {
+                primaryPlatform = first
+            }
+            // Load documents from metadata
+            if let docs = meta.documents {
+                documents = docs
+            } else {
+                // Legacy migration: reconstruct documents from old fields
+                if let story = meta.brandStory, !story.isEmpty {
+                    documents.append(ProfileDocument(category: .story, title: "Brand Story", content: story))
+                }
+                if let voice = meta.voiceNotes, !voice.isEmpty {
+                    documents.append(ProfileDocument(category: .voiceGuide, title: "Voice Notes", content: voice))
+                }
+                if let posts = meta.topPerformingPosts {
+                    for post in posts where !post.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        let category = inferDocCategory(from: post.transcript)
+                        documents.append(ProfileDocument(
+                            category: category,
+                            title: "\(category == .reel ? "Reel" : "Thread") (\(post.platform.isEmpty ? "unknown" : post.platform))",
+                            content: post.transcript,
+                            platform: post.platform,
+                            likes: post.likes,
+                            shares: post.shares
+                        ))
+                    }
+                }
+            }
+
+            // Load existing intelligence model
+            intelligenceModel = meta.intelligenceModel
+            if let model = meta.intelligenceModel {
+                overrides = model.userOverrides
+            }
+        }
+    }
+
+    private func saveProfile() async {
+        isSaving = true
+        defer { isSaving = false }
+
+        let trimmedName = clientName.trimmingCharacters(in: .whitespaces)
+        guard !trimmedName.isEmpty else { return }
+
+        // Build TopPost array from high-performer documents for legacy compat
+        let topPosts: [TopPost] = documents
+            .filter { $0.category.isHighPerformer && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { doc in
+                TopPost(
+                    transcript: doc.content,
+                    platform: doc.platform ?? "",
+                    likes: doc.likes ?? 0,
+                    shares: doc.shares ?? 0,
+                    leads: doc.leads ?? 0,
+                    views: 0
+                )
+            }
+
+        let brandStoryText = documents
+            .filter { $0.category == .story }
+            .map { $0.content }
+            .joined(separator: "\n\n")
+
+        let voiceNotesText = documents
+            .filter { $0.category == .voiceGuide }
+            .map { $0.content }
+            .joined(separator: "\n\n")
+
+        var finalModel = intelligenceModel
+        if var model = finalModel {
+            model.userOverrides = overrides
+            finalModel = model
+        }
+
+        let metadata = ClientProfileMetadata(
+            clientId: existingAtom.flatMap { $0.metadataValue(as: ClientProfileMetadata.self)?.clientId } ?? UUID().uuidString,
+            clientName: trimmedName,
+            platforms: [primaryPlatform],
+            activeStatus: true,
+            brandStory: brandStoryText.isEmpty ? nil : brandStoryText,
+            voiceNotes: voiceNotesText.isEmpty ? nil : voiceNotesText,
+            handle: handle.isEmpty ? nil : handle,
+            intelligenceModel: finalModel,
+            documents: documents.isEmpty ? nil : documents,
+            primaryPlatform: primaryPlatform,
+            topPerformingPosts: topPosts.isEmpty ? nil : topPosts
+        )
+
+        do {
+            if var existing = existingAtom {
+                existing.title = trimmedName
+                existing.metadata = metadata.toJSON()
+                let saved = try await AtomRepository.shared.update(existing)
+                onSave(saved)
+            } else {
+                var atom = Atom.new(type: .clientProfile, title: trimmedName, body: nil)
+                atom.metadata = metadata.toJSON()
+                let saved = try await AtomRepository.shared.create(atom)
+                onSave(saved)
+            }
+            dismiss()
+        } catch {
+            print("NewProfileFlowView: Save failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - Preview
+
+#Preview("New Profile Flow") {
+    NewProfileFlowView(
+        existingAtom: nil,
+        onSave: { _ in }
+    )
+    .frame(width: 620, height: 720)
+}

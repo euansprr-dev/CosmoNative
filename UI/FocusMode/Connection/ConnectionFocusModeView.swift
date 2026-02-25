@@ -28,6 +28,10 @@ struct ConnectionFocusModeView: View {
     @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
+    @State private var showSidebar = false
+    @State private var showSettings = false
+    @State private var activeRelationArea: RelationAreaState?
+    @StateObject private var coDevEngine = ConnectionCoDevEngine()
 
     // MARK: - Initialization
 
@@ -42,52 +46,113 @@ struct ConnectionFocusModeView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            // Infinite canvas with dotted grid background
-            InfiniteCanvasView(
-                viewportState: $viewportState,
-                showGrid: true,
-                anchoredContent: {
-                    anchoredConnectionCard
-                },
-                floatingContent: {
-                    floatingPanelsLayer
-                }
-            )
-
-            // Focus connection lines layer (universal linking)
-            FocusConnectionLinesLayer(
-                connectManager: focusConnectManager,
-                focusAtomUUID: atom.uuid
-            )
-
-            // Top bar overlay
-            VStack {
-                topBar
-                Spacer()
-            }
-
-            // Radial menu (on right-click)
-            if let menuPosition = viewModel.radialMenuPosition {
-                RadialMenuView(
-                    position: menuPosition,
-                    onSelect: handleRadialAction,
-                    onDismiss: {
-                        viewModel.radialMenuPosition = nil
+        ZStack(alignment: .trailing) {
+            // Main canvas area
+            ZStack {
+                // Infinite canvas with dotted grid background
+                InfiniteCanvasView(
+                    viewportState: $viewportState,
+                    showGrid: true,
+                    anchoredContent: {
+                        anchoredConnectionCard
+                    },
+                    floatingContent: {
+                        floatingPanelsLayer
                     }
                 )
+
+                // Focus connection lines layer (universal linking)
+                FocusConnectionLinesLayer(
+                    connectManager: focusConnectManager,
+                    focusAtomUUID: atom.uuid
+                )
+
+                // Relation area overlay for dropped blocks
+                if let relationState = activeRelationArea {
+                    relationAreaOverlay(relationState)
+                }
+
+                // Top bar overlay
+                VStack {
+                    topBar
+                    Spacer()
+                }
+
+                // Radial menu (on right-click)
+                if let menuPosition = viewModel.radialMenuPosition {
+                    RadialMenuView(
+                        position: menuPosition,
+                        onSelect: handleRadialAction,
+                        onDismiss: {
+                            viewModel.radialMenuPosition = nil
+                        }
+                    )
+                }
+            }
+            .focusBlockContextMenu(
+                manager: floatingBlocksManager,
+                ownerAtomUUID: atom.uuid
+            )
+
+            // Right sidebar (overlays on top)
+            if showSidebar {
+                HStack(spacing: 0) {
+                    Divider().background(DS.border)
+
+                    ConnectionSidebarView(
+                        atom: atom,
+                        viewModel: viewModel,
+                        isVisible: showSidebar,
+                        onDropSource: { source in
+                            dropSourceOnCanvas(source)
+                        }
+                    )
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .focusBlockContextMenu(
-            manager: floatingBlocksManager,
-            ownerAtomUUID: atom.uuid
-        )
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 8) {
+                // Sidebar toggle
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: showSidebar ? "sidebar.right.fill" : "sidebar.right")
+                        .font(.system(size: 13))
+                        .foregroundColor(showSidebar ? CosmoColors.blockConnection : DS.textSecondary)
+                        .padding(8)
+                        .background(
+                            showSidebar ? CosmoColors.blockConnection.opacity(0.15) : DS.border,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, showSidebar ? 340 : 16)
+            .padding(.top, 16)
+            .transition(.opacity)
+            .animation(ProMotionSprings.snappy, value: showSidebar)
+        }
         .onAppear {
             loadState()
             listenForAtomPicker()
             Task {
                 await viewModel.generateGhostSuggestions()
             }
+            // Register context provider for global Cosmo window
+            let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             saveState()
@@ -96,6 +161,12 @@ struct ConnectionFocusModeView: View {
         // Right-click for radial menu
         .onTapGesture(count: 1) {
             panelManager.deselectAll()
+            if activeRelationArea != nil {
+                // Dismiss relation area on background tap
+                withAnimation(ProMotionSprings.snappy) {
+                    activeRelationArea = nil
+                }
+            }
         }
         .gesture(
             TapGesture(count: 1)
@@ -106,8 +177,18 @@ struct ConnectionFocusModeView: View {
         )
         // Keyboard shortcuts
         .onKeyPress(.escape) {
+            if activeRelationArea != nil {
+                activeRelationArea = nil
+                return .handled
+            }
             if viewModel.radialMenuPosition != nil {
                 viewModel.radialMenuPosition = nil
+                return .handled
+            }
+            if showSidebar {
+                withAnimation(ProMotionSprings.snappy) {
+                    showSidebar = false
+                }
                 return .handled
             }
             if showCommandK {
@@ -127,6 +208,25 @@ struct ConnectionFocusModeView: View {
         .sheet(isPresented: $showCommandK) {
             CommandKView()
                 .frame(minWidth: 900, minHeight: 600)
+        }
+        // Settings sheet
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
+        }
+        // Cmd+K single-click: add as floating block
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
+            guard let uuid = notification.userInfo?["atomUUID"] as? String else { return }
+            let title = notification.userInfo?["title"] as? String ?? "Untitled"
+            let typeRaw = notification.userInfo?["atomType"] as? String ?? AtomType.idea.rawValue
+            let atomType = AtomType(rawValue: typeRaw) ?? .idea
+            showCommandK = false
+            floatingBlocksManager.addBlock(
+                linkedAtomUUID: uuid,
+                linkedAtomType: atomType,
+                title: title,
+                position: CGPoint(x: 200, y: 200)
+            )
         }
     }
 
@@ -186,7 +286,7 @@ struct ConnectionFocusModeView: View {
 
                 Text(atom.title ?? "New Connection")
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
             }
 
             // Stats
@@ -197,10 +297,10 @@ struct ConnectionFocusModeView: View {
                     Text("items")
                         .font(.system(size: 12))
                 }
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
                 Text("·")
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
 
                 HStack(spacing: 4) {
                     Text("\(viewModel.state.completedSectionCount)/8")
@@ -208,7 +308,7 @@ struct ConnectionFocusModeView: View {
                     Text("sections")
                         .font(.system(size: 12))
                 }
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
             }
 
             // Ghost suggestions indicator
@@ -220,7 +320,7 @@ struct ConnectionFocusModeView: View {
 
                     Text("Finding suggestions...")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
                 .padding(.top, 4)
             } else if viewModel.state.totalGhostCount > 0 {
@@ -248,17 +348,17 @@ struct ConnectionFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
             // Title
             Text(atom.title ?? "Connection")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(1)
 
             // Type badge
@@ -275,51 +375,14 @@ struct ConnectionFocusModeView: View {
             .background(CosmoColors.blockConnection.opacity(0.15), in: Capsule())
 
             Spacer()
-
-            // Refresh suggestions button
-            Button {
-                Task {
-                    await viewModel.generateGhostSuggestions()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 12))
-                    Text("Refresh Suggestions")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.state.isGeneratingGhosts)
-
-            // Command-K button
-            Button {
-                showCommandK = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                    Text("⌘K")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                }
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(
             LinearGradient(
                 colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
+                    DS.bg.opacity(0.95),
+                    DS.bg.opacity(0.8),
                     .clear
                 ],
                 startPoint: .top,
@@ -335,14 +398,14 @@ struct ConnectionFocusModeView: View {
             HStack {
                 Text("CONNECTED SOURCES")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                     .tracking(1)
 
                 Spacer()
 
                 Text("\(viewModel.state.connectedSources.count) sources")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -361,10 +424,10 @@ struct ConnectionFocusModeView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
+                .fill(DS.borderSubtle)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         )
     }
@@ -418,6 +481,10 @@ struct ConnectionFocusModeView: View {
                     addPanelForAtom(noteAtom, at: viewModel.lastTapPosition)
                 }
             }
+
+        case .createIdea, .createTask:
+            // Not used in Connection focus mode
+            break
 
         case .createContent:
             Task {
@@ -516,6 +583,253 @@ struct ConnectionFocusModeView: View {
 
         // Save focus mode state
         viewModel.saveState()
+    }
+
+    // MARK: - Source Drop + Relation Area
+
+    private func dropSourceOnCanvas(_ source: Atom) {
+        // Add as floating block
+        let position = CGPoint(
+            x: 500 + CGFloat.random(in: -60...60),
+            y: 300 + CGFloat.random(in: -60...60)
+        )
+
+        floatingBlocksManager.addBlock(
+            linkedAtomUUID: source.uuid,
+            linkedAtomType: source.type,
+            title: source.title ?? "Untitled",
+            position: position
+        )
+
+        // Show relation area and trigger AI suggestion
+        let state = RelationAreaState(
+            sourceAtom: source,
+            position: position
+        )
+        withAnimation(ProMotionSprings.snappy) {
+            activeRelationArea = state
+        }
+
+        // AI pre-suggestion
+        Task {
+            do {
+                let suggestion = try await coDevEngine.suggestRelation(
+                    sourceMaterial: source,
+                    connection: atom
+                )
+                withAnimation(ProMotionSprings.snappy) {
+                    activeRelationArea?.suggestion = suggestion
+                    activeRelationArea?.highlightedSections = suggestion.suggestedSections
+                    activeRelationArea?.relationNote = suggestion.relationNote
+                }
+            } catch {
+                // Fallback: no pre-suggestion
+            }
+        }
+    }
+
+    // MARK: - Relation Area Overlay
+
+    @ViewBuilder
+    private func relationAreaOverlay(_ state: RelationAreaState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Source info header
+            relationAreaHeader(state)
+
+            // Relation note field
+            relationNoteField(state)
+
+            // Category chips
+            relationChips(state)
+        }
+        .padding(16)
+        .frame(width: 400)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(DS.surfaceCard.opacity(0.95))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(CosmoColors.blockConnection.opacity(0.3), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
+        .position(x: state.position.x, y: state.position.y + 220)
+    }
+
+    @ViewBuilder
+    private func relationAreaHeader(_ state: RelationAreaState) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: sourceIconName(state.sourceAtom.type))
+                .font(.system(size: 12))
+                .foregroundColor(sourceColor(state.sourceAtom.type))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.sourceAtom.title ?? "Untitled")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Text(sourceTypeLabel(state.sourceAtom.type))
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.4)
+                    .foregroundColor(sourceColor(state.sourceAtom.type))
+            }
+
+            Spacer()
+
+            // Dismiss
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    activeRelationArea = nil
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .padding(6)
+                    .background(DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func relationNoteField(_ state: RelationAreaState) -> some View {
+        let noteBinding = Binding<String>(
+            get: { activeRelationArea?.relationNote ?? "" },
+            set: { activeRelationArea?.relationNote = $0 }
+        )
+
+        TextField("How does this relate?", text: noteBinding, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundColor(DS.text)
+            .lineLimit(1...3)
+            .padding(10)
+            .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func relationChips(_ state: RelationAreaState) -> some View {
+        let columns = [
+            GridItem(.flexible()),
+            GridItem(.flexible()),
+            GridItem(.flexible()),
+            GridItem(.flexible())
+        ]
+
+        LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(ConnectionSectionType.allCases, id: \.rawValue) { sectionType in
+                relationChipButton(sectionType, state: state)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func relationChipButton(_ sectionType: ConnectionSectionType, state: RelationAreaState) -> some View {
+        let isHighlighted = state.highlightedSections.contains(sectionType)
+
+        Button {
+            handleChipTap(sectionType, state: state)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: sectionType.icon)
+                    .font(.system(size: 11))
+
+                Text(sectionType.displayName)
+                    .font(.system(size: 8, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundColor(isHighlighted ? sectionType.accentColor : DS.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.borderSubtle)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHighlighted ? sectionType.accentColor.opacity(0.4) : Color.clear,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func handleChipTap(_ sectionType: ConnectionSectionType, state: RelationAreaState) {
+        Task {
+            let itemText = await coDevEngine.generateSectionItem(
+                sourceMaterial: state.sourceAtom,
+                targetSection: sectionType,
+                relationNote: state.relationNote,
+                connection: atom
+            )
+
+            let item = ConnectionItem(
+                content: itemText,
+                sourceAtomUUID: state.sourceAtom.uuid,
+                sourceSnippet: state.sourceAtom.title
+            )
+
+            viewModel.state.addItem(item, toSection: sectionType)
+            viewModel.saveState()
+
+            withAnimation(ProMotionSprings.snappy) {
+                activeRelationArea = nil
+            }
+        }
+    }
+
+    private func sourceIconName(_ type: AtomType) -> String {
+        switch type {
+        case .research: return "magnifyingglass"
+        case .idea: return "lightbulb.fill"
+        case .connection: return "link.circle.fill"
+        default: return "doc.fill"
+        }
+    }
+
+    private func sourceColor(_ type: AtomType) -> Color {
+        switch type {
+        case .research: return CosmoColors.blockResearch
+        case .idea: return CosmoColors.lavender
+        case .connection: return CosmoColors.blockConnection
+        default: return CosmoColors.slate
+        }
+    }
+
+    private func sourceTypeLabel(_ type: AtomType) -> String {
+        switch type {
+        case .research: return "Research"
+        case .idea: return "Insight"
+        case .connection: return "Connection"
+        default: return type.rawValue.capitalized
+        }
+    }
+}
+
+// MARK: - Relation Area State
+
+class RelationAreaState: ObservableObject {
+    let sourceAtom: Atom
+    let position: CGPoint
+    var relationNote: String
+    var highlightedSections: [ConnectionSectionType]
+    var suggestion: RelationSuggestion?
+
+    init(
+        sourceAtom: Atom,
+        position: CGPoint,
+        relationNote: String = "",
+        highlightedSections: [ConnectionSectionType] = []
+    ) {
+        self.sourceAtom = sourceAtom
+        self.position = position
+        self.relationNote = relationNote
+        self.highlightedSections = highlightedSections
     }
 }
 
@@ -747,25 +1061,25 @@ struct ConnectedSourceChip: View {
                 // Title
                 Text(source.atomTitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .lineLimit(1)
 
                 // Connection strength
                 if source.connectionStrength > 1 {
                     Text("×\(source.connectionStrength)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(isHovered ? 0.1 : 0.05))
+                    .fill(isHovered ? DS.borderActive : DS.border)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(
-                                isHovered ? colorForType(source.atomType).opacity(0.5) : Color.white.opacity(0.1),
+                                isHovered ? colorForType(source.atomType).opacity(0.5) : DS.borderActive,
                                 lineWidth: 1
                             )
                     )
@@ -819,3 +1133,44 @@ struct ConnectionFocusModeView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class ConnectionContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private weak var viewModel: ConnectionFocusModeViewModel?
+
+    init(atom: Atom, viewModel: ConnectionFocusModeViewModel) {
+        self.atom = atom
+        self.viewModel = viewModel
+    }
+
+    var contextType: CosmoContextType { .connectionFocusMode }
+
+    var contextSummary: String {
+        "Connection: \(atom.title ?? "Untitled")"
+    }
+
+    var contextData: CosmoContextData {
+        var viewData: [String: String] = [:]
+
+        if let vm = viewModel {
+            let sections = vm.state.sections
+            let totalItems = sections.reduce(0) { $0 + $1.items.count }
+            let filledSections = sections.filter { !$0.items.isEmpty }.count
+            viewData["sectionCount"] = "\(sections.count)"
+            viewData["filledSections"] = "\(filledSections)"
+            viewData["totalItems"] = "\(totalItems)"
+        }
+
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "connection",
+            currentAtomTitle: atom.title,
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}

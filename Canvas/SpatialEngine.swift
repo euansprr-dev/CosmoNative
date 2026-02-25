@@ -77,7 +77,7 @@ class SpatialEngine: ObservableObject {
                 if let createdAt = record.createdAt {
                     metadata["created"] = createdAt
                 }
-                
+
                 let block = CanvasBlock(
                     id: record.id,
                     position: CGPoint(x: CGFloat(record.positionX), y: CGFloat(record.positionY)),
@@ -93,7 +93,37 @@ class SpatialEngine: ObservableObject {
                 loadedBlocks.append(block)
             }
 
-            self.blocks = loadedBlocks
+            // Enrich research blocks with atom metadata (URL, platform, isSwipeFile, etc.)
+            // This ensures hasMediaContent() routes them to MediaBlockView correctly
+            var enrichedBlocks: [CanvasBlock] = []
+            for block in loadedBlocks {
+                if block.entityType == .research {
+                    if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                        // Rebuild with proper metadata from atom, preserving DB position/id/pin state
+                        let fromAtom = CanvasBlock.fromAtom(atom, position: block.position)
+                        let enriched = CanvasBlock(
+                            id: block.id,
+                            position: block.position,
+                            size: fromAtom.size,
+                            isPinned: block.isPinned,
+                            zIndex: block.zIndex,
+                            entityType: fromAtom.entityType,
+                            entityId: fromAtom.entityId,
+                            entityUuid: fromAtom.entityUuid,
+                            title: fromAtom.title,
+                            subtitle: fromAtom.subtitle,
+                            metadata: fromAtom.metadata
+                        )
+                        enrichedBlocks.append(enriched)
+                    } else {
+                        enrichedBlocks.append(block)
+                    }
+                } else {
+                    enrichedBlocks.append(block)
+                }
+            }
+
+            self.blocks = enrichedBlocks
             isLoading = false
             print("✅ Loaded \(loadedBlocks.count) canvas blocks for \(documentType)/\(documentId)")
 

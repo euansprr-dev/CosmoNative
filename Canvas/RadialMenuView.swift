@@ -10,13 +10,26 @@ struct RadialMenuView: View {
     let position: CGPoint
     let onSelect: (RadialAction) -> Void
     let onDismiss: () -> Void
+    let customActions: [RadialAction]?
 
     @State private var isAnimating = false
     @State private var hoveredIndex: Int?
     @State private var isCenterHovered = false  // Hover state for X button
 
-    // 6 block types for Focus Mode canvas creation
-    private let actions: [RadialAction] = [
+    init(
+        position: CGPoint,
+        onSelect: @escaping (RadialAction) -> Void,
+        onDismiss: @escaping () -> Void,
+        customActions: [RadialAction]? = nil
+    ) {
+        self.position = position
+        self.onSelect = onSelect
+        self.onDismiss = onDismiss
+        self.customActions = customActions
+    }
+
+    // Default 6 block types for canvas creation
+    private static let defaultActions: [RadialAction] = [
         RadialAction(
             icon: "note.text",
             label: "Note",
@@ -55,6 +68,10 @@ struct RadialMenuView: View {
         ),
     ]
 
+    private var actions: [RadialAction] {
+        customActions ?? Self.defaultActions
+    }
+
     /// Radius for the circular layout (increased for 6 items)
     private let radius: CGFloat = 95
 
@@ -69,7 +86,7 @@ struct RadialMenuView: View {
                         .overlay(
                             Circle()
                                 .stroke(
-                                    isCenterHovered ? Color.white.opacity(0.2) : Color.white.opacity(0.1),
+                                    isCenterHovered ? DS.textMuted : DS.borderActive,
                                     lineWidth: isCenterHovered ? 1.5 : 1
                                 )
                         )
@@ -78,7 +95,7 @@ struct RadialMenuView: View {
                     // X icon
                     Image(systemName: "xmark")
                         .font(.system(size: isCenterHovered ? 16 : 14, weight: .medium))
-                        .foregroundColor(isCenterHovered ? Color.white.opacity(0.9) : Color.white.opacity(0.6))
+                        .foregroundColor(isCenterHovered ? DS.text : DS.textSecondary)
                 }
                 .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isCenterHovered)
             }
@@ -187,7 +204,7 @@ struct RadialMenuButton: View {
                     // Border with accent color on hover
                     RoundedRectangle(cornerRadius: isHovered ? 14 : 12)
                         .stroke(
-                            isHovered ? action.color : Color.white.opacity(0.1),
+                            isHovered ? action.color : DS.borderActive,
                             lineWidth: isHovered ? 2 : 1
                         )
                         .frame(
@@ -205,7 +222,7 @@ struct RadialMenuButton: View {
                     // Icon
                     Image(systemName: action.icon)
                         .font(.system(size: isHovered ? 18 : 16, weight: .medium))
-                        .foregroundColor(isHovered ? action.color : Color.white.opacity(0.7))
+                        .foregroundColor(isHovered ? action.color : DS.textSecondary)
                 }
                 .shadow(
                     color: isHovered ? action.color.opacity(0.3) : Color.black.opacity(0.3),
@@ -215,7 +232,7 @@ struct RadialMenuButton: View {
                 // Label - always visible but more prominent on hover
                 Text(action.label)
                     .font(.system(size: 11, weight: isHovered ? .semibold : .medium))
-                    .foregroundColor(isHovered ? .white : Color.white.opacity(0.6))
+                    .foregroundColor(isHovered ? DS.text : DS.textSecondary)
             }
         }
         .buttonStyle(.plain)
@@ -260,6 +277,8 @@ struct RadialAction: Identifiable {
 
 enum RadialActionType {
     case createNote
+    case createIdea
+    case createTask
     case createContent
     case createResearch
     case createConnection

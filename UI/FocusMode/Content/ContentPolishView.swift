@@ -16,25 +16,23 @@ struct ContentPolishView: View {
     let onBack: () -> Void
 
     @State private var analysis: WritingAnalysis?
-    @State private var suggestions: [AISuggestion] = []
-    @State private var isGeneratingSuggestions = false
-    @State private var showPolishSettings = false
-    @State private var errorMessage: String?
+    @StateObject private var scorecardEngine = ContentScorecardEngine()
+    @StateObject private var redTeamEngine = RedTeamEngine()
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top: Readability dashboard
-            readabilityDashboard
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .padding(.bottom, 16)
+        HStack(spacing: 0) {
+            // Left: Editor area (readability dashboard + annotated text)
+            VStack(spacing: 0) {
+                // Top: Readability dashboard
+                readabilityDashboard
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 16)
 
-            Divider()
-                .background(Color.white.opacity(0.08))
+                Divider()
+                    .background(DS.border)
 
-            // Center + Right: Annotated text + AI suggestions
-            HStack(spacing: 0) {
-                // Center: Annotated text with legend
+                // Annotated text with legend
                 VStack(spacing: 0) {
                     legendBar
                         .padding(.horizontal, 20)
@@ -51,30 +49,26 @@ struct ContentPolishView: View {
                             .padding(.bottom, 20)
                         } else {
                             Text("Analyzing...")
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(DS.textSecondary)
                                 .padding(40)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity)
-
-                Divider()
-                    .background(Color.white.opacity(0.08))
-
-                // Right: AI suggestions sidebar
-                suggestionsSidebar
-                    .frame(width: 320)
             }
+            .frame(maxWidth: .infinity)
+
+            // Right: Analysis sidebar
+            polishSidebar
         }
-        .background(CosmoColors.thinkspaceVoid)
+        .background(DS.bg)
         .onAppear {
             runAnalysis()
+            autoTriggerScorecard()
+            autoTriggerRedTeam()
         }
         .onChange(of: state.draftContent) { _, _ in
             runAnalysis()
-        }
-        .sheet(isPresented: $showPolishSettings) {
-            polishSettingsSheet
         }
     }
 
@@ -98,12 +92,18 @@ struct ContentPolishView: View {
                     Image(systemName: "chevron.left")
                     Text("Back to Draft")
                 }
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .font(DS.buttonText)
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .fill(Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
         }
@@ -113,7 +113,7 @@ struct ContentPolishView: View {
     private var readabilityCircle: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.08), lineWidth: 6)
+                .stroke(DS.border, lineWidth: 6)
                 .frame(width: 64, height: 64)
 
             Circle()
@@ -128,20 +128,21 @@ struct ContentPolishView: View {
             VStack(spacing: 1) {
                 Text("\(Int(analysis?.fleschKincaidScore ?? 0))")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                 Text(analysis?.readabilityRating.label ?? "")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(readabilityColor)
             }
         }
+        .shadow(color: readabilityColor.opacity(0.12), radius: 8)
     }
 
     private var readabilityColor: Color {
         guard let analysis = analysis else { return .gray }
         switch analysis.readabilityRating {
-        case .good: return Color(hex: "10B981")     // Green
-        case .moderate: return Color(hex: "F59E0B")  // Yellow
-        case .difficult: return Color(hex: "EF4444") // Red
+        case .good: return DS.green
+        case .moderate: return DS.orange
+        case .difficult: return DS.red
         }
     }
 
@@ -160,10 +161,11 @@ struct ContentPolishView: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
-            Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.text)
+            Text(label.uppercased())
+                .font(DS.sectionLabel)
+                .foregroundColor(DS.textMuted)
+                .tracking(0.5)
         }
     }
 
@@ -186,209 +188,497 @@ struct ContentPolishView: View {
                 .frame(width: 8, height: 8)
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
         }
     }
 
-    // MARK: - Suggestions Sidebar
+    // MARK: - Analysis Sidebar
 
-    private var suggestionsSidebar: some View {
+    private let sidebarWidth: CGFloat = 320
+
+    private var polishSidebar: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Text("AI Suggestions")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-
+            HStack(spacing: 8) {
+                Image(systemName: "shield.checkered")
+                    .font(.system(size: 14))
+                    .foregroundColor(DS.accent)
+                Text("Analysis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.text)
                 Spacer()
-
-                Button(action: { showPolishSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            // Generate button
-            Button(action: {
-                Task { await generateSuggestions() }
-            }) {
-                HStack(spacing: 8) {
-                    if isGeneratingSuggestions {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "sparkles")
-                    }
-                    Text(isGeneratingSuggestions ? "Generating..." : "Generate Suggestions")
-                }
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(CosmoColors.blockContent)
-                .cornerRadius(8)
-            }
-            .buttonStyle(.plain)
-            .disabled(isGeneratingSuggestions)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            Divider().background(DS.border)
 
-            if let error = errorMessage {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "EF4444"))
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-
-            Divider()
-                .background(Color.white.opacity(0.08))
-
-            // Suggestion cards
             ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(suggestions) { suggestion in
-                        suggestionCard(suggestion)
-                    }
-
-                    if suggestions.isEmpty && !isGeneratingSuggestions {
-                        VStack(spacing: 8) {
-                            Image(systemName: "text.magnifyingglass")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white.opacity(0.2))
-                            Text("No suggestions yet")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.4))
-                            Text("Click Generate to get AI writing feedback")
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.3))
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                    }
+                VStack(alignment: .leading, spacing: 20) {
+                    writingQualitySection
+                    scorecardSection
+                    redTeamSection
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(16)
             }
         }
-        .background(CosmoColors.thinkspaceSecondary)
+        .frame(width: sidebarWidth)
+        .background(DS.surface.opacity(0.5))
     }
 
-    private func suggestionCard(_ suggestion: AISuggestion) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Original text (strikethrough)
-            Text(suggestion.originalText)
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
-                .strikethrough(true, color: .white.opacity(0.3))
-                .lineLimit(3)
+    // MARK: - Writing Quality Section
 
-            // Arrow
-            Image(systemName: "arrow.down")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.3))
-                .frame(maxWidth: .infinity, alignment: .center)
+    @ViewBuilder
+    private var writingQualitySection: some View {
+        if let analysis = analysis {
+            sidebarSectionHeader(title: "WRITING QUALITY", icon: "text.magnifyingglass")
 
-            // Suggested replacement
-            Text(suggestion.suggestedText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white)
-                .lineLimit(3)
-
-            // Reason
-            Text(suggestion.reason)
-                .font(.system(size: 11).italic())
-                .foregroundColor(.white.opacity(0.6))
-                .lineLimit(2)
-
-            // Accept / Dismiss buttons
-            HStack(spacing: 8) {
-                Button(action: { acceptSuggestion(suggestion) }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark")
-                        Text("Accept")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color(hex: "10B981"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(hex: "10B981").opacity(0.12))
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: { dismissSuggestion(suggestion) }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "xmark")
-                        Text("Dismiss")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color(hex: "EF4444"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(hex: "EF4444").opacity(0.12))
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
+            VStack(spacing: 8) {
+                qualityMetricRow(
+                    label: "Complex Sentences",
+                    count: analysis.complexSentenceRanges.count,
+                    color: .yellow,
+                    description: "15-25 words — consider splitting"
+                )
+                qualityMetricRow(
+                    label: "Very Complex",
+                    count: analysis.veryComplexSentenceRanges.count,
+                    color: .red,
+                    description: ">25 words — hard to read"
+                )
+                qualityMetricRow(
+                    label: "Passive Voice",
+                    count: analysis.passiveVoiceRanges.count,
+                    color: .blue,
+                    description: "Use active voice for clarity"
+                )
+                qualityMetricRow(
+                    label: "Adverbs",
+                    count: analysis.adverbRanges.count,
+                    color: .purple,
+                    description: "Use stronger verbs instead"
+                )
             }
+            .padding(12)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func qualityMetricRow(label: String, count: Int, color: Color, description: String) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(color.opacity(0.6))
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack {
+                    Text(label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.text)
+                    Spacer()
+                    Text("\(count)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(count > 0 ? color : DS.textMuted)
+                }
+                if count > 0 {
+                    Text(description)
+                        .font(.system(size: 9))
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+        }
+    }
+
+    // MARK: - Scorecard Section
+
+    @ViewBuilder
+    private var scorecardSection: some View {
+        sidebarSectionHeader(title: "CONTENT SCORECARD", icon: "chart.bar.fill")
+
+        if scorecardEngine.isEvaluating {
+            scorecardLoadingView
+        } else if let scorecard = state.contentScorecard {
+            scorecardResultsView(scorecard)
+        } else {
+            scorecardEmptyView
+        }
+    }
+
+    private var scorecardLoadingView: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(scorecardEngine.evaluationProgress.isEmpty ? "Evaluating..." : scorecardEngine.evaluationProgress)
+                .font(.system(size: 10))
+                .foregroundColor(DS.textMuted)
         }
         .padding(12)
-        .background(CosmoColors.thinkspaceTertiary)
-        .cornerRadius(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: - Polish Settings Sheet
-
-    private var polishSettingsSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Polish Settings")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer()
-                Button("Done") { showPolishSettings = false }
-                    .foregroundColor(CosmoColors.blockContent)
+    private var scorecardEmptyView: some View {
+        Button {
+            autoTriggerScorecard()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                Text("Run Scorecard")
+                    .font(.system(size: 11, weight: .medium))
             }
-            .padding(.bottom, 4)
+            .foregroundColor(DS.accent)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(DS.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
 
-            Text("Custom system prompt for AI suggestions. This guides the AI's writing style and focus areas.")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
+    @ViewBuilder
+    private func scorecardResultsView(_ scorecard: ContentScorecard) -> some View {
+        VStack(spacing: 8) {
+            scoreRow(label: "Hook", score: scorecard.hookScore.score, suggestions: scorecard.hookScore.suggestions)
+            scoreRow(label: "Copy", score: scorecard.copyScore.score, suggestions: scorecard.copyScore.suggestions)
+            scoreRow(label: "CTA", score: scorecard.ctaScore.score, suggestions: scorecard.ctaScore.suggestions)
 
-            TextEditor(text: $state.polishSystemPrompt)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(.white)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 200)
-                .padding(8)
-                .background(CosmoColors.thinkspaceTertiary)
-                .cornerRadius(8)
+            if scorecard.voiceMatch.percentage >= 0 {
+                voiceMatchRow(scorecard.voiceMatch)
+            }
 
-            Button(action: {
-                state.polishSystemPrompt = PolishEngine.defaultSystemPrompt
-                state.save()
-            }) {
-                Text("Reset to Default")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(6)
+            structuralAlignmentRow(scorecard.structuralAlignment)
+
+            if let originality = scorecard.originalityScore {
+                scoreRow(label: "Originality", score: originality.score, suggestions: originality.suggestions)
+            }
+
+            // Overall confidence
+            HStack {
+                Text("Confidence")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                Spacer()
+                Text("\(scorecard.overallConfidence)%")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .padding(.top, 4)
+
+            // Re-evaluate button
+            Button {
+                state.contentScorecard = nil
+                autoTriggerScorecard()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9))
+                    Text("Re-evaluate")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundColor(DS.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(24)
-        .frame(width: 500, height: 400)
-        .background(CosmoColors.thinkspaceSecondary)
+        .padding(12)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func scoreRow(label: String, score: Double, suggestions: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                Spacer()
+                Text(String(format: "%.1f", score))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(scoreColor(score))
+                Text("/10")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+            }
+
+            // Score bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(DS.border)
+                        .frame(height: 3)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(scoreColor(score))
+                        .frame(width: geo.size.width * CGFloat(min(score / 10.0, 1.0)), height: 3)
+                }
+            }
+            .frame(height: 3)
+
+            // Top suggestion
+            if let suggestion = suggestions.first {
+                Text(suggestion)
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func voiceMatchRow(_ voiceMatch: VoiceMatchResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Voice Match")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                Spacer()
+                Text(String(format: "%.0f%%", voiceMatch.percentage))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(scoreColor(voiceMatch.percentage / 10.0))
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(DS.border)
+                        .frame(height: 3)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(scoreColor(voiceMatch.percentage / 10.0))
+                        .frame(width: geo.size.width * CGFloat(min(voiceMatch.percentage / 100.0, 1.0)), height: 3)
+                }
+            }
+            .frame(height: 3)
+
+            if let drift = voiceMatch.drifts.first {
+                Text(drift.issue)
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func structuralAlignmentRow(_ alignment: StructuralAlignment) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Structure")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                Spacer()
+                Text(String(format: "%.0f%%", alignment.alignmentScore))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(scoreColor(alignment.alignmentScore / 10.0))
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(DS.border)
+                        .frame(height: 3)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(scoreColor(alignment.alignmentScore / 10.0))
+                        .frame(width: geo.size.width * CGFloat(min(alignment.alignmentScore / 100.0, 1.0)), height: 3)
+                }
+            }
+            .frame(height: 3)
+
+            if let suggestion = alignment.suggestions.first {
+                Text(suggestion)
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func scoreColor(_ score: Double) -> Color {
+        if score > 7 { return DS.green }
+        if score >= 5 { return DS.orange }
+        return DS.red
+    }
+
+    // MARK: - Red Team Section
+
+    @ViewBuilder
+    private var redTeamSection: some View {
+        sidebarSectionHeader(title: "RED TEAM", icon: "exclamationmark.shield.fill")
+
+        if redTeamEngine.isEvaluating {
+            redTeamLoadingView
+        } else if let result = state.redTeamResult {
+            redTeamResultsView(result)
+        } else {
+            redTeamEmptyView
+        }
+    }
+
+    private var redTeamLoadingView: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(redTeamEngine.evaluationProgress.isEmpty ? "Analyzing risks..." : redTeamEngine.evaluationProgress)
+                .font(.system(size: 10))
+                .foregroundColor(DS.textMuted)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var redTeamEmptyView: some View {
+        Button {
+            autoTriggerRedTeam()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.shield")
+                    .font(.system(size: 11))
+                Text("Run Red Team")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.red)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func redTeamResultsView(_ result: RedTeamResult) -> some View {
+        VStack(spacing: 8) {
+            if result.cards.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(DS.green)
+                    Text("No significant risks found")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.green)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DS.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                // Summary counts
+                riskSummaryBar(result)
+
+                // Risk cards
+                ForEach(result.cards) { card in
+                    riskCardView(card)
+                }
+            }
+
+            // Re-evaluate button
+            Button {
+                state.redTeamResult = nil
+                autoTriggerRedTeam()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9))
+                    Text("Re-evaluate")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundColor(DS.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(DS.border, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private func riskSummaryBar(_ result: RedTeamResult) -> some View {
+        HStack(spacing: 12) {
+            if result.highRiskCount > 0 {
+                riskCountBadge(count: result.highRiskCount, severity: .high)
+            }
+            if result.mediumRiskCount > 0 {
+                riskCountBadge(count: result.mediumRiskCount, severity: .medium)
+            }
+            Spacer()
+            Text("\(result.cards.count) issue\(result.cards.count == 1 ? "" : "s")")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    private func riskCountBadge(count: Int, severity: RiskSeverity) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(severity.color)
+                .frame(width: 6, height: 6)
+            Text("\(count) \(severity.displayName)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(severity.color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(severity.color.opacity(0.12), in: Capsule())
+    }
+
+    @ViewBuilder
+    private func riskCardView(_ card: RiskCard) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: card.riskType.iconName)
+                    .font(.system(size: 10))
+                    .foregroundColor(card.severity.color)
+
+                Text(card.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(card.severity.displayName.uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(card.severity.color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(card.severity.color.opacity(0.15), in: Capsule())
+            }
+
+            if !card.metric.isEmpty {
+                Text(card.metric)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(2)
+            }
+
+            if !card.recommendation.isEmpty {
+                Text(card.recommendation)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(3)
+            }
+        }
+        .padding(10)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(card.severity.color.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Sidebar Helpers
+
+    private func sidebarSectionHeader(title: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+                .foregroundColor(DS.textMuted)
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(DS.textMuted)
+        }
     }
 
     // MARK: - Actions
@@ -402,40 +692,32 @@ struct ContentPolishView: View {
         analysis = WritingAnalyzer.shared.analyze(text: text)
     }
 
-    private func generateSuggestions() async {
-        guard let analysis = analysis else { return }
-        isGeneratingSuggestions = true
-        errorMessage = nil
-
-        do {
-            let prompt = state.polishSystemPrompt.isEmpty ? nil : state.polishSystemPrompt
-            suggestions = try await PolishEngine.shared.generateSuggestions(
-                text: state.draftContent,
-                analysis: analysis,
-                systemPrompt: prompt
-            )
-        } catch {
-            errorMessage = error.localizedDescription
+    /// Auto-trigger scorecard evaluation when entering Polish phase
+    private func autoTriggerScorecard() {
+        guard state.contentScorecard == nil,
+              !state.draftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
         }
-
-        isGeneratingSuggestions = false
+        Task {
+            do {
+                let scorecard = try await scorecardEngine.evaluate(contentAtom: atom, state: state)
+                state.contentScorecard = scorecard
+            } catch {
+                print("ContentPolishView: scorecard auto-trigger failed: \(error)")
+            }
+        }
     }
 
-    private func acceptSuggestion(_ suggestion: AISuggestion) {
-        // Replace original text with suggested text in the draft
-        if let range = state.draftContent.range(of: suggestion.originalText) {
-            state.draftContent.replaceSubrange(range, with: suggestion.suggestedText)
+    /// Auto-trigger Red Team analysis when entering Polish phase
+    private func autoTriggerRedTeam() {
+        guard state.redTeamResult == nil,
+              !state.draftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
         }
-        suggestions.removeAll { $0.id == suggestion.id }
-        // Persist the change
-        state.lastModified = Date()
-        state.save()
-        // Re-analyze after accepting a change
-        runAnalysis()
-    }
-
-    private func dismissSuggestion(_ suggestion: AISuggestion) {
-        suggestions.removeAll { $0.id == suggestion.id }
+        Task {
+            await redTeamEngine.evaluate(contentAtom: atom, state: state)
+            state.redTeamResult = redTeamEngine.result
+        }
     }
 }
 
@@ -535,3 +817,4 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
         return attributed
     }
 }
+

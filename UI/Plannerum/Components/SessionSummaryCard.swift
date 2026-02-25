@@ -52,14 +52,14 @@ struct SessionSummaryCard: View {
             headerSection
 
             Divider()
-                .background(Color.white.opacity(0.08))
+                .background(DS.border)
 
             // Stats grid
             statsGrid
                 .padding(24)
 
             Divider()
-                .background(Color.white.opacity(0.08))
+                .background(DS.border)
 
             // Notes input
             notesSection
@@ -73,11 +73,11 @@ struct SessionSummaryCard: View {
         .frame(width: 400)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(red: 14/255, green: 14/255, blue: 22/255).opacity(0.98))
+                .fill(DS.surface.opacity(0.98))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.6), radius: 40, y: 16)
     }
@@ -153,7 +153,7 @@ struct SessionSummaryCard: View {
         ZStack {
             // Track
             Circle()
-                .stroke(Color.white.opacity(0.08), lineWidth: 6)
+                .stroke(DS.border, lineWidth: 6)
                 .frame(width: 72, height: 72)
 
             // Fill
@@ -240,7 +240,7 @@ struct SessionSummaryCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -268,12 +268,12 @@ struct SessionSummaryCard: View {
                 .focused($isNotesFocused)
                 .frame(height: 60)
                 .padding(8)
-                .background(Color.white.opacity(0.04))
+                .background(DS.borderSubtle)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            isNotesFocused ? PlannerumColors.primary.opacity(0.4) : Color.white.opacity(0.06),
+                            isNotesFocused ? PlannerumColors.primary.opacity(0.4) : DS.border,
                             lineWidth: 1
                         )
                 )
@@ -333,3 +333,4 @@ struct SessionSummaryCard: View {
         }
     }
 }
+

@@ -47,7 +47,7 @@ struct FocusConnectionLinesLayer: View {
         glowPath.addQuadCurve(to: to, control: control)
         context.stroke(
             glowPath,
-            with: .color(CosmoColors.thinkspacePurple.opacity(0.15)),
+            with: .color(DS.accent.opacity(0.15)),
             style: StrokeStyle(lineWidth: 6, lineCap: .round)
         )
 
@@ -58,7 +58,7 @@ struct FocusConnectionLinesLayer: View {
         let isHovering = connectManager.hoveredTargetId != nil
         context.stroke(
             mainPath,
-            with: .color(CosmoColors.thinkspacePurple.opacity(isHovering ? 0.8 : 0.4)),
+            with: .color(DS.accent.opacity(isHovering ? 0.8 : 0.4)),
             style: StrokeStyle(
                 lineWidth: isHovering ? 2 : 1.5,
                 lineCap: .round,
@@ -77,7 +77,7 @@ struct FocusConnectionLinesLayer: View {
         path.addQuadCurve(to: to, control: control)
         context.stroke(
             path,
-            with: .color(CosmoColors.thinkspacePurple.opacity(0.25)),
+            with: .color(DS.accent.opacity(0.25)),
             style: StrokeStyle(lineWidth: 1, lineCap: .round)
         )
     }

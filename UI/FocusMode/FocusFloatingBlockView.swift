@@ -30,7 +30,7 @@ struct FocusFloatingBlockView: View {
 
             if block.displayState != "collapsed" {
                 Divider()
-                    .background(Color.white.opacity(0.06))
+                    .background(DS.border)
 
                 // Content preview
                 contentPreview
@@ -101,9 +101,9 @@ struct FocusFloatingBlockView: View {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .padding(4)
-                        .background(Color.white.opacity(0.08), in: Circle())
+                        .background(DS.border, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity)
@@ -127,7 +127,7 @@ struct FocusFloatingBlockView: View {
             if let preview = content.preview, !preview.isEmpty {
                 Text(preview)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(block.displayState == "expanded" ? 6 : 3)
             }
 
@@ -141,7 +141,7 @@ struct FocusFloatingBlockView: View {
                             Text("\(content.linkedCount)")
                                 .font(.system(size: 9))
                         }
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                     }
 
                     if content.annotationCount > 0 {
@@ -151,7 +151,7 @@ struct FocusFloatingBlockView: View {
                             Text("\(content.annotationCount)")
                                 .font(.system(size: 9))
                         }
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                     }
                 }
             }
@@ -164,7 +164,7 @@ struct FocusFloatingBlockView: View {
 
     private var blockBackground: some View {
         ZStack {
-            Color(hex: "#1A1A25")
+            DS.surfaceCard
             LinearGradient(
                 colors: [typeConfig.accentColor.opacity(0.03), Color.clear],
                 startPoint: .topLeading,
@@ -177,7 +177,7 @@ struct FocusFloatingBlockView: View {
         if isHovered {
             return typeConfig.accentColor.opacity(0.4)
         }
-        return Color.white.opacity(0.08)
+        return DS.border
     }
 
     // MARK: - Drag Gesture

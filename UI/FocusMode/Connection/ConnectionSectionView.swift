@@ -89,7 +89,7 @@ struct ConnectionSectionView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(
-                    isHovered ? section.type.accentColor.opacity(0.3) : Color.white.opacity(0.1),
+                    isHovered ? section.type.accentColor.opacity(0.3) : DS.borderActive,
                     lineWidth: 1
                 )
         )
@@ -120,11 +120,11 @@ struct ConnectionSectionView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(section.type.displayName)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
 
                     Text(section.type.promptQuestion)
                         .font(.system(size: 11))
-                        .foregroundColor(Color.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 Spacer()
@@ -147,13 +147,13 @@ struct ConnectionSectionView: View {
                         Text("\(section.ghostSuggestions.count)")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(Color.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 }
 
                 // Expand/collapse chevron
                 Image(systemName: section.isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -192,7 +192,7 @@ struct ConnectionSectionView: View {
             TextField("Add item...", text: $newItemText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .focused($isNewItemFocused)
                 .lineLimit(1...3)
                 .onSubmit {
@@ -205,7 +205,7 @@ struct ConnectionSectionView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
             .buttonStyle(.plain)
 
@@ -223,14 +223,14 @@ struct ConnectionSectionView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Helpers
 
     private var sectionBackground: some View {
         ZStack {
-            Color(hex: "#1A1A25")
+            DS.surfaceCard
 
             // Subtle accent gradient when expanded
             if section.isExpanded {
@@ -286,7 +286,7 @@ struct ConnectionItemRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.content)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(DS.text)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -317,14 +317,14 @@ struct ConnectionItemRow: View {
                     Button(action: onEdit) {
                         Image(systemName: "pencil")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                     }
                     .buttonStyle(.plain)
 
                     Button(action: onDelete) {
                         Image(systemName: "trash")
                             .font(.system(size: 11))
-                            .foregroundColor(Color.red.opacity(0.6))
+                            .foregroundColor(DS.red.opacity(0.6))
                     }
                     .buttonStyle(.plain)
                 }
@@ -335,7 +335,7 @@ struct ConnectionItemRow: View {
         .padding(.horizontal, 10)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? Color.white.opacity(0.03) : Color.clear)
+                .fill(isHovered ? DS.borderSubtle : Color.clear)
         )
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) {
@@ -369,7 +369,7 @@ struct GhostSuggestionRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(suggestion.content)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .italic()
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
@@ -409,7 +409,7 @@ struct GhostSuggestionRow: View {
                             Text("Dismiss")
                                 .font(.system(size: 10))
                         }
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 
@@ -418,7 +418,7 @@ struct GhostSuggestionRow: View {
                     // Confidence
                     Text("\(suggestion.confidencePercent)% match")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
 
@@ -452,7 +452,7 @@ struct GhostSuggestionRow: View {
 struct ConnectionSectionView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {

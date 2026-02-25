@@ -67,7 +67,7 @@ public struct SanctuaryBackgroundView: View {
                 // Base gradient
                 LinearGradient(
                     colors: [
-                        Color(hex: "#0A0A0F"),
+                        DS.bg,
                         Color(hex: "#0F0A1A"),
                         Color(hex: "#0A0F1A")
                     ],
@@ -78,7 +78,7 @@ public struct SanctuaryBackgroundView: View {
                 // Radial glow from center
                 RadialGradient(
                     colors: [
-                        Color(hex: "#6366F1").opacity(0.15),
+                        SanctuaryColors.cognitive.opacity(0.15),
                         Color.clear
                     ],
                     center: .center,
@@ -206,9 +206,9 @@ public struct CausalityLineView: View {
     public var body: some View {
         Canvas { context, size in
             let gradient = Gradient(colors: [
-                Color.white.opacity(0),
-                Color.white.opacity(strength * 0.6),
-                Color.white.opacity(0)
+                DS.text.opacity(0),
+                DS.text.opacity(strength * 0.6),
+                DS.text.opacity(0)
             ])
 
             // Animated gradient position
@@ -248,7 +248,7 @@ public struct CausalityLineView: View {
                     width: 6,
                     height: 6
                 )),
-                with: .color(.white.opacity(strength * 0.8))
+                with: .color(DS.text.opacity(strength * 0.8))
             )
         }
     }

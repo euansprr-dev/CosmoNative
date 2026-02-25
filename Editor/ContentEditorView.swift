@@ -308,3 +308,10 @@ struct ContentEditorView: View {
         return CosmoMarkdown.parse(text, fontSize: 16)
     }
 }
+
+// MARK: - Preview
+
+#Preview("Content Editor") {
+    ContentEditorView(contentId: -1, presentation: .focus)
+        .frame(width: 800, height: 600)
+}

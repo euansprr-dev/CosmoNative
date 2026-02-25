@@ -158,7 +158,7 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
                 canvasSize = newSize
             }
         }
-        .background(CosmoColors.thinkspaceVoid)
+        .background(DS.bg)
         // Note: No .clipped() to allow transcript content to overflow visually
         .gesture(panGesture)
         .gesture(zoomGesture)
@@ -277,15 +277,15 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
         ZStack {
             // Background
             RoundedRectangle(cornerRadius: 8)
-                .fill(CosmoColors.thinkspaceTertiary.opacity(0.9))
+                .fill(DS.surfaceElevated.opacity(0.9))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(CosmoColors.thinkspaceGrid, lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
 
             // Viewport indicator
             Rectangle()
-                .stroke(CosmoColors.thinkspacePurple.opacity(0.8), lineWidth: 2)
+                .stroke(DS.accent.opacity(0.8), lineWidth: 2)
                 .frame(
                     width: max(20, 150 / effectiveZoom),
                     height: max(15, 100 / effectiveZoom)
@@ -297,7 +297,7 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
 
             // Center dot
             Circle()
-                .fill(CosmoColors.thinkspacePurple)
+                .fill(DS.accent)
                 .frame(width: 4, height: 4)
         }
         .shadow(color: Color.black.opacity(0.3), radius: 8)
@@ -356,7 +356,7 @@ struct CanvasGridView: View {
                             width: dotSize,
                             height: dotSize
                         )),
-                        with: .color(CosmoColors.thinkspaceGrid.opacity(0.15))
+                        with: .color(DS.border.opacity(0.15))
                     )
 
                     y += scaledSpacing
@@ -396,17 +396,17 @@ private struct FocusModeRecenterButton: View {
                 .padding(.vertical, 8)
                 .background(
                     Capsule()
-                        .fill(CosmoColors.thinkspaceTertiary)
+                        .fill(DS.surfaceElevated)
                         .overlay(
                             Capsule()
                                 .stroke(
-                                    isHovered ? CosmoColors.thinkspacePurple : CosmoColors.thinkspaceGrid,
+                                    isHovered ? DS.accent : DS.border,
                                     lineWidth: 1
                                 )
                         )
                 )
                 .shadow(
-                    color: isHovered ? CosmoColors.thinkspacePurple.opacity(0.3) : Color.black.opacity(0.2),
+                    color: isHovered ? DS.accent.opacity(0.3) : Color.black.opacity(0.2),
                     radius: isHovered ? 8 : 4
                 )
             }
@@ -475,7 +475,7 @@ struct InfiniteCanvasView_Previews: PreviewProvider {
                 anchoredContent: {
                     // Sample anchored content
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(CosmoColors.thinkspaceTertiary)
+                        .fill(DS.surfaceElevated)
                         .frame(width: 400, height: 300)
                         .overlay(
                             Text("Anchored Content")

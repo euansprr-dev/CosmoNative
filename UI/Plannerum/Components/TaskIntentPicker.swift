@@ -178,14 +178,14 @@ public struct TaskIntentPicker: View {
                     isSelected
                         ? item.color.opacity(0.15)
                         : isHovered
-                            ? Color.white.opacity(0.06)
-                            : Color.white.opacity(0.03)
+                            ? DS.border
+                            : DS.borderSubtle
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
                 .strokeBorder(
-                    isSelected ? item.color.opacity(0.4) : Color.white.opacity(0.08),
+                    isSelected ? item.color.opacity(0.4) : DS.border,
                     lineWidth: 1
                 )
         )
@@ -265,7 +265,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -307,7 +307,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
+        .background(DS.surface.opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -340,7 +340,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.03))
+            .background(DS.borderSubtle)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -396,7 +396,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -438,7 +438,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
+        .background(DS.surface.opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -469,7 +469,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.03))
+            .background(DS.borderSubtle)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -525,7 +525,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -567,7 +567,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
+        .background(DS.surface.opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -598,7 +598,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.03))
+            .background(DS.borderSubtle)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)

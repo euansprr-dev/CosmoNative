@@ -36,6 +36,10 @@ struct SwipeStudyFocusModeView: View {
     @State private var igVideoFailed: Bool = false
     @State private var igMediaData: InstagramMediaData?
 
+    // Carousel state
+    @State private var carouselCurrentIndex: Int = 0
+    @State private var isCarouselContent: Bool = false
+
     // Instagram transcript state
     @State private var instagramTranscript: String = ""
     @State private var transcriptSaveTask: Task<Void, Never>?
@@ -74,23 +78,26 @@ struct SwipeStudyFocusModeView: View {
     // Taxonomy management sheet
     @State private var showTaxonomyManagement = false
 
+    // Copy transcript feedback
+    @State private var copiedTranscript = false
+
     private let gold = Color(hex: "#FFD700")
 
     var body: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             if let displayAtom = currentAtom {
                 VStack(spacing: 0) {
                     topBar(atom: displayAtom)
 
-                    Divider().background(Color.white.opacity(0.1))
+                    Divider().background(DS.borderActive)
 
                     HStack(spacing: 0) {
                         leftPanel(atom: displayAtom)
                             .frame(maxWidth: .infinity)
 
-                        Divider().background(Color.white.opacity(0.1))
+                        Divider().background(DS.borderActive)
 
                         rightPanel
                             .frame(width: NSScreen.main.map { $0.frame.width * 0.45 } ?? 600)
@@ -108,12 +115,17 @@ struct SwipeStudyFocusModeView: View {
                     if isAnalyzing {
                         Text("Analyzing swipe file...")
                             .font(.system(size: 13))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                     }
                 }
             }
         }
-        .onAppear { loadAtom() }
+        .onAppear {
+            loadAtom()
+            // Register context provider for global Cosmo window
+            let provider = SwipeStudyContextProvider(atom: atom, analysisRef: { [self] in self.analysis }, transcriptRef: { [self] in self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText })
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
+        }
         .onKeyPress(.escape) {
             onClose()
             return .handled
@@ -190,16 +202,16 @@ struct SwipeStudyFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
             Text(atom.title ?? "Swipe File")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(1)
 
             HStack(spacing: 4) {
@@ -274,9 +286,9 @@ struct SwipeStudyFocusModeView: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                     .padding(8)
-                    .background(Color.white.opacity(0.06), in: Circle())
+                    .background(DS.border, in: Circle())
             }
             .buttonStyle(.plain)
             .help("Delete swipe")
@@ -294,9 +306,9 @@ struct SwipeStudyFocusModeView: View {
             } label: {
                 Image(systemName: "tag.fill")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .padding(8)
-                    .background(Color.white.opacity(0.06), in: Circle())
+                    .background(DS.border, in: Circle())
             }
             .buttonStyle(.plain)
             .help("Taxonomy Management")
@@ -311,8 +323,8 @@ struct SwipeStudyFocusModeView: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color(hex: "#0A0A0F").opacity(0.95),
-                    Color(hex: "#0A0A0F").opacity(0.8),
+                    DS.bg.opacity(0.95),
+                    DS.bg.opacity(0.8),
                     .clear
                 ],
                 startPoint: .top,
@@ -399,7 +411,7 @@ struct SwipeStudyFocusModeView: View {
 
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 48))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(DS.text)
                             .shadow(color: .black.opacity(0.4), radius: 8)
                     }
                 }
@@ -415,7 +427,60 @@ struct SwipeStudyFocusModeView: View {
     @ViewBuilder
     private func instagramContentDisplay(atom: Atom, richContent: ResearchRichContent?) -> some View {
         VStack(spacing: 12) {
-            // Native video player
+            // Carousel or video content
+            if isCarouselContent, let items = igMediaData?.carouselItems, !items.isEmpty {
+                carouselImagePager(items: items)
+            } else if isCarouselContent, let items = richContent?.instagramData?.carouselItems, !items.isEmpty {
+                carouselImagePager(items: items)
+            } else if isCarouselContent {
+                // Carousel/post with no items loaded yet — show square placeholder
+                ZStack {
+                    igThumbnailView(atom: atom)
+
+                    if igIsExtractingVideo {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .tint(.white)
+                            Text("Loading carousel...")
+                                .font(.system(size: 11))
+                                .foregroundColor(DS.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black.opacity(0.4))
+                    } else {
+                        VStack(spacing: 12) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 32))
+                                .foregroundColor(DS.textSecondary)
+                            Text("Carousel images not loaded")
+                                .font(.system(size: 12))
+                                .foregroundColor(DS.textSecondary)
+                            if let url = atom.url, let openURL = URL(string: url) {
+                                Button {
+                                    NSWorkspace.shared.open(openURL)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.up.right.square")
+                                            .font(.system(size: 11))
+                                        Text("Open in Instagram")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(Color(hex: "#E4405F"), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black.opacity(0.5))
+                    }
+                }
+                .frame(width: 350, height: 350)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            } else {
+            // Native video player (reels only)
             ZStack {
                 if igIsExtractingVideo && igPlayer == nil {
                     // Extracting state — thumbnail + spinner
@@ -428,7 +493,7 @@ struct SwipeStudyFocusModeView: View {
                                     .tint(.white)
                                 Text("Loading video...")
                                     .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .foregroundColor(DS.textSecondary)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(.black.opacity(0.4))
@@ -468,7 +533,7 @@ struct SwipeStudyFocusModeView: View {
                                             .tint(.white)
                                         Text("Refreshing video link...")
                                             .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.7))
+                                            .foregroundColor(DS.textSecondary)
                                     }
                                 )
                         }
@@ -477,7 +542,7 @@ struct SwipeStudyFocusModeView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
+                            .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
                     .onTapGesture {
                         toggleIGPlayback()
@@ -491,10 +556,10 @@ struct SwipeStudyFocusModeView: View {
                             VStack(spacing: 12) {
                                 Image(systemName: "video.slash")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(0.5))
+                                    .foregroundColor(DS.textSecondary)
                                 Text("Could not load video")
                                     .font(.system(size: 12))
-                                    .foregroundColor(.white.opacity(0.6))
+                                    .foregroundColor(DS.textSecondary)
                                 if let url = atom.url, let openURL = URL(string: url) {
                                     Button {
                                         NSWorkspace.shared.open(openURL)
@@ -526,21 +591,35 @@ struct SwipeStudyFocusModeView: View {
             }
 
             // Playback controls (only when player is active)
-            if igPlayer != nil {
+            if !isCarouselContent, igPlayer != nil {
                 igPlaybackControls
             }
+            } // end else (video player branch)
 
             // Metadata footer
             igMetadataFooter(atom: atom)
         }
         .onAppear {
             instagramTranscript = richContent?.transcript ?? ""
-            loadSlides(from: richContent?.transcript ?? "")
-            extractInstagramVideo(atom: atom)
+            // Prefer structured slides from swipeAnalysis (preserves correct slide boundaries)
+            if let savedSlides = (currentAtom ?? atom).swipeAnalysis?.transcriptSlides, !savedSlides.isEmpty {
+                transcriptSlides = savedSlides
+            } else {
+                loadSlides(from: richContent?.transcript ?? "")
+            }
+            // Pre-detect carousel/post from URL pattern (avoids "loading video" flash).
+            // Only use URL — sourceType can be stale. Extraction is the source of truth.
+            if let url = atom.url?.lowercased(),
+               url.contains("/p/") && !url.contains("/reel/") {
+                isCarouselContent = true
+            }
+            // Only extract if player doesn't already exist (avoid re-downloading on view reappear)
+            if igPlayer == nil {
+                extractInstagramVideo(atom: atom)
+            }
         }
         .onDisappear {
             igPlayer?.pause()
-            igPlayer = nil
         }
     }
 
@@ -573,9 +652,119 @@ struct SwipeStudyFocusModeView: View {
                 .overlay(
                     Image(systemName: "camera.fill")
                         .font(.system(size: 32))
-                        .foregroundColor(.white.opacity(0.2))
+                        .foregroundColor(DS.textMuted)
                 )
         }
+    }
+
+    // MARK: - Carousel Image Pager
+
+    @ViewBuilder
+    private func carouselImagePager(items: [CarouselItem]) -> some View {
+        VStack(spacing: 8) {
+            ZStack {
+                // Current image
+                carouselItemView(item: items[carouselCurrentIndex])
+
+                // Navigation arrows
+                HStack {
+                    // Left arrow
+                    if carouselCurrentIndex > 0 {
+                        Button {
+                            withAnimation(ProMotionSprings.snappy) {
+                                carouselCurrentIndex -= 1
+                            }
+                        } label: {
+                            carouselNavArrow(systemName: "chevron.left")
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Spacer()
+
+                    // Right arrow
+                    if carouselCurrentIndex < items.count - 1 {
+                        Button {
+                            withAnimation(ProMotionSprings.snappy) {
+                                carouselCurrentIndex += 1
+                            }
+                        } label: {
+                            carouselNavArrow(systemName: "chevron.right")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .frame(width: 350, height: 350)
+            .background(Color.black)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(DS.borderActive, lineWidth: 0.5)
+            )
+
+            // Dot indicators + counter
+            HStack(spacing: 6) {
+                ForEach(0..<items.count, id: \.self) { index in
+                    Circle()
+                        .fill(index == carouselCurrentIndex ? gold : DS.textMuted)
+                        .frame(width: index == carouselCurrentIndex ? 8 : 6,
+                               height: index == carouselCurrentIndex ? 8 : 6)
+                        .animation(ProMotionSprings.snappy, value: carouselCurrentIndex)
+                }
+            }
+
+            Text("\(carouselCurrentIndex + 1) / \(items.count)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(DS.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func carouselItemView(item: CarouselItem) -> some View {
+        AsyncImage(url: item.mediaURL) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            case .failure:
+                Rectangle()
+                    .fill(Color.black.opacity(0.3))
+                    .overlay(
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo")
+                                .font(.system(size: 24))
+                                .foregroundColor(DS.textMuted)
+                            Text("Failed to load")
+                                .font(.system(size: 11))
+                                .foregroundColor(DS.textMuted)
+                        }
+                    )
+            case .empty:
+                Rectangle()
+                    .fill(Color.black.opacity(0.3))
+                    .overlay(
+                        ProgressView()
+                            .tint(.white)
+                    )
+            @unknown default:
+                Rectangle()
+                    .fill(Color.black.opacity(0.3))
+            }
+        }
+        .frame(maxWidth: 350, maxHeight: 350)
+    }
+
+    private func carouselNavArrow(systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 36, height: 36)
+            .background(.ultraThinMaterial)
+            .clipShape(Circle())
+            .shadow(color: .black.opacity(0.3), radius: 4)
     }
 
     // MARK: - IG Playback Controls
@@ -587,7 +776,7 @@ struct SwipeStudyFocusModeView: View {
                 ZStack(alignment: .leading) {
                     // Track
                     Capsule()
-                        .fill(Color.white.opacity(0.15))
+                        .fill(DS.borderActive)
                         .frame(height: 4)
 
                     // Progress
@@ -623,19 +812,19 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     Image(systemName: igIsPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                 }
                 .buttonStyle(.plain)
 
                 Text(formatIGTime(currentTimestamp))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
                 Text(formatIGTime(igMediaData?.duration ?? videoDuration))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
         .frame(width: 280)
@@ -648,26 +837,26 @@ struct SwipeStudyFocusModeView: View {
         HStack(spacing: 8) {
             Image(systemName: "camera.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             if let username = igMediaData?.authorUsername {
                 Text("@\(username)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             } else if let author = atom.richContent?.author, !author.isEmpty {
                 Text("@\(author)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             }
 
             Text("·")
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
-            Text("Reel")
+            Text(contentTypeLabel(atom: atom))
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color(hex: "#E4405F"))
+                .foregroundColor(isCarouselContent ? gold : Color(hex: "#E4405F"))
         }
-        .frame(width: 280)
+        .frame(width: isCarouselContent ? 350 : 280)
         .padding(.horizontal, 8)
     }
 
@@ -685,33 +874,213 @@ struct SwipeStudyFocusModeView: View {
                 return
             }
 
+            let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
+
+            // Fast path: check stored carousel items (regardless of content type label —
+            // older atoms may have been saved as .image even if they contain carousel items)
+            if let storedIGData = atom.richContent?.instagramData,
+               let items = storedIGData.carouselItems, !items.isEmpty {
+                isCarouselContent = true
+                // Populate igMediaData so the carousel pager has items to display
+                igMediaData = InstagramMediaData(
+                    originalURL: url,
+                    contentType: .carousel,
+                    videoURL: nil,
+                    thumbnailURL: nil,
+                    duration: nil,
+                    authorUsername: storedIGData.authorUsername,
+                    caption: storedIGData.caption,
+                    carouselItems: items,
+                    extractedAt: storedIGData.extractedAt ?? Date()
+                )
+                igIsExtractingVideo = false
+
+                let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+                let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+                if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
+                    await autoTranscribeCarousel(items: items)
+                }
+                return
+            }
+
+            // Fast path: if we already have the video downloaded locally, skip extraction entirely
+            if let shortcode, let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
+                print("SwipeStudy: Using cached local video for \(shortcode)")
+                isCarouselContent = false // This is a video, not a carousel
+                setupIGPlayer(videoURL: localURL)
+
+                // Auto-transcribe only if no transcript exists and not already processing in background
+                let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+                let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+                if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
+                    await autoTranscribe(videoURL: localURL, duration: videoDuration > 0 ? videoDuration : 60)
+                } else if isBackgroundProcessing {
+                    pollForBackgroundCompletion()
+                }
+
+                igIsExtractingVideo = false
+                return
+            }
+
+            // Slow path: extract media data from Instagram, then download video
             do {
                 let mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
                 igMediaData = mediaData
 
+                // Persist caption to atom if we got one from live extraction but atom doesn't have it
+                if let caption = mediaData.caption, !caption.isEmpty,
+                   (currentAtom ?? atom).richContent?.instagramData?.caption == nil {
+                    persistCaptionToAtom(caption)
+                }
+
+                // Carousel branch — show image pager instead of video player
+                // Check carousel items regardless of content type label (embed page may return .image for carousels)
+                if let items = mediaData.carouselItems, !items.isEmpty {
+                    isCarouselContent = true
+                    igIsExtractingVideo = false
+
+                    let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                    let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+                    if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
+                        await autoTranscribeCarousel(items: items)
+                    }
+                    return
+                }
+
                 if let videoURL = mediaData.videoURL {
-                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    isCarouselContent = false // Has video → reel, not carousel
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL, shortcode: shortcode)
                     setupIGPlayer(videoURL: playableURL)
                     if let dur = mediaData.duration {
                         videoDuration = dur
                     }
 
-                    // Auto-transcribe if slides are empty
-                    let hasContent = transcriptSlides.contains { !$0.text.isEmpty }
-                    if !hasContent {
+                    // Auto-transcribe only if no transcript exists and not already processing in background
+                    let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                    let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+                    if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
                         await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
+                    } else if isBackgroundProcessing {
+                        pollForBackgroundCompletion()
                     }
+                } else if let thumbnailURL = mediaData.thumbnailURL {
+                    // Image post — no video but has thumbnail. Show as single-image carousel.
+                    print("SwipeStudy: Instagram image post (no video), showing thumbnail as image content")
+                    let singleItem = CarouselItem(
+                        index: 0,
+                        mediaType: .image,
+                        mediaURL: thumbnailURL
+                    )
+                    // Update igMediaData with a synthetic carousel item so the pager can display it
+                    igMediaData = InstagramMediaData(
+                        originalURL: mediaData.originalURL,
+                        contentType: .carousel,
+                        videoURL: nil,
+                        thumbnailURL: thumbnailURL,
+                        duration: nil,
+                        authorUsername: mediaData.authorUsername,
+                        caption: mediaData.caption,
+                        carouselItems: [singleItem],
+                        extractedAt: mediaData.extractedAt
+                    )
+                    isCarouselContent = true
+
+                    // Auto-transcribe the single image
+                    let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                    let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
+                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+                    if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
+                        await autoTranscribeCarousel(items: [singleItem])
+                    }
+                } else if isPostURL(urlString) {
+                    // Post/carousel URL with no video — expected. Show as carousel placeholder.
+                    print("SwipeStudy: Instagram post extraction returned no media — showing carousel placeholder")
+                    isCarouselContent = true
                 } else {
-                    // Image post or extraction returned no video
-                    print("SwipeStudy: Instagram extraction returned no video URL (type: \(mediaData.contentType), thumb: \(mediaData.thumbnailURL?.absoluteString ?? "nil"))")
+                    // Reel URL but no video — truly failed
+                    print("SwipeStudy: Instagram extraction returned no video URL and no thumbnail")
                     igVideoFailed = true
                 }
             } catch {
                 print("SwipeStudy: Instagram video extraction failed: \(error)")
-                igVideoFailed = true
+                if isPostURL(urlString) {
+                    // Post/carousel URL — don't show "Could not load video"
+                    isCarouselContent = true
+                } else {
+                    igVideoFailed = true
+                }
             }
 
             igIsExtractingVideo = false
+        }
+    }
+
+    /// Check if URL is an Instagram post/carousel (not a reel). Post URLs use /p/, reels use /reel/.
+    private func isPostURL(_ urlString: String) -> Bool {
+        let lower = urlString.lowercased()
+        return lower.contains("/p/") && !lower.contains("/reel/")
+    }
+
+    /// Determine the content type label for the metadata footer
+    private func contentTypeLabel(atom: Atom) -> String {
+        if isCarouselContent { return "Carousel" }
+        if let url = atom.url?.lowercased(), url.contains("/p/") { return "Post" }
+        return "Reel"
+    }
+
+    // MARK: - Re-Transcribe
+
+    /// Force re-run auto-transcription (user tapped "Re-transcribe" button)
+    private func retranscribeInstagram(atom: Atom) {
+        guard !isAutoTranscribing else { return }
+
+        // Carousel branch — re-transcribe carousel images
+        if isCarouselContent {
+            let items = igMediaData?.carouselItems ?? atom.richContent?.instagramData?.carouselItems ?? []
+            guard !items.isEmpty else { return }
+            Task {
+                await autoTranscribeCarousel(items: items)
+            }
+            return
+        }
+
+        // If we already have a player URL, re-transcribe directly
+        if let player = igPlayer, let currentItem = player.currentItem,
+           let asset = currentItem.asset as? AVURLAsset {
+            let duration = igMediaData?.duration ?? videoDuration
+            Task {
+                await autoTranscribe(videoURL: asset.url, duration: duration > 0 ? duration : 60)
+            }
+            return
+        }
+
+        // Otherwise re-extract video + transcribe
+        guard let urlString = atom.url, let url = URL(string: urlString) else { return }
+        Task {
+            do {
+                let mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
+                igMediaData = mediaData
+                if let videoURL = mediaData.videoURL {
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
+                }
+            } catch {
+                print("SwipeStudy: Re-transcribe failed: \(error)")
+            }
         }
     }
 
@@ -732,6 +1101,8 @@ struct SwipeStudyFocusModeView: View {
                 self.autoTranscriptionProgress = "Reading text... \(Int(pct * 100))%"
             case .recognizingSpeech(let pct):
                 self.autoTranscriptionProgress = "Recognizing speech... \(Int(pct * 100))%"
+            case .analyzingWithAI(let pct):
+                self.autoTranscriptionProgress = "AI analyzing frames... \(Int(pct * 100))%"
             case .mergingResults:
                 self.autoTranscriptionProgress = "Merging results..."
             case .complete:
@@ -744,19 +1115,109 @@ struct SwipeStudyFocusModeView: View {
         if result.contentType != .empty {
             var finalSlides = result.slides
 
-            // Claude cleanup if OCR confidence is low
-            if result.averageOCRConfidence < 0.7 && result.contentType != .voiceoverOnly {
-                autoTranscriptionProgress = "Cleaning up text..."
+            // Skip Claude cleanup for Gemini results (already filtered by prompt)
+            let needsCleanup = result.contentType != .voiceoverOnly
+                && !finalSlides.allSatisfy({ $0.source == .geminiVision })
+            if needsCleanup {
+                autoTranscriptionProgress = "Cleaning up with AI..."
                 if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: finalSlides) {
                     finalSlides = cleaned
                 }
             }
 
             transcriptSlides = finalSlides
-            saveSlideTranscript()
+            cleanAllSlideLineBreaks()
+            await saveSlideTranscriptAsync()
 
             // Auto-run analysis after successful auto-transcription so the right panel
             // populates without requiring a manual "Analyze" click.
+            if shouldAutoAnalyzeAfterTranscription() {
+                triggerManualAnalysis()
+            }
+        }
+
+        isAutoTranscribing = false
+    }
+
+    /// Poll for background processing completion and reload atom when done
+    private func pollForBackgroundCompletion() {
+        autoTranscriptionProgress = "Processing in background..."
+        isAutoTranscribing = true
+
+        Task {
+            let uuid = (currentAtom ?? atom).uuid
+            while SwipeProcessingService.shared.isProcessing(uuid: uuid) {
+                try? await Task.sleep(for: .seconds(2))
+            }
+
+            // Reload atom with fresh data
+            if let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                currentAtom = fresh
+                if let transcript = fresh.richContent?.transcript, !transcript.isEmpty {
+                    transcriptText = transcript
+                    instagramTranscript = transcript
+                }
+                if let sa = fresh.swipeAnalysis {
+                    analysis = sa
+                    // Prefer structured slides from swipeAnalysis over plain text split
+                    if let slides = sa.transcriptSlides, !slides.isEmpty {
+                        transcriptSlides = slides
+                        cleanAllSlideLineBreaks()
+                    } else if let transcript = fresh.richContent?.transcript, !transcript.isEmpty {
+                        loadSlides(from: transcript)
+                    }
+                } else if let transcript = fresh.richContent?.transcript, !transcript.isEmpty {
+                    loadSlides(from: transcript)
+                }
+                // Detect carousel from updated atom
+                if fresh.richContent?.sourceType == .instagramCarousel {
+                    isCarouselContent = true
+                }
+            }
+
+            isAutoTranscribing = false
+            autoTranscriptionProgress = ""
+        }
+    }
+
+    /// Auto-transcribe carousel images (mirrors autoTranscribe but for image slides)
+    private func autoTranscribeCarousel(items: [CarouselItem]) async {
+        isAutoTranscribing = true
+        autoTranscriptionProgress = "Starting carousel transcription..."
+
+        let result = await InstagramAutoTranscriber.shared.transcribeCarousel(
+            items: items
+        ) { [self] progress in
+            switch progress {
+            case .recognizingText(let pct):
+                self.autoTranscriptionProgress = "Reading slide text... \(Int(pct * 100))%"
+            case .analyzingWithAI(let pct):
+                self.autoTranscriptionProgress = "AI analyzing slides... \(Int(pct * 100))%"
+            case .complete:
+                self.autoTranscriptionProgress = "Complete"
+            default:
+                break
+            }
+        }
+
+        autoTranscriptionContentType = result.contentType
+
+        if result.contentType != .empty {
+            var finalSlides = result.slides
+
+            // Claude cleanup for non-Gemini results
+            let needsCleanup = !finalSlides.allSatisfy({ $0.source == .geminiVision })
+            if needsCleanup {
+                autoTranscriptionProgress = "Cleaning up with AI..."
+                if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: finalSlides) {
+                    finalSlides = cleaned
+                }
+            }
+
+            transcriptSlides = finalSlides
+            cleanAllSlideLineBreaks()
+            await saveSlideTranscriptAsync()
+
             if shouldAutoAnalyzeAfterTranscription() {
                 triggerManualAnalysis()
             }
@@ -770,7 +1231,9 @@ struct SwipeStudyFocusModeView: View {
             return false
         }
         guard !isAnalyzing, !isDeepAnalyzing else { return false }
-        if let analysis, analysis.isFullyAnalyzed { return false }
+        // Always re-analyze after auto-transcription completes, even if a previous analysis
+        // exists. The previous analysis may have used the caption as the hook instead of the
+        // first transcribed slide text.
         return true
     }
 
@@ -793,6 +1256,15 @@ struct SwipeStudyFocusModeView: View {
         }
 
         igPlayer = player
+
+        // Load actual duration from the video file for scrubbing
+        // (igMediaData?.duration may be nil in the fast-path when using a cached local file)
+        Task {
+            let asset = AVURLAsset(url: videoURL)
+            if let dur = try? await asset.load(.duration), dur.seconds > 0.5 {
+                videoDuration = dur.seconds
+            }
+        }
     }
 
     private func toggleIGPlayback() {
@@ -858,16 +1330,61 @@ struct SwipeStudyFocusModeView: View {
                 Text("TRANSCRIPT")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 if let contentType = autoTranscriptionContentType {
                     contentTypeBadge(contentType)
                 }
 
                 Spacer()
+
+                // Re-transcribe button
+                if !isAutoTranscribing {
+                    Button {
+                        retranscribeInstagram(atom: atom)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.trianglehead.clockwise")
+                                .font(.system(size: 9))
+                            Text("Re-transcribe")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .foregroundColor(DS.textMuted)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(DS.border, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Copy transcript button
+                Button {
+                    let formatted = transcriptSlides.map { slide in
+                        "Slide \(slide.slideNumber)\n\(slide.text)"
+                    }.joined(separator: "\n\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(formatted, forType: .string)
+                    copiedTranscript = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        copiedTranscript = false
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: copiedTranscript ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9))
+                        Text(copiedTranscript ? "Copied" : "Copy")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(copiedTranscript ? Color(hex: "#22C55E") : DS.textMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(DS.border, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
                 Text("\(transcriptSlides.count) slide\(transcriptSlides.count == 1 ? "" : "s")")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
 
             // Auto-transcription progress
@@ -912,13 +1429,13 @@ struct SwipeStudyFocusModeView: View {
                         } label: {
                             Image(systemName: "bubble.left")
                                 .font(.system(size: 11))
-                                .foregroundColor(activeCommentSlideIndex == index ? gold : .white.opacity(0.3))
+                                .foregroundColor(activeCommentSlideIndex == index ? gold : DS.textMuted)
                         }
                         .buttonStyle(.plain)
 
                         Text("\(slide.text.count)/450")
                             .font(.system(size: 9).monospacedDigit())
-                            .foregroundColor(slide.text.count > 450 ? .red : .white.opacity(0.3))
+                            .foregroundColor(slide.text.count > 450 ? DS.red : DS.textMuted)
                         if transcriptSlides.count > 1 {
                             Button {
                                 withAnimation(ProMotionSprings.snappy) {
@@ -929,7 +1446,7 @@ struct SwipeStudyFocusModeView: View {
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 12))
-                                    .foregroundColor(.white.opacity(0.3))
+                                    .foregroundColor(DS.textMuted)
                             }
                             .buttonStyle(.plain)
                         }
@@ -952,7 +1469,6 @@ struct SwipeStudyFocusModeView: View {
                             }
                         }
                     )
-                    .frame(minHeight: 60)
 
                     // Inline comment input for this slide
                     if activeCommentSlideIndex == index {
@@ -965,10 +1481,10 @@ struct SwipeStudyFocusModeView: View {
                     }
                 }
                 .padding(10)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(activeCommentSlideIndex == index ? gold.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 1)
+                        .stroke(activeCommentSlideIndex == index ? gold.opacity(0.3) : DS.border, lineWidth: 1)
                 )
             }
 
@@ -987,6 +1503,28 @@ struct SwipeStudyFocusModeView: View {
                 .padding(.vertical, 6)
             }
             .buttonStyle(.plain)
+
+            // Caption section — check live extraction first, then persisted data
+            if let caption = igMediaData?.caption ?? atom.richContent?.instagramData?.caption, !caption.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("CAPTION")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundColor(DS.textMuted)
+
+                    Text(caption)
+                        .font(.system(size: 13))
+                        .foregroundColor(DS.textSecondary)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(DS.border, lineWidth: 1)
+                        )
+                }
+            }
 
             // Analyze button
             if !slidesTranscriptText.isEmpty {
@@ -1023,6 +1561,7 @@ struct SwipeStudyFocusModeView: View {
         if let data = transcript.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([TranscriptSlide].self, from: data) {
             transcriptSlides = decoded
+            cleanAllSlideLineBreaks()
             return
         }
         // Fallback: split by double-newline into slides
@@ -1033,6 +1572,36 @@ struct SwipeStudyFocusModeView: View {
             }
         } else {
             transcriptSlides = [TranscriptSlide(text: transcript, slideNumber: 1)]
+        }
+        cleanAllSlideLineBreaks()
+    }
+
+    /// Clean up mid-sentence line breaks in slide text.
+    /// Joins lines that don't end with sentence-ending punctuation (. ! ? ...) into continuous sentences.
+    private func cleanSlideLineBreaks(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        guard lines.count > 1 else { return text }
+        var result = lines[0]
+        for i in 1..<lines.count {
+            let prev = result.trimmingCharacters(in: .whitespaces)
+            let next = lines[i].trimmingCharacters(in: .whitespaces)
+            guard !next.isEmpty else {
+                result += "\n"
+                continue
+            }
+            if prev.isEmpty || prev.hasSuffix(".") || prev.hasSuffix("!") || prev.hasSuffix("?") || prev.hasSuffix("…") {
+                result += "\n" + next
+            } else {
+                result += " " + next
+            }
+        }
+        return result
+    }
+
+    /// Apply line break cleanup to all transcript slides
+    private func cleanAllSlideLineBreaks() {
+        for i in transcriptSlides.indices {
+            transcriptSlides[i].text = cleanSlideLineBreaks(transcriptSlides[i].text)
         }
     }
 
@@ -1052,7 +1621,7 @@ struct SwipeStudyFocusModeView: View {
                 .tint(gold)
             Text(autoTranscriptionProgress)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
             Spacer()
         }
         .padding(10)
@@ -1095,6 +1664,7 @@ struct SwipeStudyFocusModeView: View {
             case .speechAudio: return ("waveform", "Speech")
             case .merged: return ("arrow.triangle.merge", "Merged")
             case .aiCleaned: return ("sparkles", "AI")
+            case .geminiVision: return ("eye.trianglebadge.exclamationmark", "Gemini")
             }
         }()
 
@@ -1104,10 +1674,10 @@ struct SwipeStudyFocusModeView: View {
             Text(label)
                 .font(.system(size: 8, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.4))
+        .foregroundColor(DS.textMuted)
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
-        .background(Color.white.opacity(0.06), in: Capsule())
+        .background(DS.border, in: Capsule())
     }
 
     // MARK: - Slide Comment Helpers
@@ -1127,7 +1697,7 @@ struct SwipeStudyFocusModeView: View {
             TextField("Add a comment...", text: $newCommentText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(DS.text)
                 .onSubmit {
                     addComment(toSlide: slideIndex)
                 }
@@ -1135,14 +1705,14 @@ struct SwipeStudyFocusModeView: View {
             Button(action: { addComment(toSlide: slideIndex) }) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty ? .white.opacity(0.2) : gold)
+                    .foregroundColor(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.textMuted : gold)
             }
             .buttonStyle(.plain)
             .disabled(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
@@ -1166,12 +1736,12 @@ struct SwipeStudyFocusModeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(comment.text)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(formatCommentDate(comment.createdAt))
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.2))
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -1183,12 +1753,12 @@ struct SwipeStudyFocusModeView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(.white.opacity(0.2))
+                    .foregroundColor(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
         .padding(6)
-        .background(Color.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func addComment(toSlide slideIndex: Int) {
@@ -1278,6 +1848,63 @@ struct SwipeStudyFocusModeView: View {
         }
     }
 
+    /// Awaitable save — used from autoTranscribe to guarantee write completes before analysis starts.
+    private func saveSlideTranscriptAsync() async {
+        guard var current = currentAtom else {
+            print("SwipeStudy: saveSlideTranscript — currentAtom is nil, cannot save")
+            return
+        }
+        let combined = slidesTranscriptText
+        current.body = combined
+        var richContent = current.richContent ?? ResearchRichContent()
+        richContent.transcript = combined
+        richContent.transcriptStatus = "available"
+        if let hook = canonicalHookFromSlides() {
+            current.hook = String(hook.prefix(200))
+            current.title = String(hook.prefix(120))
+            richContent.title = String(hook.prefix(120))
+        }
+        current.setRichContent(richContent)
+
+        // Persist slides + comments into swipeAnalysis so they survive analysis rewrites
+        var sa = current.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+        sa.transcriptSlides = transcriptSlides
+        sa.transcriptComments = transcriptComments
+        current = current.withSwipeAnalysis(sa)
+
+        transcriptText = combined
+        instagramTranscript = combined
+        currentAtom = current
+
+        do {
+            let saved = try await AtomRepository.shared.update(current)
+            currentAtom = saved
+            print("SwipeStudy: Transcript saved (\(combined.count) chars, \(transcriptSlides.count) slides, body: \(saved.body?.count ?? 0) chars)")
+        } catch {
+            print("SwipeStudy: ERROR saving transcript: \(error)")
+        }
+    }
+
+    /// Persist caption from live extraction to atom's richContent so it's available on next open.
+    private func persistCaptionToAtom(_ caption: String) {
+        guard var current = currentAtom else { return }
+        var richContent = current.richContent ?? ResearchRichContent()
+        if var igData = richContent.instagramData {
+            igData.caption = caption
+            richContent.instagramData = igData
+        } else if let urlString = current.url, let url = URL(string: urlString) {
+            var igData = InstagramData(originalURL: url, contentType: .reel)
+            igData.caption = caption
+            richContent.instagramData = igData
+        }
+        current.setRichContent(richContent)
+        currentAtom = current
+        Task {
+            try? await AtomRepository.shared.update(current)
+        }
+    }
+
+    /// Fire-and-forget save — used from debounced manual edits.
     private func saveSlideTranscript() {
         guard var current = currentAtom else { return }
         let combined = slidesTranscriptText
@@ -1285,12 +1912,43 @@ struct SwipeStudyFocusModeView: View {
         var richContent = current.richContent ?? ResearchRichContent()
         richContent.transcript = combined
         richContent.transcriptStatus = "available"
-        current.setRichContent(richContent)
-        transcriptText = combined
-        Task {
-            try? await AtomRepository.shared.update(current)
-            currentAtom = current
+        if let hook = canonicalHookFromSlides() {
+            current.hook = String(hook.prefix(200))
+            current.title = String(hook.prefix(120))
+            richContent.title = String(hook.prefix(120))
         }
+        current.setRichContent(richContent)
+
+        // Persist slides + comments into swipeAnalysis so they survive analysis rewrites
+        var sa = current.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+        sa.transcriptSlides = transcriptSlides
+        sa.transcriptComments = transcriptComments
+        current = current.withSwipeAnalysis(sa)
+
+        transcriptText = combined
+        instagramTranscript = combined
+        currentAtom = current
+        Task {
+            do {
+                let saved = try await AtomRepository.shared.update(current)
+                currentAtom = saved
+            } catch {
+                print("SwipeStudy: ERROR saving transcript (debounced): \(error)")
+            }
+        }
+    }
+
+    private func canonicalHookFromSlides() -> String? {
+        for slide in transcriptSlides {
+            let normalized = slide.text
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty {
+                return normalized
+            }
+        }
+        return nil
     }
 
     // (buildInstagramEmbedUrl removed — native AVPlayer replaces WKWebView embed)
@@ -1340,7 +1998,7 @@ struct SwipeStudyFocusModeView: View {
 
     private var thumbnailPlaceholder: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(Color.white.opacity(0.04))
+            .fill(DS.borderSubtle)
             .frame(height: 200)
             .overlay(
                 VStack(spacing: 8) {
@@ -1349,7 +2007,7 @@ struct SwipeStudyFocusModeView: View {
                         .foregroundColor(gold.opacity(0.4))
                     Text("Swipe File")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             )
     }
@@ -1384,31 +2042,56 @@ struct SwipeStudyFocusModeView: View {
                     .tint(gold)
                 Text("Analyzing...")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
             }
         }
     }
 
     /// Trigger NLP + AI classification on whatever text is currently available
     private func triggerManualAnalysis() {
-        // Determine the best available text
-        let text = !instagramTranscript.isEmpty ? instagramTranscript : transcriptText
+        // Determine the best available text, prioritizing current slide transcript.
+        let text: String = {
+            let slides = slidesTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !slides.isEmpty { return slides }
+            let transcript = transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !transcript.isEmpty { return transcript }
+            return instagramTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
         guard !text.isEmpty else { return }
 
-        // Update body/transcript so NLP + Claude see the content
-        if !instagramTranscript.isEmpty, transcriptText.isEmpty {
-            transcriptText = instagramTranscript
-        }
+        transcriptText = text
+        instagramTranscript = text
 
         Task {
+            var atomForAnalysis = currentAtom ?? atom
+            atomForAnalysis.body = text
+            atomForAnalysis.processingStatus = "complete"
+
+            var richContent = atomForAnalysis.richContent ?? ResearchRichContent()
+            richContent.transcript = text
+            richContent.transcriptStatus = "available"
+            if let hook = canonicalHookFromSlides() {
+                atomForAnalysis.hook = String(hook.prefix(200))
+                atomForAnalysis.title = String(hook.prefix(120))
+                richContent.title = String(hook.prefix(120))
+            }
+            atomForAnalysis.setRichContent(richContent)
+            try? await AtomRepository.shared.update(atomForAnalysis)
+            currentAtom = atomForAnalysis
+
+            // Capture current slides/comments so analysis writes don't discard them
+            let savedSlides = transcriptSlides
+            let savedComments = transcriptComments
+
             // Phase 1: Run NLP on current atom
             isAnalyzing = true
-            let atomForAnalysis = currentAtom ?? atom
-            let nlpResult = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
+            var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
+            nlpResult.transcriptSlides = savedSlides
+            nlpResult.transcriptComments = savedComments
             analysis = nlpResult
             isAnalyzing = false
 
-            // Save NLP results
+            // Save NLP results (with slides preserved)
             let updated = atomForAnalysis.withSwipeAnalysis(nlpResult)
             try? await AtomRepository.shared.update(updated)
             currentAtom = updated
@@ -1420,9 +2103,11 @@ struct SwipeStudyFocusModeView: View {
             )
 
             if classifiedResult.isFullyAnalyzed {
-                let enriched = SwipeClassificationEngine.shared.mergeClassification(
+                var enriched = SwipeClassificationEngine.shared.mergeClassification(
                     classifiedResult, into: nlpResult
                 )
+                enriched.transcriptSlides = savedSlides
+                enriched.transcriptComments = savedComments
                 withAnimation(ProMotionSprings.snappy) {
                     analysis = enriched
                 }
@@ -1443,7 +2128,7 @@ struct SwipeStudyFocusModeView: View {
                 Text("TRANSCRIPT")
                     .font(.system(size: 13, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 if isFetchingTranscript {
                     ProgressView()
@@ -1457,14 +2142,14 @@ struct SwipeStudyFocusModeView: View {
                    let author = richContent.author, !author.isEmpty {
                     Text(author)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
 
             if !transcriptText.isEmpty {
                 Text(transcriptText)
                     .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
                     .lineSpacing(6)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1483,7 +2168,7 @@ struct SwipeStudyFocusModeView: View {
                         Text("Edit Transcript")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             } else if isFetchingTranscript {
@@ -1497,8 +2182,30 @@ struct SwipeStudyFocusModeView: View {
             } else {
                 Text("No transcript available")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.25))
+                    .foregroundColor(DS.textMuted)
                     .padding(.vertical, 12)
+            }
+
+            // Caption section — check live extraction first, then persisted data
+            if let caption = igMediaData?.caption ?? atom.richContent?.instagramData?.caption, !caption.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("CAPTION")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundColor(DS.textMuted)
+
+                    Text(caption)
+                        .font(.system(size: 13))
+                        .foregroundColor(DS.textSecondary)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(DS.border, lineWidth: 1)
+                        )
+                }
             }
         }
     }
@@ -1521,7 +2228,7 @@ struct SwipeStudyFocusModeView: View {
                                 .foregroundColor(gold)
                             Text(insight)
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white.opacity(0.85))
+                                .foregroundColor(DS.text)
                                 .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -1539,11 +2246,11 @@ struct SwipeStudyFocusModeView: View {
                                 .tint(gold)
                             Text("Claude is analyzing structure...")
                                 .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(DS.textMuted)
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
                     }
 
                     // Structure Map — always visible, placeholder when empty
@@ -1656,26 +2363,26 @@ struct SwipeStudyFocusModeView: View {
                 Text(title)
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
             }
 
             VStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 20))
-                    .foregroundColor(.white.opacity(0.12))
+                    .foregroundColor(DS.textMuted)
                 Text(message)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.2))
+                    .foregroundColor(DS.textMuted)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
@@ -1695,29 +2402,29 @@ struct SwipeStudyFocusModeView: View {
                 Text("INSTAGRAM ANALYSIS")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
             }
 
             VStack(spacing: 8) {
                 Image(systemName: "camera.fill")
                     .font(.system(size: 22))
-                    .foregroundColor(.white.opacity(0.12))
+                    .foregroundColor(DS.textMuted)
                 Text("Instagram Analysis")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
                 Text("Coming Soon")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.2))
+                    .foregroundColor(DS.textMuted)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
         }
         .padding(16)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.border, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
@@ -1741,10 +2448,10 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
             .padding(16)
-            .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    .stroke(DS.border, lineWidth: 1)
             )
 
             // Structure map skeleton
@@ -1758,10 +2465,10 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
             .padding(16)
-            .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    .stroke(DS.border, lineWidth: 1)
             )
 
             // Emotional arc skeleton
@@ -1770,10 +2477,10 @@ struct SwipeStudyFocusModeView: View {
                 ShimmerLine(width: 1.0, height: 80)
             }
             .padding(16)
-            .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    .stroke(DS.border, lineWidth: 1)
             )
         }
     }
@@ -1785,18 +2492,18 @@ struct SwipeStudyFocusModeView: View {
                 .foregroundColor(gold.opacity(0.4))
             Text("No analysis available")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
             Text("Analysis will run automatically when content is available")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
@@ -1822,6 +2529,25 @@ struct SwipeStudyFocusModeView: View {
             }
         } else {
             transcriptText = ""
+        }
+
+        // Load saved slide-based transcript for Instagram content.
+        // Primary source: swipeAnalysis.transcriptSlides (survives analysis rewrites).
+        // Fallback: parse transcriptText as JSON slides or split by \n\n.
+        if let savedSlides = atom.swipeAnalysis?.transcriptSlides,
+           !savedSlides.isEmpty,
+           savedSlides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            transcriptSlides = savedSlides
+            instagramTranscript = transcriptText
+            print("SwipeStudy: Loaded \(savedSlides.count) slides from swipeAnalysis.transcriptSlides")
+        } else if !transcriptText.isEmpty {
+            loadSlides(from: transcriptText)
+            instagramTranscript = transcriptText
+        }
+
+        // Load saved comments from swipeAnalysis
+        if let savedComments = atom.swipeAnalysis?.transcriptComments, !savedComments.isEmpty {
+            transcriptComments = savedComments
         }
 
         // Check if analysis is already complete and up-to-date — skip re-analysis
@@ -1886,12 +2612,19 @@ struct SwipeStudyFocusModeView: View {
                 || transcriptFetched
                 || existingIsSparse
 
+            // Capture slides/comments so analysis writes don't discard them
+            let savedSlides = transcriptSlides
+            let savedComments = transcriptComments
+
             var currentAnalysis: SwipeAnalysis
             if shouldRunLocalNLP {
                 currentAnalysis = await SwipeAnalyzer.shared.analyze(atom: atomForAnalysis)
             } else {
                 currentAnalysis = existingAnalysis!
             }
+            // Always carry slides/comments through
+            currentAnalysis.transcriptSlides = savedSlides
+            currentAnalysis.transcriptComments = savedComments
 
             // Enforce minimum shimmer duration for polish (600ms)
             let elapsed = ContinuousClock.now - loadStart
@@ -1932,9 +2665,11 @@ struct SwipeStudyFocusModeView: View {
                 )
 
                 if classifiedResult.isFullyAnalyzed {
-                    let enriched = SwipeClassificationEngine.shared.mergeClassification(
+                    var enriched = SwipeClassificationEngine.shared.mergeClassification(
                         classifiedResult, into: currentAnalysis
                     )
+                    enriched.transcriptSlides = savedSlides
+                    enriched.transcriptComments = savedComments
                     withAnimation(ProMotionSprings.snappy) {
                         analysis = enriched
                     }
@@ -2105,31 +2840,31 @@ struct SwipeStudyFocusModeView: View {
             HStack {
                 Text("Edit Transcript")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                 Spacer()
                 Button("Cancel") {
                     showEditTranscript = false
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
             }
 
             TextEditor(text: $editTranscriptText)
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(DS.text)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 200, maxHeight: 400)
                 .padding(12)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
 
             HStack {
                 Text("\(editTranscriptText.split(separator: " ").count) words")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Spacer()
                 Button {
                     saveEditedTranscript()
@@ -2151,7 +2886,7 @@ struct SwipeStudyFocusModeView: View {
         }
         .padding(20)
         .frame(width: 560)
-        .background(Color(hex: "#0A0A0F"))
+        .background(DS.bg)
     }
 
     private func saveEditedTranscript() {
@@ -2302,11 +3037,11 @@ private struct ShimmerLine: View {
     var body: some View {
         GeometryReader { geo in
             RoundedRectangle(cornerRadius: height / 2)
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.border)
                 .frame(width: geo.size.width * width, height: height)
                 .overlay(
                     RoundedRectangle(cornerRadius: height / 2)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(DS.border)
                         .frame(width: geo.size.width * width, height: height)
                         .modifier(ShimmerEffect())
                 )
@@ -2321,7 +3056,7 @@ private struct ShimmerPill: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(Color.white.opacity(0.06))
+            .fill(DS.border)
             .frame(width: width, height: 20)
             .modifier(ShimmerEffect())
     }
@@ -2333,7 +3068,7 @@ private struct ShimmerCircle: View {
 
     var body: some View {
         Circle()
-            .fill(Color.white.opacity(0.06))
+            .fill(DS.border)
             .frame(width: size, height: size)
             .modifier(ShimmerEffect())
     }
@@ -2403,7 +3138,7 @@ private struct TaxonomySection: View {
                 Text("TAXONOMY")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 Spacer()
 
@@ -2427,10 +3162,10 @@ private struct TaxonomySection: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
@@ -2457,7 +3192,7 @@ private struct TaxonomySection: View {
         if let confidence = analysis?.classificationConfidence {
             Text("\(Int(confidence * 100))%")
                 .font(.system(size: 9, weight: .bold).monospacedDigit())
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
         }
     }
 
@@ -2509,7 +3244,7 @@ private struct TaxonomySection: View {
                     suggestionRow("Format", value: format.displayName, color: format.color)
                 }
                 if let niche = suggestion.niche {
-                    suggestionRow("Niche", value: niche, color: .white.opacity(0.7))
+                    suggestionRow("Niche", value: niche, color: DS.textSecondary)
                 }
             }
 
@@ -2535,10 +3270,10 @@ private struct TaxonomySection: View {
                 } label: {
                     Text("Keep Current")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.06), in: Capsule())
+                        .background(DS.border, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -2555,7 +3290,7 @@ private struct TaxonomySection: View {
         HStack(spacing: 6) {
             Text(label + ":")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
             Text(value)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(color)
@@ -2611,15 +3346,15 @@ private struct TaxonomySection: View {
             } else {
                 Text("Select...")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var secondaryNarrativeRow: some View {
@@ -2670,15 +3405,15 @@ private struct TaxonomySection: View {
             } else {
                 Text("None")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var contentFormatRow: some View {
@@ -2728,15 +3463,15 @@ private struct TaxonomySection: View {
             } else {
                 Text("Select...")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var nicheRow: some View {
@@ -2749,12 +3484,12 @@ private struct TaxonomySection: View {
                 } else {
                     Text("No niche")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
         }
     }
 
@@ -2791,7 +3526,7 @@ private struct TaxonomySection: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -2829,14 +3564,14 @@ private struct TaxonomySection: View {
             HStack(spacing: 4) {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 Text("Link creator")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
@@ -2846,11 +3581,11 @@ private struct TaxonomySection: View {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 TextField("Search creators...", text: $creatorSearchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .onChange(of: creatorSearchText) { _ in filterCreators() }
                 Button {
                     showCreatorSearch = false
@@ -2859,13 +3594,13 @@ private struct TaxonomySection: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .background(DS.border, in: RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(gold.opacity(0.3), lineWidth: 1)
@@ -2880,24 +3615,24 @@ private struct TaxonomySection: View {
 
                     // Create new option
                     if !creatorSearchText.isEmpty {
-                        Divider().background(Color.white.opacity(0.08))
+                        Divider().background(DS.border)
                         creatorCreateNewRow
                     }
                 }
-                .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 6))
+                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                        .strokeBorder(DS.borderActive, lineWidth: 1)
                 )
             } else if !creatorSearchText.isEmpty {
                 // No matches — show create option
                 VStack(spacing: 0) {
                     creatorCreateNewRow
                 }
-                .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 6))
+                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                        .strokeBorder(DS.borderActive, lineWidth: 1)
                 )
             }
         }
@@ -2914,7 +3649,7 @@ private struct TaxonomySection: View {
                     .foregroundColor(gold.opacity(0.6))
                 Text(creator.name)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -3046,7 +3781,7 @@ private struct TaxonomySection: View {
                 }
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
             .frame(width: 80, alignment: .leading)
 
@@ -3092,6 +3827,8 @@ struct SwipeStudyFocusModeView_Previews: PreviewProvider {
 /// A text editor for a single transcript slide.
 /// Enter creates a new slide (via callback), Shift+Enter inserts a newline.
 private struct SlideTextEditor: NSViewRepresentable {
+    static let didBecomeActiveNotification = NSNotification.Name("SlideTextEditorDidBecomeActive")
+
     @Binding var text: String
     var onNewSlide: () -> Void
 
@@ -3113,6 +3850,10 @@ private struct SlideTextEditor: NSViewRepresentable {
         scrollView.drawsBackground = false
 
         textView.string = text
+
+        context.coordinator.textView = textView
+        context.coordinator.observeOtherEditors()
+
         return scrollView
     }
 
@@ -3123,6 +3864,21 @@ private struct SlideTextEditor: NSViewRepresentable {
         }
     }
 
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 260
+        guard let textView = nsView.documentView as? NSTextView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return CGSize(width: width, height: 60)
+        }
+        textContainer.containerSize = NSSize(width: width - 8, height: CGFloat.greatestFiniteMagnitude)
+        let fullRange = NSRange(location: 0, length: textView.textStorage?.length ?? 0)
+        layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        layoutManager.ensureLayout(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        return CGSize(width: width, height: max(60, ceil(usedRect.height) + 12))
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onNewSlide: onNewSlide)
     }
@@ -3130,10 +3886,37 @@ private struct SlideTextEditor: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var onNewSlide: () -> Void
+        weak var textView: NSTextView?
+        private var observer: NSObjectProtocol?
 
         init(text: Binding<String>, onNewSlide: @escaping () -> Void) {
             self.text = text
             self.onNewSlide = onNewSlide
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        func observeOtherEditors() {
+            observer = NotificationCenter.default.addObserver(
+                forName: SlideTextEditor.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let self, let activeView = notification.object as? NSTextView,
+                      let myView = self.textView, activeView !== myView else { return }
+                myView.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView,
+                  textView.selectedRange().length > 0 else { return }
+            NotificationCenter.default.post(
+                name: SlideTextEditor.didBecomeActiveNotification,
+                object: textView
+            )
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -3153,3 +3936,58 @@ private struct SlideTextEditor: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class SwipeStudyContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private let analysisRef: () -> SwipeAnalysis?
+    private let transcriptRef: () -> String
+
+    init(atom: Atom, analysisRef: @escaping () -> SwipeAnalysis?, transcriptRef: @escaping () -> String) {
+        self.atom = atom
+        self.analysisRef = analysisRef
+        self.transcriptRef = transcriptRef
+    }
+
+    var contextType: CosmoContextType { .swipeStudy }
+
+    var contextSummary: String {
+        let analysis = analysisRef()
+        let hookLabel = analysis?.hookType?.rawValue ?? "unanalyzed"
+        return "Studying: \(atom.title ?? "Untitled") — \(hookLabel)"
+    }
+
+    var contextData: CosmoContextData {
+        let analysis = analysisRef()
+        let transcript = transcriptRef()
+        var viewData: [String: String] = [:]
+
+        if let hookType = analysis?.hookType {
+            viewData["hookType"] = hookType.rawValue
+        }
+        if let hookScore = analysis?.hookScore {
+            viewData["hookScore"] = String(format: "%.1f", hookScore)
+        }
+        if let framework = analysis?.frameworkType {
+            viewData["framework"] = framework.rawValue
+        }
+        if !transcript.isEmpty {
+            viewData["transcript"] = String(transcript.prefix(1000))
+        }
+        if let creatorUUID = analysis?.creatorUUID {
+            viewData["creatorUUID"] = creatorUUID
+        }
+
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "swipeFile",
+            currentAtomTitle: atom.title,
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}
+

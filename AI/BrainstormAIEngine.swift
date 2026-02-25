@@ -22,6 +22,8 @@ struct BrainstormAction: Identifiable, Equatable {
         case reorderOutline = "REORDER"
         case replaceOutline = "REPLACE"
         case refineCoreIdea = "REFINE_CORE_IDEA"
+        case addHook = "ADD_HOOK"
+        case setDescription = "SET_DESCRIPTION"
     }
 }
 
@@ -59,13 +61,15 @@ class BrainstormAIEngine: ObservableObject {
     @Published var error: String?
 
     // Context
-    var coreIdea: String = ""
+    var hooks: [String] = []
+    var contentDescription: String = ""
     var outlineItems: [String] = []
     var contentFormat: String = ""
     var platform: String = ""
     var framework: String = ""
     var matchedSwipePreviews: [String] = []
     var atomTitle: String = ""
+    var clientProfileContext: String = ""
 
     // MARK: - System Prompt
 
@@ -80,8 +84,14 @@ class BrainstormAIEngine: ObservableObject {
         if !atomTitle.isEmpty {
             prompt += "Content title: \(atomTitle)\n"
         }
-        if !coreIdea.isEmpty {
-            prompt += "Core idea: \(coreIdea)\n"
+        if !hooks.isEmpty {
+            prompt += "Creator's hooks:\n"
+            for (i, hook) in hooks.enumerated() {
+                prompt += "  \(i + 1). \(hook)\n"
+            }
+        }
+        if !contentDescription.isEmpty {
+            prompt += "Description/theme: \(contentDescription)\n"
         }
         if !contentFormat.isEmpty {
             prompt += "Format: \(contentFormat)\n"
@@ -98,6 +108,10 @@ class BrainstormAIEngine: ObservableObject {
             for (i, item) in outlineItems.enumerated() {
                 prompt += "\(i + 1). \(item)\n"
             }
+        }
+
+        if !clientProfileContext.isEmpty {
+            prompt += "\n\(clientProfileContext)\nMatch this client's brand voice and style.\n"
         }
 
         if !matchedSwipePreviews.isEmpty {
@@ -118,7 +132,10 @@ class BrainstormAIEngine: ObservableObject {
         [ACTION:REORDER] 3,1,2,4 (new order by item numbers)
         [ACTION:REPLACE] Item 1 | Item 2 | Item 3 (full replacement, pipe-separated)
         [ACTION:REFINE_CORE_IDEA] Refined core idea text here
+        [ACTION:ADD_HOOK] New hook text here
+        [ACTION:SET_DESCRIPTION] Updated description text here
 
+        You can read and edit the hooks, description, outline, and core idea fields. \
         Only include action blocks when you are specifically suggesting changes. \
         For general discussion, just respond normally without action blocks. \
         Keep responses focused and under 200 words unless the user asks for detail.
@@ -277,6 +294,26 @@ class BrainstormAIEngine: ObservableObject {
                         targetIndex: nil
                     ))
                 }
+            } else if trimmed.hasPrefix("[ACTION:ADD_HOOK]") {
+                let payload = String(trimmed.dropFirst("[ACTION:ADD_HOOK]".count)).trimmingCharacters(in: .whitespaces)
+                if !payload.isEmpty {
+                    actions.append(BrainstormAction(
+                        type: .addHook,
+                        description: "Add hook: \(payload)",
+                        payload: payload,
+                        targetIndex: nil
+                    ))
+                }
+            } else if trimmed.hasPrefix("[ACTION:SET_DESCRIPTION]") {
+                let payload = String(trimmed.dropFirst("[ACTION:SET_DESCRIPTION]".count)).trimmingCharacters(in: .whitespaces)
+                if !payload.isEmpty {
+                    actions.append(BrainstormAction(
+                        type: .setDescription,
+                        description: "Set description",
+                        payload: payload,
+                        targetIndex: nil
+                    ))
+                }
             } else {
                 cleanLines.append(line)
             }
@@ -297,20 +334,24 @@ class BrainstormAIEngine: ObservableObject {
     // MARK: - Update Context
 
     func updateContext(
-        coreIdea: String,
+        description: String,
         outline: [OutlineItem],
         title: String,
+        hooks: [String] = [],
         contentFormat: String = "",
         platform: String = "",
         framework: String = "",
-        swipePreviews: [String] = []
+        swipePreviews: [String] = [],
+        clientProfileContext: String = ""
     ) {
-        self.coreIdea = coreIdea
         self.outlineItems = outline.sorted(by: { $0.sortOrder < $1.sortOrder }).map(\.title)
         self.atomTitle = title
+        self.hooks = hooks
+        self.contentDescription = description
         self.contentFormat = contentFormat
         self.platform = platform
         self.framework = framework
         self.matchedSwipePreviews = swipePreviews
+        self.clientProfileContext = clientProfileContext
     }
 }

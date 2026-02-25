@@ -19,13 +19,23 @@ struct ContentFocusModeView: View {
     // MARK: - State
 
     @StateObject private var viewModel: ContentFocusModeViewModel
-    @State private var isContextPanelVisible = true
+    @State private var showAICollaborator = false
+    @State private var showSettings = false
+    @State private var editableTitle: String
+    @StateObject private var writingEngine = UnifiedWritingEngine()
+
+    /// Tracks the last AI-generated draft content so we can detect user edits for lesson extraction
+    @State private var lastAIGeneratedDraft: String?
+
+    // Feature flag: when true, the embedded AI Collaborator is hidden (replaced by global Cosmo window)
+    @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
     // MARK: - Initialization
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
         self.onClose = onClose
+        self._editableTitle = State(initialValue: atom.title ?? "Untitled Content")
         self._viewModel = StateObject(wrappedValue: ContentFocusModeViewModel(atom: atom))
     }
 
@@ -33,42 +43,77 @@ struct ContentFocusModeView: View {
 
     var body: some View {
         ZStack {
-            // Background
-            CosmoColors.thinkspaceVoid
+            // Background — zen dark with subtle radial glow
+            Color(red: 0.031, green: 0.031, blue: 0.051)
                 .ignoresSafeArea()
-
-            // Step content + context panel
-            VStack(spacing: 0) {
-                // Top bar spacer
-                Spacer().frame(height: 56)
-
-                HStack(spacing: 0) {
-                    // Step views
-                    stepContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    // Divider
-                    if isContextPanelVisible {
-                        Rectangle()
-                            .fill(Color.white.opacity(OnyxLayout.dividerOpacity))
-                            .frame(width: 1)
-                    }
-
-                    // Context panel
-                    ContentContextPanel(
-                        atom: atom,
-                        state: $viewModel.state,
-                        isVisible: isContextPanelVisible
+                .overlay(
+                    RadialGradient(
+                        colors: [DS.accent.opacity(0.03), .clear],
+                        center: .center,
+                        startRadius: 100,
+                        endRadius: 600
                     )
-                }
+                    .ignoresSafeArea()
+                )
 
-                // Unified bottom navigation bar (fixed position)
+            // Main content — editor takes center stage
+            VStack(spacing: 0) {
+                // Top bar spacer — matches the fixed header height
+                Spacer().frame(height: 72)
+
+                // Full-width step content (no context panel)
+                stepContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Unified bottom navigation bar
                 unifiedBottomBar
             }
 
             // Top bar overlay (fixed)
             VStack {
                 topBar
+                Spacer()
+            }
+            .zIndex(10)
+
+            // AI Collaborator floating popover (hidden when global Cosmo window is enabled)
+            if !cosmoWindowEnabled && showAICollaborator {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        ContentAICollaboratorView(
+                            engine: writingEngine,
+                            isVisible: $showAICollaborator,
+                            contentAtom: atom,
+                            state: $viewModel.state
+                        )
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity),
+                            removal: .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity)
+                        ))
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 64)
+                }
+                .zIndex(100)
+            }
+
+            // Settings cog overlay
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundColor(DS.textMuted)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 16)
+                    .padding(.top, 16)
+                }
                 Spacer()
             }
 
@@ -80,8 +125,8 @@ struct ContentFocusModeView: View {
                         Spacer()
                         Text("+\(xp) XP")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(Color(hex: "#22C55E"))
-                            .shadow(color: Color(hex: "#22C55E").opacity(0.5), radius: 8)
+                            .foregroundColor(DS.green)
+                            .shadow(color: DS.green.opacity(0.5), radius: 8)
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.5).combined(with: .opacity).combined(with: .move(edge: .bottom)),
                                 removal: .opacity.combined(with: .move(edge: .top))
@@ -95,20 +140,116 @@ struct ContentFocusModeView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: viewModel.xpAwarded)
+        .animation(ProMotionSprings.snappy, value: showAICollaborator)
         .onAppear {
             viewModel.loadState()
             viewModel.startObservingState()
             Task {
                 await viewModel.searchRelatedAtoms()
             }
+            // Register context provider for global Cosmo window
+            let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
+        }
+        .task {
+            // Initialize engine with persisted conversation (only when legacy AI Collaborator is active)
+            guard !cosmoWindowEnabled else { return }
+            await writingEngine.initialize(
+                contentAtom: atom,
+                existingMessages: viewModel.state.conversationHistory,
+                existingSummary: viewModel.state.conversationSummary
+            )
         }
         .onDisappear {
-            // Force immediate save — don't lose any pending edits
+            // Sync engine conversation to state before saving (only when legacy AI Collaborator is active)
+            if !cosmoWindowEnabled {
+                viewModel.state.conversationHistory = writingEngine.messages
+                viewModel.state.conversationSummary = writingEngine.conversationSummary
+            }
+            // Extract lessons from user edits to AI-generated draft before closing
+            extractLessonsIfEdited()
             viewModel.saveOnClose()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)) { notification in
+            // Capture AI-generated draft as the baseline for lesson extraction
+            if let content = notification.userInfo?["content"] as? String, !content.isEmpty {
+                lastAIGeneratedDraft = content
+            }
+        }
+        .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
+            // Extract lessons when advancing phases (user may have edited AI draft)
+            extractLessonsIfEdited()
+
+            guard !cosmoWindowEnabled else { return }
+            writingEngine.handlePhaseTransition(from: oldStep, to: newStep, state: viewModel.state)
+        }
+        .onChange(of: writingEngine.isProcessing) { wasProcessing, isProcessing in
+            // Persist conversation to DB directly (bypasses @Published state to avoid
+            // render cascade that was crashing the app on the second message).
+            // The engine owns the live messages array; we only sync to
+            // viewModel.state in onDisappear for full-state persistence.
+            guard !cosmoWindowEnabled else { return }
+            if wasProcessing && !isProcessing {
+                let msgs = writingEngine.messages
+                let summary = writingEngine.conversationSummary
+                let uuid = atom.uuid
+                Task.detached(priority: .utility) {
+                    await ContentFocusModeViewModel.persistConversationDirect(
+                        atomUUID: uuid, messages: msgs, summary: summary
+                    )
+                }
+            }
+        }
         .onKeyPress(.escape) {
+            if !cosmoWindowEnabled && showAICollaborator {
+                showAICollaborator = false
+                return .handled
+            }
             onClose()
             return .handled
+        }
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
+        }
+    }
+
+    /// Toggle AI Collaborator — called from Cmd+J shortcut via keyboardShortcut
+    private func toggleAICollaborator() {
+        withAnimation(ProMotionSprings.snappy) {
+            showAICollaborator.toggle()
+        }
+    }
+
+    /// Compare the current draft against the last AI-generated draft and extract
+    /// writing lessons + store the experience if the user made meaningful edits.
+    private func extractLessonsIfEdited() {
+        guard let previousDraft = lastAIGeneratedDraft,
+              !previousDraft.isEmpty else { return }
+        let currentDraft = viewModel.state.draftContent
+        guard !currentDraft.isEmpty, previousDraft != currentDraft else { return }
+
+        // Resolve client UUID and content format from atom metadata
+        let contentMeta = atom.metadataValue(as: ContentAtomMetadata.self)
+        let clientUUID = contentMeta?.clientProfileUUID.flatMap { UUID(uuidString: $0) }
+        let contentFormat = contentMeta?.platform?.rawValue ?? "unknown"
+
+        // Clear baseline so we don't double-extract
+        lastAIGeneratedDraft = nil
+
+        Task {
+            _ = await LessonExtractor.shared.extractLessons(
+                generated: previousDraft,
+                edited: currentDraft,
+                clientUUID: clientUUID,
+                contentFormat: contentFormat
+            )
+            await ExperienceBufferService.shared.storeExperience(
+                generated: previousDraft,
+                edited: currentDraft,
+                clientUUID: clientUUID,
+                contentFormat: contentFormat
+            )
         }
     }
 
@@ -120,15 +261,24 @@ struct ContentFocusModeView: View {
             // Creation phase -- use existing step routing
             creationStepContent
         } else {
-            // Post-creation phase
-            PostCreationPhaseView(
-                phase: viewModel.displayPhase,
-                atom: atom,
-                state: $viewModel.state,
-                onAdvancePhase: { phase in
-                    viewModel.goToPhase(phase)
-                }
-            )
+            // Post-creation phase — main content + context sidebar
+            HStack(spacing: 0) {
+                PostCreationPhaseView(
+                    phase: viewModel.displayPhase,
+                    atom: atom,
+                    state: $viewModel.state,
+                    onAdvancePhase: { phase in
+                        viewModel.goToPhase(phase)
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                ContentContextPanel(
+                    atom: atom,
+                    state: $viewModel.state,
+                    isVisible: viewModel.state.isContextPanelVisible
+                )
+            }
         }
     }
 
@@ -139,6 +289,7 @@ struct ContentFocusModeView: View {
             ContentBrainstormView(
                 state: $viewModel.state,
                 atom: atom,
+                writingEngine: cosmoWindowEnabled ? nil : writingEngine,
                 onNext: {
                     viewModel.goToStep(.draft)
                 }
@@ -152,6 +303,8 @@ struct ContentFocusModeView: View {
             ContentDraftView(
                 state: $viewModel.state,
                 atom: atom,
+                editableTitle: $editableTitle,
+                writingEngine: cosmoWindowEnabled ? nil : writingEngine,
                 onBack: {
                     viewModel.goToStep(.brainstorm)
                 },
@@ -182,8 +335,8 @@ struct ContentFocusModeView: View {
     // MARK: - Unified Bottom Navigation Bar
 
     private var unifiedBottomBar: some View {
-        HStack {
-            // Left: Back button (hidden on first phase)
+        HStack(spacing: 12) {
+            // Left: Back button — ghost style (hidden on first phase)
             if let prevPhase = viewModel.displayPhase.previousPhase {
                 Button {
                     viewModel.goToPhase(prevPhase)
@@ -192,13 +345,56 @@ struct ContentFocusModeView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                // Spacer to keep layout stable
                 Color.clear.frame(width: 120, height: 1)
             }
 
             Spacer()
 
-            // Right: Next button (shows "Archive" on last creation phase)
+            // Center: Phase name — 12px, DS.textMuted, 0.02em tracking
+            Text(viewModel.displayPhase.displayName)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(DS.textMuted)
+                .tracking(0.24)
+
+            // Word/outline count — 11px, DS.textMuted
+            if !viewModel.state.draftContent.isEmpty {
+                let words = viewModel.state.draftContent.split(separator: " ").count
+                Text("\(words) words")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(DS.textMuted)
+            }
+
+            Spacer()
+
+            // AI Collaborator toggle — hidden when global Cosmo window is enabled
+            if !cosmoWindowEnabled {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showAICollaborator.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("AI")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(showAICollaborator ? DS.accent.opacity(0.15) : DS.accentSoft)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .stroke(DS.accent.opacity(0.15), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Right: Advance phase button — DS.accent solid, white text, glow
             if let nextPhase = viewModel.displayPhase.nextPhase {
                 Button {
                     viewModel.goToPhase(nextPhase)
@@ -207,55 +403,62 @@ struct ContentFocusModeView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                // On the last phase (archived), no forward button
                 Color.clear.frame(width: 120, height: 1)
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
+        .frame(height: 48)
         .background(
             Rectangle()
-                .fill(CosmoColors.thinkspaceVoid)
+                .fill(DS.bg)
                 .overlay(alignment: .top) {
                     Rectangle()
-                        .fill(Color.white.opacity(0.06))
+                        .fill(DS.border)
                         .frame(height: 1)
                 }
         )
     }
 
+    /// Back button — ghost style: transparent bg, 1px DS.border, DS.textSecondary text
     @ViewBuilder
     private func backButtonLabel(_ phase: ContentPhase) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.left")
                 .font(.system(size: 12, weight: .medium))
             Text(phase.displayName)
-                .font(CosmoTypography.label)
+                .font(.system(size: 12, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.6))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .foregroundColor(DS.textSecondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
+    /// Advance button — DS.accent solid bg, white text, weight 500, accentGlow shadow 16px
     @ViewBuilder
     private func nextButtonLabel(_ phase: ContentPhase) -> some View {
         HStack(spacing: 6) {
             Text(phase.displayName)
-                .font(CosmoTypography.label)
+                .font(.system(size: 12, weight: .medium))
             Image(systemName: "arrow.right")
                 .font(.system(size: 12, weight: .medium))
         }
         .foregroundColor(.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(CosmoColors.blockContent)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.accent)
         )
+        .shadow(color: DS.accentGlow, radius: 16)
     }
 
     // MARK: - Top Bar
@@ -270,18 +473,22 @@ struct ContentFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
-            // Title
-            Text(atom.title ?? "Content")
+            // Editable title
+            TextField("Content title...", text: $editableTitle)
+                .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(1)
+                .foregroundColor(DS.text)
+                .frame(maxWidth: 300)
+                .onChange(of: editableTitle) { _, _ in
+                    viewModel.updateTitle(editableTitle)
+                }
 
             // Type badge
             HStack(spacing: 4) {
@@ -310,26 +517,25 @@ struct ContentFocusModeView: View {
 
             Spacer()
 
-            // Context panel toggle
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    isContextPanelVisible.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(isContextPanelVisible ? 0.7 : 0.3))
+            // Word count pill
+            if !viewModel.state.draftContent.isEmpty {
+                let words = viewModel.state.draftContent.split(separator: " ").count
+                Text("\(words) words")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DS.border, in: Capsule())
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(
             LinearGradient(
                 colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
-                    CosmoColors.thinkspaceVoid.opacity(0.4),
+                    DS.bg.opacity(0.95),
+                    DS.bg.opacity(0.8),
+                    DS.bg.opacity(0.4),
                     .clear
                 ],
                 startPoint: .top,
@@ -358,6 +564,7 @@ class ContentFocusModeViewModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private let autoSaveDelay: TimeInterval = 1.5
     private var saveNotificationCancellable: AnyCancellable?
+    private var toolNotificationCancellables: Set<AnyCancellable> = []
     private(set) var isInitialLoad = true
     private var writeSequence: Int = 0
     private var isClosed = false
@@ -375,6 +582,7 @@ class ContentFocusModeViewModel: ObservableObject {
         autoSaveTask?.cancel()
         saveNotificationCancellable?.cancel()
         phaseChangeCancellable?.cancel()
+        toolNotificationCancellables.removeAll()
     }
 
     // MARK: - State Observation
@@ -398,6 +606,72 @@ class ContentFocusModeViewModel: ObservableObject {
                 print("💾 Content focus: debounced save firing")
                 self.writeToAtom()
             }
+
+        // Subscribe to unified engine tool notifications so AI tool calls
+        // (outline, hooks, description, draft) actually update the UI state.
+        toolNotificationCancellables.removeAll()
+
+        NotificationCenter.default.publisher(for: .unifiedEngineOutlineUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self, !self.isClosed,
+                      let items = notification.userInfo?["items"] as? [OutlineItem] else { return }
+                self.state.outline = items
+                self.state.isAISuggestedOutline = true
+                self.state.lastModified = Date()
+                self.writeToAtom()
+            }
+            .store(in: &toolNotificationCancellables)
+
+        NotificationCenter.default.publisher(for: .unifiedEngineHooksUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self, !self.isClosed,
+                      let hooks = notification.userInfo?["hooks"] as? [String] else { return }
+                self.state.hooks = hooks
+                self.state.lastModified = Date()
+                self.writeToAtom()
+            }
+            .store(in: &toolNotificationCancellables)
+
+        NotificationCenter.default.publisher(for: .unifiedEngineDescriptionUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self, !self.isClosed,
+                      let description = notification.userInfo?["description"] as? String else { return }
+                self.state.contentDescription = description
+                self.state.lastModified = Date()
+                self.writeToAtom()
+            }
+            .store(in: &toolNotificationCancellables)
+
+        NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self, !self.isClosed,
+                      let content = notification.userInfo?["content"] as? String else { return }
+                self.state.draftContent = content
+                self.state.lastModified = Date()
+                self.writeToAtom()
+            }
+            .store(in: &toolNotificationCancellables)
+
+        NotificationCenter.default.publisher(for: .unifiedEngineSectionEdit)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let self, !self.isClosed,
+                      let newContent = notification.userInfo?["newContent"] as? String else { return }
+                let sectionId = notification.userInfo?["sectionIdentifier"] as? String ?? ""
+                self.state.pushAIUndo(
+                    previousContent: self.state.draftContent,
+                    sectionIdentifier: sectionId,
+                    description: "AI edit: \(sectionId)"
+                )
+                self.state.draftContent = newContent
+                self.state.lastModified = Date()
+                self.writeToAtom()
+            }
+            .store(in: &toolNotificationCancellables)
 
         // Observe phase changes from PostCreationPhaseView actions
         phaseChangeCancellable = NotificationCenter.default
@@ -424,7 +698,7 @@ class ContentFocusModeViewModel: ObservableObject {
 
         // Read state from atom metadata (the single source of truth)
         if let savedState = ContentFocusModeState.from(atom: atom) {
-            print("📖 Content focus: restored state (step: \(savedState.currentStep.rawValue), coreIdea: \(savedState.coreIdea.prefix(30)), outline: \(savedState.outline.count) items)")
+            print("📖 Content focus: restored state (step: \(savedState.currentStep.rawValue), desc: \(savedState.contentDescription.prefix(30)), outline: \(savedState.outline.count) items)")
             state = savedState
         } else {
             // No saved focus state yet — initialize from atom fields
@@ -433,9 +707,25 @@ class ContentFocusModeViewModel: ObservableObject {
             }
             if let metadata = atom.metadata,
                let data = metadata.data(using: .utf8),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let coreIdea = dict["coreIdea"] as? String {
-                state.coreIdea = coreIdea
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // Migrate legacy coreIdea to contentDescription
+                if let desc = dict["contentDescription"] as? String {
+                    state.contentDescription = desc
+                } else if let coreIdea = dict["coreIdea"] as? String {
+                    state.contentDescription = coreIdea
+                }
+                // Load hooks — check both "hooks" and "inheritedHooks" keys
+                if let hooks = dict["hooks"] as? [String] {
+                    state.hooks = hooks
+                } else if let hooks = dict["inheritedHooks"] as? [String] {
+                    state.hooks = hooks
+                }
+                // Load outline from metadata
+                if let outlineData = dict["outline"],
+                   let outlineJSON = try? JSONSerialization.data(withJSONObject: outlineData),
+                   let items = try? JSONDecoder().decode([OutlineItem].self, from: outlineJSON) {
+                    state.outline = items
+                }
             }
         }
 
@@ -459,7 +749,7 @@ class ContentFocusModeViewModel: ObservableObject {
         writeSequence += 1
         let mySequence = writeSequence
 
-        print("💾 Content focus: writing to atom \(atomUUID) (step: \(stateCopy.currentStep.rawValue), seq: \(mySequence), coreIdea: \(stateCopy.coreIdea.prefix(30)), outline: \(stateCopy.outline.count) items)")
+        print("💾 Content focus: writing to atom \(atomUUID) (step: \(stateCopy.currentStep.rawValue), seq: \(mySequence), desc: \(stateCopy.contentDescription.prefix(30)), outline: \(stateCopy.outline.count) items)")
 
         Task {
             // Check if a newer write has been queued — if so, skip this one
@@ -511,7 +801,63 @@ class ContentFocusModeViewModel: ObservableObject {
         // Cancel debounced notification subscription to prevent stale writes after close
         saveNotificationCancellable?.cancel()
         saveNotificationCancellable = nil
+        toolNotificationCancellables.removeAll()
         writeToAtom()
+    }
+
+    /// Persist conversation messages directly to the atom's metadata in GRDB
+    /// without touching any @Published state. Called from Task.detached in the
+    /// onChange(of: isProcessing) handler to avoid SwiftUI render cascades.
+    static func persistConversationDirect(
+        atomUUID: String,
+        messages: [WritingMessage],
+        summary: String
+    ) async {
+        let recentMessages = Array(messages.suffix(30))
+
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                guard let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]),
+                      let existingStr: String = row["metadata"],
+                      let existingData = existingStr.data(using: .utf8),
+                      var dict = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] else {
+                    return
+                }
+
+                // Encode conversation history
+                if !recentMessages.isEmpty,
+                   let messagesData = try? JSONEncoder().encode(recentMessages),
+                   let messagesArray = try? JSONSerialization.jsonObject(with: messagesData) {
+                    dict["conversationHistory"] = messagesArray
+                } else {
+                    dict["conversationHistory"] = nil
+                }
+
+                dict["conversationSummary"] = summary.isEmpty ? nil : summary
+
+                // Write merged metadata back
+                if let metadataData = try? JSONSerialization.data(withJSONObject: dict),
+                   let metadataStr = String(data: metadataData, encoding: .utf8) {
+                    try db.execute(
+                        sql: """
+                        UPDATE atoms
+                        SET metadata = ?,
+                            updated_at = ?,
+                            _local_version = _local_version + 1
+                        WHERE uuid = ?
+                        """,
+                        arguments: [
+                            metadataStr,
+                            ISO8601DateFormatter().string(from: Date()),
+                            atomUUID
+                        ]
+                    )
+                }
+            }
+            print("💾 Content focus: persisted conversation (\(recentMessages.count) msgs) for \(atomUUID)")
+        } catch {
+            print("❌ Content focus: persistConversationDirect failed: \(error)")
+        }
     }
 
     // MARK: - Phase Accessors
@@ -552,6 +898,10 @@ class ContentFocusModeViewModel: ObservableObject {
 
     /// Advance forward through phases, calling ContentPipelineService for each step.
     private func advanceToPhase(_ targetPhase: ContentPhase) {
+        // Flush current focus state to DB before pipeline advances
+        // (ensures hooks/description survive the phase transition write)
+        writeToAtom()
+
         Task {
             let pipelineService = ContentPipelineService()
             var currentIdx = ContentPhase.allCases.firstIndex(of: displayPhase) ?? 0
@@ -623,10 +973,38 @@ class ContentFocusModeViewModel: ObservableObject {
         startObservingState()
     }
 
+    // MARK: - Title Update
+
+    private var titleUpdateTask: Task<Void, Never>?
+
+    func updateTitle(_ newTitle: String) {
+        titleUpdateTask?.cancel()
+        titleUpdateTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s debounce
+            guard !Task.isCancelled else { return }
+            let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let uuid = atom.uuid
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: """
+                        UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1
+                        WHERE uuid = ?
+                        """,
+                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), uuid]
+                    )
+                }
+            } catch {
+                print("❌ Content focus: title update failed: \(error)")
+            }
+        }
+    }
+
     // MARK: - Related Atoms Search
 
     func searchRelatedAtoms() async {
-        let query = [atom.title ?? "", state.coreIdea]
+        let query = [atom.title ?? "", state.contentDescription]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
 
@@ -682,3 +1060,55 @@ struct ContentFocusModeView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class ContentContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private let stateRef: () -> ContentFocusModeState
+    private let phaseRef: () -> ContentPhase
+
+    init(atom: Atom, stateRef: @escaping () -> ContentFocusModeState, phaseRef: @escaping () -> ContentPhase) {
+        self.atom = atom
+        self.stateRef = stateRef
+        self.phaseRef = phaseRef
+    }
+
+    var contextType: CosmoContextType { .contentFocusMode }
+
+    var contextSummary: String {
+        let phase = phaseRef()
+        return "Content: \(atom.title ?? "Untitled") — \(phase.displayName)"
+    }
+
+    var contextData: CosmoContextData {
+        let state = stateRef()
+        let phase = phaseRef()
+        var viewData: [String: String] = [
+            "phase": phase.displayName,
+            "step": state.currentStep.rawValue,
+            "outlineItems": "\(state.outline.count)"
+        ]
+
+        if !state.contentDescription.isEmpty {
+            viewData["description"] = String(state.contentDescription.prefix(300))
+        }
+        if !state.hooks.isEmpty {
+            viewData["hooks"] = state.hooks.prefix(3).joined(separator: " | ")
+        }
+        if !state.draftContent.isEmpty {
+            viewData["draftWordCount"] = "\(state.draftContent.split(separator: " ").count)"
+            viewData["draftExcerpt"] = String(state.draftContent.prefix(500))
+        }
+
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "content",
+            currentAtomTitle: atom.title,
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}

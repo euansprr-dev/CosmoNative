@@ -58,43 +58,90 @@ struct TranscriptSpineView: View {
     // MARK: - Body
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
-                    ForEach(sections) { section in
-                        TranscriptSectionRow(
-                            section: section,
-                            isPlaying: isPlaying(section),
-                            isHovered: hoveredSectionID == section.id,
-                            expandedAnnotationID: $expandedAnnotationID,
-                            onTap: { onSectionTap(section) },
-                            onAddAnnotation: { type in onAddAnnotation(section, type) },
-                            onAnnotationTap: onAnnotationTap,
-                            onAnnotationEdit: onAnnotationEdit,
-                            onAnnotationDelete: onAnnotationDelete,
-                            onAnnotationPositionChange: onAnnotationPositionChange,
-                            onCreateHighlightAnnotation: onCreateHighlightAnnotation
-                        )
-                        .id(section.id)
-                        .onHover { hovering in
-                            hoveredSectionID = hovering ? section.id : nil
+        VStack(spacing: 0) {
+            // Header bar
+            transcriptHeader
+
+            // Scrollable transcript content
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(sections) { section in
+                            TranscriptSectionRow(
+                                section: section,
+                                isPlaying: isPlaying(section),
+                                isHovered: hoveredSectionID == section.id,
+                                expandedAnnotationID: $expandedAnnotationID,
+                                onTap: { onSectionTap(section) },
+                                onAddAnnotation: { type in onAddAnnotation(section, type) },
+                                onAnnotationTap: onAnnotationTap,
+                                onAnnotationEdit: onAnnotationEdit,
+                                onAnnotationDelete: onAnnotationDelete,
+                                onAnnotationPositionChange: onAnnotationPositionChange,
+                                onCreateHighlightAnnotation: onCreateHighlightAnnotation
+                            )
+                            .id(section.id)
+                            .onHover { hovering in
+                                hoveredSectionID = hovering ? section.id : nil
+                            }
                         }
                     }
+                    .padding(.vertical, 20)
+                    .padding(.horizontal, 20)
                 }
-                .padding(.vertical, 20)
-                .padding(.horizontal, 20)
-            }
-            .onChange(of: currentTimestamp) { _, newTime in
-                // Auto-scroll to current section
-                if let currentSection = sections.first(where: {
-                    newTime >= $0.startTime && newTime < $0.endTime
-                }) {
-                    withAnimation(ProMotionSprings.gentle) {
-                        proxy.scrollTo(currentSection.id, anchor: .center)
+                .scrollClipDisabled(true)
+                .onChange(of: currentTimestamp) { _, newTime in
+                    // Auto-scroll to current section
+                    if let currentSection = sections.first(where: {
+                        newTime >= $0.startTime && newTime < $0.endTime
+                    }) {
+                        withAnimation(ProMotionSprings.gentle) {
+                            proxy.scrollTo(currentSection.id, anchor: .center)
+                        }
                     }
                 }
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(DS.surfaceCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(DS.borderActive.opacity(0.8), lineWidth: 1)
+        )
+        .shadow(
+            color: Color.black.opacity(0.3),
+            radius: 12,
+            y: 4
+        )
+    }
+
+    // MARK: - Transcript Header
+
+    private var transcriptHeader: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.alignleft")
+                    .font(.system(size: 12, weight: .medium))
+                Text("TRANSCRIPT")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.8)
+            }
+            .foregroundColor(CosmoColors.blockResearch)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(CosmoColors.blockResearch.opacity(0.15), in: Capsule())
+
+            Spacer()
+
+            Text("\(sections.count) sections")
+                .font(.system(size: 11))
+                .foregroundColor(DS.textSecondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(DS.borderSubtle)
     }
 
     // MARK: - Helpers
@@ -152,8 +199,9 @@ struct TranscriptSectionRow: View {
 
             // ALL ANNOTATIONS (right side only)
             annotationColumn(annotations: allAnnotations)
-                .frame(width: 200)
+                .frame(minWidth: 200, alignment: .leading)
         }
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -173,13 +221,13 @@ struct TranscriptSectionRow: View {
 
             Text(section.startTimeString)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(isPlaying ? CosmoColors.blockResearch : Color.white.opacity(0.5))
+                .foregroundColor(isPlaying ? CosmoColors.blockResearch : DS.textSecondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(isPlaying ? CosmoColors.blockResearch.opacity(0.15) : Color.white.opacity(0.05))
+                .fill(isPlaying ? CosmoColors.blockResearch.opacity(0.15) : DS.border)
         )
     }
 
@@ -218,7 +266,7 @@ struct TranscriptSectionRow: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isPlaying ? Color.white.opacity(0.08) : Color.clear)
+                .fill(isPlaying ? DS.border : Color.clear)
         )
         .animation(ProMotionSprings.hover, value: isPlaying)
         .animation(ProMotionSprings.hover, value: isHovered)
@@ -269,75 +317,73 @@ struct TranscriptSectionRow: View {
 
     @ViewBuilder
     private func annotationColumn(annotations: [ResearchAnnotation]) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                // Connection lines for annotations with custom positions.
-                // Uses tracked card center-Y positions instead of a static formula
-                // so lines stay aligned when cards have variable heights.
+        ZStack(alignment: .topLeading) {
+            // Connection lines for annotations with custom positions.
+            // Uses tracked card center-Y positions instead of a static formula
+            // so lines stay aligned when cards have variable heights.
+            ForEach(annotations) { annotation in
+                if annotation.hasCustomPosition,
+                   let centerY = cardCenterYs[annotation.id] {
+                    let anchorX: CGFloat = 12.0
+                    let anchor = CGPoint(x: anchorX, y: centerY)
+                    let cardPos = CGPoint(
+                        x: anchorX + (annotation.customOffset?.x ?? 0),
+                        y: centerY + (annotation.customOffset?.y ?? 0)
+                    )
+
+                    AnnotationConnectionLine(
+                        from: anchor,
+                        to: cardPos,
+                        color: annotation.type.color
+                    )
+                }
+            }
+
+            // Annotation cards
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(annotations) { annotation in
-                    if annotation.hasCustomPosition,
-                       let centerY = cardCenterYs[annotation.id] {
-                        let anchorX: CGFloat = 12.0
-                        let anchor = CGPoint(x: anchorX, y: centerY)
-                        let cardPos = CGPoint(
-                            x: anchorX + (annotation.customOffset?.x ?? 0),
-                            y: centerY + (annotation.customOffset?.y ?? 0)
-                        )
-
-                        AnnotationConnectionLine(
-                            from: anchor,
-                            to: cardPos,
-                            color: annotation.type.color
-                        )
-                    }
-                }
-
-                // Annotation cards
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(annotations) { annotation in
-                        AnnotationCardView(
-                            annotation: annotation,
-                            isExpanded: expandedAnnotationID == annotation.id,
-                            onTap: {
-                                withAnimation(ProMotionSprings.snappy) {
-                                    if expandedAnnotationID == annotation.id {
-                                        expandedAnnotationID = nil
-                                    } else {
-                                        expandedAnnotationID = annotation.id
-                                    }
+                    AnnotationCardView(
+                        annotation: annotation,
+                        isExpanded: expandedAnnotationID == annotation.id,
+                        onTap: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                if expandedAnnotationID == annotation.id {
+                                    expandedAnnotationID = nil
+                                } else {
+                                    expandedAnnotationID = annotation.id
                                 }
-                                onAnnotationTap(annotation)
-                            },
-                            onEdit: { newContent in onAnnotationEdit(annotation, newContent) },
-                            onDelete: { onAnnotationDelete(annotation) },
-                            onPositionChange: { newOffset in
-                                onAnnotationPositionChange(annotation, newOffset)
                             }
-                        )
-                        .background(
-                            GeometryReader { cardGeo in
-                                Color.clear.preference(
-                                    key: AnnotationCardCenterYKey.self,
-                                    value: [annotation.id: cardGeo.frame(in: .named("annotationColumn")).midY]
-                                )
-                            }
-                        )
-                        .zIndex(annotation.hasCustomPosition ? 1 : 0)
-                    }
+                            onAnnotationTap(annotation)
+                        },
+                        onEdit: { newContent in onAnnotationEdit(annotation, newContent) },
+                        onDelete: { onAnnotationDelete(annotation) },
+                        onPositionChange: { newOffset in
+                            onAnnotationPositionChange(annotation, newOffset)
+                        }
+                    )
+                    .background(
+                        GeometryReader { cardGeo in
+                            Color.clear.preference(
+                                key: AnnotationCardCenterYKey.self,
+                                value: [annotation.id: cardGeo.frame(in: .named("annotationColumn")).midY]
+                            )
+                        }
+                    )
+                    .zIndex(annotation.hasCustomPosition ? 1 : 0)
                 }
-                .padding(.leading, 12)
             }
-            .coordinateSpace(name: "annotationColumn")
-            .onPreferenceChange(AnnotationCardCenterYKey.self) { positions in
-                cardCenterYs = positions
-            }
+            .padding(.leading, 12)
+        }
+        .coordinateSpace(name: "annotationColumn")
+        .onPreferenceChange(AnnotationCardCenterYKey.self) { positions in
+            cardCenterYs = positions
         }
     }
 
     // MARK: - Helpers
 
     private var spineColor: Color {
-        isPlaying ? CosmoColors.blockResearch : Color.white.opacity(0.15)
+        isPlaying ? CosmoColors.blockResearch : DS.borderActive
     }
 }
 
@@ -388,14 +434,14 @@ struct AnnotationCardView: View {
                         if editContent.isEmpty {
                             Text("Add a note...")
                                 .font(.system(size: 11))
-                                .foregroundColor(Color.white.opacity(0.3))
+                                .foregroundColor(DS.textMuted)
                                 .padding(.top, 4)
                                 .padding(.leading, 2)
                                 .allowsHitTesting(false)
                         }
                         TextEditor(text: $editContent)
                             .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.85))
+                            .foregroundColor(DS.text)
                             .scrollContentBackground(.hidden)
                             .focused($isTextFieldFocused)
                             .frame(minHeight: 40, maxHeight: 120)
@@ -403,19 +449,19 @@ struct AnnotationCardView: View {
                     .padding(4)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.06))
+                            .fill(DS.border)
                     )
                 } else {
                     if !annotation.content.isEmpty {
                         Text(annotation.content)
                             .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.85))
+                            .foregroundColor(DS.text)
                             .lineLimit(isExpanded ? nil : 2)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("Double-click to edit")
                             .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.3))
+                            .foregroundColor(DS.textMuted)
                             .italic()
                     }
                 }
@@ -428,14 +474,14 @@ struct AnnotationCardView: View {
                         } label: {
                             Image(systemName: "pencil")
                                 .font(.system(size: 9))
-                                .foregroundColor(Color.white.opacity(0.5))
+                                .foregroundColor(DS.textSecondary)
                         }
                         .buttonStyle(.plain)
 
                         Button(action: onDelete) {
                             Image(systemName: "trash")
                                 .font(.system(size: 9))
-                                .foregroundColor(Color.red.opacity(0.6))
+                                .foregroundColor(DS.red.opacity(0.6))
                         }
                         .buttonStyle(.plain)
                     }
@@ -449,7 +495,7 @@ struct AnnotationCardView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(isEditing ? 0.10 : (isHovered ? 0.08 : 0.04)))
+                .fill(isEditing ? DS.borderActive : (isHovered ? DS.border : DS.borderSubtle))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(accentColor.opacity(isEditing ? 0.6 : (isHovered ? 0.4 : 0.2)), lineWidth: isEditing ? 1.5 : 1)
@@ -543,7 +589,7 @@ struct AnnotationCardView: View {
 struct TranscriptSpineView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             TranscriptSpineView(

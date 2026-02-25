@@ -495,7 +495,7 @@ public struct JournalPromptCard: View {
                         Text("Start Writing")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .padding(.horizontal, SanctuaryLayout.Spacing.lg)
                     .padding(.vertical, SanctuaryLayout.Spacing.sm)
                     .background(

@@ -66,7 +66,7 @@ struct MoodCheckInView: View {
                 }) {
                     Text("Save Mood")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(
@@ -301,7 +301,7 @@ struct JournalEntrySheet: View {
                 }) {
                     Text("Save Entry")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(

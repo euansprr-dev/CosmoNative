@@ -31,6 +31,33 @@ final class DaemonServiceDelegate: NSObject, NSXPCListenerDelegate {
     }
 }
 
+// MARK: - Memory Pressure Handler
+
+/// Respond to system memory pressure by shedding non-essential models
+/// instead of letting the OS kill us via Jetsam
+let memoryPressureSource = DispatchSource.makeMemoryPressureSource(
+    eventMask: [.warning, .critical],
+    queue: .main
+)
+
+memoryPressureSource.setEventHandler {
+    let event = memoryPressureSource.data
+    let daemon = CosmoVoiceDaemon.shared
+
+    if event.contains(.critical) {
+        print("CosmoVoiceDaemon: ⚠️ CRITICAL memory pressure - shedding L2 Whisper and KV cache")
+        // Shed the heaviest optional models to stay alive
+        daemon.unloadL2 { }
+        daemon.flushKVCache { }
+    } else if event.contains(.warning) {
+        print("CosmoVoiceDaemon: ⚠️ Memory pressure warning - flushing KV cache")
+        // Just flush caches, keep models loaded
+        daemon.flushKVCache { }
+    }
+}
+
+memoryPressureSource.resume()
+
 // MARK: - Main Entry Point
 
 print("CosmoVoiceDaemon: Starting...")

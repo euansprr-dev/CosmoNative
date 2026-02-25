@@ -38,7 +38,7 @@ public struct DimensionDetailView: View {
 
                     Text(dimension.displayName)
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                 }
 
                 Spacer()
@@ -49,16 +49,16 @@ public struct DimensionDetailView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(Color.white.opacity(0.1))
+                        .background(DS.borderActive)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .background(Color.white.opacity(0.03))
+            .background(DS.borderSubtle)
 
             // Scrollable content
             ScrollView {
@@ -86,7 +86,7 @@ public struct DimensionDetailView: View {
                 .padding(20)
             }
         }
-        .background(Color(hex: "#0A0A0F"))
+        .background(DS.bg)
         .preferredColorScheme(.dark)
     }
 
@@ -115,12 +115,12 @@ public struct DimensionDetailView: View {
                 VStack(spacing: 4) {
                     Image(systemName: dimension.iconName)
                         .font(.system(size: 32, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
 
                     if let state = state {
                         Text("Lvl \(state.level)")
                             .font(.system(size: 18, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(DS.text)
                     }
                 }
             }
@@ -130,11 +130,11 @@ public struct DimensionDetailView: View {
                 HStack(spacing: 8) {
                     Text("NELO")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
 
                     Text("\(state.nelo)")
                         .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
 
                     trendArrow(for: state.trend)
                 }
@@ -192,7 +192,7 @@ public struct DimensionDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Level Progress")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundColor(DS.text)
 
             if let state = state {
                 VStack(spacing: 8) {
@@ -201,7 +201,7 @@ public struct DimensionDetailView: View {
                         ZStack(alignment: .leading) {
                             // Background
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.white.opacity(0.1))
+                                .fill(DS.borderActive)
 
                             // Progress
                             RoundedRectangle(cornerRadius: 6)
@@ -220,20 +220,20 @@ public struct DimensionDetailView: View {
                     HStack {
                         Text("\(state.currentXP) XP")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(DS.textSecondary)
 
                         Spacer()
 
                         Text("\(state.xpToNextLevel) XP to Level \(state.level + 1)")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(DS.textSecondary)
                     }
                 }
             }
         }
         .padding()
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.border)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 
     // MARK: - Trend Chart Section
@@ -243,7 +243,7 @@ public struct DimensionDetailView: View {
             HStack {
                 Text("Trend")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
@@ -286,7 +286,7 @@ public struct DimensionDetailView: View {
                         if let intValue = value.as(Int.self) {
                             Text("\(intValue)")
                                 .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(DS.textMuted)
                         }
                     }
                 }
@@ -297,7 +297,7 @@ public struct DimensionDetailView: View {
                         if let stringValue = value.as(String.self) {
                             Text(stringValue)
                                 .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(DS.textMuted)
                         }
                     }
                 }
@@ -305,8 +305,8 @@ public struct DimensionDetailView: View {
             .frame(height: 150)
         }
         .padding()
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.border)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 
     // MARK: - Insights Section
@@ -315,15 +315,15 @@ public struct DimensionDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Related Insights")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundColor(DS.text)
 
             ForEach(insights.prefix(3), id: \.uuid) { insight in
                 InsightRowView(insight: insight)
             }
         }
         .padding()
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.border)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 
     // MARK: - Recent Activity Section
@@ -332,7 +332,7 @@ public struct DimensionDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Activity")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundColor(DS.text)
 
             // Placeholder for activity list
             ForEach(0..<3, id: \.self) { _ in
@@ -343,20 +343,20 @@ public struct DimensionDetailView: View {
 
                     Text("Activity placeholder")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
 
                     Spacer()
 
                     Text("2h ago")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
                 .padding(.vertical, 8)
             }
         }
         .padding()
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.border)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 
     // MARK: - Helpers
@@ -427,19 +427,19 @@ struct StatCard: View {
 
             Text(value)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
 
             Text(title)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
 
             Text(subtitle)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
         }
         .padding()
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.border)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 }
 
@@ -459,12 +459,12 @@ struct InsightRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(insight.humanDescription)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .lineLimit(2)
 
                 Text("\(insight.confidence.rawValue.capitalized) • \(insight.strength.rawValue.capitalized)")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -475,8 +475,8 @@ struct InsightRowView: View {
                 .foregroundColor(insight.coefficient > 0 ? .green : .red)
         }
         .padding()
-        .background(Color.white.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(DS.borderSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
     }
 }
 

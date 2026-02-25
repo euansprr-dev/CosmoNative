@@ -245,6 +245,12 @@ class AtomRepository: ObservableObject {
                 """,
                 arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
             )
+
+            // Also soft-delete any canvas blocks referencing this atom
+            try db.execute(
+                sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE entity_uuid = ?",
+                arguments: [uuid]
+            )
         }
 
         // Track for sync
@@ -252,6 +258,14 @@ class AtomRepository: ObservableObject {
 
         // Sync to NodeGraph
         try? await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)
+
+        // Notify canvas to remove blocks for this atom
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                object: nil
+            )
+        }
     }
 
     /// Soft delete an atom
@@ -265,6 +279,20 @@ class AtomRepository: ObservableObject {
             try db.execute(
                 sql: "DELETE FROM atoms WHERE uuid = ?",
                 arguments: [uuid]
+            )
+
+            // Also hard-delete any canvas blocks referencing this atom
+            try db.execute(
+                sql: "DELETE FROM canvas_blocks WHERE entity_uuid = ?",
+                arguments: [uuid]
+            )
+        }
+
+        // Notify canvas to remove blocks for this atom
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                object: nil
             )
         }
     }

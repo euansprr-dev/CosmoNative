@@ -46,6 +46,7 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var swipeContentFormat: ContentFormat?
     public var niche: String?
     public var creatorUUID: String?
+    public var clientUUID: String?
 
     // Classification State
     public var classifiedAt: Date?
@@ -56,6 +57,10 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var studiedAt: String?
     public var practiceAttempts: Int?
     public var userHookScore: Double?
+
+    // Beat Pattern Intelligence
+    public var normalizedBeats: [String]?
+    public var beatFingerprint: String?
 
     // Inline Transcript Data
     public var transcriptComments: [TranscriptComment]?
@@ -85,12 +90,15 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         swipeContentFormat: ContentFormat? = nil,
         niche: String? = nil,
         creatorUUID: String? = nil,
+        clientUUID: String? = nil,
         classifiedAt: Date? = nil,
         classificationSource: ClassificationSource? = nil,
         classificationConfidence: Double? = nil,
         studiedAt: String? = nil,
         practiceAttempts: Int? = nil,
         userHookScore: Double? = nil,
+        normalizedBeats: [String]? = nil,
+        beatFingerprint: String? = nil,
         transcriptComments: [TranscriptComment]? = nil,
         transcriptSlides: [TranscriptSlide]? = nil
     ) {
@@ -117,12 +125,15 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         self.swipeContentFormat = swipeContentFormat
         self.niche = niche
         self.creatorUUID = creatorUUID
+        self.clientUUID = clientUUID
         self.classifiedAt = classifiedAt
         self.classificationSource = classificationSource
         self.classificationConfidence = classificationConfidence
         self.studiedAt = studiedAt
         self.practiceAttempts = practiceAttempts
         self.userHookScore = userHookScore
+        self.normalizedBeats = normalizedBeats
+        self.beatFingerprint = beatFingerprint
         self.transcriptComments = transcriptComments
         self.transcriptSlides = transcriptSlides
     }
@@ -673,6 +684,9 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let swipeContentFormat: ContentFormat?
     public let niche: String?
     public let creatorName: String?
+    public let clientUUID: String?
+    public let clientName: String?
+    public let instagramId: String?
 
     public init(
         atomUUID: String,
@@ -692,7 +706,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         primaryNarrative: NarrativeStyle? = nil,
         swipeContentFormat: ContentFormat? = nil,
         niche: String? = nil,
-        creatorName: String? = nil
+        creatorName: String? = nil,
+        clientUUID: String? = nil,
+        clientName: String? = nil,
+        instagramId: String? = nil
     ) {
         self.id = atomUUID
         self.atomUUID = atomUUID
@@ -713,17 +730,21 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.swipeContentFormat = swipeContentFormat
         self.niche = niche
         self.creatorName = creatorName
+        self.clientUUID = clientUUID
+        self.clientName = clientName
+        self.instagramId = instagramId
     }
 
     /// Platform display icon
     public var platformIcon: String {
         switch platform {
-        case "youtube", "youtubeShort": return "play.rectangle.fill"
-        case "instagram", "instagramReel", "instagramPost", "instagramCarousel": return "camera.fill"
-        case "xPost", "twitter": return "at"
+        case "youtube", "youtubeShort", "youtube_short": return "play.rectangle.fill"
+        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
+             "instagram_reel", "instagram_post", "instagram_carousel": return "camera.fill"
+        case "xPost", "twitter", "x_post": return "at"
         case "threads": return "at.badge.plus"
         case "website": return "globe"
-        case "rawNote", "clipboard": return "doc.on.clipboard"
+        case "rawNote", "raw_note", "clipboard": return "doc.on.clipboard"
         default: return "doc.fill"
         }
     }
@@ -732,12 +753,13 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public var platformName: String {
         switch platform {
         case "youtube": return "YouTube"
-        case "youtubeShort": return "YT Short"
-        case "instagram", "instagramReel", "instagramPost", "instagramCarousel": return "Instagram"
-        case "xPost", "twitter": return "X"
+        case "youtubeShort", "youtube_short": return "YT Short"
+        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
+             "instagram_reel", "instagram_post", "instagram_carousel": return "Instagram"
+        case "xPost", "twitter", "x_post": return "X"
         case "threads": return "Threads"
         case "website": return "Website"
-        case "rawNote", "clipboard": return "Clipboard"
+        case "rawNote", "raw_note", "clipboard": return "Clipboard"
         default: return "Unknown"
         }
     }
@@ -768,24 +790,29 @@ extension Atom {
         return nil
     }
 
-    /// Return a new atom with the SwipeAnalysis merged into structured JSON
+    /// Return a new atom with the SwipeAnalysis merged into structured JSON.
+    /// Uses raw JSON dictionary to preserve sibling keys (autoMetadata, transcriptComments, etc.)
+    /// that would otherwise be lost by typed Codable encoding.
     public func withSwipeAnalysis(_ analysis: SwipeAnalysis) -> Atom {
         var copy = self
 
-        // Parse existing structured data or create new
-        var wrapper: SwipeAnalysisWrapper
+        // Parse existing structured as raw dictionary to preserve all keys
+        var dict: [String: Any] = [:]
         if let structuredStr = structured,
            let data = structuredStr.data(using: .utf8),
-           let existing = try? JSONDecoder().decode(SwipeAnalysisWrapper.self, from: data) {
-            wrapper = existing
-        } else {
-            wrapper = SwipeAnalysisWrapper(existingStructured: structured)
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = existing
         }
 
-        wrapper.swipeAnalysis = analysis
+        // Update only the swipeAnalysis key
+        if let analysisData = try? JSONEncoder().encode(analysis),
+           let analysisObj = try? JSONSerialization.jsonObject(with: analysisData) {
+            dict["swipeAnalysis"] = analysisObj
+        }
 
-        if let encoded = try? JSONEncoder().encode(wrapper),
-           let jsonStr = String(data: encoded, encoding: .utf8) {
+        // Re-encode preserving all keys
+        if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
             copy.structured = jsonStr
         }
 
@@ -810,19 +837,65 @@ extension Atom {
         var thumbnailUrl: String?
         var author: String?
         var duration: Int?
+        var instagramId: String?
 
         if let structuredStr = structured,
-           let data = structuredStr.data(using: .utf8) {
-            if let richContent = try? JSONDecoder().decode(ResearchRichContentMinimal.self, from: data) {
-                platform = richContent.autoMetadata?.sourceType ?? meta?.contentSource
-                thumbnailUrl = meta?.thumbnailUrl
-                author = richContent.autoMetadata?.author
-                duration = richContent.autoMetadata?.duration
+           let data = structuredStr.data(using: .utf8),
+           let outer = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let autoMetaStr = outer["autoMetadata"] as? String,
+           let autoMetaData = autoMetaStr.data(using: .utf8),
+           let autoMeta = try? JSONSerialization.jsonObject(with: autoMetaData) as? [String: Any] {
+            // sourceType from rich content (e.g. "instagram_reel", "youtube", etc.)
+            platform = autoMeta["sourceType"] as? String
+            author = autoMeta["author"] as? String
+            duration = autoMeta["duration"] as? Int
+            instagramId = autoMeta["instagramId"] as? String
+
+            // Fix carousel detection from instagramType field (more reliable than carouselItems check)
+            if let instagramType = autoMeta["instagramType"] as? String, instagramType == "carousel" {
+                if platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
+                    platform = "instagram_carousel"
+                }
+            }
+
+            // Fix reel detection from instagramType field
+            if let instagramType = autoMeta["instagramType"] as? String, instagramType == "reel" {
+                if platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
+                    platform = "instagram_reel"
+                }
             }
         }
 
-        if platform == nil {
+        thumbnailUrl = meta?.thumbnailUrl
+
+        // Fallback to metadata contentSource
+        if platform == nil || platform?.isEmpty == true {
             platform = meta?.contentSource
+        }
+
+        // Extract instagramId from richContent if not in autoMetadata
+        if instagramId == nil, let richContent = self.richContent {
+            instagramId = richContent.instagramId
+        }
+
+        // Fix carousel detection: if rich content has carousel items, upgrade platform + fill thumbnail
+        if let rc = self.richContent,
+           let items = rc.instagramData?.carouselItems, !items.isEmpty {
+            // Upgrade platform if it was misclassified as post
+            if platform == "instagramPost" || platform == "instagram_post" || platform == "instagram" {
+                platform = "instagramCarousel"
+            }
+            // Use first carousel image as thumbnail if none set
+            if thumbnailUrl == nil || thumbnailUrl?.isEmpty == true {
+                if let firstImage = items.first(where: { $0.mediaType == .image }) ?? items.first {
+                    thumbnailUrl = firstImage.mediaURL.absoluteString
+                }
+            }
+        }
+
+        // Fallback: generic "instagram" with a video duration → reel
+        if platform == "instagram", let dur = duration, dur > 0 {
+            platform = "instagram_reel"
         }
 
         return SwipeGalleryItem(
@@ -843,7 +916,8 @@ extension Atom {
             primaryNarrative: analysis?.primaryNarrative,
             swipeContentFormat: analysis?.swipeContentFormat,
             niche: analysis?.niche,
-            creatorName: author
+            creatorName: author,
+            instagramId: instagramId
         )
     }
 
@@ -858,6 +932,7 @@ public enum TranscriptSlideSource: String, Codable, Sendable, Equatable {
     case speechAudio    // SFSpeechRecognizer transcription
     case merged         // Combined OCR + speech
     case aiCleaned      // Post-processed by Claude
+    case geminiVision   // Gemini Flash 2.0 vision OCR
 }
 
 // MARK: - Transcription Content Type
@@ -941,13 +1016,3 @@ private struct SwipeAnalysisWrapper: Codable {
     }
 }
 
-/// Minimal decoder for extracting source type from ResearchRichContent
-private struct ResearchRichContentMinimal: Codable {
-    var autoMetadata: AutoMetadataMinimal?
-
-    struct AutoMetadataMinimal: Codable {
-        var sourceType: String?
-        var author: String?
-        var duration: Int?
-    }
-}

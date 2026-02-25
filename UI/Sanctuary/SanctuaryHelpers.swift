@@ -85,7 +85,7 @@ struct ShimmerModifier: ViewModifier {
                     LinearGradient(
                         colors: [
                             .clear,
-                            .white.opacity(0.3),
+                            DS.text.opacity(0.3),
                             .clear
                         ],
                         startPoint: .leading,
@@ -152,7 +152,7 @@ func triggerSanctuaryHaptic(_ type: SanctuaryHapticType) {
 struct GradientPresets {
     static let sanctuary = LinearGradient(
         colors: [
-            Color(hex: "#0A0A0F"),
+            DS.bg,
             Color(hex: "#0F0A1A"),
             Color(hex: "#0A0F1A")
         ],

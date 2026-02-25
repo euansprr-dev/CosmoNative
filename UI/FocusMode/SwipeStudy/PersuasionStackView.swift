@@ -28,7 +28,7 @@ struct PersuasionStackView: View {
             Text("PERSUASION STACK")
                 .font(.system(size: 13, weight: .bold))
                 .tracking(1.2)
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .textCase(.uppercase)
 
             if topTechniques.isEmpty {
@@ -42,10 +42,10 @@ struct PersuasionStackView: View {
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
             guard !hasAppeared else { return }
@@ -66,7 +66,7 @@ struct PersuasionStackView: View {
                 // Label
                 Text(technique.type.displayName)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
                     .frame(width: 100, alignment: .leading)
 
                 // Bar
@@ -77,7 +77,7 @@ struct PersuasionStackView: View {
                     ZStack(alignment: .leading) {
                         // Track
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.04))
+                            .fill(DS.borderSubtle)
                             .frame(height: 20)
 
                         // Fill
@@ -91,14 +91,14 @@ struct PersuasionStackView: View {
                 // Intensity value
                 Text(String(format: "%.0f%%", technique.intensity * 100))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .frame(width: 36, alignment: .trailing)
 
                 // Chevron indicator (only if example available)
                 if hasExample {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .rotationEffect(.degrees(isExpanded ? 0 : -90))
                         .animation(ProMotionSprings.snappy, value: isExpanded)
                 }
@@ -125,14 +125,14 @@ struct PersuasionStackView: View {
 
                     Text(example)
                         .font(.system(size: 12).italic())
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(nil)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.03))
+                        .fill(DS.borderSubtle)
                 )
                 .padding(.top, 6)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -156,7 +156,7 @@ struct PersuasionStackView: View {
     private var placeholderView: some View {
         Text("No persuasion techniques detected")
             .font(.system(size: 13))
-            .foregroundColor(.white.opacity(0.3))
+            .foregroundColor(DS.textMuted)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
     }
@@ -168,7 +168,7 @@ struct PersuasionStackView: View {
 struct PersuasionStackView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
             PersuasionStackView(
                 techniques: [
                     PersuasionTechnique(type: .curiosityGap, intensity: 0.92, example: "\"You won't believe what happened next...\" — withholds the key detail to pull the reader forward."),

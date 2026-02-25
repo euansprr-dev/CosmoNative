@@ -396,9 +396,9 @@ public actor WeeklySummaryGenerator {
         let rows = try Row.fetchAll(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'daily_summary'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
-            ORDER BY createdAt ASC
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
+            ORDER BY created_at ASC
         """, arguments: [start, end])
 
         var summaries: [DailySummaryMetadata] = []
@@ -486,38 +486,38 @@ public actor WeeklySummaryGenerator {
             SELECT COUNT(*) FROM atoms
             WHERE type = 'task'
             AND metadata LIKE '%"isCompleted":true%'
-            AND updatedAt >= ? AND updatedAt < ?
-            AND isDeleted = 0
+            AND updated_at >= ? AND updated_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let deepWork = try Int.fetchOne(db, sql: """
             SELECT COALESCE(SUM(CAST(json_extract(metadata, '$.durationMinutes') AS INTEGER)), 0)
             FROM atoms
             WHERE type IN ('focus_session', 'deep_work_block')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let words = try Int.fetchOne(db, sql: """
             SELECT COALESCE(SUM(CAST(json_extract(metadata, '$.wordCount') AS INTEGER)), 0)
             FROM atoms
             WHERE type = 'writing_session'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let journals = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'journal_entry'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let ideas = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'idea'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         return ActivityAggregation(
@@ -545,39 +545,39 @@ public actor WeeklySummaryGenerator {
             SELECT AVG(CAST(json_extract(metadata, '$.hrvMs') AS REAL))
             FROM atoms
             WHERE type = 'hrv_reading'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         let avgSleep = try Double.fetchOne(db, sql: """
             SELECT AVG(CAST(json_extract(metadata, '$.totalHours') AS REAL))
             FROM atoms
             WHERE type = 'sleep_record'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         let avgSleepQuality = try Double.fetchOne(db, sql: """
             SELECT AVG(CAST(json_extract(metadata, '$.efficiency') AS REAL))
             FROM atoms
             WHERE type = 'sleep_record'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         let avgReadiness = try Double.fetchOne(db, sql: """
             SELECT AVG(CAST(json_extract(metadata, '$.overallScore') AS REAL))
             FROM atoms
             WHERE type = 'readiness_score'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         let workouts = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'workout'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Determine trend based on week halves
@@ -650,8 +650,8 @@ public actor WeeklySummaryGenerator {
             SELECT COUNT(*) FROM atoms
             WHERE type = 'streak_event'
             AND metadata LIKE '%"eventType":"broken"%'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         // Get current streaks
@@ -663,8 +663,8 @@ public actor WeeklySummaryGenerator {
                 FROM atoms
                 WHERE type = 'streak_event'
                 AND metadata LIKE ?
-                AND isDeleted = 0
-                ORDER BY createdAt DESC
+                AND is_deleted = 0
+                ORDER BY created_at DESC
                 LIMIT 1
             """, arguments: ["%\"\(dim)\"%"]) ?? 0
             current[dim] = streak
@@ -689,8 +689,8 @@ public actor WeeklySummaryGenerator {
         let rows = try Row.fetchAll(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'badge_unlocked'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end])
 
         var unlocked: [BadgeUnlockSummary] = []
@@ -729,15 +729,15 @@ public actor WeeklySummaryGenerator {
             SELECT COUNT(*) FROM atoms
             WHERE type = 'daily_quest'
             AND metadata LIKE '%"isComplete":true%'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let total = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type = 'daily_quest'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let xp = try Int.fetchOne(db, sql: """
@@ -745,8 +745,8 @@ public actor WeeklySummaryGenerator {
             FROM atoms
             WHERE type = 'daily_quest'
             AND metadata LIKE '%"isComplete":true%'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [start, end]) ?? 0
 
         let rate = total > 0 ? Double(completed) / Double(total) : 0
@@ -772,8 +772,8 @@ public actor WeeklySummaryGenerator {
         let row = try Row.fetchOne(db, sql: """
             SELECT metadata FROM atoms
             WHERE type = 'weekly_summary'
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
             LIMIT 1
         """, arguments: [prevWeekStart, prevWeekEnd])
 

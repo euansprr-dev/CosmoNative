@@ -175,10 +175,15 @@ struct IdeaBlockView: View {
     }
 
     private func openFocusMode() {
+        let entityId = idea?.id ?? block.entityId
+        guard entityId > 0 else {
+            print("⚠️ IdeaBlockView.openFocusMode: no backing atom (entityId=\(entityId)), skipping")
+            return
+        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
-            userInfo: ["type": EntityType.idea, "id": idea?.id ?? block.entityId]
+            userInfo: ["type": EntityType.idea, "id": entityId]
         )
     }
 
@@ -481,4 +486,19 @@ struct IdeaFooter: View {
     private func shareIdea() {
         // Future: implement share functionality
     }
+}
+
+// MARK: - Preview
+
+#Preview("Idea Block") {
+    ZStack {
+        CosmoColors.thinkspaceVoid
+            .ignoresSafeArea()
+
+        IdeaBlockView(
+            block: CanvasBlock.previewIdeaBlock()
+        )
+        .environmentObject(BlockExpansionManager())
+    }
+    .frame(width: 400, height: 300)
 }

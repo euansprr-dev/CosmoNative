@@ -47,6 +47,17 @@ final class SwipeClassificationEngine: ObservableObject {
                 // Build the enriched analysis
                 var analysis = buildAnalysis(from: parsed, creatorUUID: creatorUUID)
 
+                // Platform-based format validation: video content from Instagram cannot be "post"
+                if analysis.swipeContentFormat == .post || analysis.swipeContentFormat == nil {
+                    let rc = atom.richContent
+                    let isVideo = rc?.instagramData?.extractedMediaURL != nil
+                        || rc?.sourceType == .instagramReel
+                        || rc?.instagramType == "reel"
+                    if isVideo {
+                        analysis.swipeContentFormat = .multiSliderReel
+                    }
+                }
+
                 // Persist to atom
                 await persistAnalysis(analysis, to: atom)
 
@@ -134,10 +145,36 @@ final class SwipeClassificationEngine: ObservableObject {
         let author = richContent?.author ?? ""
         let oembedTitle = richContent?.title ?? ""
 
+        // Gather media context for format classification
+        let sourceType = richContent?.sourceType?.rawValue ?? ""
+        let instagramType = richContent?.instagramType ?? ""
+        let hasVideo = richContent?.instagramData?.extractedMediaURL != nil
+        let slideCount = richContent?.instagramData?.carouselItems?.count ?? 0
+
+        // Extract duration from autoMetadata JSON
+        var duration: Int = 0
+        if let structuredStr = atom.structured,
+           let data = structuredStr.data(using: .utf8),
+           let outer = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let autoMetaStr = outer["autoMetadata"] as? String,
+           let autoData = autoMetaStr.data(using: .utf8),
+           let autoMeta = try? JSONSerialization.jsonObject(with: autoData) as? [String: Any],
+           let d = autoMeta["duration"] as? Int {
+            duration = d
+        }
+
         // Build available taxonomy values lists
         let narrativeValues = NarrativeStyle.allCases.map { $0.rawValue }.joined(separator: ", ")
         let formatValues = ContentFormat.allCases.map { $0.rawValue }.joined(separator: ", ")
         let frameworkValues = SwipeFrameworkType.allCases.map { $0.rawValue }.joined(separator: ", ")
+
+        // Build media context string
+        var mediaContext = ""
+        if !sourceType.isEmpty { mediaContext += "Source Type: \(sourceType)\n" }
+        if !instagramType.isEmpty { mediaContext += "Instagram Type: \(instagramType)\n" }
+        if duration > 0 { mediaContext += "Duration: \(duration) seconds\n" }
+        if slideCount > 0 { mediaContext += "Carousel/Slide Count: \(slideCount)\n" }
+        if hasVideo { mediaContext += "Has Video: yes\n" }
 
         return """
         You are a content intelligence analyst. Analyze this content and return a single JSON object that covers BOTH taxonomy classification AND structural analysis.
@@ -147,15 +184,30 @@ final class SwipeClassificationEngine: ObservableObject {
         Platform: \(platform)
         Creator/Author: \(author)
         oEmbed Title: \(oembedTitle)
+        \(mediaContext)
         Transcript (first 4000 words): \(truncated)
 
         ## Taxonomy Classification
         Classify the content across these dimensions:
 
         Narrative Styles (pick primary and optional secondary): \(narrativeValues)
+        - studentSuccess: A STUDENT or CLIENT success story — someone ELSE achieved a specific result (revenue, transformation, milestone). Must feature a real person's outcome, NOT generic tips. Example: "My student went from $0 to $10K/month in 90 days."
+        - storytelling: The creator recapping a STORY — their own journey, a client's story told narratively, or a behind-the-scenes experience. The content is structured as a narrative arc, not tips or analysis.
+        - lessonsLearned: A LISTICLE or numbered list of lessons, mistakes, or takeaways. The format is "X things I learned" or "X mistakes to avoid." Must be structured as a list, not a single topic deep-dive.
+        - authorityHacking: The HOOK or opening references a famous person, public figure, brand, or celebrity to borrow credibility. Example: "How Warren Buffett buys real estate" or "The strategy Hormozi uses to..."
+        - businessBreakdown: Analyzing, explaining, or breaking down a BUSINESS MODEL, market, strategy, tool, or system. Includes resource lists, platform comparisons, market analysis, how-to explanations of business mechanics. Example: "5 websites to find homes under $75K" = businessBreakdown (analyzing tools/market), NOT lessonsLearned.
+        - fearMongering: The hook leverages a CURRENT EVENT, alarming trend, or scary scenario to grab attention. Creates urgency through fear or concern. Example: "The housing market is about to crash" or "This new law will destroy your business."
+        - noValue: Pure entertainment, engagement-bait, or meme content with no educational, aspirational, or strategic value.
         Content Formats: \(formatValues)
+        - voiceoverReel: A single continuous video with voiceover narration (talking head, B-roll with VO)
+        - oneSliderReel: A reel with ONE static or slow-motion background image/clip and text overlay
+        - multiSliderReel: A reel with MULTIPLE slides/frames shown in sequence (timed text cards, image transitions). If the transcript has numbered slides (Slide 1, Slide 2...) and there's video, this is almost certainly a multiSliderReel, NOT a post or carousel.
+        - carousel: Static multi-image swipeable post (NO video, NO audio)
+        - post: A single static image post (NO video). Only use this for truly static single-image content.
+        - reel: Generic short-form video (use a more specific reel type if possible)
+        IMPORTANT: If the content has VIDEO (duration > 0 seconds) and is from Instagram, it is a REEL format (voiceoverReel, oneSliderReel, or multiSliderReel), NEVER "post". "post" is ONLY for static images with no video.
         Niche: A short label for the content vertical (e.g., "Real Estate Wholesaling", "Fitness", "SaaS Marketing")
-        Creator: Extract the creator's handle (@username) and display name if identifiable
+        Creator: Extract the creator's @username handle and display name. IMPORTANT: The Creator/Author field above may contain a numeric ID (e.g. "63181063998") — do NOT use this. Instead, look for the actual @username in the transcript text, captions, or any visible mentions. If no real username is found, return null for creatorHandle.
 
         ## Structural Analysis
         Also provide deep structural analysis:
@@ -166,7 +218,7 @@ final class SwipeClassificationEngine: ObservableObject {
 
         Return ONLY valid JSON with no markdown formatting:
         {
-          "primaryNarrative": "studentSuccess",
+          "primaryNarrative": "storytelling",
           "secondaryNarrative": null,
           "contentType": "voiceoverReel",
           "niche": "Real Estate Wholesaling",
@@ -346,12 +398,19 @@ final class SwipeClassificationEngine: ObservableObject {
     private func resolveCreator(handle: String?, name: String?, atom: Atom) async -> String? {
         guard let handle = handle, !handle.isEmpty else { return nil }
 
+        // Skip purely numeric handles (Instagram user IDs leaked through)
+        let stripped = handle.replacingOccurrences(of: "@", with: "")
+        guard !stripped.allSatisfy(\.isNumber) else { return nil }
+
         // Normalize handle
         let normalizedHandle = handle.hasPrefix("@") ? handle : "@\(handle)"
         let displayName = name ?? normalizedHandle
 
         // Detect platform from atom metadata
         let platform = atom.researchMetadata?.contentSource ?? "unknown"
+
+        // Backfill: if the stored author was a numeric ID, update it with the real handle
+        await backfillAuthor(normalizedHandle, on: atom)
 
         do {
             // Search existing creators by handle
@@ -382,6 +441,25 @@ final class SwipeClassificationEngine: ObservableObject {
             print("SwipeClassificationEngine: Creator resolution failed: \(error)")
             return nil
         }
+    }
+
+    /// If the stored author is a numeric ID, replace it with the real handle from AI classification.
+    private func backfillAuthor(_ handle: String, on atom: Atom) async {
+        guard var rc = atom.richContent else { return }
+        let currentAuthor = rc.author ?? ""
+        // Only backfill if current author is empty or purely numeric
+        let isNumericOrEmpty = currentAuthor.isEmpty || currentAuthor.replacingOccurrences(of: "@", with: "").allSatisfy(\.isNumber)
+        guard isNumericOrEmpty else { return }
+
+        rc.author = handle
+        if var igData = rc.instagramData {
+            igData.authorUsername = handle.replacingOccurrences(of: "@", with: "")
+            rc.instagramData = igData
+        }
+
+        var updated = atom
+        updated.setRichContent(rc)
+        try? await AtomRepository.shared.update(updated)
     }
 
     /// Add bidirectional links between swipe and creator

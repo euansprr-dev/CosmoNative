@@ -15,7 +15,6 @@ final class ConnectionDiscoveryEngine {
     // MARK: - Dependencies
 
     private let database = CosmoDatabase.shared
-    private let mlxService = MLXEmbeddingService.shared
     private let semanticEngine = SemanticSearchEngine.shared
 
     // MARK: - Configuration

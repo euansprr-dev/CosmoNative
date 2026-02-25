@@ -469,7 +469,7 @@ public final class BadgeProgressTracker: Sendable {
         let typeCountsSQL = """
             SELECT type, COUNT(*) as count
             FROM atoms
-            WHERE isDeleted = 0
+            WHERE is_deleted = 0
             GROUP BY type
         """
 
@@ -485,7 +485,7 @@ public final class BadgeProgressTracker: Sendable {
             SELECT COALESCE(SUM(json_extract(metadata, '$.wordCount')), 0) as total
             FROM atoms
             WHERE type IN ('journal_entry', 'note', 'ideaNote', 'projectNote')
-            AND isDeleted = 0
+            AND is_deleted = 0
         """
 
         if let total = try Int.fetchOne(db, sql: wordCountSQL) {
@@ -526,7 +526,7 @@ public final class BadgeProgressTracker: Sendable {
             SELECT json_extract(metadata, '$.badgeId') as badgeId
             FROM atoms
             WHERE type = 'badge'
-            AND isDeleted = 0
+            AND is_deleted = 0
         """
 
         let badgeIds = try String.fetchAll(db, sql: sql)
@@ -549,10 +549,10 @@ public final class BadgeProgressTracker: Sendable {
 
         for (atomType, dimension) in dimensionMapping {
             let sql = """
-                SELECT COUNT(DISTINCT date(createdAt)) as days
+                SELECT COUNT(DISTINCT date(created_at)) as days
                 FROM atoms
                 WHERE type = ?
-                AND isDeleted = 0
+                AND is_deleted = 0
             """
 
             if let days = try Int.fetchOne(db, sql: sql, arguments: [atomType]) {
@@ -562,9 +562,9 @@ public final class BadgeProgressTracker: Sendable {
 
         // Overall unique days
         let overallSQL = """
-            SELECT COUNT(DISTINCT date(createdAt)) as days
+            SELECT COUNT(DISTINCT date(created_at)) as days
             FROM atoms
-            WHERE isDeleted = 0
+            WHERE is_deleted = 0
         """
 
         let overallUniqueDays = try Int.fetchOne(db, sql: overallSQL) ?? 0
@@ -580,7 +580,7 @@ public final class BadgeProgressTracker: Sendable {
             SELECT COALESCE(SUM(json_extract(metadata, '$.durationMinutes')), 0) as total
             FROM atoms
             WHERE type = 'focus_session'
-            AND isDeleted = 0
+            AND is_deleted = 0
         """
 
         if let total = try Int.fetchOne(db, sql: cognitiveSQL) {
@@ -592,7 +592,7 @@ public final class BadgeProgressTracker: Sendable {
             SELECT COALESCE(SUM(json_extract(metadata, '$.durationMinutes')), 0) as total
             FROM atoms
             WHERE type = 'workout'
-            AND isDeleted = 0
+            AND is_deleted = 0
         """
 
         if let total = try Int.fetchOne(db, sql: physioSQL) {

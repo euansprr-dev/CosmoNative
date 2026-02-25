@@ -163,7 +163,7 @@ struct FloatingPanelTypeConfig {
             )
         case .idea:
             return FloatingPanelTypeConfig(
-                accentColor: CosmoColors.lavender,
+                accentColor: DS.accent,
                 icon: "lightbulb.fill",
                 label: "Idea"
             )

@@ -22,6 +22,7 @@ struct InstagramTranscriptView: View {
     @State private var igVideoFailed: Bool = false
     @State private var igMediaData: InstagramMediaData?
     @State private var igCurrentTime: TimeInterval = 0
+    @State private var videoDuration: TimeInterval = 0
 
     // Auto-transcription state
     @State private var isAutoTranscribing = false
@@ -74,7 +75,7 @@ struct InstagramTranscriptView: View {
             if let url = atom.url {
                 Text(url)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -92,18 +93,18 @@ struct InstagramTranscriptView: View {
                     Text("Open in Browser")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
         }
         .padding(14)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
     }
 
@@ -124,7 +125,7 @@ struct InstagramTranscriptView: View {
                                     .tint(.white)
                                 Text("Loading video...")
                                     .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .foregroundColor(DS.textSecondary)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(.black.opacity(0.4))
@@ -161,7 +162,7 @@ struct InstagramTranscriptView: View {
                                         ProgressView().tint(.white)
                                         Text("Refreshing video link...")
                                             .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.7))
+                                            .foregroundColor(DS.textSecondary)
                                     }
                                 )
                         }
@@ -170,7 +171,7 @@ struct InstagramTranscriptView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
+                            .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
                     .onTapGesture {
                         togglePlayback()
@@ -184,10 +185,10 @@ struct InstagramTranscriptView: View {
                             VStack(spacing: 12) {
                                 Image(systemName: "video.slash")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(0.5))
+                                    .foregroundColor(DS.textSecondary)
                                 Text("Could not load video")
                                     .font(.system(size: 12))
-                                    .foregroundColor(.white.opacity(0.6))
+                                    .foregroundColor(DS.textSecondary)
                                 if let urlString = atom.url, let openURL = URL(string: urlString) {
                                     Button {
                                         NSWorkspace.shared.open(openURL)
@@ -227,11 +228,12 @@ struct InstagramTranscriptView: View {
             igMetadataFooter
         }
         .onAppear {
-            extractVideo()
+            if igPlayer == nil {
+                extractVideo()
+            }
         }
         .onDisappear {
             igPlayer?.pause()
-            igPlayer = nil
         }
     }
 
@@ -258,7 +260,7 @@ struct InstagramTranscriptView: View {
                     .overlay(
                         Image(systemName: "camera.fill")
                             .font(.system(size: 32))
-                            .foregroundColor(.white.opacity(0.2))
+                            .foregroundColor(DS.textMuted)
                     )
             }
         }
@@ -271,7 +273,7 @@ struct InstagramTranscriptView: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.15))
+                        .fill(DS.borderActive)
                         .frame(height: 4)
 
                     Capsule()
@@ -286,7 +288,8 @@ struct InstagramTranscriptView: View {
                             DragGesture()
                                 .onChanged { value in
                                     let ratio = max(0, min(1, value.location.x / geometry.size.width))
-                                    let dur = igMediaData?.duration ?? 60
+                                    let dur = igMediaData?.duration ?? videoDuration
+                                    guard dur > 0 else { return }
                                     let time = dur * ratio
                                     igCurrentTime = time
                                     igPlayer?.seek(to: CMTime(seconds: time, preferredTimescale: 600))
@@ -303,19 +306,19 @@ struct InstagramTranscriptView: View {
                 } label: {
                     Image(systemName: igIsPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                 }
                 .buttonStyle(.plain)
 
                 Text(formatTime(igCurrentTime))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
-                Text(formatTime(igMediaData?.duration ?? 0))
+                Text(formatTime(igMediaData?.duration ?? videoDuration))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
         }
         .frame(width: 280)
@@ -328,20 +331,20 @@ struct InstagramTranscriptView: View {
         HStack(spacing: 8) {
             Image(systemName: "camera.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             if let username = igMediaData?.authorUsername {
                 Text("@\(username)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             } else if let author = atom.richContent?.author, !author.isEmpty {
                 Text("@\(author)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
             }
 
             Text("·")
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
             Text("Reel")
                 .font(.system(size: 11, weight: .semibold))
@@ -364,16 +367,36 @@ struct InstagramTranscriptView: View {
                 return
             }
 
+            let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
+
+            // Fast path: if we already have the video downloaded locally, skip extraction entirely
+            if let shortcode, let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
+                print("InstagramTranscriptView: Using cached local video for \(shortcode)")
+                setupPlayer(videoURL: localURL)
+
+                let hasSavedTranscript = !(atom.richContent?.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !(atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if transcript.isEmpty && !hasSavedTranscript {
+                    await autoTranscribe(videoURL: localURL, duration: 60)
+                }
+
+                igIsExtractingVideo = false
+                return
+            }
+
+            // Slow path: extract media data from Instagram, then download video
             do {
                 let mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
                 igMediaData = mediaData
 
                 if let videoURL = mediaData.videoURL {
-                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL)
+                    let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL, shortcode: shortcode)
                     setupPlayer(videoURL: playableURL)
 
-                    // Auto-transcribe if transcript is empty
-                    if transcript.isEmpty {
+                    // Auto-transcribe only if no saved transcript exists
+                    let hasSavedTranscript = !(atom.richContent?.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !(atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    if transcript.isEmpty && !hasSavedTranscript {
                         await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
                     }
                 } else {
@@ -406,6 +429,8 @@ struct InstagramTranscriptView: View {
                 self.autoTranscriptionProgress = "Reading text... \(Int(pct * 100))%"
             case .recognizingSpeech(let pct):
                 self.autoTranscriptionProgress = "Recognizing speech... \(Int(pct * 100))%"
+            case .analyzingWithAI(let pct):
+                self.autoTranscriptionProgress = "AI analyzing frames... \(Int(pct * 100))%"
             case .mergingResults:
                 self.autoTranscriptionProgress = "Merging results..."
             case .complete:
@@ -418,9 +443,11 @@ struct InstagramTranscriptView: View {
         if result.contentType != .empty {
             var slides = result.slides
 
-            // Claude cleanup if OCR confidence is low
-            if result.averageOCRConfidence < 0.7 && result.contentType != .voiceoverOnly {
-                autoTranscriptionProgress = "Cleaning up text..."
+            // Skip Claude cleanup for Gemini results (already filtered by prompt)
+            let needsCleanup = result.contentType != .voiceoverOnly
+                && !slides.allSatisfy({ $0.source == .geminiVision })
+            if needsCleanup {
+                autoTranscriptionProgress = "Cleaning up with AI..."
                 if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: slides) {
                     slides = cleaned
                 }
@@ -456,6 +483,14 @@ struct InstagramTranscriptView: View {
         }
 
         igPlayer = player
+
+        // Load actual duration from the video file for scrubbing
+        Task {
+            let asset = AVURLAsset(url: videoURL)
+            if let dur = try? await asset.load(.duration), dur.seconds > 0.5 {
+                videoDuration = dur.seconds
+            }
+        }
     }
 
     private func togglePlayback() {
@@ -499,7 +534,7 @@ struct InstagramTranscriptView: View {
     }
 
     private func igProgressWidth(in width: CGFloat) -> CGFloat {
-        let dur = igMediaData?.duration ?? 0
+        let dur = igMediaData?.duration ?? videoDuration
         guard dur > 0 else { return 0 }
         return width * (igCurrentTime / dur)
     }
@@ -518,7 +553,7 @@ struct InstagramTranscriptView: View {
                 Text("TRANSCRIPT")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 if let contentType = autoTranscriptionContentType {
                     igContentTypeBadge(contentType)
@@ -535,7 +570,7 @@ struct InstagramTranscriptView: View {
                         .tint(gold)
                     Text(autoTranscriptionProgress)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                     Spacer()
                 }
                 .padding(10)
@@ -549,20 +584,20 @@ struct InstagramTranscriptView: View {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $transcript)
                     .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(DS.text)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 180, maxHeight: 320)
                     .padding(12)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            .stroke(DS.border, lineWidth: 1)
                     )
 
                 if transcript.isEmpty {
                     Text("Watch the reel above and type out the script here...")
                         .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.2))
+                        .foregroundColor(DS.textMuted)
                         .padding(.leading, 16)
                         .padding(.top, 20)
                         .allowsHitTesting(false)
@@ -582,7 +617,7 @@ struct InstagramTranscriptView: View {
                 Text("\(wordCount) words")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(wordCount >= 10 ? .white.opacity(0.5) : Color(hex: "#F97316").opacity(0.8))
+            .foregroundColor(wordCount >= 10 ? DS.textSecondary : Color(hex: "#F97316").opacity(0.8))
 
             if wordCount > 0 && wordCount < 10 {
                 Text("(need at least 10 words)")
@@ -607,7 +642,7 @@ struct InstagramTranscriptView: View {
                         .tint(gold)
                     Text("Analyzing...")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -621,11 +656,11 @@ struct InstagramTranscriptView: View {
                         Text("Run Analysis")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundColor(canAnalyze ? .black : .white.opacity(0.3))
+                    .foregroundColor(canAnalyze ? .black : DS.textMuted)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(
-                        canAnalyze ? gold : Color.white.opacity(0.06),
+                        canAnalyze ? gold : DS.border,
                         in: Capsule()
                     )
                 }
@@ -669,6 +704,14 @@ struct InstagramTranscriptView: View {
         analysisError = nil
 
         Task {
+            let firstHookLine = transcript
+                .components(separatedBy: .newlines)
+                .map {
+                    $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                .first(where: { !$0.isEmpty })
+
             // a) Save transcript to atom.body
             var updatedAtom = atom
             updatedAtom.body = transcript
@@ -677,6 +720,11 @@ struct InstagramTranscriptView: View {
             var richContent = updatedAtom.richContent ?? ResearchRichContent()
             richContent.transcript = transcript
             richContent.transcriptStatus = "available"
+            if let firstHookLine {
+                updatedAtom.hook = String(firstHookLine.prefix(200))
+                updatedAtom.title = String(firstHookLine.prefix(120))
+                richContent.title = String(firstHookLine.prefix(120))
+            }
             updatedAtom.setRichContent(richContent)
 
             // b) Update processing status
@@ -685,13 +733,18 @@ struct InstagramTranscriptView: View {
             // Save the intermediate state
             _ = try? await AtomRepository.shared.update(updatedAtom)
 
+            // Preserve existing slides/comments from prior transcription
+            let existingSlides = updatedAtom.swipeAnalysis?.transcriptSlides
+            let existingComments = updatedAtom.swipeAnalysis?.transcriptComments
+
             // c) Run analysis (SwipeAnalyzer as primary, SwipeClassificationEngine as future upgrade)
-            // TODO: Call SwipeClassificationEngine.shared.classifyAndAnalyze(atom:) when WP2 is merged
             let nlpResult = await SwipeAnalyzer.shared.analyze(atom: updatedAtom)
 
             // d) Mark analysis complete
             var analysis = nlpResult
             analysis.analyzedAt = ISO8601DateFormatter().string(from: Date())
+            analysis.transcriptSlides = existingSlides
+            analysis.transcriptComments = existingComments
 
             // e) Save the updated atom with analysis
             updatedAtom = updatedAtom.withSwipeAnalysis(analysis)
@@ -704,7 +757,9 @@ struct InstagramTranscriptView: View {
             )
 
             if let deepResult = deepResult {
-                let enriched = SwipeAnalyzer.shared.mergeDeepAnalysis(deepResult, into: analysis)
+                var enriched = SwipeAnalyzer.shared.mergeDeepAnalysis(deepResult, into: analysis)
+                enriched.transcriptSlides = existingSlides
+                enriched.transcriptComments = existingComments
                 updatedAtom = updatedAtom.withSwipeAnalysis(enriched)
                 _ = try? await AtomRepository.shared.update(updatedAtom)
             }
@@ -717,3 +772,4 @@ struct InstagramTranscriptView: View {
         }
     }
 }
+

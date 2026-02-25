@@ -169,14 +169,14 @@ public final class ContentPipelineService: ObservableObject {
             return atom
         }
 
-        // Update content atom with new phase
+        // Update content atom with new phase — merge into existing metadata
+        // to preserve focus state keys (hooks, contentDescription, outline, etc.)
         metadata.phase = nextPhase
         metadata.lastPhaseTransition = Date()
         metadata.createdPhaseAt = Date()
 
-        // Create immutable copy for Sendable closure
         var updatedAtom = contentAtom
-        updatedAtom.metadata = metadata.toJSON()
+        updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
         let atomToUpdate = updatedAtom
 
@@ -416,9 +416,8 @@ public final class ContentPipelineService: ObservableObject {
         metadata.predictedReach = prediction.reach
         metadata.predictedEngagement = prediction.engagementRate
 
-        // Create immutable copy for Sendable closure
         var updatedAtom = contentAtom
-        updatedAtom.metadata = metadata.toJSON()
+        updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
         let atomToUpdate = updatedAtom
 
         try? await database.write { db in
@@ -615,6 +614,19 @@ public final class ContentPipelineService: ObservableObject {
 
     // MARK: - Private Helpers
 
+    /// Merge typed metadata fields into existing metadata JSON, preserving untyped keys (e.g. focus state).
+    private func mergedMetadataJSON<T: Encodable>(_ typed: T, existing: String?) -> String? {
+        guard let existing,
+              let existingData = existing.data(using: .utf8),
+              var dict = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+              let typedData = try? JSONEncoder().encode(typed),
+              let typedDict = try? JSONSerialization.jsonObject(with: typedData) as? [String: Any] else {
+            return (try? JSONEncoder().encode(typed)).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        for (key, value) in typedDict { dict[key] = value }
+        return (try? JSONSerialization.data(withJSONObject: dict)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
     private func loadActiveContent() async {
         isLoading = true
         defer { isLoading = false }
@@ -665,9 +677,8 @@ public final class ContentPipelineService: ObservableObject {
 
         metadata.wordCount = wordCount
 
-        // Create immutable copy for Sendable closure
         var updatedAtom = atom
-        updatedAtom.metadata = metadata.toJSON()
+        updatedAtom.metadata = mergedMetadataJSON(metadata, existing: atom.metadata)
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
         let atomToUpdate = updatedAtom
 
@@ -698,9 +709,12 @@ public final class ContentPipelineService: ObservableObject {
         // Derive niche from the client profile if available
         var niche: String?
         if let clientUUID = ideaAtom.ideaClientUUID,
-           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID),
-           let clientMeta = client.metadataValue(as: ClientMetadata.self) {
-            niche = clientMeta.niche
+           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
+            if let clientMeta = client.metadataValue(as: ClientProfileMetadata.self) {
+                niche = clientMeta.niche
+            } else if let clientMeta = client.metadataValue(as: ClientMetadata.self) {
+                niche = clientMeta.niche
+            }
         }
         let matchingSwipes: [Atom]
         do {
@@ -851,6 +865,7 @@ struct ContentAtomMetadata: Codable, Sendable {
     var predictedEngagement: Double?
     var sourceIdeaUUID: String?
     var inheritedSwipeUUIDs: [String]?
+    var inheritedConnectionIds: [String]?
     var inheritedFramework: String?
     var inheritedHooks: [String]?
     var activatedAt: String?
@@ -958,6 +973,9 @@ extension ClientProfileMetadata {
         if let beliefs = coreBeliefs, !beliefs.isEmpty {
             lines.append("Core Beliefs: \(beliefs.joined(separator: "; "))")
         }
+        if let phrases = signaturePhrases, !phrases.isEmpty {
+            lines.append("Signature Phrases: \(phrases.joined(separator: " | "))")
+        }
         if !platforms.isEmpty {
             lines.append("Platforms: \(platforms.map(\.displayName).joined(separator: ", "))")
         }
@@ -979,6 +997,30 @@ extension ClientProfileMetadata {
         }
         if let personal = isPersonalBrand {
             lines.append("Brand Type: \(personal ? "Personal Brand" : "Company/Agency")")
+        }
+        if let voice = extractedVoicePatterns {
+            lines.append("EXTRACTED VOICE PROFILE:")
+            if voice.avgSentenceLength > 0 {
+                lines.append("  Avg Sentence Length: \(String(format: "%.1f", voice.avgSentenceLength)) words")
+            }
+            if !voice.readingLevel.isEmpty {
+                lines.append("  Reading Level: \(voice.readingLevel)")
+            }
+            if !voice.emotionalRange.isEmpty {
+                lines.append("  Emotional Range: \(voice.emotionalRange)")
+            }
+            if !voice.recurringPhrases.isEmpty {
+                lines.append("  Recurring Phrases: \(voice.recurringPhrases.joined(separator: " | "))")
+            }
+            if !voice.ctaPatterns.isEmpty {
+                lines.append("  CTA Patterns: \(voice.ctaPatterns.joined(separator: " | "))")
+            }
+            if !voice.stylisticQuirks.isEmpty {
+                lines.append("  Stylistic Quirks: \(voice.stylisticQuirks.joined(separator: "; "))")
+            }
+        }
+        if let beats = preferredBeatPatterns, !beats.isEmpty {
+            lines.append("Preferred Beat Patterns: \(beats.joined(separator: ", "))")
         }
 
         return lines.joined(separator: "\n")

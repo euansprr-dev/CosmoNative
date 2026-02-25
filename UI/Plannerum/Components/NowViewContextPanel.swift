@@ -289,7 +289,7 @@ struct NowViewContextPanel: View {
                     ? Color(red: 74/255, green: 222/255, blue: 128/255)
                     : isCurrent
                         ? contentPhaseColor(phase)
-                        : Color.white.opacity(0.08)
+                        : DS.border
             )
             .frame(maxWidth: .infinity)
             .overlay {
@@ -348,11 +348,11 @@ struct NowViewContextPanel: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.03))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
         .onTapGesture {
             navigateToSwipe(uuid: swipe.swipeAtomUUID)
@@ -427,7 +427,7 @@ struct NowViewContextPanel: View {
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(PlannerumColors.textMuted)
             .frame(width: 24, height: 24)
-            .background(Color.white.opacity(0.05))
+            .background(DS.border)
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
@@ -643,11 +643,11 @@ private struct ContextCardStyleModifier: ViewModifier {
             .padding(PlannerumLayout.spacingLG)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(DS.border)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(DS.border, lineWidth: 1)
             )
     }
 }
@@ -777,4 +777,23 @@ final class NowViewContextViewModel: ObservableObject {
             recentCaptures = []
         }
     }
+}
+
+// MARK: - Preview
+
+#Preview("Now View Context Panel") {
+    let mockTask = TaskViewModel(
+        uuid: "preview-task",
+        title: "Draft weekly newsletter",
+        projectName: "Content",
+        projectColor: .purple,
+        estimatedMinutes: 60,
+        priority: .high
+    )
+    
+    NowViewContextPanel(task: mockTask)
+        .frame(width: 400, height: 300)
+        .padding(20)
+        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
+        .preferredColorScheme(.dark)
 }

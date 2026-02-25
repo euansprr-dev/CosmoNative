@@ -874,3 +874,10 @@ struct CompactConnectionSectionCard: View {
         )
     }
 }
+
+// MARK: - Preview
+
+#Preview("Connection Editor") {
+    ConnectionEditorView(connectionId: -1, presentation: .focus)
+        .frame(width: 900, height: 700)
+}

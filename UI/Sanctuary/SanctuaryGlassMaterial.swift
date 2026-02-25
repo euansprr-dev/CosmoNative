@@ -70,9 +70,9 @@ public struct SanctuaryGlassSurface: ViewModifier {
         case .primary: return SanctuaryColors.glassPrimary
         case .secondary: return SanctuaryColors.glassSecondary
         case .accent: return SanctuaryColors.glassAccent
-        case .frosted: return Color.white.opacity(0.1)
-        case .subtle: return Color.white.opacity(0.03)
-        case .void: return Color.white.opacity(0.02)
+        case .frosted: return DS.borderActive               // ~0.12
+        case .subtle: return DS.borderSubtle                // ~0.04
+        case .void: return Color.white.opacity(0.02)        // ultra-subtle
         }
     }
 
@@ -108,7 +108,7 @@ public struct SanctuaryGlassSurface: ViewModifier {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color.white.opacity(isHovered ? 0.12 : 0.08),
+                                    (isHovered ? DS.borderActive : DS.border),
                                     Color.white.opacity(0.02),
                                     Color.clear
                                 ],
@@ -464,7 +464,7 @@ public struct SanctuaryProgressRing: View {
         progress: Double,
         lineWidth: CGFloat = 3,
         progressColor: Color = SanctuaryColors.live,
-        trackColor: Color = Color.white.opacity(0.1),
+        trackColor: Color = Color.white.opacity(0.15),
         showGlow: Bool = true
     ) {
         self.progress = progress
@@ -680,7 +680,7 @@ struct SanctuaryGlassMaterial_Previews: PreviewProvider {
                     ForEach([SanctuaryGlassType.primary, .secondary, .accent], id: \.self) { type in
                         Text("Glass")
                             .font(SanctuaryTypography.label)
-                            .foregroundColor(.white)
+                            .foregroundColor(DS.text)
                             .padding()
                             .sanctuaryGlass(type)
                     }

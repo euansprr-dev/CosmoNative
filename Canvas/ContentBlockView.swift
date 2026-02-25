@@ -19,14 +19,19 @@ struct ContentBlockView: View {
     @State private var currentStep: ContentStep = .brainstorm
     @State private var currentContentPhase: ContentPhase = .ideation
     @State private var coreIdea: String = ""
+    @State private var hooks: [String] = []
+    @State private var contentDescription: String = ""
     @State private var draftContent: String = ""
     @State private var outlineItems: [String] = []
     @State private var wordCount: Int = 0
     @State private var polishAnalysis: PolishAnalysis?
     @State private var lastModified: Date?
+    @State private var platformName: String?
+    @State private var clientName: String?
 
     // GRDB observation
     @State private var observationCancellable: AnyCancellable?
+    @State private var lastParsedMetadata: String?
 
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
@@ -75,7 +80,7 @@ struct ContentBlockView: View {
 
     private var displayTitle: String {
         if !contentTitle.isEmpty {
-            return String(contentTitle.prefix(40))
+            return contentTitle
         }
         return "Untitled Content"
     }
@@ -84,21 +89,31 @@ struct ContentBlockView: View {
 
     private var workflowCardView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Clickable step indicator
+            // Phase dots
             stepIndicator
-                .padding(.top, 14)
+                .padding(.top, 12)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+                .padding(.bottom, 8)
+
+            // Title section
+            titleSection
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
+            // Step capsule switcher
+            stepCapsuleSwitcher
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
 
             // Thin separator
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.border)
                 .frame(height: 1)
 
             // Content preview based on current step
             stepPreview
                 .padding(.horizontal, 16)
-                .padding(.top, 10)
+                .padding(.top, 8)
 
             Spacer(minLength: 0)
 
@@ -108,6 +123,60 @@ struct ContentBlockView: View {
                 .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Title Section
+
+    private var titleSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(displayTitle)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.text)
+                .lineLimit(3)
+
+            if let client = clientName, !client.isEmpty {
+                Text("For \(client)")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(1)
+            } else if let platform = platformName, !platform.isEmpty {
+                Text(platform)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    // MARK: - Step Capsule Switcher
+
+    private var stepCapsuleSwitcher: some View {
+        HStack(spacing: 6) {
+            ForEach(ContentStep.allCases, id: \.self) { step in
+                stepCapsule(step)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepCapsule(_ step: ContentStep) -> some View {
+        let stepColor = colorForStep(step)
+        Text(step.label)
+            .font(.system(size: 10, weight: .medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(currentStep == step ? stepColor.opacity(0.2) : DS.borderSubtle.opacity(0.5))
+            .foregroundColor(currentStep == step ? stepColor : DS.textMuted)
+            .clipShape(Capsule())
+            .onTapGesture { switchStep(to: step) }
+    }
+
+    private func colorForStep(_ step: ContentStep) -> Color {
+        switch step {
+        case .brainstorm: return Color(hex: "818CF8") // indigo
+        case .draft: return Color(hex: "60A5FA")      // blue
+        case .polish: return Color(hex: "34D399")      // green
+        }
     }
 
     // MARK: - Phase Indicator (8-Phase Pipeline)
@@ -156,7 +225,7 @@ struct ContentBlockView: View {
             // Future: stroke, dimmed for post-creation
             let isCreation = ContentFocusModeState.stepForPhase(phase) != nil
             Circle()
-                .stroke(Color.white.opacity(isCreation ? 0.25 : 0.1), lineWidth: 1)
+                .stroke(isCreation ? DS.textMuted : DS.borderActive, lineWidth: 1)
                 .frame(width: 6, height: 6)
         }
     }
@@ -167,7 +236,7 @@ struct ContentBlockView: View {
         if phaseIdx <= currentIdx {
             return completedColor.opacity(0.5)
         }
-        return Color.white.opacity(0.08)
+        return DS.border
     }
 
     // MARK: - Step Preview
@@ -185,52 +254,75 @@ struct ContentBlockView: View {
     }
 
     private var brainstormPreview: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             // Core idea
             if !coreIdea.isEmpty {
-                HStack(spacing: 5) {
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 9))
-                        .foregroundColor(accentColor)
-                    Text(String(coreIdea.prefix(60)))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
+                Text(String(coreIdea.prefix(80)))
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(2)
+            } else if !contentDescription.isEmpty {
+                Text(String(contentDescription.prefix(80)))
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(2)
+            }
+
+            // Hooks
+            if !hooks.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(hooks.prefix(2).enumerated()), id: \.offset) { _, hook in
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 8))
+                                .foregroundColor(accentColor)
+                            Text(String(hook.prefix(40)))
+                                .font(.system(size: 10))
+                                .foregroundColor(DS.text)
+                                .lineLimit(1)
+                        }
+                    }
+                    if hooks.count > 2 {
+                        Text("+\(hooks.count - 2) more hooks")
+                            .font(.system(size: 9))
+                            .foregroundColor(DS.textMuted)
+                    }
                 }
             }
 
-            // Outline items (mini list)
+            // Outline items
             if !outlineItems.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(outlineItems.prefix(3).enumerated()), id: \.offset) { index, item in
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             Text("\(index + 1).")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
                                 .foregroundColor(accentColor.opacity(0.7))
                                 .frame(width: 14, alignment: .trailing)
                             Text(String(item.prefix(35)))
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.7))
+                                .font(.system(size: 10))
+                                .foregroundColor(DS.textSecondary)
                                 .lineLimit(1)
                         }
                     }
                     if outlineItems.count > 3 {
                         Text("+\(outlineItems.count - 3) more")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.3))
-                            .padding(.leading, 20)
+                            .font(.system(size: 9))
+                            .foregroundColor(DS.textMuted)
+                            .padding(.leading, 19)
                     }
                 }
             }
 
-            if coreIdea.isEmpty && outlineItems.isEmpty {
+            // Empty state — only when all brainstorm data is empty
+            if coreIdea.isEmpty && contentDescription.isEmpty && hooks.isEmpty && outlineItems.isEmpty {
                 HStack(spacing: 5) {
                     Image(systemName: "lightbulb.max.fill")
                         .font(.system(size: 10))
                         .foregroundColor(accentColor.opacity(0.5))
                     Text("Open to brainstorm...")
                         .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .italic()
                 }
             }
@@ -246,14 +338,14 @@ struct ContentBlockView: View {
                         .foregroundColor(accentColor.opacity(0.5))
                     Text("Open to start drafting...")
                         .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .italic()
                 }
             } else {
                 // Draft excerpt
                 Text(String(draftContent.prefix(120)))
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(4)
 
                 // Word count badge
@@ -283,7 +375,7 @@ struct ContentBlockView: View {
                         .foregroundColor(accentColor)
                     Text(analysis.readabilityLabel)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                 }
 
                 // Stats row
@@ -293,7 +385,7 @@ struct ContentBlockView: View {
                     Label("\(analysis.sentenceCount)s", systemImage: "text.alignleft")
                 }
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
             } else if wordCount > 0 {
                 HStack(spacing: 5) {
                     Image(systemName: "sparkles")
@@ -301,7 +393,7 @@ struct ContentBlockView: View {
                         .foregroundColor(accentColor.opacity(0.6))
                     Text("Ready to polish")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 if wordCount > 0 {
@@ -317,10 +409,10 @@ struct ContentBlockView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                     Text("Draft first, then polish")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .italic()
                 }
             }
@@ -330,15 +422,20 @@ struct ContentBlockView: View {
     // MARK: - Bottom Info Bar
 
     private var bottomInfoBar: some View {
-        HStack(spacing: 6) {
-            // Phase badge
-            HStack(spacing: 3) {
-                Image(systemName: currentContentPhase.iconName)
-                    .font(.system(size: 8))
-                Text("Phase \((ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0) + 1)/8")
-                    .font(.system(size: 9, weight: .medium))
+        HStack(spacing: 4) {
+            // Phase name
+            Text(currentContentPhase.displayName)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(accentColor.opacity(0.7))
+
+            if wordCount > 0 {
+                Text("\u{00B7}")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+                Text("\(wordCount)w")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
             }
-            .foregroundColor(accentColor.opacity(0.6))
 
             Spacer()
 
@@ -346,11 +443,11 @@ struct ContentBlockView: View {
             if let modified = lastModified {
                 Text(formatRelativeDate(modified))
                     .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.25))
+                    .foregroundColor(DS.textMuted)
             } else if let timestamp = block.metadata["updated"] {
                 Text(formatTimestamp(timestamp))
                     .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.25))
+                    .foregroundColor(DS.textMuted)
             }
         }
     }
@@ -403,10 +500,18 @@ struct ContentBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { [self] atom in
                     guard let atom else { return }
-                    contentTitle = atom.title ?? ""
-                    contentBody = atom.body ?? ""
-                    // Read focus state directly from atom metadata (not UserDefaults)
-                    parseAtomState(atom)
+                    let newTitle = atom.title ?? ""
+                    let newBody = atom.body ?? ""
+                    // Only update if something actually changed
+                    let titleChanged = newTitle != contentTitle
+                    let bodyChanged = newBody != contentBody
+                    if titleChanged { contentTitle = newTitle }
+                    if bodyChanged { contentBody = newBody }
+                    // Only re-parse atom state if the atom's metadata changed
+                    if titleChanged || bodyChanged || atom.metadata != lastParsedMetadata {
+                        lastParsedMetadata = atom.metadata
+                        parseAtomState(atom)
+                    }
                 }
             )
     }
@@ -451,12 +556,21 @@ struct ContentBlockView: View {
         // Read pipeline phase from ContentAtomMetadata
         if let metadata = atom.metadataValue(as: ContentAtomMetadata.self) {
             currentContentPhase = metadata.phase
+            if let platform = metadata.platform {
+                platformName = platform.displayName
+            }
+            // Load client name if linked
+            if let clientUUID = metadata.clientProfileUUID, !clientUUID.isEmpty {
+                loadClientName(uuid: clientUUID)
+            }
         }
 
         if let state = ContentFocusModeState.from(atom: atom) {
-            print("🔄 ContentBlock parseAtomState: step=\(state.currentStep.rawValue), coreIdea=\(state.coreIdea.prefix(20)), outline=\(state.outline.count), draft=\(state.draftContent.count)chars")
+            print("🔄 ContentBlock parseAtomState: step=\(state.currentStep.rawValue), coreIdea=\(state.coreIdea.prefix(20)), hooks=\(state.hooks.count), outline=\(state.outline.count), draft=\(state.draftContent.count)chars")
             currentStep = state.currentStep
             coreIdea = state.coreIdea
+            hooks = state.hooks
+            contentDescription = state.contentDescription
             draftContent = state.draftContent
             outlineItems = state.sortedOutline.map { $0.text }
             wordCount = state.draftContent.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
@@ -467,63 +581,33 @@ struct ContentBlockView: View {
         }
     }
 
+    /// Load client display name from clientProfile atom
+    private func loadClientName(uuid: String) {
+        Task {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                await MainActor.run {
+                    clientName = atom.title
+                }
+            }
+        }
+    }
+
     // MARK: - Focus Mode
 
     private func openFocusMode() {
         print("📂 ContentBlockView.openFocusMode: entityId=\(block.entityId), entityUuid=\(block.entityUuid), blockId=\(block.id)")
-        if block.entityId > 0 {
-            // Has backing atom — open directly
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: [
-                    "type": EntityType.content,
-                    "id": block.entityId
-                ]
-            )
-        } else {
-            // No backing atom — create one first (like NoteBlockView does)
-            Task {
-                do {
-                    let newAtom = try await AtomRepository.shared.createContent(
-                        title: contentTitle.isEmpty ? "Untitled Content" : contentTitle,
-                        body: contentBody.isEmpty ? nil : contentBody
-                    )
-                    let atomId = newAtom.id ?? Int64(-1)
-
-                    // Link the canvas block to the new atom
-                    try await CosmoDatabase.shared.asyncWrite { db in
-                        try db.execute(
-                            sql: """
-                            UPDATE canvas_blocks
-                            SET entity_id = ?, entity_uuid = ?
-                            WHERE id = ?
-                            """,
-                            arguments: [atomId, newAtom.uuid, block.id]
-                        )
-                    }
-
-                    await MainActor.run {
-                        // Notify canvas to reload blocks so entityId is updated in memory
-                        NotificationCenter.default.post(
-                            name: Notification.Name("com.cosmo.canvasBlocksChanged"),
-                            object: nil
-                        )
-
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: [
-                                "type": EntityType.content,
-                                "id": atomId
-                            ]
-                        )
-                    }
-                } catch {
-                    print("ContentBlockView: Failed to create backing atom: \(error)")
-                }
-            }
+        guard block.entityId > 0 else {
+            print("⚠️ ContentBlockView.openFocusMode: no backing atom (entityId=\(block.entityId)), skipping")
+            return
         }
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: [
+                "type": EntityType.content,
+                "id": block.entityId
+            ]
+        )
     }
 
     // MARK: - Helpers
@@ -833,4 +917,19 @@ struct ContentFooter: View {
     private func exportContent() {
         // Future: implement export functionality
     }
+}
+
+// MARK: - Preview
+
+#Preview("Content Block") {
+    ZStack {
+        CosmoColors.thinkspaceVoid
+            .ignoresSafeArea()
+
+        ContentBlockView(
+            block: CanvasBlock.previewContentBlock()
+        )
+        .environmentObject(BlockExpansionManager())
+    }
+    .frame(width: 400, height: 350)
 }

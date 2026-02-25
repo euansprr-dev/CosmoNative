@@ -624,8 +624,8 @@ public final class LevelSystemService: ObservableObject {
             SELECT json_extract(metadata, '$.badgeId') as badgeId
             FROM atoms
             WHERE type = 'badge'
-            AND isDeleted = 0
-            ORDER BY createdAt DESC
+            AND is_deleted = 0
+            ORDER BY created_at DESC
             LIMIT ?
         """
 

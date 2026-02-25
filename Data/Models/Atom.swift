@@ -100,6 +100,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     case creator                                        // Content creator profiles (for attribution)
     case taxonomyValue = "taxonomy_value"               // User-defined taxonomy dimension values
 
+    // MARK: - Agent Learning
+    case agentLearning = "agent_learning"               // Agent outcome tracking & taste profile data
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -124,7 +127,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .journalInsight, .analysisChunk, .emotionalState, .clarityScore:
             return .reflection
         case .dailySummary, .weeklySummary, .syncEvent, .systemEvent, .userPreference, .routineDefinition,
-             .thinkspace:
+             .thinkspace, .agentLearning:
             return .system
         case .correlationInsight, .causalityComputation, .semanticExtraction, .sanctuarySnapshot,
              .livingInsight, .syncState:
@@ -242,6 +245,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Swipe Intelligence Taxonomy
         case .creator: return "Creator"
         case .taxonomyValue: return "Taxonomy Value"
+        // Agent Learning
+        case .agentLearning: return "Agent Learning"
         }
     }
 
@@ -323,6 +328,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Swipe Intelligence Taxonomy
         case .creator: return "Creators"
         case .taxonomyValue: return "Taxonomy Values"
+        // Agent Learning
+        case .agentLearning: return "Agent Learning"
         }
     }
 
@@ -404,6 +411,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // Swipe Intelligence Taxonomy
         case .creator: return "person.crop.rectangle.fill"
         case .taxonomyValue: return "tag.fill"
+        // Agent Learning
+        case .agentLearning: return "brain"
         }
     }
 }
@@ -554,6 +563,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     // MARK: - Swipe Intelligence Links
     case swipeToCreator = "swipe_to_creator"               // Swipe attributed to a creator
     case creatorToSwipe = "creator_to_swipe"               // Creator's swipe files
+    case swipeToClient = "swipe_to_client"                 // Swipe tagged for a client
+    case clientToSwipe = "client_to_swipe"                 // Client's tagged swipes
 
     // MARK: - Bidirectional Links (for knowledge graph traversal)
     case linksTo = "links_to"                              // Generic forward link
@@ -597,6 +608,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .clientToIdea: return .ideaToClient
         case .swipeToCreator: return .creatorToSwipe
         case .creatorToSwipe: return .swipeToCreator
+        case .swipeToClient: return .clientToSwipe
+        case .clientToSwipe: return .swipeToClient
         default: return nil
         }
     }
@@ -665,6 +678,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         // Swipe Intelligence
         case .swipeToCreator: return "Swipe to Creator"
         case .creatorToSwipe: return "Creator to Swipe"
+        case .swipeToClient: return "Swipe to Client"
+        case .clientToSwipe: return "Client to Swipe"
         }
     }
 }
@@ -956,6 +971,16 @@ public struct AtomLink: Codable, Equatable, Sendable, Hashable {
 
     static func creatorToSwipe(_ swipeUUID: String) -> AtomLink {
         AtomLink(linkType: .creatorToSwipe, uuid: swipeUUID, entityType: .research)
+    }
+
+    // MARK: - Swipe-to-Client Link Factories
+
+    static func swipeToClient(_ clientUUID: String) -> AtomLink {
+        AtomLink(linkType: .swipeToClient, uuid: clientUUID, entityType: .clientProfile)
+    }
+
+    static func clientToSwipe(_ swipeUUID: String) -> AtomLink {
+        AtomLink(linkType: .clientToSwipe, uuid: swipeUUID, entityType: .research)
     }
 
     // MARK: - Utility Methods
@@ -1628,6 +1653,14 @@ public enum ContentFormat: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    public var isVideoFormat: Bool {
+        switch self {
+        case .reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA, .youtube:
+            return true
+        default: return false
+        }
+    }
+
     public var icon: String {
         switch self {
         case .voiceoverReel: return "waveform"
@@ -1794,6 +1827,12 @@ struct IdeaMetadata: Codable, Sendable {
     var matchingSwipeCount: Int?
     var lastAnalyzedAt: String?
     var contentUUIDs: [String]?
+    // Linked context (Idea Page Redesign)
+    var linkedSwipeIds: [String]?
+    var linkedConnectionIds: [String]?
+    // Hook + Description fields (Content Pipeline integration)
+    var hooks: [String]?
+    var ideaDescription: String?
 }
 
 // MARK: - Task Recommendation Types

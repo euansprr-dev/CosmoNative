@@ -58,7 +58,7 @@ struct PlaceholderCard: View {
             Button(action: connectAction) {
                 Text("Connect \(source)")
                     .font(SanctuaryTypography.label)
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .padding(.horizontal, SanctuaryLayout.Spacing.md)
                     .padding(.vertical, SanctuaryLayout.Spacing.sm)
                     .background(

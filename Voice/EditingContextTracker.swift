@@ -63,7 +63,6 @@ final class EditingContextTracker: ObservableObject {
     // MARK: - Private
 
     private var updateTask: Task<Void, Never>?
-    private let mlxService = MLXEmbeddingService.shared
 
     private init() {}
 
@@ -159,9 +158,10 @@ final class EditingContextTracker: ObservableObject {
         defer { isUpdatingContext = false }
 
         do {
-            // Generate embedding for context
-            let embedding = try await mlxService.embed(contextText)
-            contextVector = embedding
+            // Generate embedding for context via DaemonXPCClient
+            let fullEmbedding = try await DaemonXPCClient.shared.embed(text: contextText)
+            // Truncate 768d → 256d Matryoshka to match stored vectors
+            contextVector = Array(fullEmbedding.prefix(VectorConfig.matryoshkaDimension))
             lastContextUpdate = Date()
 
             // Extract concepts (simple keyword extraction)

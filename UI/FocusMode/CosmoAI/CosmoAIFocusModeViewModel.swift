@@ -1,6 +1,7 @@
 // CosmoOS/UI/FocusMode/CosmoAI/CosmoAIFocusModeViewModel.swift
-// Extended conversation state for Cosmo AI Focus Mode
-// Manages multi-turn conversation, mode routing, context loading, and surfaced atoms
+// Unified conversation state for Cosmo AI Focus Mode
+// Routes through CosmoAgentService for full tool access
+// February 2026
 
 import SwiftUI
 import Combine
@@ -8,40 +9,34 @@ import Combine
 @MainActor
 final class CosmoAIFocusModeViewModel: ObservableObject {
     // MARK: - Published State
-    @Published var messages: [AIMessage] = []
+    @Published var messages: [CosmoWindowMessage] = []
     @Published var surfacedAtoms: [Atom] = []
-    @Published var isGenerating = false
-    @Published var currentMode: CosmoMode = .think
+    @Published var isProcessing = false
     @Published var connectedAtomUUIDs: [String] = []
     @Published var contextSources: [ContextSource] = []
     @Published var inputText = ""
 
+    // MARK: - Live Tool Activity (WP5)
+    @Published var liveToolActivity: [ToolActivityGroup] = []
+    @Published var activeToolLabel: String? = nil
+
+    // MARK: - Mention State (WP2)
+    @Published var mentionedAtoms: [Atom] = []
+    @Published var showMentionOverlay = false
+    @Published var mentionSearchText = ""
+    @Published var modelOverride: AgentModelTier? = nil
+
     // MARK: - Properties
     let atom: Atom
+    private let agentService = CosmoAgentService.shared
+    private var conversationId: String
 
     // MARK: - Init
     init(atom: Atom) {
         self.atom = atom
+        self.conversationId = "cosmo-ai-focus-\(atom.uuid)"
         loadConversationHistory()
         loadConnectedContext()
-    }
-
-    // MARK: - Message Types
-    struct AIMessage: Identifiable {
-        let id = UUID()
-        let role: MessageRole
-        let content: String
-        let timestamp: Date
-        let mode: CosmoMode
-        var recallResults: [RecallResult]?
-        var actionResults: [ActionResult]?
-        var sources: [ResearchFinding]?
-    }
-
-    enum MessageRole: String {
-        case user
-        case assistant
-        case system
     }
 
     // MARK: - Send Message
@@ -49,173 +44,159 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
         let query = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
 
-        let inferredMode = CosmoMode.infer(from: query)
-        currentMode = inferredMode
         inputText = ""
 
-        let userMsg = AIMessage(role: .user, content: query, timestamp: Date(), mode: inferredMode)
-        messages.append(userMsg)
-
-        isGenerating = true
-
-        switch inferredMode {
-        case .think:
-            await performThink(query: query)
-        case .research:
-            await performResearch(query: query)
-        case .recall:
-            await performRecall(query: query)
-        case .act:
-            await performAct(query: query)
+        // Capture mention info before clearing
+        let mentionInfo: [MentionedAtomInfo]? = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map { atom in
+            MentionedAtomInfo(type: atom.type.rawValue, title: atom.title ?? "Untitled")
         }
 
-        isGenerating = false
-        saveConversationHistory()
+        let userMsg = CosmoWindowMessage.user(query, mentionedAtoms: mentionInfo)
+        messages.append(userMsg)
 
+        isProcessing = true
+        liveToolActivity = []
+        activeToolLabel = nil
+
+        // Build enriched text with connected context + mention context
+        let enrichedText = buildEnrichedText(query: query)
+
+        // Clear mentions after capturing
+        clearMentions()
+
+        // Route through CosmoAgentService
+        let (response, trace) = await agentService.processMessage(
+            enrichedText,
+            conversationId: conversationId,
+            source: .inApp,
+            tierOverride: modelOverride,
+            onToolActivity: { [weak self] event in
+                Task { @MainActor in
+                    self?.handleToolActivity(event)
+                }
+            }
+        )
+
+        // Insert context trace if tools were used
+        if trace.hasContent {
+            messages.append(.contextTrace(from: trace))
+        }
+
+        // Freeze tool activity into the assistant message
+        let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
+        messages.append(CosmoWindowMessage(
+            type: .assistant,
+            content: response,
+            toolActivityGroups: frozenGroups
+        ))
+
+        isProcessing = false
+        liveToolActivity = []
+        activeToolLabel = nil
+
+        saveConversationHistory()
         await autoSurfaceRelated(query: query)
     }
 
-    // MARK: - Think Mode
-    private func performThink(query: String) async {
-        do {
-            var contextText = ""
+    // MARK: - Mention Management
+
+    func addMention(_ atom: Atom) {
+        guard !mentionedAtoms.contains(where: { $0.uuid == atom.uuid }) else { return }
+        mentionedAtoms.append(atom)
+        showMentionOverlay = false
+        mentionSearchText = ""
+    }
+
+    func removeMention(_ atom: Atom) {
+        mentionedAtoms.removeAll { $0.uuid == atom.uuid }
+    }
+
+    func clearMentions() {
+        mentionedAtoms = []
+        showMentionOverlay = false
+        mentionSearchText = ""
+    }
+
+    // MARK: - Build Enriched Text
+
+    private func buildEnrichedText(query: String) -> String {
+        var parts: [String] = []
+
+        // Auto-inject connected context
+        if !contextSources.isEmpty {
+            var contextBlock = "## Connected Context (auto-loaded from canvas connections)"
             for source in contextSources {
-                contextText += "[\(source.type.rawValue.uppercased()): \(source.title)] \(source.bodyPreview)\n\n"
+                contextBlock += "\n[\(source.type.rawValue.uppercased()): \(source.title)] \(source.bodyPreview)"
             }
-
-            let result = try await ResearchService.shared.performResearch(
-                query: contextText.isEmpty ? query : "\(query)\n\nContext:\n\(contextText)",
-                searchType: .web,
-                maxResults: 3
-            )
-
-            let response = AIMessage(
-                role: .assistant,
-                content: result.summary,
-                timestamp: Date(),
-                mode: .think,
-                sources: result.findings
-            )
-            messages.append(response)
-        } catch {
-            let errorMsg = AIMessage(role: .assistant, content: "Error: \(error.localizedDescription)", timestamp: Date(), mode: .think)
-            messages.append(errorMsg)
+            parts.append(contextBlock)
         }
+
+        // Inject mentioned atoms as referenced context
+        if !mentionedAtoms.isEmpty {
+            var mentionBlock = "## Referenced Context"
+            for atom in mentionedAtoms {
+                let typeLabel = atom.type.rawValue.uppercased()
+                let title = atom.title ?? "Untitled"
+                let body = String((atom.body ?? "").prefix(500))
+                mentionBlock += "\n[\(typeLabel): \"\(title)\"]\n\(body)"
+            }
+            parts.append(mentionBlock)
+        }
+
+        parts.append(query)
+        return parts.joined(separator: "\n\n")
     }
 
-    // MARK: - Research Mode
-    private func performResearch(query: String) async {
-        do {
-            let result = try await ResearchService.shared.performResearch(
-                query: query,
-                searchType: .web,
-                maxResults: 5
-            )
+    // MARK: - Live Tool Activity Handling
 
-            let response = AIMessage(
-                role: .assistant,
-                content: result.summary,
-                timestamp: Date(),
-                mode: .research,
-                sources: result.findings
-            )
-            messages.append(response)
-        } catch {
-            let errorMsg = AIMessage(role: .assistant, content: "Research failed: \(error.localizedDescription)", timestamp: Date(), mode: .research)
-            messages.append(errorMsg)
-        }
-    }
+    private func handleToolActivity(_ event: ToolActivityEvent) {
+        switch event {
+        case .started(let name, let displayLabel, _):
+            activeToolLabel = displayLabel
+            let category = toolActivityCategory(for: name)
+            let icon = toolActivityIcon(for: name)
+            let item = ToolActivityItem(icon: icon, label: displayLabel, status: .active)
 
-    // MARK: - Recall Mode
-    private func performRecall(query: String) async {
-        do {
-            // VectorDatabase.search returns [VectorSearchResult] with entityUUID (String?)
-            let vectorResults = try await VectorDatabase.shared.search(query: query, limit: 8, minSimilarity: 0.3)
-            let keywordResults = try await AtomRepository.shared.search(query: query, limit: 8)
-
-            var seen = Set<String>()
-            var results: [RecallResult] = []
-
-            for vr in vectorResults {
-                if let uuid = vr.entityUUID, !seen.contains(uuid) {
-                    seen.insert(uuid)
-                    if let atom = try await AtomRepository.shared.fetch(uuid: uuid) {
-                        results.append(RecallResult(atom: atom, similarity: vr.similarity, source: "vector"))
-                    }
-                }
-            }
-            for atom in keywordResults {
-                if !seen.contains(atom.uuid) {
-                    seen.insert(atom.uuid)
-                    results.append(RecallResult(atom: atom, similarity: nil, source: "keyword"))
-                }
-            }
-
-            let response = AIMessage(
-                role: .assistant,
-                content: "Found \(results.count) related items in your knowledge base.",
-                timestamp: Date(),
-                mode: .recall,
-                recallResults: results
-            )
-            messages.append(response)
-        } catch {
-            let errorMsg = AIMessage(role: .assistant, content: "Recall failed: \(error.localizedDescription)", timestamp: Date(), mode: .recall)
-            messages.append(errorMsg)
-        }
-    }
-
-    // MARK: - Act Mode
-    private func performAct(query: String) async {
-        let q = query.lowercased()
-
-        do {
-            if q.contains("create a note") || q.contains("make a note") {
-                let content = extractContent(from: query, removing: ["create a note about", "make a note about"])
-                let atom = try await AtomRepository.shared.create(type: .idea, title: content, body: content)
-
-                let result = ActionResult(description: "Created note: \(content)", createdAtomId: atom.id, createdAtomType: .note)
-                let response = AIMessage(
-                    role: .assistant,
-                    content: "Created note: \(content)",
-                    timestamp: Date(),
-                    mode: .act,
-                    actionResults: [result]
-                )
-                messages.append(response)
-            } else if q.contains("should i work on") || q.contains("what should i") {
-                let recommendations = try await TaskRecommendationEngine.shared.getRecommendations(
-                    currentEnergy: 70,
-                    currentFocus: 70,
-                    limit: 3
-                )
-                var text = ""
-                if let primary = recommendations.primary {
-                    text = "Top recommendation: \(primary.task.title)\n"
-                    if !recommendations.alternatives.isEmpty {
-                        text += "\nAlternatives:\n"
-                        for alt in recommendations.alternatives {
-                            text += "- \(alt.task.title)\n"
-                        }
-                    }
-                } else {
-                    text = "No pending tasks found."
-                }
-                let response = AIMessage(role: .assistant, content: text, timestamp: Date(), mode: .act)
-                messages.append(response)
+            if let idx = liveToolActivity.firstIndex(where: { $0.category == category }) {
+                liveToolActivity[idx].items.append(item)
             } else {
-                let response = AIMessage(
-                    role: .assistant,
-                    content: "Available actions:\n- Create a note about [topic]\n- What should I work on?\n- Summarize my research on [topic]",
-                    timestamp: Date(),
-                    mode: .act
-                )
-                messages.append(response)
+                liveToolActivity.append(ToolActivityGroup(category: category, items: [item]))
             }
-        } catch {
-            let errorMsg = AIMessage(role: .assistant, content: "Action failed: \(error.localizedDescription)", timestamp: Date(), mode: .act)
-            messages.append(errorMsg)
+
+        case .completed(let name, _, let preview):
+            let category = toolActivityCategory(for: name)
+            if let gIdx = liveToolActivity.firstIndex(where: { $0.category == category }),
+               let iIdx = liveToolActivity[gIdx].items.lastIndex(where: { $0.status == .active }) {
+                liveToolActivity[gIdx].items[iIdx] = ToolActivityItem(
+                    icon: liveToolActivity[gIdx].items[iIdx].icon,
+                    label: liveToolActivity[gIdx].items[iIdx].label,
+                    detail: preview,
+                    status: .done
+                )
+            }
+
+        case .allDone:
+            activeToolLabel = nil
+            for i in liveToolActivity.indices {
+                liveToolActivity[i].isComplete = true
+            }
         }
+    }
+
+    private func toolActivityCategory(for toolName: String) -> String {
+        if toolName.hasPrefix("search_") || toolName.hasPrefix("find_") || toolName.hasPrefix("get_") || toolName.hasPrefix("list_") { return "Viewed" }
+        if toolName.hasPrefix("generate_") || toolName.hasPrefix("create_") || toolName.hasPrefix("write_") { return "Generated" }
+        if toolName == "web_search" { return "Searched" }
+        if toolName.hasPrefix("score_") || toolName.hasPrefix("evaluate_") { return "Analyzed" }
+        return "Processed"
+    }
+
+    private func toolActivityIcon(for toolName: String) -> String {
+        if toolName.hasPrefix("search_") || toolName.hasPrefix("find_") || toolName.hasPrefix("get_") || toolName.hasPrefix("list_") { return "doc.text" }
+        if toolName.hasPrefix("generate_") || toolName.hasPrefix("create_") || toolName.hasPrefix("write_") { return "sparkles" }
+        if toolName == "web_search" { return "globe" }
+        if toolName.hasPrefix("score_") || toolName.hasPrefix("evaluate_") { return "chart.bar" }
+        return "gearshape"
     }
 
     // MARK: - Auto-Surface Related
@@ -273,22 +254,36 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
               let messagesArray = json["messages"] as? [[String: Any]] else { return }
 
         messages = messagesArray.compactMap { dict in
-            guard let roleStr = dict["role"] as? String,
-                  let role = MessageRole(rawValue: roleStr),
-                  let content = dict["content"] as? String,
-                  let modeStr = dict["mode"] as? String,
-                  let mode = CosmoMode(rawValue: modeStr) else { return nil }
+            guard let typeStr = dict["type"] as? String,
+                  let content = dict["content"] as? String else { return nil }
             let timestamp = (dict["timestamp"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
-            return AIMessage(role: role, content: content, timestamp: timestamp, mode: mode)
+            let isStreaming = false
+
+            switch typeStr {
+            case "user":
+                return CosmoWindowMessage(type: .user, content: content, timestamp: timestamp, isStreaming: isStreaming)
+            case "assistant":
+                return CosmoWindowMessage(type: .assistant, content: content, timestamp: timestamp, isStreaming: isStreaming)
+            case "system":
+                return CosmoWindowMessage(type: .system, content: content, timestamp: timestamp, isStreaming: isStreaming)
+            default:
+                return nil
+            }
         }
     }
 
     private func saveConversationHistory() {
-        let messagesArray: [[String: Any]] = messages.suffix(50).map { msg in
-            [
-                "role": msg.role.rawValue,
+        let messagesArray: [[String: Any]] = messages.suffix(50).compactMap { msg in
+            let typeStr: String
+            switch msg.type {
+            case .user: typeStr = "user"
+            case .assistant: typeStr = "assistant"
+            case .system: typeStr = "system"
+            default: return nil  // Don't persist trace/change messages
+            }
+            return [
+                "type": typeStr,
                 "content": msg.content,
-                "mode": msg.mode.rawValue,
                 "timestamp": msg.timestamp.timeIntervalSince1970
             ]
         }
@@ -313,17 +308,5 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
     func unpinAtom(_ atom: Atom) {
         surfacedAtoms.removeAll { $0.uuid == atom.uuid }
-    }
-
-    // MARK: - Helpers
-    private func extractContent(from query: String, removing prefixes: [String]) -> String {
-        var result = query
-        for prefix in prefixes {
-            if result.lowercased().hasPrefix(prefix) {
-                result = String(result.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
-        return result.isEmpty ? query : result
     }
 }

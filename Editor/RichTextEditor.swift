@@ -377,3 +377,18 @@ struct MentionEntity: Identifiable {
     let title: String
     let subtitle: String?
 }
+
+// MARK: - Preview
+
+#Preview("Rich Text Editor") {
+    @Previewable @State var text = NSAttributedString(string: "Sample text content...")
+    @Previewable @State var plainText = "Sample text content..."
+
+    RichTextEditor(
+        text: $text,
+        plainText: $plainText,
+        placeholder: "Start typing..."
+    )
+    .frame(width: 600, height: 400)
+    .padding()
+}

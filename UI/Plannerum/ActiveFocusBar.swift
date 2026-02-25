@@ -101,7 +101,7 @@ public struct ActiveFocusBar: View {
             // Top border (Spec: 1px rgba(255,255,255,0.08))
             VStack {
                 Rectangle()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(DS.border)
                     .frame(height: Layout.topBorder)
                 Spacer()
             }
@@ -342,6 +342,16 @@ public struct ActiveFocusBar: View {
                 pulsePhase += 0.1
             }
     }
+}
+
+// MARK: - Preview
+
+#Preview("Active Focus Bar") {
+    ActiveFocusBar()
+        .frame(height: 80)
+        .frame(maxWidth: .infinity)
+        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
+        .preferredColorScheme(.dark)
 }
 
 // MARK: - Active Focus Bar View Model

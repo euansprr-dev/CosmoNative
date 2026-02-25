@@ -65,7 +65,7 @@ struct ConnectionBlockView: View {
 
             // Divider
             Rectangle()
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.border)
                 .frame(height: 1)
 
             // Scrollable sections
@@ -124,12 +124,12 @@ struct ConnectionBlockView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(block.title.isEmpty ? "Untitled Connection" : block.title)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
 
                 Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
                     .font(.system(size: 11))
-                    .foregroundColor(Color.white.opacity(0.35))
+                    .foregroundColor(DS.textMuted)
             }
 
             Spacer()
@@ -143,7 +143,7 @@ struct ConnectionBlockView: View {
             if let created = block.metadata["created"] ?? block.metadata["updated"] {
                 Text(formatTimestamp(created))
                     .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.25))
+                    .foregroundColor(DS.textMuted)
             }
             Spacer()
         }
@@ -292,49 +292,18 @@ struct ConnectionBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        if block.entityId > 0 {
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: [
-                    "type": EntityType.connection,
-                    "id": block.entityId
-                ]
-            )
-        } else {
-            // Create backing atom first
-            Task {
-                let newAtom = Atom.new(
-                    type: .connection,
-                    title: block.title.isEmpty ? "New Connection" : block.title,
-                    body: ""
-                )
-                guard let created = try? await AtomRepository.shared.create(newAtom) else { return }
-                let atomId = created.id ?? Int64(-1)
-
-                try? await CosmoDatabase.shared.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE canvas_blocks SET entity_id = ?, entity_uuid = ? WHERE id = ?",
-                        arguments: [atomId, created.uuid, block.id]
-                    )
-                }
-
-                await MainActor.run {
-                    NotificationCenter.default.post(
-                        name: Notification.Name("com.cosmo.canvasBlocksChanged"),
-                        object: nil
-                    )
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: [
-                            "type": EntityType.connection,
-                            "id": atomId
-                        ]
-                    )
-                }
-            }
+        guard block.entityId > 0 else {
+            print("⚠️ ConnectionBlockView.openFocusMode: no backing atom (entityId=\(block.entityId)), skipping")
+            return
         }
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: [
+                "type": EntityType.connection,
+                "id": block.entityId
+            ]
+        )
     }
 
     // MARK: - Helpers
@@ -378,7 +347,7 @@ private struct CompactSectionRow: View {
                     // Section name
                     Text(section.type.displayName)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
 
                     // Count badge
                     if !section.items.isEmpty {
@@ -398,7 +367,7 @@ private struct CompactSectionRow: View {
                     // Chevron
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .rotationEffect(.degrees(section.isExpanded ? 90 : 0))
                 }
                 .padding(.horizontal, 8)
@@ -434,7 +403,7 @@ private struct CompactSectionRow: View {
 
                             TextField("Add item...", text: $newItemText)
                                 .font(.system(size: 12))
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
                                 .textFieldStyle(.plain)
                                 .focused($isAddFieldFocused)
                                 .onSubmit {
@@ -473,7 +442,7 @@ private struct CompactSectionRow: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(section.isExpanded ? Color.white.opacity(0.03) : Color.clear)
+                .fill(section.isExpanded ? DS.borderSubtle : Color.clear)
         )
     }
 
@@ -516,7 +485,7 @@ private struct CompactItemRow: View {
             if isEditing {
                 TextField("", text: $editText)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .textFieldStyle(.plain)
                     .focused($isFieldFocused)
                     .onSubmit {
@@ -529,7 +498,7 @@ private struct CompactItemRow: View {
             } else {
                 Text(item.content)
                     .font(.system(size: 12))
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -544,7 +513,7 @@ private struct CompactItemRow: View {
                     } label: {
                         Image(systemName: "pencil")
                             .font(.system(size: 9))
-                            .foregroundColor(Color.white.opacity(0.4))
+                            .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 

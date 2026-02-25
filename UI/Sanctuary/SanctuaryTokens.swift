@@ -95,13 +95,13 @@ public struct SanctuaryColors {
     public static let heroInnerGlow = Color.white.opacity(0.35)
 
     // ═══════════════════════════════════════════════════════════════
-    // BACKGROUND SYSTEM - Aurora and void
+    // BACKGROUND SYSTEM - Aurora and void (referencing DS base tokens)
     // ═══════════════════════════════════════════════════════════════
 
     /// Deep void background - nearly black with subtle warmth
-    public static let voidPrimary = Color(hex: "0A0A0F")
-    public static let voidSecondary = Color(hex: "12121A")
-    public static let voidTertiary = Color(hex: "1A1A25")
+    public static let voidPrimary = DS.bg              // Color(hex: "0A0A0F")
+    public static let voidSecondary = DS.surface       // Color(hex: "111118")
+    public static let voidTertiary = DS.surfaceCard    // Color(hex: "1A1A24")
 
     /// Aurora accent colors for background animation
     public static let auroraBlue = Color(hex: "3B82F6").opacity(0.15)
@@ -109,39 +109,39 @@ public struct SanctuaryColors {
     public static let auroraPink = Color(hex: "EC4899").opacity(0.08)
 
     // ═══════════════════════════════════════════════════════════════
-    // GLASS MATERIALS - Translucent surfaces
+    // GLASS MATERIALS - Translucent surfaces (referencing DS base tokens)
     // ═══════════════════════════════════════════════════════════════
 
     /// Primary glass (cards, panels) - visible but subtle
-    public static let glassPrimary = Color.white.opacity(0.08)
+    public static let glassPrimary = DS.border          // Color.white.opacity(0.06)
 
     /// Secondary glass (nested elements) - more subtle
-    public static let glassSecondary = Color.white.opacity(0.05)
+    public static let glassSecondary = DS.borderSubtle  // Color.white.opacity(0.04)
 
     /// Accent glass (highlighted states) - more visible
-    public static let glassAccent = Color.white.opacity(0.12)
+    public static let glassAccent = DS.borderActive     // Color.white.opacity(0.12)
 
     /// Glass border highlight
     public static let glassBorder = Color.white.opacity(0.15)
 
     /// Glass border subtle
-    public static let glassBorderSubtle = Color.white.opacity(0.08)
+    public static let glassBorderSubtle = DS.border     // Color.white.opacity(0.06)
 
     // ═══════════════════════════════════════════════════════════════
-    // TEXT HIERARCHY - On dark backgrounds
+    // TEXT HIERARCHY - On dark backgrounds (referencing DS base tokens)
     // ═══════════════════════════════════════════════════════════════
 
     /// Primary text - high visibility
-    public static let textPrimary = Color.white
+    public static let textPrimary = DS.text             // Color(hex: "E8E8ED")
 
     /// Secondary text - reduced emphasis
-    public static let textSecondary = Color.white.opacity(0.7)
+    public static let textSecondary = DS.textSecondary  // Color(hex: "8888A0")
 
     /// Tertiary text - hints, captions
-    public static let textTertiary = Color.white.opacity(0.5)
+    public static let textTertiary = DS.textMuted       // Color(hex: "555566")
 
     /// Muted text - disabled, less important
-    public static let textMuted = Color.white.opacity(0.35)
+    public static let textMuted = DS.textMuted          // Color(hex: "555566")
 
     // ═══════════════════════════════════════════════════════════════
     // STATUS COLORS - For indicators and alerts
@@ -345,7 +345,7 @@ public struct SanctuaryColors {
             case .plannerum:
                 return RadialGradient(
                     colors: [
-                        Color.white.opacity(0.15),
+                        Color.white.opacity(0.15),  // orb glow highlight — keep raw
                         plannerumPrimary.opacity(0.85),
                         plannerumDark.opacity(0.95)
                     ],
@@ -356,7 +356,7 @@ public struct SanctuaryColors {
             case .thinkspace:
                 return RadialGradient(
                     colors: [
-                        Color.white.opacity(0.15),
+                        Color.white.opacity(0.15),  // orb glow highlight — keep raw
                         thinkspacePrimary.opacity(0.85),
                         thinkspaceDark.opacity(0.95)
                     ],
@@ -404,9 +404,9 @@ public struct SanctuaryColors {
 
     /// Card surface colors namespace
     public struct Card {
-        public static let background = Color(hex: "1C1C2E")
-        public static let border = Color.white.opacity(0.08)
-        public static let titleText = Color(hex: "8888AA")
+        public static let background = DS.surfaceCard       // Color(hex: "1A1A24")
+        public static let border = DS.border                // Color.white.opacity(0.06)
+        public static let titleText = DS.textSecondary      // Color(hex: "8888A0")
     }
 
     /// Glass effect colors namespace
@@ -416,8 +416,8 @@ public struct SanctuaryColors {
         public static let accent = SanctuaryColors.glassAccent
         public static let border = SanctuaryColors.glassBorder
         public static let borderSubtle = SanctuaryColors.glassBorderSubtle
-        public static let background = SanctuaryColors.voidSecondary
-        public static let highlight = Color.white.opacity(0.2)
+        public static let background = DS.surface               // was voidSecondary
+        public static let highlight = DS.borderActive           // Color.white.opacity(0.12)
     }
 }
 
@@ -939,8 +939,8 @@ public struct SanctuaryGradients {
     /// Glass surface highlight
     public static let glassHighlight = LinearGradient(
         colors: [
-            Color.white.opacity(0.12),
-            Color.white.opacity(0.04),
+            DS.borderActive,       // Color.white.opacity(0.12)
+            DS.borderSubtle,       // Color.white.opacity(0.04)
             Color.clear
         ],
         startPoint: .topLeading,
@@ -951,7 +951,7 @@ public struct SanctuaryGradients {
     public static let glassBorder = LinearGradient(
         colors: [
             Color.white.opacity(0.2),
-            Color.white.opacity(0.08)
+            DS.border              // Color.white.opacity(0.06)
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -970,7 +970,7 @@ public struct SanctuaryGradients {
 
     /// XP background track
     public static let xpTrack = LinearGradient(
-        colors: [Color.white.opacity(0.1), Color.white.opacity(0.05)],
+        colors: [DS.borderActive, DS.border],   // was white 0.1/0.05
         startPoint: .leading,
         endPoint: .trailing
     )
@@ -1128,7 +1128,7 @@ struct SanctuaryTokens_Previews: PreviewProvider {
                 // Dimension Colors
                 Text("Dimension Colors")
                     .font(SanctuaryTypography.titleLarge)
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 HStack(spacing: 16) {
                     ForEach(LevelDimension.allCases, id: \.self) { dimension in
@@ -1138,7 +1138,7 @@ struct SanctuaryTokens_Previews: PreviewProvider {
                                 .frame(width: 40, height: 40)
                             Text(SanctuaryIcons.shortName(for: dimension))
                                 .font(SanctuaryTypography.labelSmall)
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
                         }
                     }
                 }
@@ -1146,7 +1146,7 @@ struct SanctuaryTokens_Previews: PreviewProvider {
                 // Typography
                 Text("Typography")
                     .font(SanctuaryTypography.titleLarge)
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Hero Number").font(SanctuaryTypography.heroNumber)
@@ -1155,7 +1155,7 @@ struct SanctuaryTokens_Previews: PreviewProvider {
                     Text("Body Medium").font(SanctuaryTypography.bodyMedium)
                     Text("Label Small").font(SanctuaryTypography.labelSmall)
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
             }
             .padding(32)
         }

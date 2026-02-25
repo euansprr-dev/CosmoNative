@@ -16,6 +16,8 @@ class IdeaFocusModeViewModel: ObservableObject {
     @Published var idea: Atom
     @Published var editableTitle: String
     @Published var editableBody: String
+    @Published var editableHooks: [String]
+    @Published var editableDescription: String
     @Published var selectedStatus: IdeaStatus
     @Published var selectedFormat: ContentFormat?
     @Published var selectedPlatform: IdeaPlatform?
@@ -31,6 +33,19 @@ class IdeaFocusModeViewModel: ObservableObject {
     @Published var linkedClient: Atom?
     @Published var clientProfiles: [Atom] = []
 
+    // MARK: - Published State (Linked Context)
+
+    @Published var linkedSwipes: [Atom] = []
+    @Published var linkedConnections: [Atom] = []
+    @Published var suggestedConnections: [Atom] = []
+    @Published var generatedHooks: [HookSuggestion] = []
+    @Published var isGeneratingHooks: Bool = false
+
+    // MARK: - Overlay State
+
+    @Published var showLinkSwipesOverlay: Bool = false
+    @Published var showLinkConnectionsOverlay: Bool = false
+
     // MARK: - Session State
 
     @Published var sessionState: IdeaFocusModeState
@@ -39,6 +54,7 @@ class IdeaFocusModeViewModel: ObservableObject {
 
     private var autoSaveTask: Task<Void, Never>?
     private var autoEnrichTask: Task<Void, Never>?
+    private var hookGenerationTask: Task<Void, Never>?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
 
@@ -51,6 +67,8 @@ class IdeaFocusModeViewModel: ObservableObject {
 
         self.editableTitle = atom.title ?? ""
         self.editableBody = atom.body ?? ""
+        self.editableHooks = meta?.hooks ?? []
+        self.editableDescription = meta?.ideaDescription ?? ""
         self.selectedStatus = meta?.ideaStatus ?? .spark
         self.selectedFormat = meta?.contentFormat
         self.selectedPlatform = meta?.platform
@@ -75,11 +93,17 @@ class IdeaFocusModeViewModel: ObservableObject {
         if let clientUUID = meta?.clientUUID {
             Task { await loadLinkedClient(uuid: clientUUID) }
         }
+
+        // Load linked swipes and connections
+        Task { await loadLinkedSwipes() }
+        Task { await loadLinkedConnections() }
+        Task { await loadSuggestedConnections() }
     }
 
     deinit {
         autoSaveTask?.cancel()
         autoEnrichTask?.cancel()
+        hookGenerationTask?.cancel()
     }
 
     // MARK: - Analysis Pipeline
@@ -211,7 +235,7 @@ class IdeaFocusModeViewModel: ObservableObject {
                 idea = try await AtomRepository.shared.update(analysisAtom)
             }
 
-            // Create content atom with empty body — the idea text goes into coreIdea,
+            // Create content atom with empty body — the idea text goes into contentDescription,
             // not into draftContent (which maps to atom.body).
             let contentAtom = try await AtomRepository.shared.createContent(
                 title: editableTitle,
@@ -219,20 +243,30 @@ class IdeaFocusModeViewModel: ObservableObject {
                 contentType: selectedFormat?.rawValue ?? "post"
             )
 
-            // Determine inherited metadata from insight
-            let inheritedSwipeUUIDs = insight?.matchingSwipes?.map(\.swipeAtomUUID) ?? []
+            // Determine inherited metadata — prioritize explicitly linked, then insight
+            let linkedSwipeUUIDs = idea.ideaMetadata?.linkedSwipeIds ?? []
+            let insightSwipeUUIDs = insight?.matchingSwipes?.map(\.swipeAtomUUID) ?? []
+            let inheritedSwipeUUIDs = Array(Set(linkedSwipeUUIDs + insightSwipeUUIDs))
+
+            let linkedConnectionUUIDs = idea.ideaMetadata?.linkedConnectionIds ?? []
+
             let inheritedFramework: String? = {
                 if let selected = sessionState.selectedFramework {
                     return selected
                 }
                 return insight?.frameworkRecommendations?.first?.framework.rawValue
             }()
-            let inheritedHooks = insight?.hookSuggestions?.map(\.hookText) ?? []
+            let inheritedHooks: [String] = {
+                if !generatedHooks.isEmpty {
+                    return generatedHooks.map(\.hookText)
+                }
+                return insight?.hookSuggestions?.map(\.hookText) ?? []
+            }()
             let nowISO = ISO8601DateFormatter().string(from: Date())
 
-            // Build ContentFocusModeState with coreIdea = the original idea text
+            // Build ContentFocusModeState with description = the original idea text
             var focusState = ContentFocusModeState(atomUUID: contentAtom.uuid)
-            focusState.coreIdea = editableBody
+            focusState.contentDescription = editableBody
 
             // Generate AI-suggested outline using ResearchService
             let aiOutline = await generateOutline(
@@ -269,6 +303,7 @@ class IdeaFocusModeViewModel: ObservableObject {
                 ?? ContentAtomMetadata(phase: .ideation, wordCount: 0)
             contentMeta.sourceIdeaUUID = idea.uuid
             contentMeta.inheritedSwipeUUIDs = inheritedSwipeUUIDs.isEmpty ? nil : inheritedSwipeUUIDs
+            contentMeta.inheritedConnectionIds = linkedConnectionUUIDs.isEmpty ? nil : linkedConnectionUUIDs
             contentMeta.inheritedFramework = inheritedFramework
             contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
             contentMeta.activatedAt = nowISO
@@ -301,6 +336,13 @@ class IdeaFocusModeViewModel: ObservableObject {
 
             // Award 10 XP to creative dimension for idea activation
             await awardActivationXP(contentUUID: contentAtom.uuid)
+
+            // Notify the Ideas Library to remove this idea (it's now a content piece)
+            NotificationCenter.default.post(
+                name: Notification.Name("ideaActivated"),
+                object: nil,
+                userInfo: ["uuid": idea.uuid]
+            )
 
             // Post notification to open the new content in focus mode
             NotificationCenter.default.post(
@@ -423,6 +465,225 @@ class IdeaFocusModeViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Linked Swipes
+
+    /// Load swipe atoms from the idea's linkedSwipeIds metadata.
+    func loadLinkedSwipes() async {
+        let swipeIds = idea.ideaMetadata?.linkedSwipeIds ?? []
+        var swipes: [Atom] = []
+        for uuid in swipeIds {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                swipes.append(atom)
+            }
+        }
+        linkedSwipes = swipes
+    }
+
+    /// Link a swipe to this idea by appending its UUID to linkedSwipeIds.
+    func linkSwipe(_ swipeUUID: String) async {
+        var updatedAtom = idea.withUpdatedIdeaMetadata { meta in
+            var ids = meta.linkedSwipeIds ?? []
+            guard !ids.contains(swipeUUID) else { return }
+            ids.append(swipeUUID)
+            meta.linkedSwipeIds = ids
+        }
+        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.localVersion += 1
+        do {
+            idea = try await AtomRepository.shared.update(updatedAtom)
+            await loadLinkedSwipes()
+            scheduleHookGeneration()
+        } catch {
+            print("IdeaFocusMode: linkSwipe failed: \(error)")
+        }
+    }
+
+    /// Unlink a swipe from this idea by removing its UUID from linkedSwipeIds.
+    func unlinkSwipe(_ swipeUUID: String) async {
+        var updatedAtom = idea.withUpdatedIdeaMetadata { meta in
+            meta.linkedSwipeIds = meta.linkedSwipeIds?.filter { $0 != swipeUUID }
+            if meta.linkedSwipeIds?.isEmpty == true { meta.linkedSwipeIds = nil }
+        }
+        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.localVersion += 1
+        do {
+            idea = try await AtomRepository.shared.update(updatedAtom)
+            await loadLinkedSwipes()
+            scheduleHookGeneration()
+        } catch {
+            print("IdeaFocusMode: unlinkSwipe failed: \(error)")
+        }
+    }
+
+    // MARK: - Linked Connections
+
+    /// Load connection atoms from the idea's linkedConnectionIds metadata.
+    func loadLinkedConnections() async {
+        let connectionIds = idea.ideaMetadata?.linkedConnectionIds ?? []
+        var connections: [Atom] = []
+        for uuid in connectionIds {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                connections.append(atom)
+            }
+        }
+        linkedConnections = connections
+    }
+
+    /// Link a connection to this idea.
+    func linkConnection(_ connectionUUID: String) async {
+        var updatedAtom = idea.withUpdatedIdeaMetadata { meta in
+            var ids = meta.linkedConnectionIds ?? []
+            guard !ids.contains(connectionUUID) else { return }
+            ids.append(connectionUUID)
+            meta.linkedConnectionIds = ids
+        }
+        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.localVersion += 1
+        do {
+            idea = try await AtomRepository.shared.update(updatedAtom)
+            await loadLinkedConnections()
+        } catch {
+            print("IdeaFocusMode: linkConnection failed: \(error)")
+        }
+    }
+
+    /// Unlink a connection from this idea.
+    func unlinkConnection(_ connectionUUID: String) async {
+        var updatedAtom = idea.withUpdatedIdeaMetadata { meta in
+            meta.linkedConnectionIds = meta.linkedConnectionIds?.filter { $0 != connectionUUID }
+            if meta.linkedConnectionIds?.isEmpty == true { meta.linkedConnectionIds = nil }
+        }
+        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.localVersion += 1
+        do {
+            idea = try await AtomRepository.shared.update(updatedAtom)
+            await loadLinkedConnections()
+        } catch {
+            print("IdeaFocusMode: unlinkConnection failed: \(error)")
+        }
+    }
+
+    /// Load suggested connections — connections assigned to the idea's client, or semantically related.
+    func loadSuggestedConnections() async {
+        let linkedIds = Set(idea.ideaMetadata?.linkedConnectionIds ?? [])
+        do {
+            let allConnections = try await AtomRepository.shared.fetchAll(type: .connection)
+            let clientUUID = idea.ideaMetadata?.clientUUID
+
+            // Suggest connections assigned to the same client, or with matching titles
+            let suggestions = allConnections.filter { conn in
+                guard !linkedIds.contains(conn.uuid) else { return false }
+                // If idea has a client, prefer connections linked to the same client
+                if let clientUUID = clientUUID {
+                    if conn.linksList.contains(where: { $0.uuid == clientUUID }) {
+                        return true
+                    }
+                }
+                return false
+            }
+            suggestedConnections = Array(suggestions.prefix(2))
+        } catch {
+            print("IdeaFocusMode: loadSuggestedConnections failed: \(error)")
+        }
+    }
+
+    // MARK: - AI Hook Generation
+
+    /// Schedule debounced hook generation (5s delay).
+    func scheduleHookGeneration() {
+        hookGenerationTask?.cancel()
+        hookGenerationTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            await generateHooksFromLinkedSwipes()
+        }
+    }
+
+    /// Generate hooks from linked swipes using ResearchService.
+    func generateHooksFromLinkedSwipes() async {
+        guard !linkedSwipes.isEmpty else {
+            generatedHooks = []
+            return
+        }
+        guard !isGeneratingHooks else { return }
+
+        isGeneratingHooks = true
+        defer { isGeneratingHooks = false }
+
+        // Build swipe context
+        var swipeContext = ""
+        for swipe in linkedSwipes.prefix(5) {
+            let analysis = swipe.swipeAnalysis
+            let hookText = swipe.researchMetadata?.hook ?? analysis?.hookText ?? ""
+            let hookType = analysis?.hookType?.displayName ?? "unknown"
+            let score = analysis?.hookScore.map { String(format: "%.1f", $0) } ?? "?"
+            let title = swipe.title ?? "Untitled"
+            swipeContext += "- \"\(hookText)\" (type: \(hookType), score: \(score)/10, source: \(title))\n"
+        }
+
+        // Build client voice context
+        var voiceContext = ""
+        if let client = linkedClient {
+            let clientMeta = client.clientMetadata
+            if let voice = clientMeta?.brandVoice, !voice.isEmpty {
+                voiceContext = "\nClient voice: \(voice)"
+            }
+        }
+
+        let prompt = """
+        Generate 3-5 hook suggestions for this idea, inspired by the structural patterns in the linked swipe files.
+
+        Idea title: \(editableTitle)
+        Core idea: \(editableBody)\(voiceContext)
+
+        Linked swipe hooks:
+        \(swipeContext)
+
+        For each hook, provide:
+        - "hookText": The full hook text (1-2 sentences)
+        - "hookType": One of: question, statistic, story, contrarian, authority, vulnerability, curiosity, challenge, comparison, metaphor, prediction, confession, secret, directAddress
+        - "sourceSwipeTitle": Which swipe file inspired this hook pattern
+        - "estimatedScore": Predicted hook score 1-10
+
+        Return ONLY this JSON:
+        {"hooks":[{"hookText":"...","hookType":"...","sourceSwipeTitle":"...","estimatedScore":7.5}]}
+        """
+
+        do {
+            let response = try await ResearchService.shared.analyzeContent(prompt: prompt)
+            let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard let startIdx = cleaned.firstIndex(of: "{"),
+                  let endIdx = cleaned.lastIndex(of: "}") else { return }
+
+            let jsonString = String(cleaned[startIdx...endIdx])
+            guard let data = jsonString.data(using: .utf8) else { return }
+
+            struct HookResponse: Decodable {
+                struct Item: Decodable {
+                    let hookText: String
+                    let hookType: String?
+                    let sourceSwipeTitle: String?
+                    let estimatedScore: Double?
+                }
+                let hooks: [Item]
+            }
+
+            if let parsed = try? JSONDecoder().decode(HookResponse.self, from: data) {
+                generatedHooks = parsed.hooks.map { item in
+                    HookSuggestion(
+                        hookText: item.hookText,
+                        hookType: item.hookType.flatMap { SwipeHookType(rawValue: $0) },
+                        sourceSwipeTitle: item.sourceSwipeTitle,
+                        estimatedScore: item.estimatedScore
+                    )
+                }
+            }
+        } catch {
+            print("IdeaFocusMode: generateHooksFromLinkedSwipes failed: \(error)")
+        }
+    }
+
     // MARK: - Client Assignment
 
     /// Assign or unassign a client profile to this idea.
@@ -493,6 +754,8 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.contentFormat = selectedFormat
             meta.platform = selectedPlatform
             meta.ideaStatus = selectedStatus
+            meta.hooks = editableHooks.isEmpty ? nil : editableHooks
+            meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
         }
 
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())

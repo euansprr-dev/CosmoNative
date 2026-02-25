@@ -69,6 +69,12 @@ struct CosmoApp: App {
             TaskRecurrenceEngine.shared.scheduleMidnightRefresh()
         }
 
+        // Migrate existing lessons to add intent scope
+        Task { await LessonExtractor.shared.migrateExistingLessons() }
+
+        // Migrate existing lessons into matching skill modules
+        Task { await LessonExtractor.shared.migrateExistingLessonsToModules() }
+
         // Register Swipe File hotkey (Cmd+Shift+S)
         print("📋 Registering Swipe File hotkey callback...")
         HotkeyManager.shared.registerSwipeFileHotkey { [weak swipeFileEngine] in
@@ -86,7 +92,7 @@ struct CosmoApp: App {
 
         // Setup command bar (hidden by default, revealed on activation)
         voicePillWindow = VoicePillWindowController()
-        voicePillWindow?.setupTriggerZone()
+        // voicePillWindow?.setupTriggerZone()  // Disabled — settings cog replaces trigger zone
 
         // Register Option-C hotkey to open command bar typing mode
         HotkeyManager.shared.registerCommandBarTypingHotkey {
@@ -460,6 +466,11 @@ struct CosmoCommands: Commands {
                 NotificationCenter.default.post(name: .showCommandPalette, object: nil)
             }
             .keyboardShortcut("k", modifiers: [.command])
+
+            Button("Toggle Cosmo") {
+                NotificationCenter.default.post(name: CosmoNotification.CosmoWindow.toggle, object: nil)
+            }
+            .keyboardShortcut("a", modifiers: [.option])
         }
 
         // Undo/Redo commands (⌘Z / ⌘⇧Z)

@@ -612,10 +612,10 @@ actor VoiceWorkoutHandler {
         return try await database.read { db in
             try Atom
                 .filter(Column("type") == AtomType.workout.rawValue)
-                .filter(Column("createdAt") >= oneHourAgo.ISO8601Format())
+                .filter(Column("created_at") >= oneHourAgo.ISO8601Format())
                 .filter(sql: "metadata LIKE ? AND metadata LIKE ?",
                         arguments: ["%\"source\":\"healthkit\"%", "%\(type.lowercased())%"])
-                .order(Column("createdAt").desc)
+                .order(Column("created_at").desc)
                 .fetchOne(db)
         }
     }
@@ -743,8 +743,8 @@ actor WorkoutIntegrationCoordinator {
         return try await database.read { db in
             try Atom
                 .filter(Column("type") == AtomType.workout.rawValue)
-                .filter(Column("createdAt") >= todayStart.ISO8601Format())
-                .order(Column("createdAt").desc)
+                .filter(Column("created_at") >= todayStart.ISO8601Format())
+                .order(Column("created_at").desc)
                 .fetchAll(db)
         }
     }

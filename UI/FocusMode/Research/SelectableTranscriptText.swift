@@ -48,10 +48,6 @@ struct SelectableTranscriptText: NSViewRepresentable {
         textView.textStorage?.beginEditing()
         textView.textStorage?.setAttributedString(attributed)
         textView.textStorage?.endEditing()
-
-        // Force NSTextView to recalculate display
-        textView.needsLayout = true
-        textView.needsDisplay = true
     }
 
     /// Tell SwiftUI the exact height this text view needs
@@ -141,4 +137,53 @@ struct SelectableTranscriptText: NSViewRepresentable {
             parent.onTextSelected(selectedText, selectedRange)
         }
     }
+}
+
+// MARK: - Preview
+
+#Preview("Selectable Transcript Text") {
+    VStack(spacing: 20) {
+        // Without highlights
+        SelectableTranscriptText(
+            text: "This is a sample transcript text that can be selected. Try selecting some text to see how it works. The text is fully selectable and will report selections back via the callback.",
+            highlights: [],
+            isPlaying: false,
+            onTextSelected: { text, range in
+                print("Selected: \"\(text)\" at range \(range)")
+            }
+        )
+        .frame(width: 300, height: 80)
+
+        Divider()
+
+        // With highlights
+        SelectableTranscriptText(
+            text: "Identity is not fixed. It's a story you tell yourself. Real transformation comes from subtraction, not addition.",
+            highlights: [
+                TextHighlight(
+                    annotationID: UUID(),
+                    startCharIndex: 0,
+                    endCharIndex: 23,
+                    annotationType: .insight,
+                    highlightedText: "Identity is not fixed."
+                ),
+                TextHighlight(
+                    annotationID: UUID(),
+                    startCharIndex: 55,
+                    endCharIndex: 111,
+                    annotationType: .note,
+                    highlightedText: "Real transformation comes from subtraction, not addition."
+                )
+            ],
+            isPlaying: true,
+            onTextSelected: { text, range in
+                print("Selected: \"\(text)\" at range \(range)")
+            }
+        )
+        .frame(width: 300, height: 80)
+    }
+    .padding(20)
+    .frame(width: 340, height: 280)
+    .background(Color.black)
+    .preferredColorScheme(.dark)
 }

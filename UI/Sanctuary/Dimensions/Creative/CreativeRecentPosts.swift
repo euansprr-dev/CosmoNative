@@ -228,7 +228,7 @@ public struct RecentPostCard: View {
                 Text(post.platform.shortName)
                     .font(.system(size: 9, weight: .bold))
             }
-            .foregroundColor(.white)
+            .foregroundColor(DS.text)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(
@@ -246,7 +246,7 @@ public struct RecentPostCard: View {
                     Text("Trending")
                         .font(.system(size: 7, weight: .bold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(

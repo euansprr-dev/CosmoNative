@@ -3,6 +3,7 @@
 // Supports content drafts, phases, performance analytics, and client profiles
 
 import Foundation
+import SwiftUI
 
 // MARK: - Content Phase
 
@@ -40,28 +41,28 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Previous phase in the pipeline
+    /// Previous phase in the pipeline (visible flow: ideation → draft → polish → archived)
     var previousPhase: ContentPhase? {
         switch self {
         case .ideation: return nil
         case .draft: return .ideation
         case .polish: return .draft
-        case .scheduled: return .polish
-        case .published: return .scheduled
-        case .analyzing: return .published
-        case .archived: return .analyzing
+        case .scheduled: return .polish   // legacy — hidden in UI
+        case .published: return .scheduled // legacy — hidden in UI
+        case .analyzing: return .published // legacy — hidden in UI
+        case .archived: return .polish     // visible flow skips to polish
         }
     }
 
-    /// Next phase in the pipeline
+    /// Next phase in the pipeline (visible flow: ideation → draft → polish → archived)
     var nextPhase: ContentPhase? {
         switch self {
         case .ideation: return .draft
         case .draft: return .polish
-        case .polish: return .scheduled
-        case .scheduled: return .published
-        case .published: return .analyzing
-        case .analyzing: return .archived
+        case .polish: return .archived     // visible flow skips to archived
+        case .scheduled: return .published // legacy — hidden in UI
+        case .published: return .analyzing // legacy — hidden in UI
+        case .analyzing: return .archived  // legacy — hidden in UI
         case .archived: return nil
         }
     }
@@ -77,6 +78,20 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
         case .analyzing: return 0
         case .archived: return 0
         }
+    }
+
+    /// Whether this phase is visible in the UI pipeline bar
+    /// Schedule, Published, and Analyzing are hidden for V1
+    var isVisibleInPipeline: Bool {
+        switch self {
+        case .ideation, .draft, .polish, .archived: return true
+        case .scheduled, .published, .analyzing: return false
+        }
+    }
+
+    /// Only the phases shown in the UI pipeline bar
+    static var visiblePhases: [ContentPhase] {
+        allCases.filter(\.isVisibleInPipeline)
     }
 }
 
@@ -460,6 +475,560 @@ enum ContentMediaType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+// MARK: - Profile Document
+
+/// A document stored in the client profile's document library
+struct ProfileDocument: Codable, Identifiable, Sendable {
+    let id: UUID
+    var category: ProfileDocumentCategory
+    var title: String
+    var content: String
+    var filename: String?
+    /// Platform (for reel/thread categories)
+    var platform: String?
+    /// Like count (for reel/thread categories)
+    var likes: Int?
+    /// Share count (for reel/thread categories)
+    var shares: Int?
+    /// Save count (for reel/thread categories)
+    var saves: Int?
+    /// Comment count (for reel/thread categories)
+    var comments: Int?
+    /// Lead count (for reel/thread categories)
+    var leads: Int?
+
+    init(
+        id: UUID = UUID(),
+        category: ProfileDocumentCategory,
+        title: String,
+        content: String,
+        filename: String? = nil,
+        platform: String? = nil,
+        likes: Int? = nil,
+        shares: Int? = nil,
+        saves: Int? = nil,
+        comments: Int? = nil,
+        leads: Int? = nil
+    ) {
+        self.id = id
+        self.category = category
+        self.title = title
+        self.content = content
+        self.filename = filename
+        self.platform = platform
+        self.likes = likes
+        self.shares = shares
+        self.saves = saves
+        self.comments = comments
+        self.leads = leads
+    }
+}
+
+/// Categories for profile documents
+enum ProfileDocumentCategory: String, Codable, CaseIterable, Sendable {
+    case story           // Brand story / origin narrative
+    case reel            // Top-performing reel with transcript + metrics
+    case thread          // Top-performing thread/carousel with transcript + metrics
+    case voiceGuide      // Voice/style guide document
+    case underperformingReel    // Worst-performing reel for failure fingerprint
+    case underperformingThread  // Worst-performing thread for failure fingerprint
+
+    var displayName: String {
+        switch self {
+        case .story: return "Brand Story"
+        case .reel: return "Reels"
+        case .thread: return "Threads"
+        case .voiceGuide: return "Voice Guide"
+        case .underperformingReel: return "Underperforming Reels"
+        case .underperformingThread: return "Underperforming Threads"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .story: return "book.closed"
+        case .reel, .underperformingReel: return "play.rectangle.fill"
+        case .thread, .underperformingThread: return "text.below.photo.fill"
+        case .voiceGuide: return "text.quote"
+        }
+    }
+
+    /// Whether this category represents high-performing content with metrics
+    var isHighPerformer: Bool {
+        self == .reel || self == .thread
+    }
+
+    /// Whether this category represents underperforming content
+    var isUnderperformer: Bool {
+        self == .underperformingReel || self == .underperformingThread
+    }
+
+    /// Whether this category has performance metrics (likes, shares, etc.)
+    var hasMetrics: Bool {
+        isHighPerformer || isUnderperformer
+    }
+
+    /// The corresponding top-performer category for an underperformer
+    var topPerformerCounterpart: ProfileDocumentCategory? {
+        switch self {
+        case .underperformingReel: return .reel
+        case .underperformingThread: return .thread
+        default: return nil
+        }
+    }
+
+    /// The corresponding underperformer category for a top-performer
+    var underperformerCounterpart: ProfileDocumentCategory? {
+        switch self {
+        case .reel: return .underperformingReel
+        case .thread: return .underperformingThread
+        default: return nil
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "topPerformer":
+            // Legacy fallback: old topPerformer docs default to .reel
+            self = .reel
+        default:
+            guard let value = ProfileDocumentCategory(rawValue: rawValue) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown category: \(rawValue)")
+            }
+            self = value
+        }
+    }
+}
+
+// MARK: - Intelligence Confidence
+
+/// Confidence level for AI-generated metrics
+enum ConfidenceLevel: String, Codable, Sendable {
+    case high
+    case medium
+    case low
+
+    var displayName: String {
+        rawValue.capitalized
+    }
+
+    var color: Color {
+        switch self {
+        case .high: return .green
+        case .medium: return .yellow
+        case .low: return .orange
+        }
+    }
+}
+
+/// Confidence tracking for a specific metric in the intelligence model
+struct MetricConfidence: Codable, Sendable {
+    let metricPath: String
+    let confidence: ConfidenceLevel
+    let reasoning: String
+}
+
+/// User override for a generated metric value
+struct IntelligenceOverride: Codable, Sendable {
+    let metricPath: String
+    let userValue: String
+    let generatedValue: String
+    let overrideDate: Date
+}
+
+// MARK: - Failure Fingerprint
+
+/// Severity level for failure rules
+enum FailureRuleSeverity: String, Codable, Sendable {
+    case high       // Strong statistical signal, consistently correlates with poor performance
+    case medium     // Moderate signal, some correlation with poor performance
+    case low        // Weak but notable signal
+
+    var displayName: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .high: return .red
+        case .medium: return .orange
+        case .low: return .yellow
+        }
+    }
+}
+
+/// A single failure rule extracted from comparing top vs underperforming content
+struct FailureRule: Codable, Identifiable, Sendable {
+    let id: UUID
+    /// Dimension being measured (e.g., "Hook Length", "Reading Level", "Beat Count")
+    let dimension: String
+    /// Metric value from top performers (e.g., "11 words avg")
+    let bestMetric: String
+    /// Metric value from underperformers (e.g., "22 words avg")
+    let worstMetric: String
+    /// Percentage or absolute delta between best and worst
+    let delta: String
+    /// Plain-English rule statement (e.g., "AVOID hooks over 15 words")
+    let rule: String
+    /// How strongly this correlates with poor performance
+    let severity: FailureRuleSeverity
+
+    init(
+        id: UUID = UUID(),
+        dimension: String,
+        bestMetric: String,
+        worstMetric: String,
+        delta: String,
+        rule: String,
+        severity: FailureRuleSeverity
+    ) {
+        self.id = id
+        self.dimension = dimension
+        self.bestMetric = bestMetric
+        self.worstMetric = worstMetric
+        self.delta = delta
+        self.rule = rule
+        self.severity = severity
+    }
+}
+
+/// Failure patterns extracted by comparing top-performing vs underperforming content
+struct FailureFingerprint: Codable, Sendable {
+    /// All extracted failure rules
+    var rules: [FailureRule]
+    /// When this fingerprint was generated
+    var generatedAt: Date
+    /// Number of top-performing documents analyzed
+    var topPerformerCount: Int
+    /// Number of underperforming documents analyzed
+    var underperformerCount: Int
+
+    init(
+        rules: [FailureRule] = [],
+        generatedAt: Date = Date(),
+        topPerformerCount: Int = 0,
+        underperformerCount: Int = 0
+    ) {
+        self.rules = rules
+        self.generatedAt = generatedAt
+        self.topPerformerCount = topPerformerCount
+        self.underperformerCount = underperformerCount
+    }
+
+    /// Rules filtered by severity
+    func rules(severity: FailureRuleSeverity) -> [FailureRule] {
+        rules.filter { $0.severity == severity }
+    }
+
+    /// Format rules as directive strings for prompt injection
+    func asDirectives() -> [String] {
+        rules.map { $0.rule }
+    }
+}
+
+// MARK: - Client Intelligence Model
+
+/// AI-generated intelligence model from profile documents
+struct ClientIntelligenceModel: Codable, Sendable {
+    var generatedAt: Date
+    var documentCount: DocumentCount
+    var voiceFingerprint: IntelligenceVoiceFingerprint
+    var performanceFingerprint: IntelligencePerformanceFingerprint
+    var audienceModel: IntelligenceAudienceModel
+    var nicheAndPositioning: IntelligenceNichePositioning
+    var userOverrides: [IntelligenceOverride]
+    var confidenceScores: [MetricConfidence]
+
+    // Format-specific fingerprints (optional for backward compat)
+    var reelVoiceFingerprint: IntelligenceVoiceFingerprint?
+    var reelPerformanceFingerprint: IntelligencePerformanceFingerprint?
+    var threadVoiceFingerprint: IntelligenceVoiceFingerprint?
+    var threadPerformanceFingerprint: IntelligencePerformanceFingerprint?
+
+    // Failure fingerprints (optional — requires underperformer documents)
+    var failureFingerprint: FailureFingerprint?
+    var reelFailureFingerprint: FailureFingerprint?
+    var threadFailureFingerprint: FailureFingerprint?
+
+    init(
+        generatedAt: Date = Date(),
+        documentCount: DocumentCount = DocumentCount(),
+        voiceFingerprint: IntelligenceVoiceFingerprint = IntelligenceVoiceFingerprint(),
+        performanceFingerprint: IntelligencePerformanceFingerprint = IntelligencePerformanceFingerprint(),
+        audienceModel: IntelligenceAudienceModel = IntelligenceAudienceModel(),
+        nicheAndPositioning: IntelligenceNichePositioning = IntelligenceNichePositioning(),
+        userOverrides: [IntelligenceOverride] = [],
+        confidenceScores: [MetricConfidence] = [],
+        reelVoiceFingerprint: IntelligenceVoiceFingerprint? = nil,
+        reelPerformanceFingerprint: IntelligencePerformanceFingerprint? = nil,
+        threadVoiceFingerprint: IntelligenceVoiceFingerprint? = nil,
+        threadPerformanceFingerprint: IntelligencePerformanceFingerprint? = nil,
+        failureFingerprint: FailureFingerprint? = nil,
+        reelFailureFingerprint: FailureFingerprint? = nil,
+        threadFailureFingerprint: FailureFingerprint? = nil
+    ) {
+        self.generatedAt = generatedAt
+        self.documentCount = documentCount
+        self.voiceFingerprint = voiceFingerprint
+        self.performanceFingerprint = performanceFingerprint
+        self.audienceModel = audienceModel
+        self.nicheAndPositioning = nicheAndPositioning
+        self.userOverrides = userOverrides
+        self.confidenceScores = confidenceScores
+        self.reelVoiceFingerprint = reelVoiceFingerprint
+        self.reelPerformanceFingerprint = reelPerformanceFingerprint
+        self.threadVoiceFingerprint = threadVoiceFingerprint
+        self.threadPerformanceFingerprint = threadPerformanceFingerprint
+        self.failureFingerprint = failureFingerprint
+        self.reelFailureFingerprint = reelFailureFingerprint
+        self.threadFailureFingerprint = threadFailureFingerprint
+    }
+}
+
+/// Format view selector for the intelligence model UI
+enum IntelligenceFormatView: String, CaseIterable {
+    case overall = "Overall"
+    case reels = "Reels"
+    case threads = "Threads"
+}
+
+/// Document count by category
+struct DocumentCount: Codable, Sendable {
+    var story: Int
+    var reels: Int
+    var threads: Int
+    var voiceGuide: Int
+    var underperformingReels: Int
+    var underperformingThreads: Int
+
+    init(story: Int = 0, reels: Int = 0, threads: Int = 0, voiceGuide: Int = 0,
+         underperformingReels: Int = 0, underperformingThreads: Int = 0) {
+        self.story = story
+        self.reels = reels
+        self.threads = threads
+        self.voiceGuide = voiceGuide
+        self.underperformingReels = underperformingReels
+        self.underperformingThreads = underperformingThreads
+    }
+
+    /// Whether underperformer data is available for failure fingerprint generation
+    var hasUnderperformers: Bool {
+        underperformingReels > 0 || underperformingThreads > 0
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case story, reels, threads, voiceGuide
+        case underperformingReels, underperformingThreads
+        case legacyTopPerformers = "topPerformers"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        story = try container.decodeIfPresent(Int.self, forKey: .story) ?? 0
+        reels = try container.decodeIfPresent(Int.self, forKey: .reels) ?? 0
+        threads = try container.decodeIfPresent(Int.self, forKey: .threads) ?? 0
+        voiceGuide = try container.decodeIfPresent(Int.self, forKey: .voiceGuide) ?? 0
+        underperformingReels = try container.decodeIfPresent(Int.self, forKey: .underperformingReels) ?? 0
+        underperformingThreads = try container.decodeIfPresent(Int.self, forKey: .underperformingThreads) ?? 0
+        // Legacy: map old topPerformers count to reels
+        if reels == 0 && threads == 0,
+           let legacy = try container.decodeIfPresent(Int.self, forKey: .legacyTopPerformers) {
+            reels = legacy
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(story, forKey: .story)
+        try container.encode(reels, forKey: .reels)
+        try container.encode(threads, forKey: .threads)
+        try container.encode(voiceGuide, forKey: .voiceGuide)
+        try container.encode(underperformingReels, forKey: .underperformingReels)
+        try container.encode(underperformingThreads, forKey: .underperformingThreads)
+    }
+}
+
+/// Voice analysis extracted from content documents
+struct IntelligenceVoiceFingerprint: Codable, Sendable {
+    var avgSentenceLength: Double
+    var maxSentenceLength: Int
+    var sentenceStarterDistribution: [String: Double]
+    var readingLevel: String
+    var powerWords: [String]
+    var emotionalToneDistribution: [String: Double]
+    var punctuationStyle: String
+    var ctaPattern: String
+    var signaturePhrases: [String]
+    var blacklistedPhrases: [String]
+    var paragraphLength: String
+    var formattingQuirks: [String]
+
+    init(
+        avgSentenceLength: Double = 0,
+        maxSentenceLength: Int = 0,
+        sentenceStarterDistribution: [String: Double] = [:],
+        readingLevel: String = "",
+        powerWords: [String] = [],
+        emotionalToneDistribution: [String: Double] = [:],
+        punctuationStyle: String = "",
+        ctaPattern: String = "",
+        signaturePhrases: [String] = [],
+        blacklistedPhrases: [String] = [],
+        paragraphLength: String = "",
+        formattingQuirks: [String] = []
+    ) {
+        self.avgSentenceLength = avgSentenceLength
+        self.maxSentenceLength = maxSentenceLength
+        self.sentenceStarterDistribution = sentenceStarterDistribution
+        self.readingLevel = readingLevel
+        self.powerWords = powerWords
+        self.emotionalToneDistribution = emotionalToneDistribution
+        self.punctuationStyle = punctuationStyle
+        self.ctaPattern = ctaPattern
+        self.signaturePhrases = signaturePhrases
+        self.blacklistedPhrases = blacklistedPhrases
+        self.paragraphLength = paragraphLength
+        self.formattingQuirks = formattingQuirks
+    }
+}
+
+/// Performance patterns extracted from top-performing content
+struct IntelligencePerformanceFingerprint: Codable, Sendable {
+    var hookTypePerformance: [String: Double]
+    var bestBeatPatterns: [String]
+    var optimalLength: String
+    var bestTopics: [String]
+    var engagementTriggers: [String]
+    var formatComparison: [String: Double]
+
+    init(
+        hookTypePerformance: [String: Double] = [:],
+        bestBeatPatterns: [String] = [],
+        optimalLength: String = "",
+        bestTopics: [String] = [],
+        engagementTriggers: [String] = [],
+        formatComparison: [String: Double] = [:]
+    ) {
+        self.hookTypePerformance = hookTypePerformance
+        self.bestBeatPatterns = bestBeatPatterns
+        self.optimalLength = optimalLength
+        self.bestTopics = bestTopics
+        self.engagementTriggers = engagementTriggers
+        self.formatComparison = formatComparison
+    }
+}
+
+/// Audience model derived from content analysis
+struct IntelligenceAudienceModel: Codable, Sendable {
+    var primaryAudience: String
+    var topPainPoints: [String]
+    var aspirationalOutcomes: [String]
+    var commonObjections: [String]
+    var audienceLanguage: [String]
+
+    init(
+        primaryAudience: String = "",
+        topPainPoints: [String] = [],
+        aspirationalOutcomes: [String] = [],
+        commonObjections: [String] = [],
+        audienceLanguage: [String] = []
+    ) {
+        self.primaryAudience = primaryAudience
+        self.topPainPoints = topPainPoints
+        self.aspirationalOutcomes = aspirationalOutcomes
+        self.commonObjections = commonObjections
+        self.audienceLanguage = audienceLanguage
+    }
+}
+
+/// Niche positioning extracted from brand story and content
+struct IntelligenceNichePositioning: Codable, Sendable {
+    var specificNiche: String
+    var uniqueAngle: String
+    var coreBeliefs: [String]
+    var enemies: [String]
+    var uniqueMechanism: String
+
+    init(
+        specificNiche: String = "",
+        uniqueAngle: String = "",
+        coreBeliefs: [String] = [],
+        enemies: [String] = [],
+        uniqueMechanism: String = ""
+    ) {
+        self.specificNiche = specificNiche
+        self.uniqueAngle = uniqueAngle
+        self.coreBeliefs = coreBeliefs
+        self.enemies = enemies
+        self.uniqueMechanism = uniqueMechanism
+    }
+}
+
+// MARK: - Top Post
+
+/// A top-performing post with transcript and metrics for voice extraction
+struct TopPost: Codable, Identifiable, Sendable {
+    let id: UUID
+    var transcript: String
+    var platform: String
+    var likes: Int
+    var shares: Int
+    var leads: Int
+    var views: Int
+    var datePosted: String
+
+    init(
+        id: UUID = UUID(),
+        transcript: String = "",
+        platform: String = "",
+        likes: Int = 0,
+        shares: Int = 0,
+        leads: Int = 0,
+        views: Int = 0,
+        datePosted: String = ""
+    ) {
+        self.id = id
+        self.transcript = transcript
+        self.platform = platform
+        self.likes = likes
+        self.shares = shares
+        self.leads = leads
+        self.views = views
+        self.datePosted = datePosted
+    }
+}
+
+// MARK: - Voice Profile
+
+/// Extracted voice patterns from top-performing content
+struct VoiceProfile: Codable, Sendable {
+    var avgSentenceLength: Double
+    var hookStyleDistribution: [String: Int]
+    var ctaPatterns: [String]
+    var recurringPhrases: [String]
+    var emotionalRange: String
+    var readingLevel: String
+    var stylisticQuirks: [String]
+
+    init(
+        avgSentenceLength: Double = 0,
+        hookStyleDistribution: [String: Int] = [:],
+        ctaPatterns: [String] = [],
+        recurringPhrases: [String] = [],
+        emotionalRange: String = "",
+        readingLevel: String = "",
+        stylisticQuirks: [String] = []
+    ) {
+        self.avgSentenceLength = avgSentenceLength
+        self.hookStyleDistribution = hookStyleDistribution
+        self.ctaPatterns = ctaPatterns
+        self.recurringPhrases = recurringPhrases
+        self.emotionalRange = emotionalRange
+        self.readingLevel = readingLevel
+        self.stylisticQuirks = stylisticQuirks
+    }
+}
+
 // MARK: - Client Profile Metadata
 
 /// Metadata for clientProfile atoms - ghostwriting clients
@@ -550,6 +1119,34 @@ struct ClientProfileMetadata: Codable, Sendable {
     /// Whether this is a personal brand (vs. company/agency)
     var isPersonalBrand: Bool?
 
+    /// Signature phrases, catchphrases, recurring openers, trademark expressions
+    var signaturePhrases: [String]?
+
+    // MARK: - Intelligence Model (Client Intelligence Engine)
+
+    /// AI-generated intelligence model from profile documents
+    var intelligenceModel: ClientIntelligenceModel?
+
+    /// Document library for this profile
+    var documents: [ProfileDocument]?
+
+    /// Primary platform for content creation
+    var primaryPlatform: SocialPlatform?
+
+    /// Preserved legacy field values after migration
+    var legacyFields: [String: String]?
+
+    // MARK: - Voice Intelligence (WP5 extension)
+
+    /// Top-performing posts with full transcripts and metrics
+    var topPerformingPosts: [TopPost]?
+
+    /// AI-extracted voice patterns from top-performing content
+    var extractedVoicePatterns: VoiceProfile?
+
+    /// Preferred beat patterns (e.g., ["preferred:BoldClaim>Discovery>Proof>CTA"])
+    var preferredBeatPatterns: [String]?
+
     init(
         clientId: String,
         clientName: String,
@@ -576,7 +1173,15 @@ struct ClientProfileMetadata: Codable, Sendable {
         preferredPostTimes: [String]? = nil,
         handle: String? = nil,
         niche: String? = nil,
-        isPersonalBrand: Bool? = nil
+        isPersonalBrand: Bool? = nil,
+        signaturePhrases: [String]? = nil,
+        intelligenceModel: ClientIntelligenceModel? = nil,
+        documents: [ProfileDocument]? = nil,
+        primaryPlatform: SocialPlatform? = nil,
+        legacyFields: [String: String]? = nil,
+        topPerformingPosts: [TopPost]? = nil,
+        extractedVoicePatterns: VoiceProfile? = nil,
+        preferredBeatPatterns: [String]? = nil
     ) {
         self.clientId = clientId
         self.clientName = clientName
@@ -604,6 +1209,58 @@ struct ClientProfileMetadata: Codable, Sendable {
         self.handle = handle
         self.niche = niche
         self.isPersonalBrand = isPersonalBrand
+        self.signaturePhrases = signaturePhrases
+        self.intelligenceModel = intelligenceModel
+        self.documents = documents
+        self.primaryPlatform = primaryPlatform
+        self.legacyFields = legacyFields
+        self.topPerformingPosts = topPerformingPosts
+        self.extractedVoicePatterns = extractedVoicePatterns
+        self.preferredBeatPatterns = preferredBeatPatterns
+    }
+
+    // MARK: - Resilient Decoding
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Required fields with fallbacks for older saved profiles
+        clientId = try container.decodeIfPresent(String.self, forKey: .clientId) ?? UUID().uuidString
+        clientName = try container.decodeIfPresent(String.self, forKey: .clientName) ?? ""
+        platforms = try container.decodeIfPresent([SocialPlatform].self, forKey: .platforms) ?? []
+        totalReach = try container.decodeIfPresent(Int.self, forKey: .totalReach) ?? 0
+        avgEngagementRate = try container.decodeIfPresent(Double.self, forKey: .avgEngagementRate) ?? 0
+        contentCount = try container.decodeIfPresent(Int.self, forKey: .contentCount) ?? 0
+        viralPostCount = try container.decodeIfPresent(Int.self, forKey: .viralPostCount) ?? 0
+        activeStatus = try container.decodeIfPresent(Bool.self, forKey: .activeStatus) ?? true
+        clientSince = try container.decodeIfPresent(Date.self, forKey: .clientSince) ?? Date()
+        lastContentDate = try container.decodeIfPresent(Date.self, forKey: .lastContentDate)
+
+        // Optional fields
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        industry = try container.decodeIfPresent(String.self, forKey: .industry)
+        targetAudience = try container.decodeIfPresent(String.self, forKey: .targetAudience)
+        brandStory = try container.decodeIfPresent(String.self, forKey: .brandStory)
+        brandVision = try container.decodeIfPresent(String.self, forKey: .brandVision)
+        coreBeliefs = try container.decodeIfPresent([String].self, forKey: .coreBeliefs)
+        voiceNotes = try container.decodeIfPresent(String.self, forKey: .voiceNotes)
+        uniqueAngle = try container.decodeIfPresent(String.self, forKey: .uniqueAngle)
+        topPerformingPostIds = try container.decodeIfPresent([String].self, forKey: .topPerformingPostIds)
+        topPerformingTranscripts = try container.decodeIfPresent([String].self, forKey: .topPerformingTranscripts)
+        bestFormats = try container.decodeIfPresent([String].self, forKey: .bestFormats)
+        postingFrequency = try container.decodeIfPresent(String.self, forKey: .postingFrequency)
+        preferredPostTimes = try container.decodeIfPresent([String].self, forKey: .preferredPostTimes)
+        handle = try container.decodeIfPresent(String.self, forKey: .handle)
+        niche = try container.decodeIfPresent(String.self, forKey: .niche)
+        isPersonalBrand = try container.decodeIfPresent(Bool.self, forKey: .isPersonalBrand)
+        signaturePhrases = try container.decodeIfPresent([String].self, forKey: .signaturePhrases)
+        intelligenceModel = try container.decodeIfPresent(ClientIntelligenceModel.self, forKey: .intelligenceModel)
+        documents = try container.decodeIfPresent([ProfileDocument].self, forKey: .documents)
+        primaryPlatform = try container.decodeIfPresent(SocialPlatform.self, forKey: .primaryPlatform)
+        legacyFields = try container.decodeIfPresent([String: String].self, forKey: .legacyFields)
+        topPerformingPosts = try container.decodeIfPresent([TopPost].self, forKey: .topPerformingPosts)
+        extractedVoicePatterns = try container.decodeIfPresent(VoiceProfile.self, forKey: .extractedVoicePatterns)
+        preferredBeatPatterns = try container.decodeIfPresent([String].self, forKey: .preferredBeatPatterns)
     }
 }
 

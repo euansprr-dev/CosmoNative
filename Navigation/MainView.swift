@@ -23,6 +23,7 @@ struct MainView: View {
 
     // Command-K (constellation-based search)
     @State private var showCommandK = false
+    @State private var commandKReturnTab: CommandKView.CommandKTab? = nil
     @StateObject private var commandKViewModel = CommandKViewModel()
 
     // Block context menu (right-click on block)
@@ -34,6 +35,9 @@ struct MainView: View {
     // Sanctuary state - NOW THE DEFAULT HOME VIEW
     @State private var showingSanctuary = true  // Changed: Sanctuary is now the default entry point
     @StateObject private var sanctuaryChoreographer = AnimationChoreographer()
+
+    // Cosmo Window (global floating AI chat panel, Option+A)
+    @State private var showCosmoWindow = false
 
     // Activation loading overlay (shown during idea→content navigation)
     @State private var showActivationLoading = false
@@ -63,15 +67,22 @@ struct MainView: View {
                 .scaleEffect(showingSanctuary ? 0.92 : 1.0)  // Simulates z-translate back
                 .animation(.easeInOut(duration: 0.4), value: showingSanctuary)
 
-            // Top-left Level Orb (entry point to Sanctuary)
-            // Offset when sidebar is visible to avoid overlap
+            // Top-left escape hint
             VStack {
                 HStack {
-                    CanvasLevelOrbView {
-                        openSanctuary()
+                    HStack(spacing: 5) {
+                        Text("esc")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.35))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
+                        Text("to go back")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.white.opacity(0.25))
                     }
                     .padding(.leading, thinkspaceManager.isSidebarVisible ? 300 : 16)
-                    .padding(.top, 12)
+                    .padding(.top, 14)
                     .opacity(showingSanctuary ? 0 : 1)
                     .animation(.easeOut(duration: 0.2), value: showingSanctuary)
                     .animation(ProMotionSprings.snappy, value: thinkspaceManager.isSidebarVisible)
@@ -82,22 +93,6 @@ struct MainView: View {
             }
             .zIndex(45)
 
-            // Top-right controls (voice indicator + settings)
-            VStack {
-                HStack {
-                    Spacer()
-                    TopRightControls(
-                        showCommandK: $showCommandK
-                    )
-                    .environmentObject(voiceEngine)
-                    .padding(.top, 12)
-                    .padding(.trailing, 16)
-                }
-                Spacer()
-            }
-            .zIndex(50)
-            .opacity(showingSanctuary ? 0.3 : 1.0)
-            .animation(.easeInOut(duration: 0.3), value: showingSanctuary)
 
             // Glass overlay for search results, clarifications, proactive suggestions
             if glassCenter.isVisible {
@@ -126,21 +121,33 @@ struct MainView: View {
             .zIndex(40)
 
             // Focus mode overlay (when editing an entity)
+            // zIndex 195: above Sanctuary (180) and Plannerum (190) so focus mode works from anywhere
             if let focusEntity = appState.focusedEntity {
                 FocusModeView(entity: focusEntity)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    .zIndex(100)
+                    .zIndex(195)
             }
 
             // Command-K - The Cognition Hub
             // Revolutionary spatial command center that replaces Finder and sidebars
             if showCommandK {
-                CommandKView()
+                CommandKView(initialTab: commandKReturnTab ?? .library)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(200)
             }
 
             // Settings accessible via Sanctuary gear icon
+
+            // Cosmo Window — Global floating AI chat panel (Option+A)
+            // zIndex 260: above CommandK (200), below InstagramSwipeModal (275)
+            if showCosmoWindow {
+                CosmoWindowView(isVisible: $showCosmoWindow)
+                    .zIndex(260)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+            }
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
             if swipeFileEngine.showInstagramModal {
@@ -375,6 +382,7 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
+        .animation(ProMotionSprings.snappy, value: showCosmoWindow)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: showingSanctuary)
         .animation(.spring(response: 0.5, dampingFraction: 0.78), value: showingPlannerum)
@@ -395,6 +403,12 @@ struct MainView: View {
                 commandKViewModel.clear()
             }
         }
+        // Cosmo Window toggle (from menu bar, Telegram, or other sources)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
+            withAnimation(ProMotionSprings.snappy) {
+                showCosmoWindow.toggle()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
             // Settings now live in Sanctuary — navigate there
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -405,6 +419,17 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .enterFocusMode)) { notification in
             if let type = notification.userInfo?["type"] as? EntityType,
                let id = notification.userInfo?["id"] as? Int64 {
+                // Track if this focus mode was opened from Command K
+                if let tabString = notification.userInfo?["commandKTab"] as? String {
+                    switch tabString {
+                    case "swipeGallery": commandKReturnTab = .swipeGallery
+                    case "ideas": commandKReturnTab = .ideas
+                    case "library": commandKReturnTab = .library
+                    default: commandKReturnTab = nil
+                    }
+                } else {
+                    commandKReturnTab = nil
+                }
                 withAnimation(.spring(response: 0.3)) {
                     appState.focusedEntity = EntitySelection(id: id, type: type)
                 }
@@ -413,6 +438,48 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
             withAnimation(.spring(response: 0.3)) {
                 appState.focusedEntity = nil
+            }
+        }
+        .onChange(of: appState.focusedEntity) { _, newValue in
+            // When focus mode closes, reopen Command K if it was the source
+            if newValue == nil, commandKReturnTab != nil {
+                // Brief delay so the focus mode dismissal animation completes first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.spring(response: 0.2)) {
+                        // commandKReturnTab is read by CommandKView(initialTab:) at creation
+                        showCommandK = true
+                    }
+                    // Clear after CommandKView is created so it picks up the tab
+                    DispatchQueue.main.async {
+                        commandKReturnTab = nil
+                    }
+                }
+            }
+        }
+        // Cosmo Window context tracking
+        .onChange(of: showCosmoWindow) { _, isOpen in
+            if isOpen {
+                // Update context based on current view state
+                let vm = CosmoWindowViewModel.shared
+                if showingPlannerum {
+                    vm.updateContextManually(type: .plannerum)
+                } else if showingSanctuary {
+                    vm.updateContextManually(type: .sanctuary)
+                } else if appState.focusedEntity != nil {
+                    // Focus mode context is handled by the focus mode views themselves
+                } else {
+                    vm.updateContextManually(type: .thinkspaceCanvas)
+                }
+            }
+        }
+        .onChange(of: showingSanctuary) { _, isSanctuary in
+            if showCosmoWindow && isSanctuary {
+                CosmoWindowViewModel.shared.updateContextManually(type: .sanctuary)
+            }
+        }
+        .onChange(of: showingPlannerum) { _, isPlannerum in
+            if showCosmoWindow {
+                CosmoWindowViewModel.shared.updateContextManually(type: isPlannerum ? .plannerum : .sanctuary)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
@@ -424,8 +491,9 @@ struct MainView: View {
                 commandKViewModel.clear()
             }
 
-            // Add to canvas after a brief delay for animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Navigate to Thinkspace then add to canvas
+            navigateToThinkspace()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NotificationCenter.default.post(
                     name: .openEntityOnCanvas,
                     object: nil,
@@ -442,13 +510,59 @@ struct MainView: View {
                 commandKViewModel.clear()
             }
 
-            // Add to canvas after a brief delay for animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Navigate to Thinkspace then add to canvas
+            navigateToThinkspace()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NotificationCenter.default.post(
                     name: .openEntityOnCanvas,
                     object: nil,
                     userInfo: ["atomUUID": atomUUID]
                 )
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+
+            // Close Command-K first
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKViewModel.clear()
+            }
+
+            // Navigate to Thinkspace then add to canvas
+            navigateToThinkspace()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NotificationCenter.default.post(
+                    name: .openEntityOnCanvas,
+                    object: nil,
+                    userInfo: ["atomUUID": atomUUID]
+                )
+            }
+        }
+        // Cmd+K single-click: add item to current canvas (Thinkspace fallback)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
+            // Only handle at MainView level when no focus mode is active (Thinkspace canvas)
+            guard appState.focusedEntity == nil else { return }
+
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKViewModel.clear()
+            }
+
+            // Fetch atom and add to Thinkspace canvas
+            Task { @MainActor in
+                if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    let entityType = mapAtomTypeToEntityType(atom.type)
+                    navigateToThinkspace()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        NotificationCenter.default.post(
+                            name: .openEntityOnCanvas,
+                            object: nil,
+                            userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
+                        )
+                    }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
@@ -628,6 +742,14 @@ struct MainView: View {
                     return nil  // Consume event
                 }
 
+                // Close Cosmo Window if open (zIndex 260, above most overlays)
+                if showCosmoWindow {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showCosmoWindow = false
+                    }
+                    return nil  // Consume event
+                }
+
                 // Close Plannerum first if open (returns to Sanctuary)
                 if showingPlannerum {
                     closePlannerum()
@@ -635,7 +757,8 @@ struct MainView: View {
                 }
 
                 // Return from Thinkspace (Canvas) to Sanctuary with world-switch
-                if showingThinkspace && !showingSanctuary {
+                // Also handles default canvas state (showingThinkspace may be false on app launch)
+                if !showingSanctuary {
                     navigateToSanctuary()
                     showingThinkspace = false
                     return nil  // Consume event
@@ -711,6 +834,18 @@ struct MainView: View {
                 return nil  // Consume event
             }
 
+            // L key - Open Command-K to Library tab from Sanctuary
+            if event.type == .keyDown,
+               event.keyCode == 37,  // L key
+               showingSanctuary,
+               !showingPlannerum,
+               !isFirstResponderTextField() {
+                withAnimation(.spring(response: 0.2)) {
+                    showCommandK = true
+                }
+                return nil  // Consume event
+            }
+
             // Cmd+Shift+C - Open command bar typing mode
             if event.type == .keyDown,
                event.keyCode == 8,  // C key
@@ -718,6 +853,17 @@ struct MainView: View {
                event.modifierFlags.contains(.shift),
                !isFirstResponderTextField() {
                 NotificationCenter.default.post(name: .activateCommandBarTyping, object: nil)
+                return nil  // Consume event
+            }
+
+            // Option+A - Toggle Cosmo Window (global AI chat panel)
+            if event.type == .keyDown,
+               event.modifierFlags.contains(.option),
+               event.charactersIgnoringModifiers == "a",
+               !isFirstResponderTextField() {
+                withAnimation(ProMotionSprings.snappy) {
+                    showCosmoWindow.toggle()
+                }
                 return nil  // Consume event
             }
 
@@ -864,7 +1010,7 @@ struct MainView: View {
             )
 
             // Don't show menus when overlays are active
-            guard !showingSanctuary, !showingPlannerum, !showCommandK, appState.focusedEntity == nil else {
+            guard !showingSanctuary, !showingPlannerum, !showCommandK, !showCosmoWindow, appState.focusedEntity == nil else {
                 return event
             }
 
@@ -902,6 +1048,10 @@ struct MainView: View {
         switch action.type {
         case .createNote:
             createNewEntity(type: .note, at: radialMenuPosition)
+        case .createIdea:
+            createNewEntity(type: .idea, at: radialMenuPosition)
+        case .createTask:
+            createNewEntity(type: .task, at: radialMenuPosition)
         case .createContent:
             createNewEntity(type: .content, at: radialMenuPosition)
         case .createResearch:
@@ -993,30 +1143,13 @@ struct MainView: View {
                     // Map AtomType to EntityType for navigation
                     let entityType = mapAtomTypeToEntityType(atom.type)
 
-                    // Route to canvas or focus mode based on type
+                    // Always open in focus mode — works from any view
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        // Swipe files always open in focus mode
-                        if atom.isSwipeFileAtom {
-                            NotificationCenter.default.post(
-                                name: .enterFocusMode,
-                                object: nil,
-                                userInfo: ["type": entityType, "id": atom.id ?? 0]
-                            )
-                        } else if [EntityType.idea, .content, .research, .connection].contains(entityType) {
-                            // Open as floating block on canvas
-                            NotificationCenter.default.post(
-                                name: .openEntityOnCanvas,
-                                object: nil,
-                                userInfo: ["type": entityType, "id": atom.id ?? 0]
-                            )
-                        } else {
-                            // Open in focus mode
-                            NotificationCenter.default.post(
-                                name: .enterFocusMode,
-                                object: nil,
-                                userInfo: ["type": entityType, "id": atom.id ?? 0]
-                            )
-                        }
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: ["type": entityType, "id": atom.id ?? 0]
+                        )
                     }
                 }
             } catch {
@@ -1040,6 +1173,8 @@ struct MainView: View {
             return .connection
         case .project:
             return .project
+        case .note:
+            return .note
         default:
             return .idea  // Default fallback
         }
@@ -1178,3 +1313,25 @@ struct ErrorView: View {
 // MARK: - Additional Notifications
 // Note: Most canvas notifications are now defined in CosmoNotifications.swift
 // Use CosmoNotification.Canvas.* for consistency
+
+// MARK: - Previews
+
+#Preview("Main View") {
+    MainView()
+        .environmentObject(AppState())
+        .environmentObject(CosmoDatabase.shared)
+        .environmentObject(VoiceEngine.shared)
+        .environmentObject(CosmoGlassCenter.shared)
+        .environmentObject(SwipeFileEngine.shared)
+        .frame(width: 1200, height: 800)
+}
+
+#Preview("Loading View") {
+    LoadingView()
+        .frame(width: 400, height: 300)
+}
+
+#Preview("Error View") {
+    ErrorView(message: "Something went wrong. Please try again.")
+        .frame(width: 500, height: 400)
+}

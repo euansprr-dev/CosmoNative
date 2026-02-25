@@ -456,8 +456,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let cognitiveCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('focus_session', 'focus_event')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["cognitive"] = DailyActivityMetrics(
@@ -471,8 +471,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let creativeCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('idea', 'ideaNote', 'project')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["creative"] = DailyActivityMetrics(
@@ -486,8 +486,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let physioCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('sleep_record', 'hrv_reading', 'workout', 'recovery_score')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["physiological"] = DailyActivityMetrics(
@@ -501,8 +501,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let behavioralCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('task', 'habit_completion', 'routine_completed')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["behavioral"] = DailyActivityMetrics(
@@ -516,8 +516,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let knowledgeCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('note', 'book', 'article', 'learning_session')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["knowledge"] = DailyActivityMetrics(
@@ -531,8 +531,8 @@ public final class DailyCronEngine: @unchecked Sendable {
         let reflectionCount = try Int.fetchOne(db, sql: """
             SELECT COUNT(*) FROM atoms
             WHERE type IN ('journal_entry', 'insight', 'emotional_state', 'reflection_session')
-            AND createdAt >= ? AND createdAt < ?
-            AND isDeleted = 0
+            AND created_at >= ? AND created_at < ?
+            AND is_deleted = 0
         """, arguments: [startOfDay, endOfDay]) ?? 0
 
         metrics["reflection"] = DailyActivityMetrics(

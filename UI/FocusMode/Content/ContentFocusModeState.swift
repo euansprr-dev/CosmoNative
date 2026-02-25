@@ -123,7 +123,7 @@ enum RelatedContentTier: String, Codable, Sendable, CaseIterable {
         switch self {
         case .primary: return Color(hex: "#FFD700")   // Gold
         case .secondary: return Color(hex: "#C0C0C0") // Silver
-        case .tertiary: return Color.white.opacity(0.3)
+        case .tertiary: return DS.textMuted
         }
     }
 }
@@ -265,6 +265,111 @@ struct AISuggestion: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - AI Edit (Undo Stack)
+
+/// Represents a single AI edit that can be undone
+struct AIEdit: Codable, Identifiable {
+    let id: UUID
+    let previousContent: String
+    let sectionIdentifier: String?  // e.g. "slide 3", "the hook"
+    let timestamp: Date
+    let description: String
+
+    init(previousContent: String, sectionIdentifier: String?, description: String) {
+        self.id = UUID()
+        self.previousContent = previousContent
+        self.sectionIdentifier = sectionIdentifier
+        self.timestamp = Date()
+        self.description = description
+    }
+}
+
+// MARK: - Pinned Decision
+
+/// A definitive creative decision the user has made during the collaborator session
+struct PinnedDecision: Codable, Identifiable {
+    let id: UUID
+    let type: String  // "hook", "framework", "tone", "structure"
+    let content: String
+    let timestamp: Date
+
+    init(type: String, content: String) {
+        self.id = UUID()
+        self.type = type
+        self.content = content
+        self.timestamp = Date()
+    }
+}
+
+// MARK: - Tool Chain Step
+
+/// A single step in a multi-step AI tool chain, shown as progress in the collaborator view
+struct ToolChainStep: Identifiable {
+    let id: UUID
+    let emoji: String
+    let description: String
+    var status: StepStatus
+
+    enum StepStatus {
+        case pending, inProgress, completed, failed
+    }
+
+    init(emoji: String, description: String, status: StepStatus = .pending) {
+        self.id = UUID()
+        self.emoji = emoji
+        self.description = description
+        self.status = status
+    }
+}
+
+// MARK: - Generation Record
+
+/// Tracks a single AI generation event for preference learning
+struct GenerationRecord: Codable, Identifiable {
+    let id: UUID
+    let timestamp: Date
+    let mode: GenerationMode
+    let inputContext: String   // compact summary of what was provided
+    let outputSummary: String  // first 200 chars of output
+    var userAction: GenerationAction
+    var editDistance: Double    // 0-1 Levenshtein ratio (0 = identical, 1 = completely different)
+    var beatPatternUsed: String?
+
+    enum GenerationMode: String, Codable {
+        case outline
+        case draft
+        case hookVariant
+        case rewrite
+    }
+
+    enum GenerationAction: String, Codable {
+        case accepted
+        case rejected
+        case editedThenAccepted
+        case ignored
+    }
+
+    init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        mode: GenerationMode,
+        inputContext: String,
+        outputSummary: String,
+        userAction: GenerationAction = .ignored,
+        editDistance: Double = 0,
+        beatPatternUsed: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.mode = mode
+        self.inputContext = inputContext
+        self.outputSummary = String(outputSummary.prefix(200))
+        self.userAction = userAction
+        self.editDistance = editDistance
+        self.beatPatternUsed = beatPatternUsed
+    }
+}
+
 // MARK: - Content Focus Mode State
 
 /// Complete state for a Content Focus Mode session
@@ -272,6 +377,8 @@ struct ContentFocusModeState: Codable {
     let atomUUID: String
     var currentStep: ContentStep
     var coreIdea: String
+    var hooks: [String]
+    var contentDescription: String
     var outline: [OutlineItem]
     var relatedAtoms: [RelatedAtomRef]
     var draftContent: String
@@ -280,12 +387,43 @@ struct ContentFocusModeState: Codable {
     var polishSystemPrompt: String
     var isContextPanelVisible: Bool
     var isAISuggestedOutline: Bool
+    var generationHistory: [GenerationRecord]
     var lastModified: Date
+
+    // MARK: - Unified Writing Engine Conversation (persisted)
+    var conversationHistory: [WritingMessage] = []
+    var conversationSummary: String = ""
+
+    // MARK: AI Editing State (non-persisted, excluded from Codable)
+    var aiUndoStack: [AIEdit] = []          // last 20 AI edits
+    var pinnedDecisions: [PinnedDecision] = []
+
+    // Scorecard state (transient — re-evaluated per session)
+    var contentScorecard: ContentScorecard? = nil
+
+    // Red Team state (transient — re-evaluated per session)
+    var redTeamResult: RedTeamResult? = nil
+
+    // Streaming edit state (transient, not persisted)
+    var isStreamingEdit: Bool = false
+    var streamingEditSectionId: String? = nil
+    var showUndoToast: Bool = false
+    var undoToastMessage: String = ""
+
+    // Exclude transient fields from Codable synthesis
+    enum CodingKeys: String, CodingKey {
+        case atomUUID, currentStep, coreIdea, hooks, contentDescription, outline, relatedAtoms
+        case draftContent, polishAnalysis, aiSuggestions, polishSystemPrompt
+        case isContextPanelVisible, isAISuggestedOutline, generationHistory, lastModified
+        case conversationHistory, conversationSummary
+    }
 
     init(atomUUID: String) {
         self.atomUUID = atomUUID
         self.currentStep = .brainstorm
         self.coreIdea = ""
+        self.hooks = []
+        self.contentDescription = ""
         self.outline = []
         self.relatedAtoms = []
         self.draftContent = ""
@@ -294,6 +432,7 @@ struct ContentFocusModeState: Codable {
         self.polishSystemPrompt = ""
         self.isContextPanelVisible = true
         self.isAISuggestedOutline = false
+        self.generationHistory = []
         self.lastModified = Date()
     }
 
@@ -399,6 +538,49 @@ struct ContentFocusModeState: Codable {
     var pendingSuggestions: [AISuggestion] {
         aiSuggestions.filter { $0.status == .pending }
     }
+
+    // MARK: - AI Undo Stack
+
+    /// Push a snapshot of current content before an AI edit
+    mutating func pushAIUndo(previousContent: String, sectionIdentifier: String?, description: String) {
+        let edit = AIEdit(previousContent: previousContent, sectionIdentifier: sectionIdentifier, description: description)
+        aiUndoStack.append(edit)
+        if aiUndoStack.count > 20 { aiUndoStack.removeFirst() }
+    }
+
+    /// Pop the most recent AI edit and restore its content
+    mutating func popAIUndo() -> AIEdit? {
+        return aiUndoStack.popLast()
+    }
+
+    // MARK: - Generation History
+
+    /// Log an AI generation event for preference learning
+    mutating func logGeneration(
+        mode: GenerationRecord.GenerationMode,
+        inputContext: String,
+        outputSummary: String,
+        beatPatternUsed: String? = nil
+    ) -> UUID {
+        let record = GenerationRecord(
+            mode: mode,
+            inputContext: inputContext,
+            outputSummary: outputSummary,
+            beatPatternUsed: beatPatternUsed
+        )
+        generationHistory.append(record)
+        lastModified = Date()
+        return record.id
+    }
+
+    /// Update the user action for a generation record
+    mutating func updateGenerationAction(id: UUID, action: GenerationRecord.GenerationAction, editDistance: Double = 0) {
+        if let idx = generationHistory.firstIndex(where: { $0.id == id }) {
+            generationHistory[idx].userAction = action
+            generationHistory[idx].editDistance = editDistance
+            lastModified = Date()
+        }
+    }
 }
 
 // MARK: - Atom-Based Persistence
@@ -431,6 +613,8 @@ extension ContentFocusModeState {
         var state = ContentFocusModeState(atomUUID: atom.uuid)
         state.currentStep = step
         state.coreIdea = dict["coreIdea"] as? String ?? ""
+        state.hooks = dict["hooks"] as? [String] ?? dict["inheritedHooks"] as? [String] ?? []
+        state.contentDescription = dict["contentDescription"] as? String ?? ""
         state.draftContent = atom.body ?? ""
         state.polishSystemPrompt = dict["polishSystemPrompt"] as? String ?? ""
         state.isContextPanelVisible = dict["isContextPanelVisible"] as? Bool ?? true
@@ -451,6 +635,25 @@ extension ContentFocusModeState {
                 state.polishAnalysis = analysis
             }
         }
+
+        // Decode generation history
+        if let historyData = dict["generationHistory"] {
+            if let historyJSON = try? JSONSerialization.data(withJSONObject: historyData),
+               let records = try? JSONDecoder().decode([GenerationRecord].self, from: historyJSON) {
+                state.generationHistory = records
+            }
+        }
+
+        // Decode conversation history
+        if let conversationData = dict["conversationHistory"] {
+            if let conversationJSON = try? JSONSerialization.data(withJSONObject: conversationData),
+               let messages = try? JSONDecoder().decode([WritingMessage].self, from: conversationJSON) {
+                state.conversationHistory = messages
+            }
+        }
+
+        // Decode conversation summary
+        state.conversationSummary = dict["conversationSummary"] as? String ?? ""
 
         // Decode last modified
         if let modifiedStr = dict["lastModified"] as? String,
@@ -475,6 +678,8 @@ extension ContentFocusModeState {
         // Write focus state fields
         metadataDict["currentStep"] = currentStep.rawValue
         metadataDict["coreIdea"] = coreIdea.isEmpty ? nil : coreIdea
+        metadataDict["hooks"] = hooks.isEmpty ? nil : hooks
+        metadataDict["contentDescription"] = contentDescription.isEmpty ? nil : contentDescription
         metadataDict["polishSystemPrompt"] = polishSystemPrompt.isEmpty ? nil : polishSystemPrompt
         metadataDict["isContextPanelVisible"] = isContextPanelVisible
         metadataDict["isAISuggestedOutline"] = isAISuggestedOutline
@@ -495,6 +700,30 @@ extension ContentFocusModeState {
            let analysisDict = try? JSONSerialization.jsonObject(with: analysisData) {
             metadataDict["polishAnalysis"] = analysisDict
         }
+
+        // Encode generation history (keep last 50 records to avoid bloat)
+        let recentHistory = Array(generationHistory.suffix(50))
+        if !recentHistory.isEmpty,
+           let historyData = try? JSONEncoder().encode(recentHistory),
+           let historyArray = try? JSONSerialization.jsonObject(with: historyData) {
+            metadataDict["generationHistory"] = historyArray
+        } else {
+            metadataDict["generationHistory"] = nil
+        }
+
+        // Encode conversation history (keep last 30 messages — was 100 which caused
+        // massive metadata blobs and expensive JSON decode on every focus mode open)
+        let recentConversation = Array(conversationHistory.suffix(30))
+        if !recentConversation.isEmpty,
+           let conversationData = try? JSONEncoder().encode(recentConversation),
+           let conversationArray = try? JSONSerialization.jsonObject(with: conversationData) {
+            metadataDict["conversationHistory"] = conversationArray
+        } else {
+            metadataDict["conversationHistory"] = nil
+        }
+
+        // Encode conversation summary
+        metadataDict["conversationSummary"] = conversationSummary.isEmpty ? nil : conversationSummary
 
         let metadataString: String?
         if !metadataDict.isEmpty,

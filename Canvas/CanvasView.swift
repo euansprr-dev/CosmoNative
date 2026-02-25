@@ -41,6 +41,7 @@ struct CanvasView: View {
 
     // Thinkspace sidebar state
     @State private var isSidebarVisible = false
+    @State private var showSettings = false
     @StateObject private var thinkspaceManager = ThinkspaceManager.shared
 
     // Notification observer management - prevent duplicate registrations
@@ -99,6 +100,23 @@ struct CanvasView: View {
                 // Zoom indicator
                 zoomIndicator
             }
+            .overlay(alignment: .topTrailing) {
+                // Settings cog
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 16)
+                .padding(.top, 16)
+            }
+            .sheet(isPresented: $showSettings) {
+                SanctuarySettingsView()
+                    .frame(width: 720, height: 540)
+            }
             // Thinkspace sidebar trigger zone (left edge)
             .overlay(alignment: .leading) {
                 ThinkspaceSidebarTrigger(isVisible: $isSidebarVisible)
@@ -155,7 +173,7 @@ struct CanvasView: View {
                     // Zoom level display
                     Text("\(Int(effectiveScale * 100))%")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
 
                     // Reset zoom button
                     Button {
@@ -165,7 +183,7 @@ struct CanvasView: View {
                     } label: {
                         Image(systemName: "1.magnifyingglass")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(DS.textSecondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -174,7 +192,7 @@ struct CanvasView: View {
                 .background(CosmoColors.thinkspaceTertiary, in: Capsule())
                 .overlay(
                     Capsule()
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(DS.borderActive, lineWidth: 1)
                 )
                 .shadow(color: CosmoColors.thinkspacePurple.opacity(0.2), radius: 8, y: 2)
                 .padding(.trailing, 20)
@@ -279,7 +297,12 @@ struct CanvasView: View {
             case .calendar:
                 CalendarWindowView(block: block)
             case .research:
-                ResearchBlockView(block: block)
+                // Use borderless media block for research with video/media content
+                if hasMediaContent(block) {
+                    MediaBlockView(block: block)
+                } else {
+                    ResearchBlockView(block: block)
+                }
             case .connection:
                 ConnectionBlockView(block: block)
             case .idea:
@@ -316,12 +339,13 @@ struct CanvasView: View {
                             let scaledY = screenCenter.y + (blockY - screenCenter.y) * effectiveScale
                             connectManager.beginConnection(from: block, center: CGPoint(x: scaledX, y: scaledY))
                         }
-                        // Update drag point (gesture location is relative to block)
+                        // Update drag point (gesture translation is in the block's local space,
+                        // which is inside the scaled container — scale it to screen coords)
                         let blockScreenX = screenCenter.x + (block.position.x + canvasOffset.width + scaledPanOffset.width - screenCenter.x) * effectiveScale
                         let blockScreenY = screenCenter.y + (block.position.y + canvasOffset.height + scaledPanOffset.height - screenCenter.y) * effectiveScale
                         connectManager.updateDrag(to: CGPoint(
-                            x: blockScreenX + gesture.translation.width,
-                            y: blockScreenY + gesture.translation.height
+                            x: blockScreenX + gesture.translation.width * effectiveScale,
+                            y: blockScreenY + gesture.translation.height * effectiveScale
                         ))
                         connectManager.checkTarget(
                             blocks: spatialEngine.blocks,
@@ -366,6 +390,14 @@ struct CanvasView: View {
         ))
     }
 
+    /// Check if a research block has media content that should use the borderless MediaBlockView
+    private func hasMediaContent(_ block: CanvasBlock) -> Bool {
+        let url = (block.metadata["url"] ?? "").lowercased()
+        return url.contains("youtube") || url.contains("youtu.be") ||
+               url.contains("instagram") || url.contains("tiktok") ||
+               block.metadata["isSwipeFile"] == "true"
+    }
+
     private var controlsOverlay: some View {
         VStack {
             HStack {
@@ -380,8 +412,6 @@ struct CanvasView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
                 Spacer()
-                CanvasControls(spatialEngine: spatialEngine)
-                    .padding()
             }
             Spacer()
         }
@@ -470,6 +500,10 @@ struct CanvasView: View {
             canvasContent
                 .onAppear {
                     canvasSize = geometry.size
+
+                // Register context provider for global Cosmo window
+                let provider = CanvasContextProvider(spatialEngine: spatialEngine)
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
 
                 // Load persisted blocks from database for current ThinkSpace
                 Task { @MainActor in
@@ -1970,33 +2004,20 @@ struct CanvasView: View {
     }
 
     private func createContentBlock(at position: CGPoint, prefillBody: String? = nil, prefillTitle: String? = nil) {
-        // Create content block without database entry (same pattern as Note blocks)
-        // Content is stored in metadata and persisted to canvas_blocks table
-        var metadata: [String: String] = [
-            "created": ISO8601DateFormatter().string(from: Date())
-        ]
+        Task { @MainActor in
+            do {
+                let title = prefillTitle ?? "New Content"
+                let savedAtom = try await AtomRepository.shared.createContent(
+                    title: title,
+                    body: prefillBody
+                )
 
-        if let title = prefillTitle, !title.isEmpty {
-            metadata["title"] = title
-        }
-        if let body = prefillBody, !body.isEmpty {
-            metadata["content"] = body
-        }
-
-        let block = CanvasBlock(
-            position: position,
-            size: CGSize(width: 320, height: 280),  // Match Note block size
-            entityType: .content,
-            entityId: -1,  // No database entry - content stored in metadata
-            entityUuid: UUID().uuidString,
-            title: prefillTitle ?? "Content",
-            subtitle: nil,
-            metadata: metadata
-        )
-
-        Task {
-            await spatialEngine.addBlock(block, persist: true)
-            print("📄 Created content block (metadata-based)")
+                let block = CanvasBlock.fromAtom(savedAtom, position: position)
+                await spatialEngine.addBlock(block, persist: true)
+                print("✅ Created content block: ID \(savedAtom.id ?? -1)")
+            } catch {
+                print("❌ Failed to create content atom: \(error)")
+            }
         }
     }
 
@@ -2129,21 +2150,64 @@ struct CanvasView: View {
     }
 
     // MARK: - Open Entity On Canvas (from Cmd+K)
-    
+
     /// Opens an existing entity as a floating block on the canvas,
     /// or focuses/scrolls to it if it already exists.
+    /// Supports two notification formats:
+    ///   - `["type": EntityType, "id": Int64]` (from code paths that have both)
+    ///   - `["atomUUID": String]` (from addSwipeToCanvas, addIdeaToCanvas, etc.)
     private func handleOpenEntityOnCanvas(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let entityType = userInfo["type"] as? EntityType,
-              let entityId = userInfo["id"] as? Int64 else {
-            print("⚠️ handleOpenEntityOnCanvas: missing userInfo or entity details")
+        guard let userInfo = notification.userInfo else {
+            print("⚠️ handleOpenEntityOnCanvas: missing userInfo")
             return
         }
-        
-        // Check if a block for this entity already exists
-        if let existingBlock = spatialEngine.blocks.first(where: { 
-            $0.entityType == entityType && $0.entityId == entityId 
-        }) {
+
+        // Path 1: Direct type + id (from code paths that have both)
+        if let entityType = userInfo["type"] as? EntityType,
+           let entityId = userInfo["id"] as? Int64 {
+            Task {
+                // Try to fetch atom for rich metadata
+                let atom = try? await AtomRepository.shared.fetch(id: entityId)
+                await openOrCreateBlock(entityType: entityType, entityId: entityId, atom: atom)
+            }
+            return
+        }
+
+        // Path 2: atomUUID (from addSwipeToCanvas, addIdeaToCanvas, etc.)
+        if let atomUUID = userInfo["atomUUID"] as? String {
+            Task {
+                guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                    print("⚠️ handleOpenEntityOnCanvas: atom not found for UUID \(atomUUID)")
+                    return
+                }
+                let entityType = EntityType(rawValue: atom.type.rawValue) ?? .research
+                let entityId = atom.id ?? Int64(0)
+                await openOrCreateBlock(entityType: entityType, entityId: entityId, atom: atom)
+            }
+            return
+        }
+
+        print("⚠️ handleOpenEntityOnCanvas: missing type/id or atomUUID")
+    }
+
+    /// Creates or focuses an existing canvas block for the given entity.
+    /// When an `atom` is provided, uses `CanvasBlock.fromAtom` for proper metadata and sizing.
+    @MainActor
+    private func openOrCreateBlock(entityType: EntityType, entityId: Int64, atom: Atom? = nil) async {
+        // Check if a block for this entity already exists (match by entityId or by UUID)
+        let existingBlock: CanvasBlock? = {
+            if let atom = atom {
+                return spatialEngine.blocks.first(where: {
+                    ($0.entityType == entityType && $0.entityId == entityId) ||
+                    $0.entityUuid == atom.uuid
+                })
+            }
+            return spatialEngine.blocks.first(where: {
+                $0.entityType == entityType && $0.entityId == entityId
+            })
+        }()
+
+        if let existingBlock = existingBlock {
             // Focus and scroll to existing block
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 canvasOffset = CGSize(
@@ -2151,7 +2215,7 @@ struct CanvasView: View {
                     height: -existingBlock.position.y + canvasSize.height / 2
                 )
             }
-            
+
             // Select it - batch update to avoid race conditions
             var updatedBlocks = spatialEngine.blocks
             for index in updatedBlocks.indices {
@@ -2159,83 +2223,49 @@ struct CanvasView: View {
             }
             spatialEngine.blocks = updatedBlocks
             selectedBlockId = existingBlock.id
-            
+
             print("📍 Focused existing \(entityType) block for entity ID \(entityId)")
             return
         }
-        
-        // Create new block for the entity
+
+        // Calculate center position for new block
         let position = CGPoint(
             x: canvasSize.width / 2 - canvasOffset.width,
             y: canvasSize.height / 2 - canvasOffset.height
         )
-        
-        // Create block based on entity type
+
+        // Create block — use CanvasBlock.fromAtom when atom is available for rich metadata + proper sizing
         let block: CanvasBlock
-        switch entityType {
-        case .idea:
-            block = CanvasBlock(
-                position: position,
-                size: CGSize(width: 320, height: 280),
-                entityType: .idea,
-                entityId: entityId,
-                entityUuid: UUID().uuidString,
-                title: "Idea",
-                subtitle: nil,
-                metadata: [:]
-            )
-        case .content:
-            block = CanvasBlock(
-                position: position,
-                size: CGSize(width: 320, height: 280),
-                entityType: .content,
-                entityId: entityId,
-                entityUuid: UUID().uuidString,
-                title: "Content",
-                subtitle: nil,
-                metadata: [:]
-            )
-        case .research:
-            block = CanvasBlock(
-                position: position,
-                size: CGSize(width: 320, height: 280),
-                entityType: .research,
-                entityId: entityId,
-                entityUuid: UUID().uuidString,
-                title: "Research",
-                subtitle: nil,
-                metadata: [:]
-            )
-        case .connection:
-            block = CanvasBlock(
-                position: position,
-                size: CGSize(width: 320, height: 280),
-                entityType: .connection,
-                entityId: entityId,
-                entityUuid: UUID().uuidString,
-                title: "Connection",
-                subtitle: nil,
-                metadata: [:]
-            )
-        default:
-            // For other types, open Focus Mode instead
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": entityType, "id": entityId]
-            )
-            return
-        }
-        
-        Task {
-            await spatialEngine.addBlock(block, persist: true)
-            
-            // Select the new block
-            await MainActor.run {
-                selectedBlockId = block.id
+        if let atom = atom {
+            block = CanvasBlock.fromAtom(atom, position: position)
+        } else {
+            // Fallback: no atom available, create with basic metadata
+            switch entityType {
+            case .idea, .content, .research, .connection:
+                block = CanvasBlock(
+                    position: position,
+                    size: CGSize(width: 320, height: 280),
+                    entityType: entityType,
+                    entityId: entityId,
+                    entityUuid: UUID().uuidString,
+                    title: entityType.rawValue.capitalized,
+                    subtitle: nil,
+                    metadata: [:]
+                )
+            default:
+                // For other types, open Focus Mode instead
+                NotificationCenter.default.post(
+                    name: .enterFocusMode,
+                    object: nil,
+                    userInfo: ["type": entityType, "id": entityId]
+                )
+                return
             }
         }
-        
+
+        await spatialEngine.addBlock(block, persist: true)
+        selectedBlockId = block.id
+
         print("🆕 Created \(entityType) floating block for entity ID \(entityId)")
     }
 
@@ -2587,4 +2617,53 @@ extension Notification.Name {
     static let createEntityInFocusMode = Notification.Name("createEntityInFocusMode")
     static let switchToThinkspace = Notification.Name("switchToThinkspace")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
+}
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class CanvasContextProvider: CosmoContextProvider {
+    private weak var spatialEngine: SpatialEngine?
+
+    init(spatialEngine: SpatialEngine) {
+        self.spatialEngine = spatialEngine
+    }
+
+    var contextType: CosmoContextType { .thinkspaceCanvas }
+
+    var contextSummary: String {
+        let count = spatialEngine?.blocks.count ?? 0
+        return "\(count) blocks on canvas"
+    }
+
+    var contextData: CosmoContextData {
+        guard let blocks = spatialEngine?.blocks else {
+            return CosmoContextData(viewSpecificData: ["blockCount": "0"])
+        }
+
+        var viewData: [String: String] = [
+            "blockCount": "\(blocks.count)"
+        ]
+
+        // Summarize block types
+        var typeCounts: [String: Int] = [:]
+        for block in blocks {
+            let type = block.entityType.rawValue
+            typeCounts[type, default: 0] += 1
+        }
+        viewData["blockTypes"] = typeCounts.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+
+        // Include titles of visible blocks (up to 20)
+        let titles = blocks.prefix(20).compactMap { $0.title }.filter { !$0.isEmpty }
+        if !titles.isEmpty {
+            viewData["blockTitles"] = titles.joined(separator: " | ")
+        }
+
+        return CosmoContextData(
+            viewSpecificData: viewData,
+            visibleItemCount: blocks.count
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
 }

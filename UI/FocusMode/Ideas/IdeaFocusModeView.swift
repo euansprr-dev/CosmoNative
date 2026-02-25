@@ -21,17 +21,23 @@ struct IdeaFocusModeView: View {
 
     @StateObject private var viewModel: IdeaFocusModeViewModel
     @State private var newTagText: String = ""
+    @State private var newIdeaHookText: String = ""
     @State private var showClientPicker: Bool = false
     @State private var showProfileEditor: Bool = false
     @FocusState private var isTitleFocused: Bool
-    @FocusState private var isBodyFocused: Bool
     @FocusState private var isTagFieldFocused: Bool
+    @FocusState private var isDescriptionFocused: Bool
+
+    // MARK: - Hover States
+
+    @State private var hoveredPlatform: IdeaPlatform?
+    @State private var hoveredStatus: IdeaStatus?
 
     // MARK: - Constants
 
-    private let accentIndigo = OnyxColors.Accent.iris
-    private let panelBackground = OnyxColors.Elevation.base
-    private let cardBackground = Color.white.opacity(0.06)
+    private let accentIndigo = DS.accent
+    private let panelBackground = DS.surface
+    private let cardBackground = DS.border
     private let ideaGold = OnyxColors.Accent.amber
 
     // MARK: - Initialization
@@ -46,31 +52,68 @@ struct IdeaFocusModeView: View {
 
     var body: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.bg
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 headerBar
 
-                HStack(spacing: 0) {
-                    leftColumn
-                        .frame(maxWidth: .infinity)
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        leftColumn
+                            .frame(width: viewModel.sessionState.intelligencePanelCollapsed
+                                   ? geo.size.width
+                                   : geo.size.width * 0.65)
 
-                    Divider()
-                        .background(Color.white.opacity(0.15))
+                        if !viewModel.sessionState.intelligencePanelCollapsed {
+                            Rectangle()
+                                .fill(DS.border)
+                                .frame(width: 1)
 
-                    if !viewModel.sessionState.intelligencePanelCollapsed {
-                        rightColumn
-                            .frame(width: 380)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                            rightColumn
+                                .frame(width: geo.size.width * 0.35)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
                     }
                 }
             }
+
+            // Overlay presentations
+            if viewModel.showLinkSwipesOverlay {
+                LinkSwipesOverlay(
+                    viewModel: viewModel,
+                    isPresented: $viewModel.showLinkSwipesOverlay
+                )
+                .transition(.opacity)
+                .zIndex(100)
+            }
+
+            if viewModel.showLinkConnectionsOverlay {
+                LinkConnectionsOverlay(
+                    viewModel: viewModel,
+                    isPresented: $viewModel.showLinkConnectionsOverlay
+                )
+                .transition(.opacity)
+                .zIndex(100)
+            }
+        }
+        .onAppear {
+            // Register context provider for global Cosmo window
+            let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onDisappear {
             viewModel.saveOnClose()
         }
         .onKeyPress(.escape) {
+            if viewModel.showLinkSwipesOverlay {
+                viewModel.showLinkSwipesOverlay = false
+                return .handled
+            }
+            if viewModel.showLinkConnectionsOverlay {
+                viewModel.showLinkConnectionsOverlay = false
+                return .handled
+            }
             onClose()
             return .handled
         }
@@ -85,7 +128,7 @@ struct IdeaFocusModeView: View {
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             // Back button
             Button(action: onClose) {
                 HStack(spacing: 6) {
@@ -94,18 +137,12 @@ struct IdeaFocusModeView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
-
-            // Title
-            Text(viewModel.editableTitle.isEmpty ? "Untitled Idea" : viewModel.editableTitle)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(1)
 
             // Type badge
             HStack(spacing: 4) {
@@ -169,65 +206,86 @@ struct IdeaFocusModeView: View {
                     viewModel.sessionState.save()
                 }
             } label: {
-                Image(systemName: viewModel.sessionState.intelligencePanelCollapsed
-                      ? "sidebar.right"
-                      : "sidebar.right")
+                Image(systemName: "sidebar.right")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .padding(8)
-                    .background(Color.white.opacity(0.08), in: Circle())
+                    .background(DS.border, in: Circle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.vertical, 12)
-        .background(
-            LinearGradient(
-                colors: [
-                    CosmoColors.thinkspaceVoid.opacity(0.95),
-                    CosmoColors.thinkspaceVoid.opacity(0.8),
-                    CosmoColors.thinkspaceVoid.opacity(0.4),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 120)
-            .allowsHitTesting(false)
-        , alignment: .top)
+        .background(DS.bg.opacity(0.95))
     }
 
     // MARK: - Left Column
 
     private var leftColumn: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 0) {
                 // Editable title
                 titleEditor
+                    .padding(.bottom, 24)
 
-                // Core idea body
-                bodyEditor
+                // Hooks
+                ideaHooksSection
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
+
+                // Description (replaces Core Idea + old Description)
+                ideaDescriptionSection
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
 
                 // Status pipeline
                 statusPipeline
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
 
                 // Format selector
                 formatSelector
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
 
                 // Platform selector
                 platformSelector
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
 
                 // Client assignment
                 clientAssignment
+                    .padding(.bottom, 24)
+
+                // Section divider
+                sectionDivider
 
                 // Tags editor
                 tagsEditor
 
                 Spacer(minLength: 60)
             }
-            .padding(.horizontal, 40)
-            .padding(.top, 24)
+            .padding(.horizontal, 48)
+            .padding(.top, 28)
         }
+    }
+
+    /// Thin divider between sections
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(DS.border)
+            .frame(height: 1)
+            .padding(.bottom, 24)
     }
 
     // MARK: - Title Editor
@@ -235,60 +293,172 @@ struct IdeaFocusModeView: View {
     private var titleEditor: some View {
         TextField("Idea title...", text: $viewModel.editableTitle)
             .textFieldStyle(.plain)
-            .font(.system(size: 28, weight: .bold))
-            .foregroundColor(.white)
+            .font(.system(size: 28, weight: .semibold))
+            .foregroundColor(DS.text)
             .focused($isTitleFocused)
             .onChange(of: viewModel.editableTitle) { _ in
                 viewModel.scheduleAutoSave()
             }
     }
 
-    // MARK: - Body Editor
+    // MARK: - Hooks Section
 
-    private var bodyEditor: some View {
+    private var ideaHooksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("HOOKS")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(DS.textMuted)
+                    .tracking(1.2)
+
+                Spacer()
+
+                if !viewModel.editableHooks.isEmpty {
+                    Text("\(viewModel.editableHooks.count) hooks")
+                        .font(CosmoTypography.caption)
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+
+            Text("Opening lines that grab attention")
+                .font(.system(size: 13))
+                .foregroundColor(DS.textSecondary)
+
+            // Existing hooks
+            ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
+                IdeaHookRow(
+                    hook: hook,
+                    index: index,
+                    onUpdate: { newText in
+                        viewModel.editableHooks[index] = newText
+                        viewModel.scheduleAutoSave()
+                    },
+                    onDelete: {
+                        withAnimation(ProMotionSprings.snappy) {
+                            viewModel.editableHooks.remove(at: index)
+                            viewModel.scheduleAutoSave()
+                        }
+                    }
+                )
+            }
+
+            // Add new hook
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(DS.accent.opacity(0.6))
+
+                TextField("Add a hook...", text: $newIdeaHookText)
+                    .textFieldStyle(.plain)
+                    .font(CosmoTypography.body)
+                    .foregroundColor(DS.text)
+                    .onSubmit {
+                        let trimmed = newIdeaHookText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        withAnimation(ProMotionSprings.snappy) {
+                            viewModel.editableHooks.append(trimmed)
+                            newIdeaHookText = ""
+                            viewModel.scheduleAutoSave()
+                        }
+                    }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(DS.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    // MARK: - Description Section
+
+    private var ideaDescriptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("CORE IDEA")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+            Text("DESCRIPTION")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
-            TextEditor(text: $viewModel.editableBody)
-                .scrollContentBackground(.hidden)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(.white.opacity(0.9))
-                .frame(minHeight: 120, maxHeight: 240)
-                .padding(12)
-                .background(cardBackground, in: RoundedRectangle(cornerRadius: 10))
-                .focused($isBodyFocused)
-                .onChange(of: viewModel.editableBody) { _ in
-                    viewModel.scheduleAutoSave()
-                    viewModel.autoEnrich()
+            ZStack(alignment: .leading) {
+                // Left accent bar
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(viewModel.selectedStatus.color)
+                        .frame(width: 2)
+                        .padding(.vertical, 12)
+                    Spacer()
                 }
 
-            Text("\(viewModel.editableBody.split(separator: " ").count) words")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.3))
+                VStack(alignment: .trailing, spacing: 0) {
+                    TextEditor(text: $viewModel.editableBody)
+                        .scrollContentBackground(.hidden)
+                        .font(.system(size: 15, weight: .regular))
+                        .lineSpacing(15 * 0.6)
+                        .foregroundColor(DS.text)
+                        .frame(minHeight: 200, maxHeight: 400)
+                        .padding(.leading, 18)
+                        .padding(.trailing, 16)
+                        .padding(.vertical, 16)
+                        .focused($isDescriptionFocused)
+                        .onChange(of: viewModel.editableBody) { _ in
+                            viewModel.scheduleAutoSave()
+                            viewModel.autoEnrich()
+                        }
+
+                    // Word count bottom-right
+                    Text("\(viewModel.editableBody.split(separator: " ").count) words")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(DS.textMuted)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 12)
+                }
+            }
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .overlay(alignment: .topLeading) {
+                if viewModel.editableBody.isEmpty {
+                    Text("What's the core idea? Include the hook angle, key points, and why this matters...")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundColor(DS.textMuted)
+                        .lineSpacing(15 * 0.6)
+                        .padding(.leading, 18)
+                        .padding(.top, 16)
+                        .allowsHitTesting(false)
+                }
+            }
         }
     }
 
     // MARK: - Status Pipeline
 
     private var statusPipeline: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("STATUS")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
-            HStack(spacing: 6) {
-                ForEach(IdeaStatus.allCases, id: \.self) { status in
-                    Button {
-                        Task { await viewModel.updateStatus(status) }
-                    } label: {
-                        statusButtonLabel(for: status)
-                    }
-                    .buttonStyle(.plain)
+            statusPillsRow
+        }
+    }
+
+    private var statusPillsRow: some View {
+        HStack(spacing: 8) {
+            ForEach(IdeaStatus.allCases, id: \.self) { status in
+                Button {
+                    Task { await viewModel.updateStatus(status) }
+                } label: {
+                    statusButtonLabel(for: status)
                 }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -296,30 +466,42 @@ struct IdeaFocusModeView: View {
     @ViewBuilder
     private func statusButtonLabel(for status: IdeaStatus) -> some View {
         let isSelected = status == viewModel.selectedStatus
-        let bgColor: Color = isSelected ? status.color.opacity(0.3) : Color.white.opacity(0.06)
-        let strokeColor: Color = isSelected ? status.color.opacity(0.6) : Color.clear
+        let isHovered = hoveredStatus == status
+        let bgColor: Color = isSelected
+            ? status.color.opacity(0.3)
+            : (isHovered ? DS.borderActive : DS.border)
+        let strokeColor: Color = isSelected ? status.color.opacity(0.5) : Color.clear
 
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: status.iconName)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text(status.displayName)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
         }
         .foregroundColor(isSelected ? .white : status.color.opacity(0.8))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(bgColor, in: Capsule())
         .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
+        .shadow(
+            color: isSelected ? status.color.opacity(0.3) : .clear,
+            radius: 8, x: 0, y: 0
+        )
+        .onHover { hovering in
+            withAnimation(OnyxSpring.hover) {
+                hoveredStatus = hovering ? status : nil
+            }
+        }
     }
 
     // MARK: - Format Selector
 
     private var formatSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("FORMAT")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
             formatGroupRow(label: "Short-Form Video", formats: ContentFormat.shortFormVideo)
             formatGroupRow(label: "Static", formats: ContentFormat.staticFormats)
@@ -332,10 +514,10 @@ struct IdeaFocusModeView: View {
 
     @ViewBuilder
     private func formatGroupRow(label: String, formats: [ContentFormat]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
             FlowLayout(spacing: 6) {
                 ForEach(formats, id: \.self) { format in
@@ -356,20 +538,20 @@ struct IdeaFocusModeView: View {
     @ViewBuilder
     private func formatButtonLabel(for format: ContentFormat) -> some View {
         let isSelected = viewModel.selectedFormat == format
-        let bgColor: Color = isSelected ? format.color.opacity(0.25) : Color.white.opacity(0.06)
-        let strokeColor: Color = isSelected ? format.color.opacity(0.5) : Color.clear
 
         HStack(spacing: 4) {
             Image(systemName: format.icon)
                 .font(.system(size: 9))
             Text(format.displayName)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(isSelected ? .white : format.color.opacity(0.7))
+        .foregroundColor(isSelected ? format.color : DS.textSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(bgColor, in: Capsule())
-        .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
+        .background(
+            isSelected ? format.color.opacity(0.2) : DS.border,
+            in: Capsule()
+        )
     }
 
     @ViewBuilder
@@ -386,23 +568,23 @@ struct IdeaFocusModeView: View {
                     .foregroundColor(accentIndigo)
                 Text("-- \(rationale)")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             }
-            .padding(.top, 4)
+            .padding(.top, 6)
         }
     }
 
     // MARK: - Platform Selector
 
     private var platformSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("PLATFORM")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 ForEach(IdeaPlatform.allCases, id: \.self) { platform in
                     Button {
                         withAnimation(ProMotionSprings.snappy) {
@@ -421,54 +603,72 @@ struct IdeaFocusModeView: View {
     @ViewBuilder
     private func platformButtonLabel(for platform: IdeaPlatform) -> some View {
         let isSelected = viewModel.selectedPlatform == platform
-        let bgColor: Color = isSelected ? platform.color.opacity(0.15) : Color.white.opacity(0.04)
-        let strokeColor: Color = isSelected ? platform.color.opacity(0.4) : Color.clear
+        let isHovered = hoveredPlatform == platform
 
-        VStack(spacing: 4) {
-            Image(systemName: platform.iconName)
-                .font(.system(size: 16))
-                .foregroundColor(isSelected ? platform.color : .white.opacity(0.4))
+        VStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(
+                        isSelected
+                            ? platform.color.opacity(0.15)
+                            : (isHovered ? DS.border : Color.clear)
+                    )
+                    .frame(width: 40, height: 40)
+
+                Image(systemName: platform.iconName)
+                    .font(.system(size: 16))
+                    .foregroundColor(isSelected ? platform.color : (isHovered ? DS.textSecondary : DS.textMuted))
+            }
 
             Text(platform.displayName)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundColor(isSelected ? platform.color : .white.opacity(0.3))
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(isSelected ? platform.color : DS.textMuted)
         }
-        .frame(width: 52, height: 48)
-        .background(bgColor, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(strokeColor, lineWidth: 1))
+        .frame(width: 48)
+        .onHover { hovering in
+            withAnimation(OnyxSpring.hover) {
+                hoveredPlatform = hovering ? platform : nil
+            }
+        }
     }
 
     // MARK: - Client Assignment
 
     private var clientAssignment: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("CLIENT")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
             HStack(spacing: 8) {
                 if let client = viewModel.linkedClient {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 14))
+                            .font(.system(size: 16))
                             .foregroundColor(accentIndigo)
                         Text(client.title ?? "Client")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(DS.text)
+
+                        Spacer()
 
                         Button {
                             Task { await viewModel.assignClient(nil) }
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.4))
+                                .font(.system(size: 13))
+                                .foregroundColor(DS.textMuted)
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(cardBackground, in: Capsule())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
                 } else {
                     Menu {
                         ForEach(viewModel.clientProfiles, id: \.uuid) { client in
@@ -490,15 +690,21 @@ struct IdeaFocusModeView: View {
                         }
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 12))
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .medium))
                             Text("Assign Client")
                                 .font(.system(size: 12, weight: .medium))
                         }
-                        .foregroundColor(.white.opacity(0.5))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.white.opacity(0.06), in: Capsule())
+                        .foregroundColor(DS.textMuted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .strokeBorder(
+                                    DS.textMuted.opacity(0.4),
+                                    style: StrokeStyle(lineWidth: 1, dash: [5, 3])
+                                )
+                        )
                     }
                     .menuStyle(.borderlessButton)
                 }
@@ -509,44 +715,43 @@ struct IdeaFocusModeView: View {
     // MARK: - Tags Editor
 
     private var tagsEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("TAGS")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.4))
-                .tracking(1.0)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .tracking(1.2)
 
-            // Existing tags as chips
             FlowLayout(spacing: 6) {
                 ForEach(viewModel.tags, id: \.self) { tag in
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Text(tag)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(DS.textSecondary)
 
                         Button {
                             viewModel.removeTag(tag)
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(DS.textMuted)
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.1), in: Capsule())
+                    .padding(.vertical, 6)
+                    .background(DS.border, in: Capsule())
                 }
 
                 // Add tag field
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
 
                     TextField("Add tag", text: $newTagText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 11))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .frame(width: 80)
                         .focused($isTagFieldFocused)
                         .onSubmit {
@@ -555,8 +760,8 @@ struct IdeaFocusModeView: View {
                         }
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.white.opacity(0.06), in: Capsule())
+                .padding(.vertical, 6)
+                .background(DS.border, in: Capsule())
             }
         }
     }
@@ -574,19 +779,24 @@ struct IdeaFocusModeView: View {
                     analysisLoadingView
                 }
 
-                // Matching swipes section
-                if let swipes = viewModel.insight?.matchingSwipes, !swipes.isEmpty {
-                    matchingSwipesSection(swipes)
+                // --- LINKED CONTEXT SECTIONS ---
+
+                // 1. Related Swipes
+                relatedSwipesSection
+
+                // 2. Related Connections
+                relatedConnectionsSection
+
+                // 3. AI-Suggested Hooks (only when swipes linked)
+                if !viewModel.linkedSwipes.isEmpty {
+                    aiSuggestedHooksSection
                 }
+
+                // --- ANALYSIS SECTIONS ---
 
                 // Recommended frameworks section
                 if let frameworks = viewModel.insight?.frameworkRecommendations, !frameworks.isEmpty {
                     frameworksSection(frameworks)
-                }
-
-                // Suggested hooks section
-                if let hooks = viewModel.insight?.hookSuggestions, !hooks.isEmpty {
-                    hooksSection(hooks)
                 }
 
                 // Format suitability
@@ -600,11 +810,12 @@ struct IdeaFocusModeView: View {
                 }
 
                 // Empty state
-                if viewModel.insight == nil && !viewModel.isAnalyzing {
+                if viewModel.insight == nil && !viewModel.isAnalyzing
+                    && viewModel.linkedSwipes.isEmpty && viewModel.linkedConnections.isEmpty {
                     emptyIntelligenceState
                 }
 
-                // "Activate This Idea" CTA — shown after analysis completes
+                // "Activate This Idea" CTA
                 if viewModel.insight != nil && !viewModel.isAnalyzing {
                     activateIdeaCTA
                 }
@@ -615,6 +826,605 @@ struct IdeaFocusModeView: View {
             .padding(.top, 16)
         }
         .background(panelBackground)
+    }
+
+    // MARK: - Related Swipes Section
+
+    private var relatedSwipesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header with link button
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(accentIndigo)
+
+                Text("RELATED SWIPES")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DS.textSecondary)
+                    .tracking(0.8)
+
+                Spacer()
+
+                if !viewModel.linkedSwipes.isEmpty {
+                    Text("\(viewModel.linkedSwipes.count)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(accentIndigo)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(accentIndigo.opacity(0.12), in: Capsule())
+                }
+
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.showLinkSwipesOverlay = true
+                    }
+                } label: {
+                    linkedSwipesLinkButtonLabel
+                }
+                .buttonStyle(.plain)
+            }
+
+            if viewModel.linkedSwipes.isEmpty {
+                // Empty state
+                Text("No swipes linked yet. Link swipes to give the AI structural inspiration when you draft this idea.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                ForEach(viewModel.linkedSwipes, id: \.uuid) { swipe in
+                    linkedSwipeCard(swipe)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var linkedSwipesLinkButtonLabel: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .bold))
+            Text("Link")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(accentIndigo)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(accentIndigo.opacity(0.1), in: Capsule())
+    }
+
+    @ViewBuilder
+    private func linkedSwipeCard(_ swipe: Atom) -> some View {
+        let analysis = swipe.swipeAnalysis
+        let hookText = swipe.researchMetadata?.hook ?? analysis?.hookText ?? ""
+        let hookScore = analysis?.hookScore
+        let hookType = analysis?.hookType
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                // Thumbnail
+                linkedSwipeThumbnail(swipe)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(swipe.title ?? "Untitled Swipe")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.text)
+                        .lineLimit(1)
+
+                    // Hook text preview (60 chars)
+                    if !hookText.isEmpty {
+                        Text(String(hookText.prefix(60)))
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textSecondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer()
+
+                // Hook score badge
+                if let score = hookScore {
+                    linkedSwipeScoreBadge(score)
+                }
+
+                // Unlink button
+                Button {
+                    Task { await viewModel.unlinkSwipe(swipe.uuid) }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(DS.textMuted)
+                        .padding(5)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Badge row: hook type + beat patterns
+            HStack(spacing: 4) {
+                if let type = hookType {
+                    swipeHookTypePill(type)
+                }
+                if let platform = swipe.researchMetadata?.contentSource {
+                    Text(platform)
+                        .font(.system(size: 9))
+                        .foregroundColor(DS.textMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.border, in: Capsule())
+                }
+            }
+        }
+        .padding(10)
+        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func linkedSwipeThumbnail(_ swipe: Atom) -> some View {
+        let thumbUrl = swipe.researchMetadata?.thumbnailUrl
+
+        if let urlStr = thumbUrl, let url = URL(string: urlStr) {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                linkedSwipePlaceholderThumb
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            linkedSwipePlaceholderThumb
+        }
+    }
+
+    @ViewBuilder
+    private var linkedSwipePlaceholderThumb: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(DS.border)
+            .frame(width: 40, height: 40)
+            .overlay(
+                Image(systemName: "doc.text")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textMuted)
+            )
+    }
+
+    @ViewBuilder
+    private func linkedSwipeScoreBadge(_ score: Double) -> some View {
+        let color: Color = score >= 7 ? Color(hex: "22C55E") :
+            score >= 5 ? Color(hex: "FBBF24") : Color(hex: "64748B")
+
+        Text(String(format: "%.1f", score))
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Related Connections Section
+
+    private var relatedConnectionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header with link button
+            HStack(spacing: 6) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.accent)
+
+                Text("RELATED CONNECTIONS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DS.textSecondary)
+                    .tracking(0.8)
+
+                Spacer()
+
+                if !viewModel.linkedConnections.isEmpty {
+                    Text("\(viewModel.linkedConnections.count)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(accentIndigo)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(accentIndigo.opacity(0.12), in: Capsule())
+                }
+
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.showLinkConnectionsOverlay = true
+                    }
+                } label: {
+                    relatedConnectionsLinkButtonLabel
+                }
+                .buttonStyle(.plain)
+            }
+
+            if viewModel.linkedConnections.isEmpty && viewModel.suggestedConnections.isEmpty {
+                Text("No connections linked. Link your unique frameworks to make the content intellectually distinctive.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                // Linked connections
+                ForEach(viewModel.linkedConnections, id: \.uuid) { conn in
+                    linkedConnectionCard(conn)
+                }
+
+                // Suggested connections (dashed border)
+                ForEach(viewModel.suggestedConnections, id: \.uuid) { conn in
+                    suggestedConnectionCard(conn)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var relatedConnectionsLinkButtonLabel: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .bold))
+            Text("Link")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(accentIndigo)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(accentIndigo.opacity(0.1), in: Capsule())
+    }
+
+    @ViewBuilder
+    private func linkedConnectionCard(_ conn: Atom) -> some View {
+        let maturity = resolveConnectionMaturity(conn)
+        let filledCount = connectionFilledCount(conn)
+        let filledNames = connectionFilledSectionNames(conn)
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(conn.title ?? "Untitled Connection")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.text)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        connectionMaturityBadge(maturity)
+
+                        Text("\(filledCount)/8 sections")
+                            .font(.system(size: 9))
+                            .foregroundColor(DS.textMuted)
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    Task { await viewModel.unlinkConnection(conn.uuid) }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(DS.textMuted)
+                        .padding(5)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Goal text preview
+            if let goalText = connectionGoalPreview(conn), !goalText.isEmpty {
+                Text(goalText)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+            }
+
+            // Filled section names
+            if !filledNames.isEmpty {
+                Text(filledNames.joined(separator: " \u{2022} "))
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(10)
+        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func suggestedConnectionCard(_ conn: Atom) -> some View {
+        let maturity = resolveConnectionMaturity(conn)
+        let filledCount = connectionFilledCount(conn)
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 9))
+                    .foregroundColor(accentIndigo.opacity(0.6))
+
+                Text(conn.title ?? "Untitled")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                connectionMaturityBadge(maturity)
+            }
+
+            Text("\(filledCount)/8 sections")
+                .font(.system(size: 9))
+                .foregroundColor(DS.textMuted)
+
+            HStack(spacing: 8) {
+                Button {
+                    Task { await viewModel.linkConnection(conn.uuid) }
+                } label: {
+                    suggestedConnectionLinkLabel
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.suggestedConnections.removeAll { $0.uuid == conn.uuid }
+                    }
+                } label: {
+                    suggestedConnectionDismissLabel
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(10)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    DS.borderActive,
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 3])
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var suggestedConnectionLinkLabel: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "link.badge.plus")
+                .font(.system(size: 9))
+            Text("Link")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(accentIndigo)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    @ViewBuilder
+    private var suggestedConnectionDismissLabel: some View {
+        Text("Dismiss")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(DS.textMuted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    @ViewBuilder
+    private func connectionMaturityBadge(_ level: ConnectionMaturityLevel) -> some View {
+        let color = connectionMaturityColor(level)
+        HStack(spacing: 3) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            Text(level.displayName)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.3)
+                .foregroundColor(color)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+
+    private func connectionMaturityColor(_ level: ConnectionMaturityLevel) -> Color {
+        switch level {
+        case .seed: return Color(hex: "9CA3AF")
+        case .developing: return Color(hex: "FBBF24")
+        case .mature: return Color(hex: "22C55E")
+        case .proven: return Color(hex: "6366F1")
+        }
+    }
+
+    private func resolveConnectionMaturity(_ conn: Atom) -> ConnectionMaturityLevel {
+        if let cached = conn.connectionMaturityLevel,
+           let level = ConnectionMaturityLevel(rawValue: cached) {
+            return level
+        }
+        let count = connectionFilledCount(conn)
+        if count >= 6 { return .proven }
+        if count >= 4 { return .mature }
+        if count >= 2 { return .developing }
+        return .seed
+    }
+
+    private func connectionFilledCount(_ conn: Atom) -> Int {
+        guard let structured = conn.structured,
+              let data = ConnectionStructuredData.fromJSON(structured) else {
+            return 0
+        }
+        return data.sections.filter { !$0.items.isEmpty }.count
+    }
+
+    private func connectionFilledSectionNames(_ conn: Atom) -> [String] {
+        guard let structured = conn.structured,
+              let data = ConnectionStructuredData.fromJSON(structured) else {
+            return []
+        }
+        return data.sections
+            .filter { !$0.items.isEmpty }
+            .map { $0.type.displayName }
+    }
+
+    private func connectionGoalPreview(_ conn: Atom) -> String? {
+        guard let structured = conn.structured,
+              let data = ConnectionStructuredData.fromJSON(structured) else {
+            return conn.mentalModel?.goal
+        }
+        let goalSection = data.sections.first { $0.type == .goal }
+        return goalSection?.items.first?.content
+    }
+
+    // MARK: - AI-Suggested Hooks Section
+
+    private var aiSuggestedHooksSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack(spacing: 6) {
+                Image(systemName: "text.quote")
+                    .font(.system(size: 10))
+                    .foregroundColor(accentIndigo)
+
+                Text("AI-SUGGESTED HOOKS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DS.textSecondary)
+                    .tracking(0.8)
+
+                Spacer()
+
+                if !viewModel.generatedHooks.isEmpty {
+                    Text("\(viewModel.generatedHooks.count)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(accentIndigo)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(accentIndigo.opacity(0.12), in: Capsule())
+                }
+
+                // Refresh button
+                Button {
+                    Task { await viewModel.generateHooksFromLinkedSwipes() }
+                } label: {
+                    aiHooksRefreshButtonLabel
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isGeneratingHooks)
+            }
+
+            if viewModel.isGeneratingHooks {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small).tint(accentIndigo)
+                    Text("Generating hooks from linked swipes...")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            } else if viewModel.generatedHooks.isEmpty {
+                Text("Link swipes above, then hooks will be generated from their structural patterns.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                ForEach(viewModel.generatedHooks) { hook in
+                    generatedHookCard(hook)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var aiHooksRefreshButtonLabel: some View {
+        Image(systemName: viewModel.isGeneratingHooks ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(accentIndigo.opacity(viewModel.isGeneratingHooks ? 0.4 : 1))
+            .padding(5)
+            .background(accentIndigo.opacity(0.08), in: Circle())
+    }
+
+    @ViewBuilder
+    private func generatedHookCard(_ hook: HookSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Hook text
+            Text(hook.hookText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(DS.text)
+                .lineLimit(3)
+
+            // Hook type + score row
+            HStack(spacing: 6) {
+                if let hookType = hook.hookType {
+                    swipeHookTypePill(hookType)
+                }
+
+                if let score = hook.estimatedScore {
+                    generatedHookScoreBadge(score)
+                }
+            }
+
+            // Source swipe attribution
+            if let source = hook.sourceSwipeTitle, !source.isEmpty {
+                Text("Based on pattern from \(source)")
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+                    .italic()
+            }
+
+            // Use This button
+            Button {
+                viewModel.editableBody = hook.hookText + "\n\n" + viewModel.editableBody
+                viewModel.scheduleAutoSave()
+            } label: {
+                generatedHookUseLabel
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func generatedHookScoreBadge(_ score: Double) -> some View {
+        let color: Color = score >= 7 ? Color(hex: "22C55E") :
+            score >= 5 ? Color(hex: "3B82F6") : Color(hex: "64748B")
+
+        HStack(spacing: 3) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(String(format: "%.1f", score))
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var generatedHookUseLabel: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "text.insert")
+                .font(.system(size: 9))
+            Text("Use This")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(accentIndigo)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Intelligence Panel Header
@@ -628,14 +1438,14 @@ struct IdeaFocusModeView: View {
 
                 Text("Intelligence")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
                 if let lastAnalyzed = viewModel.sessionState.lastAnalyzedAt {
                     Text("Last analyzed: \(formatRelativeDate(lastAnalyzed))")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
 
@@ -686,142 +1496,25 @@ struct IdeaFocusModeView: View {
                     ProgressView().controlSize(.small)
                     Text(viewModel.analysisStage)
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
             } else {
                 Text("Analyzing idea against swipe library...")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.center)
             }
 
             Text("Finding matching frameworks, hooks, and patterns")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
     }
 
-    // MARK: - Matching Swipes Section
-
-    private func matchingSwipesSection(_ swipes: [SwipeMatch]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "MATCHING SWIPES", count: swipes.count, icon: "doc.on.doc.fill")
-
-            ForEach(swipes.prefix(3)) { swipe in
-                swipeMatchCard(swipe)
-            }
-
-            if swipes.count > 3 {
-                Text("+\(swipes.count - 3) more matching swipes")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 2)
-            }
-        }
-    }
-
-    private func swipeMatchCard(_ swipe: SwipeMatch) -> some View {
-        Button {
-            // Open swipe in focus mode
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openBlockInFocusMode,
-                object: nil,
-                userInfo: ["atomUUID": swipe.swipeAtomUUID]
-            )
-        } label: {
-            swipeMatchCardLabel(swipe)
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func swipeMatchCardLabel(_ swipe: SwipeMatch) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Title + similarity
-            HStack {
-                Text(swipe.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-
-                Spacer()
-
-                Text("\(Int(swipe.similarityScore * 100))%")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(similarityColor(swipe.similarityScore))
-            }
-
-            // Similarity bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.1))
-                        .frame(height: OnyxLayout.progressLineHeight)
-
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    similarityColor(swipe.similarityScore).opacity(0.6),
-                                    similarityColor(swipe.similarityScore)
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geo.size.width * swipe.similarityScore, height: OnyxLayout.progressLineHeight)
-                }
-            }
-            .frame(height: OnyxLayout.progressLineHeight)
-
-            // Badges
-            HStack(spacing: 6) {
-                if let hookType = swipe.hookType {
-                    swipeHookTypePill(hookType)
-                }
-
-                if let framework = swipe.frameworkType {
-                    HStack(spacing: 3) {
-                        Text(framework.abbreviation)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    }
-                    .foregroundColor(framework.color)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(framework.color.opacity(0.15), in: Capsule())
-                }
-
-                if let platform = swipe.platform {
-                    Text(platform)
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
-                }
-            }
-
-            // Hook text preview
-            if let hookText = swipe.hookText {
-                Text("\"\(hookText)\"")
-                    .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(.white.opacity(0.5))
-                    .italic()
-                    .lineLimit(2)
-            }
-
-            // Match reason
-            if let reason = swipe.matchReason {
-                Text(reason)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
-                    .lineLimit(2)
-            }
-        }
-        .padding(10)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 8))
-    }
+    // (Old matchingSwipesSection removed — replaced by relatedSwipesSection)
 
     @ViewBuilder
     private func swipeHookTypePill(_ hookType: SwipeHookType) -> some View {
@@ -858,11 +1551,11 @@ struct IdeaFocusModeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rec.framework.displayName)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
 
                     Text(rec.framework.description)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .lineLimit(1)
                 }
 
@@ -874,7 +1567,7 @@ struct IdeaFocusModeView: View {
                 HStack {
                     Text("Confidence")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                     Spacer()
                     Text("\(Int(rec.confidence * 100))%")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
@@ -884,7 +1577,7 @@ struct IdeaFocusModeView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.white.opacity(0.1))
+                            .fill(DS.borderActive)
                             .frame(height: OnyxLayout.progressLineHeight)
 
                         RoundedRectangle(cornerRadius: 1)
@@ -898,7 +1591,7 @@ struct IdeaFocusModeView: View {
             // Rationale
             Text(rec.rationale)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
                 .lineLimit(3)
 
             // Evidence-based reasoning
@@ -911,7 +1604,7 @@ struct IdeaFocusModeView: View {
 
                     Text(reasoning)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.35))
+                        .foregroundColor(DS.textMuted)
                         .lineLimit(4)
                         .italic()
                 }
@@ -929,11 +1622,11 @@ struct IdeaFocusModeView: View {
                     Text(isSelected ? "Selected" : "Select Framework")
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundColor(isSelected ? Color(hex: "#22C55E") : accentIndigo)
+                .foregroundColor(isSelected ? DS.green : accentIndigo)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .background(
-                    (isSelected ? Color(hex: "#22C55E") : accentIndigo).opacity(0.12),
+                    (isSelected ? DS.green : accentIndigo).opacity(0.12),
                     in: RoundedRectangle(cornerRadius: 6)
                 )
             }
@@ -950,112 +1643,7 @@ struct IdeaFocusModeView: View {
         )
     }
 
-    // MARK: - Hooks Section
-
-    private func hooksSection(_ hooks: [HookSuggestion]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "HOOK VARIANTS", count: hooks.count, icon: "text.quote")
-
-            ForEach(Array(hooks.prefix(5).enumerated()), id: \.element.id) { index, hook in
-                hookVariantCard(hook, index: index)
-            }
-        }
-    }
-
-    private func hookVariantCard(_ hook: HookSuggestion, index: Int) -> some View {
-        let isSelected = viewModel.selectedHookIndex == index
-
-        return VStack(alignment: .leading, spacing: 8) {
-            // Hook text
-            Text(hook.hookText)
-                .font(.system(size: 12, weight: isSelected ? .medium : .regular))
-                .foregroundColor(isSelected ? .white : .white.opacity(0.7))
-                .multilineTextAlignment(.leading)
-
-            // Hook type badge
-            if let hookType = hook.hookType {
-                HStack(spacing: 3) {
-                    Image(systemName: hookType.iconName)
-                        .font(.system(size: 8))
-                    Text(hookType.displayName)
-                        .font(.system(size: 9, weight: .medium))
-                }
-                .foregroundColor(hookType.color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(hookType.color.opacity(0.12), in: Capsule())
-            }
-
-            // Action buttons row
-            HStack(spacing: 8) {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(hook.hookText, forType: .string)
-                } label: {
-                    hookVariantCopyLabel()
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    viewModel.editableBody = hook.hookText + "\n\n" + viewModel.editableBody
-                    viewModel.scheduleAutoSave()
-                } label: {
-                    hookVariantUseLabel()
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.selectedHookIndex = isSelected ? nil : index
-                    }
-                } label: {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14))
-                        .foregroundColor(isSelected ? accentIndigo : .white.opacity(0.3))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(10)
-        .background(
-            isSelected ? accentIndigo.opacity(0.08) : cardBackground,
-            in: RoundedRectangle(cornerRadius: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? accentIndigo.opacity(0.3) : Color.clear, lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private func hookVariantCopyLabel() -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "doc.on.doc")
-                .font(.system(size: 9))
-            Text("Copy")
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(.white.opacity(0.5))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
-    }
-
-    @ViewBuilder
-    private func hookVariantUseLabel() -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "text.insert")
-                .font(.system(size: 9))
-            Text("Use")
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(accentIndigo)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-    }
+    // (Old hooksSection removed — replaced by aiSuggestedHooksSection)
 
     // MARK: - Blueprint Section
 
@@ -1077,7 +1665,7 @@ struct IdeaFocusModeView: View {
 
                     Text(hook)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                         .italic()
                 }
                 .padding(10)
@@ -1095,16 +1683,16 @@ struct IdeaFocusModeView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("CALL TO ACTION")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color(hex: "#22C55E").opacity(0.7))
+                        .foregroundColor(DS.green.opacity(0.7))
                         .tracking(0.6)
 
                     Text(cta)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(hex: "#22C55E").opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
 
             // Word count estimate
@@ -1115,7 +1703,7 @@ struct IdeaFocusModeView: View {
                     Text("~\(wordCount) words estimated")
                         .font(.system(size: 10))
                 }
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
             }
 
         }
@@ -1126,28 +1714,28 @@ struct IdeaFocusModeView: View {
             HStack {
                 Text(section.label)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
                 if let wordCount = section.targetWordCount {
                     Text("~\(wordCount)w")
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                 }
             }
 
             Text(section.purpose)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             if let content = section.suggestedContent, !content.isEmpty {
                 Text(content)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(DS.textSecondary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(10)
@@ -1169,7 +1757,7 @@ struct IdeaFocusModeView: View {
                     if let source = dataSources?[key] {
                         Text(source)
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.25))
+                            .foregroundColor(DS.textMuted)
                             .padding(.leading, 88)
                     }
                 }
@@ -1185,13 +1773,13 @@ struct IdeaFocusModeView: View {
         HStack(spacing: 8) {
             Text(formatName)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .frame(width: 80, alignment: .leading)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.white.opacity(0.1))
+                        .fill(DS.borderActive)
                         .frame(height: OnyxLayout.progressLineHeight)
 
                     RoundedRectangle(cornerRadius: 1)
@@ -1243,11 +1831,11 @@ struct IdeaFocusModeView: View {
 
             Text("No analysis yet")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
 
             Text("Click \"Analyze Idea\" to find matching swipes, recommended frameworks, and hook suggestions from your library.")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .lineLimit(4)
         }
@@ -1266,7 +1854,7 @@ struct IdeaFocusModeView: View {
 
             Text(title)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
                 .tracking(0.8)
 
             Spacer()
@@ -1278,12 +1866,6 @@ struct IdeaFocusModeView: View {
                 .padding(.vertical, 2)
                 .background(accentIndigo.opacity(0.12), in: Capsule())
         }
-    }
-
-    private func similarityColor(_ score: Double) -> Color {
-        if score >= 0.8 { return Color(hex: "#22C55E") }
-        if score >= 0.6 { return Color(hex: "#FBBF24") }
-        return Color(hex: "#64748B")
     }
 
     private func formatRelativeDate(_ iso8601: String) -> String {
@@ -1345,6 +1927,94 @@ private struct FlowLayout: Layout {
     }
 }
 
+// MARK: - Idea Hook Row
+
+private struct IdeaHookRow: View {
+    let hook: String
+    let index: Int
+    let onUpdate: (String) -> Void
+    let onDelete: () -> Void
+
+    @State private var isEditing = false
+    @State private var editText = ""
+    @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(index + 1).")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.textMuted)
+                .frame(width: 20, alignment: .trailing)
+
+            if isEditing {
+                TextField("", text: $editText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .focused($isFocused)
+                    .onSubmit { commitEdit() }
+                    .onChange(of: isFocused) { _, focused in
+                        if !focused { commitEdit() }
+                    }
+            } else {
+                Text(hook)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
+                    .onTapGesture(count: 2) {
+                        editText = hook
+                        isEditing = true
+                        isFocused = true
+                    }
+            }
+
+            Spacer(minLength: 4)
+
+            if isHovered {
+                Button(action: {
+                    editText = hook
+                    isEditing = true
+                    isFocused = true
+                }) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDelete) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(DS.borderSubtle)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+    }
+
+    private func commitEdit() {
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { onUpdate(trimmed) }
+        isEditing = false
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -1362,3 +2032,57 @@ struct IdeaFocusModeView_Previews: PreviewProvider {
     }
 }
 #endif
+
+// MARK: - Cosmo Context Provider
+
+@MainActor
+class IdeaContextProvider: CosmoContextProvider {
+    private let atom: Atom
+    private weak var viewModel: IdeaFocusModeViewModel?
+
+    init(atom: Atom, viewModel: IdeaFocusModeViewModel) {
+        self.atom = atom
+        self.viewModel = viewModel
+    }
+
+    var contextType: CosmoContextType { .ideaFocusMode }
+
+    var contextSummary: String {
+        let status = viewModel?.selectedStatus.rawValue ?? "spark"
+        return "Idea: \(atom.title ?? "Untitled") — \(status)"
+    }
+
+    var contextData: CosmoContextData {
+        var viewData: [String: String] = [:]
+
+        if let vm = viewModel {
+            viewData["status"] = vm.selectedStatus.rawValue
+            if let format = vm.selectedFormat {
+                viewData["format"] = format.rawValue
+            }
+            if let platform = vm.selectedPlatform {
+                viewData["platform"] = platform.rawValue
+            }
+            if !vm.editableBody.isEmpty {
+                viewData["bodyPreview"] = String(vm.editableBody.prefix(500))
+            }
+            if let insight = vm.insight {
+                if let hooks = insight.hookSuggestions, !hooks.isEmpty {
+                    viewData["hookCount"] = "\(hooks.count)"
+                }
+                if let swipes = insight.matchingSwipes, !swipes.isEmpty {
+                    viewData["matchedSwipes"] = "\(swipes.count)"
+                }
+            }
+        }
+
+        return CosmoContextData(
+            currentAtomUUID: atom.uuid,
+            currentAtomType: "idea",
+            currentAtomTitle: atom.title,
+            viewSpecificData: viewData
+        )
+    }
+
+    var availableActions: [CosmoWindowAction] { [] }
+}

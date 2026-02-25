@@ -126,11 +126,14 @@ struct SwipeURLClassifier {
             return .url(.instagramReel, id: reelId, url: trimmed)
         }
 
-        // Check Instagram Post
+        // Check Instagram Post (or carousel if img_index is present)
         if let match = instagramPostPattern.firstMatch(in: trimmed, range: range),
            let postIdRange = Range(match.range(at: 1), in: trimmed) {
             let postId = String(trimmed[postIdRange])
-            // Could be a post or carousel - default to post, can be changed in modal
+            // Detect carousel from img_index query parameter
+            if trimmed.contains("img_index=") {
+                return .url(.instagramCarousel, id: postId, url: trimmed)
+            }
             return .url(.instagramPost, id: postId, url: trimmed)
         }
 

@@ -49,13 +49,13 @@ struct CreatorListView: View {
 
     var body: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 headerBar
-                Divider().background(Color.white.opacity(0.1))
+                Divider().background(DS.borderActive)
                 filterRow
-                Divider().background(Color.white.opacity(0.1))
+                Divider().background(DS.borderActive)
 
                 if isLoading {
                     Spacer()
@@ -87,10 +87,10 @@ struct CreatorListView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -100,7 +100,7 @@ struct CreatorListView: View {
 
             Text("Creators")
                 .font(.system(size: 18, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
 
             Text("\(creators.count)")
                 .font(.system(size: 12, weight: .semibold))
@@ -115,18 +115,18 @@ struct CreatorListView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
                 TextField("Search creators...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                 if !searchText.isEmpty {
                     Button {
                         searchText = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -134,10 +134,10 @@ struct CreatorListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(width: 240)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                    .strokeBorder(DS.borderActive, lineWidth: 1)
             )
 
             // Compare button
@@ -171,7 +171,7 @@ struct CreatorListView: View {
                 sortMenuView
 
                 Rectangle()
-                    .fill(Color.white.opacity(0.15))
+                    .fill(DS.borderActive)
                     .frame(width: 1, height: 24)
 
                 // Platform filters
@@ -190,7 +190,7 @@ struct CreatorListView: View {
 
                 if !allNiches.isEmpty {
                     Rectangle()
-                        .fill(Color.white.opacity(0.15))
+                        .fill(DS.borderActive)
                         .frame(width: 1, height: 24)
 
                     // Niche filters
@@ -200,7 +200,7 @@ struct CreatorListView: View {
             .padding(.horizontal, 20)
         }
         .frame(height: 52)
-        .background(Color(hex: "#0A0A0F"))
+        .background(DS.bg)
     }
 
     private var sortMenuView: some View {
@@ -226,15 +226,15 @@ struct CreatorListView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
-        .foregroundColor(.white.opacity(0.7))
+        .foregroundColor(DS.textSecondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.border)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                        .strokeBorder(DS.borderActive, lineWidth: 1)
                 )
         )
     }
@@ -264,16 +264,16 @@ struct CreatorListView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
-        .foregroundColor(nicheFilter != nil ? .white : .white.opacity(0.7))
+        .foregroundColor(nicheFilter != nil ? DS.text : DS.textSecondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(nicheFilter != nil ? gold.opacity(0.25) : Color.white.opacity(0.06))
+                .fill(nicheFilter != nil ? gold.opacity(0.25) : DS.border)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            nicheFilter != nil ? gold.opacity(0.6) : Color.white.opacity(0.12),
+                            nicheFilter != nil ? gold.opacity(0.6) : DS.borderActive,
                             lineWidth: 1
                         )
                 )
@@ -290,16 +290,16 @@ struct CreatorListView: View {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(isSelected ? .white : .white.opacity(0.7))
+            .foregroundColor(isSelected ? DS.text : DS.textSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? gold.opacity(0.25) : Color.white.opacity(0.06))
+                    .fill(isSelected ? gold.opacity(0.25) : DS.border)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(
-                                isSelected ? gold.opacity(0.6) : Color.white.opacity(0.12),
+                                isSelected ? gold.opacity(0.6) : DS.borderActive,
                                 lineWidth: 1
                             )
                     )
@@ -386,10 +386,10 @@ struct CreatorListView: View {
                 .foregroundColor(gold.opacity(0.3))
             Text(searchText.isEmpty ? "No creators yet" : "No matching creators")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(DS.textSecondary)
             Text("Creators are auto-detected when you save swipe files")
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
             Spacer()
         }
     }
@@ -458,12 +458,12 @@ private struct CreatorCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(atom.title ?? "Unknown")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .lineLimit(1)
                     if let handle = meta?.handle {
                         Text(handle)
                             .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                             .lineLimit(1)
                     }
                 }
@@ -481,13 +481,13 @@ private struct CreatorCard: View {
                 if let niche = meta?.niche, !niche.isEmpty {
                     Text(niche)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
             }
 
-            Divider().background(Color.white.opacity(0.08))
+            Divider().background(DS.border)
 
             // Stats row
             HStack(spacing: 12) {
@@ -511,12 +511,12 @@ private struct CreatorCard: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(hex: "#1A1A25"))
+                .fill(DS.surfaceCard)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(
-                    isHovered ? gold.opacity(0.3) : Color.white.opacity(0.06),
+                    isHovered ? gold.opacity(0.3) : DS.border,
                     lineWidth: 1
                 )
         )
@@ -567,10 +567,10 @@ private struct CreatorCard: View {
             Text(platformNameFor(platform))
                 .font(.system(size: 10, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.7))
+        .foregroundColor(DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.08), in: Capsule())
+        .background(DS.border, in: Capsule())
     }
 
     private func statItem(value: String, label: String, valueColor: Color = .white) -> some View {
@@ -580,7 +580,7 @@ private struct CreatorCard: View {
                 .foregroundColor(valueColor)
             Text(label)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
         }
     }
 
@@ -645,4 +645,15 @@ private struct CreatorCard: View {
         default: return raw.capitalized
         }
     }
+}
+
+// MARK: - Preview
+
+#Preview("Creator List View") {
+    CreatorListView(
+        onSelectCreator: { _ in },
+        onCompare: { _ in },
+        onClose: {}
+    )
+    .frame(width: 1000, height: 700)
 }

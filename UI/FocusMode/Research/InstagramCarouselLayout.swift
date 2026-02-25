@@ -103,21 +103,21 @@ struct InstagramCarouselLayout: View {
                 if let items = instagramData.carouselItems {
                     Text("\(currentSlideIndex + 1) / \(items.count)")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 Text("·")
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
 
                 // Username
                 if let username = instagramData.authorUsername {
                     Text("@\(username)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 Text("·")
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
 
                 // Type badge
                 Text("Carousel")
@@ -127,7 +127,7 @@ struct InstagramCarouselLayout: View {
                 if let items = instagramData.carouselItems {
                     Text("· \(items.count) items")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
             }
         }
@@ -139,7 +139,7 @@ struct InstagramCarouselLayout: View {
         }
         // Filled if has annotation
         let hasAnnotation = getAnnotationsForSlide(index).count > 0
-        return hasAnnotation ? Color(hex: "#E4405F") : Color.white.opacity(0.3)
+        return hasAnnotation ? Color(hex: "#E4405F") : DS.textMuted
     }
 
     private func navigationArrow(direction: NavigationDirection) -> some View {
@@ -157,11 +157,11 @@ struct InstagramCarouselLayout: View {
         VStack(spacing: 12) {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 40))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
 
             Text("Could not load carousel")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
         }
     }
 
@@ -174,7 +174,7 @@ struct InstagramCarouselLayout: View {
                 Text("NOTES FOR SLIDE \(currentSlideIndex + 1)")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.8)
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
 
                 Spacer()
 
@@ -231,7 +231,7 @@ struct InstagramCarouselLayout: View {
             Spacer()
             Text("No notes for this slide yet")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
             Spacer()
         }
         .padding(.vertical, 20)
@@ -316,7 +316,7 @@ struct CarouselSlideView: View {
                             .overlay(
                                 Image(systemName: "photo")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(0.3))
+                                    .foregroundColor(DS.textMuted)
                             )
                     @unknown default:
                         EmptyView()
@@ -368,7 +368,7 @@ struct CarouselAnnotationView: View {
                 // Content
                 Text(annotation.content)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(DS.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -385,7 +385,7 @@ struct CarouselAnnotationView: View {
                             .font(.system(size: 11))
                     }
                 }
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .buttonStyle(.plain)
             }
         }
@@ -415,3 +415,4 @@ struct CarouselAnnotationView: View {
         }
     }
 }
+

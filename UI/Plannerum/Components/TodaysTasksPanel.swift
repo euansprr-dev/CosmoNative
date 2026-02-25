@@ -95,7 +95,7 @@ public struct TodaysTasksPanel: View {
                 }
             }
         }
-        .background(Color.white.opacity(0.02))
+        .background(DS.borderSubtle)
         .clipShape(RoundedRectangle(cornerRadius: NowViewTokens.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NowViewTokens.cornerRadius, style: .continuous)
@@ -149,7 +149,7 @@ public struct TodaysTasksPanel: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(PlannerumColors.textSecondary)
                         .frame(width: 24, height: 24)
-                        .background(Color.white.opacity(0.05))
+                        .background(DS.border)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -372,7 +372,7 @@ public struct TodaysTasksPanel: View {
                     .foregroundColor(PlannerumColors.textSecondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.06))
+                    .background(DS.border)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)

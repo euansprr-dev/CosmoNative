@@ -111,15 +111,21 @@ final class InstagramExtractor: Sendable {
         _ mediaData: InstagramMediaData,
         requestedType: InstagramContentType
     ) -> Bool {
+        // If any strategy found carousel items, always accept — definitive result
+        if !(mediaData.carouselItems?.isEmpty ?? true) { return true }
+
         switch requestedType {
         case .reel, .videoPost:
             return mediaData.videoURL != nil
         case .carousel:
-            if mediaData.videoURL != nil { return true }
-            return !(mediaData.carouselItems?.isEmpty ?? true)
-        case .image, .story:
-            return mediaData.videoURL != nil ||
-                mediaData.thumbnailURL != nil ||
+            return mediaData.videoURL != nil
+        case .image:
+            // For /p/ URLs, thumbnail alone isn't enough — the post might be
+            // a carousel where only the first image was extracted by a fast strategy.
+            // Keep trying strategies until we find video, carousel items, or exhaust all.
+            return mediaData.videoURL != nil
+        case .story:
+            return mediaData.thumbnailURL != nil ||
                 !(mediaData.caption?.isEmpty ?? true) ||
                 !(mediaData.authorUsername?.isEmpty ?? true)
         }
@@ -155,6 +161,11 @@ final class InstagramExtractor: Sendable {
             return .story
         }
         if path.contains("/p/") || path.contains("/share/p/") {
+            // img_index query parameter indicates carousel content
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               components.queryItems?.contains(where: { $0.name == "img_index" }) == true {
+                return .carousel
+            }
             return .image
         }
 
@@ -218,6 +229,7 @@ final class InstagramExtractor: Sendable {
 
     /// Cobalt instance URLs — tried in order (handles TLS fingerprinting, doc_id rotation, etc.)
     private static let cobaltInstances = [
+        "https://co.eepy.today/",
         "https://cobalt-backend.canine.tools/",
         "https://kityune.imput.net/",
         "https://cobalt-api.meowing.de/",
@@ -253,6 +265,13 @@ final class InstagramExtractor: Sendable {
                 }
 
                 let status = json["status"] as? String
+
+                // Check for picker (carousel) FIRST — status is "picker" for carousels
+                if status == "picker",
+                   let picker = json["picker"] as? [[String: Any]] {
+                    return parseCobaltPicker(picker, originalURL: url, contentType: contentType)
+                }
+
                 guard status == "tunnel" || status == "redirect" || status == "stream" else {
                     continue
                 }
@@ -273,11 +292,6 @@ final class InstagramExtractor: Sendable {
                         thumbnailURL: thumbnailURL,
                         extractedAt: Date()
                     )
-                }
-
-                // Check for picker (carousel)
-                if let picker = json["picker"] as? [[String: Any]] {
-                    return parseCobaltPicker(picker, originalURL: url, contentType: contentType)
                 }
             } catch {
                 print("InstagramExtractor: Cobalt instance \(instanceURL) failed: \(error.localizedDescription)")
@@ -832,8 +846,288 @@ final class InstagramExtractor: Sendable {
             throw InstagramExtractionError.couldNotExtract
         }
 
+        // Get metadata (caption, author, thumbnail, duration) via JSON dump
         let json = try await runYtDlpDump(ytdlpPath: ytdlpPath, url: url)
-        return parseYtDlpResult(json, originalURL: url, contentType: contentType)
+
+        // For carousels with multiple entries, use URL-based approach
+        if let entries = json["entries"] as? [[String: Any]], !entries.isEmpty {
+            return parseYtDlpResult(json, originalURL: url, contentType: contentType)
+        }
+
+        // For single videos: download via yt-dlp to get a proper MP4 with audio+video merged.
+        // The JSON dump only gives raw CDN stream URLs which may be video-only DASH segments
+        // or WebM/VP9 format that macOS AVFoundation can't play.
+        let shortcode = extractShortcode(from: url) ?? ytDlpStableHash(url.absoluteString)
+        let localURL = try await downloadViaYtDlp(ytdlpPath: ytdlpPath, url: url, cacheKey: shortcode)
+
+        let author = resolveYtDlpAuthor(json)
+        let caption = json["description"] as? String
+        let thumbnail = (json["thumbnail"] as? String).flatMap(URL.init(string:))
+        let duration = json["duration"] as? TimeInterval
+
+        return InstagramMediaData(
+            originalURL: url,
+            contentType: contentType == .reel ? .reel : .videoPost,
+            videoURL: localURL,
+            thumbnailURL: thumbnail,
+            duration: duration,
+            authorUsername: author,
+            caption: caption,
+            extractedAt: Date()
+        )
+    }
+
+    /// Resolve author from yt-dlp JSON, preferring username over numeric user ID.
+    /// Instagram's yt-dlp output sets `uploader_id` to the numeric user ID (e.g. "63181063998")
+    /// and `uploader` to the actual username. Also tries `channel` and caption @mention extraction.
+    private func resolveYtDlpAuthor(_ json: [String: Any]) -> String? {
+        // Prefer uploader (username) over uploader_id (numeric ID)
+        let candidates: [String?] = [
+            json["uploader"] as? String,
+            json["channel"] as? String,
+            json["uploader_id"] as? String
+        ]
+
+        for candidate in candidates {
+            guard let value = candidate, !value.isEmpty else { continue }
+            // Skip purely numeric IDs (Instagram internal user IDs)
+            if value.allSatisfy(\.isNumber) { continue }
+            return value
+        }
+
+        // Last resort: try to extract @username from caption
+        if let caption = json["description"] as? String,
+           let match = caption.range(of: #"@([A-Za-z0-9_.]+)"#, options: .regularExpression) {
+            return String(caption[match]).replacingOccurrences(of: "@", with: "")
+        }
+
+        return nil
+    }
+
+    /// Download video via yt-dlp with proper format merging (audio+video → MP4).
+    /// Uses format selection that prefers MP4 video + M4A audio, falling back to combined MP4.
+    private func downloadViaYtDlp(ytdlpPath: String, url: URL, cacheKey: String) async throws -> URL {
+        let cacheDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Cosmo/InstagramVideoCache", isDirectory: true)
+        try fileManager.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+
+        let destination = cacheDir.appendingPathComponent("ig-\(cacheKey).mp4")
+
+        // If cached file exists and is a valid MP4, skip download
+        if fileManager.fileExists(atPath: destination.path),
+           let attrs = try? fileManager.attributesOfItem(atPath: destination.path),
+           let size = attrs[.size] as? NSNumber, size.int64Value > 10000,
+           isValidMP4(at: destination) {
+            return destination
+        }
+
+        // Remove any invalid remnant (e.g. WebM saved as .mp4 from old code path)
+        try? fileManager.removeItem(at: destination)
+
+        let outputTemplate = cacheDir.appendingPathComponent("ig-\(cacheKey).%(ext)s").path
+
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: ytdlpPath)
+                process.arguments = [
+                    "-f", "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[vcodec^=avc1]+ba/b[ext=mp4][vcodec^=avc1]/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+                    "-S", "vcodec:h264,ext:mp4:m4a",
+                    "--merge-output-format", "mp4",
+                    "--no-playlist",
+                    "--no-warnings",
+                    "-o", outputTemplate,
+                    url.absoluteString
+                ]
+
+                var env = ProcessInfo.processInfo.environment
+                let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+                if let existingPath = env["PATH"] {
+                    env["PATH"] = "\(homebrewPaths):\(existingPath)"
+                } else {
+                    env["PATH"] = homebrewPaths
+                }
+                process.environment = env
+
+                let errorPipe = Pipe()
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = errorPipe
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    guard process.terminationStatus == 0 else {
+                        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                        let errorText = String(data: errorData, encoding: .utf8) ?? ""
+                        if !errorText.isEmpty {
+                            print("InstagramExtractor: yt-dlp download error: \(errorText.prefix(300))")
+                        }
+                        continuation.resume(throwing: InstagramExtractionError.couldNotExtract)
+                        return
+                    }
+
+                    // Check for the expected .mp4 output
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        if self.isValidMP4(at: destination) {
+                            print("InstagramExtractor: yt-dlp downloaded \(destination.lastPathComponent)")
+                            continuation.resume(returning: destination)
+                        } else if self.transcodeToH264(source: destination, destination: destination) {
+                            print("InstagramExtractor: yt-dlp downloaded + transcoded \(destination.lastPathComponent)")
+                            continuation.resume(returning: destination)
+                        } else {
+                            print("InstagramExtractor: Downloaded video has unsupported codec and transcode failed")
+                            continuation.resume(throwing: InstagramExtractionError.couldNotExtract)
+                        }
+                        return
+                    }
+
+                    // Fallback: look for any file matching ig-{cacheKey}.*
+                    if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil),
+                       let match = files.first(where: { $0.lastPathComponent.hasPrefix("ig-\(cacheKey).") }) {
+                        if self.isValidMP4(at: match) {
+                            print("InstagramExtractor: yt-dlp downloaded \(match.lastPathComponent)")
+                            continuation.resume(returning: match)
+                        } else if self.transcodeToH264(source: match, destination: destination) {
+                            print("InstagramExtractor: yt-dlp downloaded + transcoded \(destination.lastPathComponent)")
+                            continuation.resume(returning: destination)
+                        } else {
+                            // Return the file anyway as last resort
+                            print("InstagramExtractor: Downloaded video may have unsupported codec")
+                            continuation.resume(returning: match)
+                        }
+                        return
+                    }
+
+                    continuation.resume(throwing: InstagramExtractionError.couldNotExtract)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Validate that a file is an MP4 container with a codec AVFoundation can decode.
+    /// Checks ftyp header AND scans for codec atoms — rejects VP9/AV1 which produce
+    /// black frames on macOS (err=-12430 kFigMediaPlayerError_NoDecodableTrack).
+    private func isValidMP4(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        let headerData = handle.readData(ofLength: 100_000)
+        handle.closeFile()
+        guard headerData.count >= 8 else { return false }
+
+        // Must be a valid MP4 container (ftyp box)
+        let ftyp = String(data: headerData[4..<8], encoding: .ascii)
+        guard ftyp == "ftyp" else { return false }
+
+        // Scan for video codec identifiers in moov/trak/stsd boxes
+        let bytes = [UInt8](headerData)
+        let len = bytes.count - 3
+        var hasDecodable = false
+        var hasUnsupported = false
+
+        for i in 0..<len {
+            let b0 = bytes[i], b1 = bytes[i+1], b2 = bytes[i+2], b3 = bytes[i+3]
+            // H.264 "avc1" (0x61766331)
+            if b0 == 0x61 && b1 == 0x76 && b2 == 0x63 && b3 == 0x31 { hasDecodable = true }
+            // HEVC "hvc1" (0x68766331) / "hev1" (0x68657631)
+            if b0 == 0x68 && b1 == 0x76 && b2 == 0x63 && b3 == 0x31 { hasDecodable = true }
+            if b0 == 0x68 && b1 == 0x65 && b2 == 0x76 && b3 == 0x31 { hasDecodable = true }
+            // VP9 "vp09" (0x76703039) — unsupported by AVFoundation
+            if b0 == 0x76 && b1 == 0x70 && b2 == 0x30 && b3 == 0x39 { hasUnsupported = true }
+            // AV1 "av01" (0x61763031) — unsupported by AVFoundation
+            if b0 == 0x61 && b1 == 0x76 && b2 == 0x30 && b3 == 0x31 { hasUnsupported = true }
+        }
+
+        if hasDecodable { return true }
+        if hasUnsupported {
+            print("InstagramExtractor: Detected unsupported codec (VP9/AV1) in \(url.lastPathComponent)")
+            return false
+        }
+        // Couldn't determine codec from first 100KB — assume valid (ftyp passed)
+        return true
+    }
+
+    /// Find ffmpeg binary for transcoding VP9/AV1 to H.264
+    private func findFfmpeg() -> String? {
+        let paths = [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        ]
+        for path in paths where fileManager.fileExists(atPath: path) {
+            return path
+        }
+        return nil
+    }
+
+    /// Transcode a non-H.264 video to H.264+AAC using ffmpeg.
+    /// Writes to a temp file then replaces the destination.
+    private func transcodeToH264(source: URL, destination: URL) -> Bool {
+        guard let ffmpegPath = findFfmpeg() else {
+            print("InstagramExtractor: ffmpeg not found — cannot transcode VP9/AV1 video")
+            return false
+        }
+
+        let tempOutput = destination.deletingLastPathComponent()
+            .appendingPathComponent("transcode_temp_\(UUID().uuidString.prefix(8)).mp4")
+        try? fileManager.removeItem(at: tempOutput)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-i", source.path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-y",
+            tempOutput.path
+        ]
+
+        var env = ProcessInfo.processInfo.environment
+        let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+        if let existingPath = env["PATH"] {
+            env["PATH"] = "\(homebrewPaths):\(existingPath)"
+        } else {
+            env["PATH"] = homebrewPaths
+        }
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0,
+                  fileManager.fileExists(atPath: tempOutput.path) else {
+                print("InstagramExtractor: ffmpeg transcode failed (exit \(process.terminationStatus))")
+                try? fileManager.removeItem(at: tempOutput)
+                return false
+            }
+
+            // Replace source and destination with transcoded file
+            if source != destination { try? fileManager.removeItem(at: source) }
+            try? fileManager.removeItem(at: destination)
+            try fileManager.moveItem(at: tempOutput, to: destination)
+            print("InstagramExtractor: Transcoded VP9/AV1 → H.264 (\(destination.lastPathComponent))")
+            return true
+        } catch {
+            print("InstagramExtractor: ffmpeg transcode error: \(error.localizedDescription)")
+            try? fileManager.removeItem(at: tempOutput)
+            return false
+        }
+    }
+
+    private func ytDlpStableHash(_ input: String) -> String {
+        var hash: UInt64 = 5381
+        for scalar in input.unicodeScalars {
+            hash = ((hash << 5) &+ hash) &+ UInt64(scalar.value)
+        }
+        return String(hash, radix: 16)
     }
 
     private func runYtDlpDump(ytdlpPath: String, url: URL) async throws -> [String: Any] {
@@ -897,7 +1191,7 @@ final class InstagramExtractor: Sendable {
         originalURL: URL,
         contentType: InstagramContentType
     ) -> InstagramMediaData {
-        let author = json["uploader_id"] as? String ?? json["uploader"] as? String
+        let author = resolveYtDlpAuthor(json)
         let caption = json["description"] as? String
         let thumbnail = (json["thumbnail"] as? String).flatMap(URL.init(string:))
         let duration = json["duration"] as? TimeInterval
@@ -1183,13 +1477,22 @@ final class InstagramMediaCache {
     }
 
     private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
+        // Carousel items mean we have a quality extraction
+        if !(mediaData.carouselItems?.isEmpty ?? true) { return true }
+
         switch mediaData.contentType {
         case .reel, .videoPost:
             return mediaData.videoURL != nil
         case .carousel:
+            return mediaData.videoURL != nil
+        case .image:
+            // For image posts, require more than just a thumbnail — a minimal result
+            // from the embed page may have missed carousel slides. Re-extract if we
+            // only have a thumbnail without caption/author context.
             if mediaData.videoURL != nil { return true }
-            return !(mediaData.carouselItems?.isEmpty ?? true)
-        case .image, .story:
+            return mediaData.thumbnailURL != nil &&
+                (!(mediaData.caption?.isEmpty ?? true) || !(mediaData.authorUsername?.isEmpty ?? true))
+        case .story:
             return mediaData.thumbnailURL != nil ||
                 !(mediaData.caption?.isEmpty ?? true) ||
                 !(mediaData.authorUsername?.isEmpty ?? true)
@@ -1242,16 +1545,33 @@ final class InstagramMediaCache {
 // MARK: - Local Video Resolver
 
 /// Resolves remote Instagram CDN URLs to a local downloaded file for reliable playback/transcription.
+/// Uses the Instagram shortcode as the cache key so the file persists across CDN URL changes.
 enum InstagramVideoLocalCache {
     private static let fileManager = FileManager.default
-    private static let cacheDirectory = fileManager.temporaryDirectory
-        .appendingPathComponent("CosmoInstagramVideoCache", isDirectory: true)
+    private static let cacheDirectory: URL = {
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Cosmo/InstagramVideoCache", isDirectory: true)
+    }()
 
-    static func resolvePlayableURL(from sourceURL: URL) async -> URL {
+    /// Resolve a playable URL. If a shortcode is provided, uses it as a stable cache key
+    /// so the downloaded file survives across app restarts and CDN URL rotations.
+    static func resolvePlayableURL(from sourceURL: URL, shortcode: String? = nil) async -> URL {
         guard !sourceURL.isFileURL else { return sourceURL }
 
+        // If we have a shortcode, check for an existing valid local file first (fast path)
+        if let shortcode, !shortcode.isEmpty {
+            let localPath = localFilePath(for: shortcode)
+            if fileManager.fileExists(atPath: localPath.path),
+               let attrs = try? fileManager.attributesOfItem(atPath: localPath.path),
+               let size = attrs[.size] as? NSNumber, size.int64Value > 10000,
+               isValidMP4(at: localPath) {
+                return localPath
+            }
+        }
+
         do {
-            let local = try await downloadIfNeeded(from: sourceURL)
+            let cacheKey = shortcode ?? stableHash(sourceURL.absoluteString)
+            let local = try await downloadIfNeeded(from: sourceURL, cacheKey: cacheKey)
             return local
         } catch {
             print("InstagramVideoLocalCache: Failed local download (\(error.localizedDescription)); using remote URL")
@@ -1259,16 +1579,62 @@ enum InstagramVideoLocalCache {
         }
     }
 
-    private static func downloadIfNeeded(from remoteURL: URL) async throws -> URL {
+    /// Check if a local video exists for this shortcode (no download, no network).
+    /// Validates the file is actually a playable MP4 (rejects WebM or video-only DASH saved as .mp4).
+    static func localVideoURL(forShortcode shortcode: String) -> URL? {
+        let path = localFilePath(for: shortcode)
+        guard fileManager.fileExists(atPath: path.path),
+              let attrs = try? fileManager.attributesOfItem(atPath: path.path),
+              let size = attrs[.size] as? NSNumber, size.int64Value > 10000,
+              isValidMP4(at: path) else {
+            return nil
+        }
+        return path
+    }
+
+    /// Validate that a file is an MP4 with a codec AVFoundation can decode.
+    /// Rejects VP9/AV1 which cause black frames (err=-12430).
+    private static func isValidMP4(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        let headerData = handle.readData(ofLength: 100_000)
+        handle.closeFile()
+        guard headerData.count >= 8 else { return false }
+
+        let ftyp = String(data: headerData[4..<8], encoding: .ascii)
+        guard ftyp == "ftyp" else { return false }
+
+        let bytes = [UInt8](headerData)
+        let len = bytes.count - 3
+        var hasDecodable = false
+        var hasUnsupported = false
+
+        for i in 0..<len {
+            let b0 = bytes[i], b1 = bytes[i+1], b2 = bytes[i+2], b3 = bytes[i+3]
+            if b0 == 0x61 && b1 == 0x76 && b2 == 0x63 && b3 == 0x31 { hasDecodable = true } // avc1
+            if b0 == 0x68 && b1 == 0x76 && b2 == 0x63 && b3 == 0x31 { hasDecodable = true } // hvc1
+            if b0 == 0x68 && b1 == 0x65 && b2 == 0x76 && b3 == 0x31 { hasDecodable = true } // hev1
+            if b0 == 0x76 && b1 == 0x70 && b2 == 0x30 && b3 == 0x39 { hasUnsupported = true } // vp09
+            if b0 == 0x61 && b1 == 0x76 && b2 == 0x30 && b3 == 0x31 { hasUnsupported = true } // av01
+        }
+
+        if hasDecodable { return true }
+        if hasUnsupported { return false }
+        return true
+    }
+
+    private static func localFilePath(for shortcode: String) -> URL {
+        cacheDirectory.appendingPathComponent("ig-\(shortcode).mp4")
+    }
+
+    private static func downloadIfNeeded(from remoteURL: URL, cacheKey: String) async throws -> URL {
         try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
 
-        let ext = remoteURL.pathExtension.isEmpty ? "mp4" : remoteURL.pathExtension
-        let fileName = "ig-\(stableHash(remoteURL.absoluteString)).\(ext)"
-        let destination = cacheDirectory.appendingPathComponent(fileName)
+        let destination = cacheDirectory.appendingPathComponent("ig-\(cacheKey).mp4")
 
         if fileManager.fileExists(atPath: destination.path) {
             let attrs = try? fileManager.attributesOfItem(atPath: destination.path)
-            if let size = attrs?[.size] as? NSNumber, size.int64Value > 0 {
+            if let size = attrs?[.size] as? NSNumber, size.int64Value > 10000,
+               isValidMP4(at: destination) {
                 return destination
             }
             try? fileManager.removeItem(at: destination)

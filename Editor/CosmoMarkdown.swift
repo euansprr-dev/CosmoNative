@@ -9,12 +9,14 @@ struct CosmoMarkdown {
     
     // MARK: - Parse (Markdown -> NSAttributedString)
 
-    static func parse(_ text: String, fontSize: CGFloat = 16) -> NSAttributedString {
+    static func parse(_ text: String, fontSize: CGFloat = 16, darkMode: Bool = false) -> NSAttributedString {
+        let textColor = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+
         let result = NSMutableAttributedString(
             string: text,
             attributes: [
                 .font: NSFont.systemFont(ofSize: fontSize),
-                .foregroundColor: NSColor(CosmoColors.textPrimary),
+                .foregroundColor: textColor,
                 .paragraphStyle: CosmoTypography.bodyParagraphStyle()
             ]
         )
@@ -35,7 +37,7 @@ struct CosmoMarkdown {
 
                 result.addAttributes([
                     .font: NSFont.systemFont(ofSize: 28, weight: .bold),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: textColor,
                     .paragraphStyle: headingStyle
                 ], range: lineRange)
             }
@@ -48,7 +50,7 @@ struct CosmoMarkdown {
 
                 result.addAttributes([
                     .font: NSFont.systemFont(ofSize: 22, weight: .semibold),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: textColor,
                     .paragraphStyle: headingStyle
                 ], range: lineRange)
             }
@@ -61,7 +63,7 @@ struct CosmoMarkdown {
 
                 result.addAttributes([
                     .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary),
+                    .foregroundColor: textColor,
                     .paragraphStyle: headingStyle
                 ], range: lineRange)
             }

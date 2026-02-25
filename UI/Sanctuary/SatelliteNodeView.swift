@@ -144,7 +144,7 @@ public struct SatelliteNodeView: View {
                 // Icon
                 Image(systemName: type.icon)
                     .font(.system(size: Layout.iconSize, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
 
                 // Badge (if present)
@@ -154,7 +154,7 @@ public struct SatelliteNodeView: View {
                             Spacer()
                             Text("\(count)")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
                                 .frame(width: Layout.badgeSize, height: Layout.badgeSize)
                                 .background(
                                     Circle()

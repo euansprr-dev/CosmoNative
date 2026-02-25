@@ -20,7 +20,7 @@ struct PipelineFunnelView: View {
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
             }
-            .foregroundColor(.white.opacity(0.8))
+            .foregroundColor(DS.text)
             .padding(.bottom, 16)
 
             // Funnel chevrons
@@ -35,10 +35,10 @@ struct PipelineFunnelView: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.borderSubtle)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusLarge)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         )
     }
@@ -58,7 +58,7 @@ struct PipelineFunnelView: View {
 
             Text(phase.displayName)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(DS.text)
 
             Spacer()
 
@@ -106,7 +106,7 @@ struct PipelineFunnelView: View {
                     Text(rate)
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                 }
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(DS.textMuted)
             }
             Spacer()
         }

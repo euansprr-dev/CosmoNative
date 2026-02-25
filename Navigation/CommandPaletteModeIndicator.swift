@@ -71,3 +71,25 @@ struct ModeTab: View {
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isActive)
     }
 }
+
+// MARK: - Previews
+
+#Preview("Command Hub Mode Indicator - Library") {
+    CommandHubModeIndicator(currentMode: .library)
+        .frame(width: 400)
+}
+
+#Preview("Command Hub Mode Indicator - Inbox") {
+    CommandHubModeIndicator(currentMode: .inboxViews)
+        .frame(width: 400)
+}
+
+#Preview("Mode Tab - Active") {
+    ModeTab(title: "Library", isActive: true)
+        .padding()
+}
+
+#Preview("Mode Tab - Inactive") {
+    ModeTab(title: "Inbox Views", isActive: false)
+        .padding()
+}

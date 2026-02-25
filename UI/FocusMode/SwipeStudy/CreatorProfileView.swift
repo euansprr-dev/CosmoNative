@@ -47,11 +47,11 @@ struct CreatorProfileView: View {
 
     var body: some View {
         ZStack {
-            Color(hex: "#0A0A0F").ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 topBar
-                Divider().background(Color.white.opacity(0.1))
+                Divider().background(DS.borderActive)
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 20) {
@@ -89,16 +89,16 @@ struct CreatorProfileView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
 
             Text(creator.title ?? "Creator")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(1)
 
             Spacer()
@@ -132,10 +132,10 @@ struct CreatorProfileView: View {
                     Text("Edit")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
         }
@@ -160,12 +160,12 @@ struct CreatorProfileView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(creator.title ?? "Unknown Creator")
                     .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
 
                 if let handle = meta.handle {
                     Text(handle)
                         .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                 }
 
                 HStack(spacing: 8) {
@@ -175,10 +175,10 @@ struct CreatorProfileView: View {
                     if let niche = meta.niche, !niche.isEmpty {
                         Text(niche)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.06), in: Capsule())
+                            .background(DS.border, in: Capsule())
                     }
                     if meta.isActive == true {
                         HStack(spacing: 3) {
@@ -201,18 +201,18 @@ struct CreatorProfileView: View {
                 VStack(spacing: 2) {
                     Text(formatFollowers(followers))
                         .font(.system(size: 20, weight: .bold).monospacedDigit())
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                     Text("Followers")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
             }
         }
         .padding(16)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
     }
 
@@ -266,20 +266,20 @@ struct CreatorProfileView: View {
                     .foregroundColor(color)
                 Text(value)
                     .font(.system(size: 18, weight: .bold).monospacedDigit())
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(14)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
     }
 
@@ -311,7 +311,7 @@ struct CreatorProfileView: View {
                 Text("PATTERN ANALYSIS")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 Spacer()
 
@@ -325,7 +325,7 @@ struct CreatorProfileView: View {
                             Text("Refresh")
                                 .font(.system(size: 11, weight: .medium))
                         }
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -336,19 +336,19 @@ struct CreatorProfileView: View {
                     ProgressView().scaleEffect(0.5).tint(gold)
                     Text("Generating pattern analysis...")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             } else if !patternAnalysis.isEmpty {
                 Text(patternAnalysis)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(DS.text)
                     .lineSpacing(5)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(gold.opacity(0.15), lineWidth: 1)
@@ -372,10 +372,10 @@ struct CreatorProfileView: View {
             } else {
                 Text("Need at least 2 swipes to generate pattern analysis")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 12))
+                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -388,7 +388,7 @@ struct CreatorProfileView: View {
                 Text("SWIPES (\(filteredSwipes.count))")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(DS.textMuted)
 
                 Spacer()
 
@@ -401,7 +401,7 @@ struct CreatorProfileView: View {
             } else if filteredSwipes.isEmpty {
                 Text("No swipes match current filters")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
                     .padding(.vertical, 20)
                     .frame(maxWidth: .infinity)
             } else {
@@ -458,12 +458,12 @@ struct CreatorProfileView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
         }
-        .foregroundColor(narrativeFilter != nil ? .white : .white.opacity(0.5))
+        .foregroundColor(narrativeFilter != nil ? DS.text : DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(narrativeFilter != nil ? gold.opacity(0.2) : Color.white.opacity(0.06))
+                .fill(narrativeFilter != nil ? gold.opacity(0.2) : DS.border)
         )
     }
 
@@ -475,12 +475,12 @@ struct CreatorProfileView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
         }
-        .foregroundColor(formatFilter != nil ? .white : .white.opacity(0.5))
+        .foregroundColor(formatFilter != nil ? DS.text : DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(formatFilter != nil ? gold.opacity(0.2) : Color.white.opacity(0.06))
+                .fill(formatFilter != nil ? gold.opacity(0.2) : DS.border)
         )
     }
 
@@ -501,13 +501,13 @@ struct CreatorProfileView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(swipe.title ?? "Untitled")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             if let hook = analysis?.hookText {
                 Text(hook)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(2)
             }
 
@@ -535,10 +535,10 @@ struct CreatorProfileView: View {
             }
         }
         .padding(10)
-        .background(Color(hex: "#1A1A25"), in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
         .onTapGesture {
             if let entityId = swipe.id {
@@ -554,11 +554,11 @@ struct CreatorProfileView: View {
             HStack {
                 Text("Edit Creator")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
                 Spacer()
                 Button("Cancel") { isEditing = false }
                     .buttonStyle(.plain)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -569,7 +569,7 @@ struct CreatorProfileView: View {
                 Toggle(isOn: $editIsActive) {
                     Text("Actively Tracked")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                 }
                 .toggleStyle(.switch)
                 .tint(gold)
@@ -577,17 +577,17 @@ struct CreatorProfileView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notes")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                     TextEditor(text: $editNotes)
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(DS.text)
                         .scrollContentBackground(.hidden)
                         .frame(height: 100)
                         .padding(8)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                .stroke(DS.border, lineWidth: 1)
                         )
                 }
             }
@@ -613,23 +613,23 @@ struct CreatorProfileView: View {
         }
         .padding(20)
         .frame(width: 440)
-        .background(Color(hex: "#0A0A0F"))
+        .background(DS.bg)
     }
 
     private func editField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
             TextField(label, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .padding(8)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         }
     }
@@ -779,10 +779,10 @@ struct CreatorProfileView: View {
             Text(platformNameFor(platform))
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.7))
+        .foregroundColor(DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.08), in: Capsule())
+        .background(DS.border, in: Capsule())
     }
 
     // MARK: - Helpers
@@ -831,3 +831,4 @@ struct CreatorProfileView: View {
         }
     }
 }
+

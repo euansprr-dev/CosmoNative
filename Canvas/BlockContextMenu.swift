@@ -17,7 +17,7 @@ struct BlockContextMenu: View {
 
         // Focus mode (for types that support it)
         if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
-            items.append(("focus", "arrow.up.left.and.arrow.down.right", "Open Focus Mode", .white))
+            items.append(("focus", "arrow.up.left.and.arrow.down.right", "Open Focus Mode", DS.text))
         }
 
         items.append(("connect", "link", "Connect to...", CosmoColors.thinkspacePurple))
@@ -27,7 +27,7 @@ struct BlockContextMenu: View {
             items.append(("askCosmo", "sparkle", "Ask Cosmo", CosmoColors.lavender))
         }
 
-        items.append(("duplicate", "plus.square.on.square", "Duplicate", .white))
+        items.append(("duplicate", "plus.square.on.square", "Duplicate", DS.text))
         items.append(("delete", "trash", "Delete", CosmoColors.softRed))
 
         return items
@@ -50,7 +50,7 @@ struct BlockContextMenu: View {
             .padding(.bottom, 4)
 
             Divider()
-                .background(Color.white.opacity(0.06))
+                .background(DS.border)
 
             ForEach(menuItems, id: \.id) { item in
                 Button {
@@ -65,7 +65,7 @@ struct BlockContextMenu: View {
 
                         Text(item.label)
                             .font(.system(size: 13, weight: .regular))
-                            .foregroundColor(.white.opacity(0.9))
+                            .foregroundColor(DS.text)
 
                         Spacer()
                     }
@@ -73,7 +73,7 @@ struct BlockContextMenu: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(isHovered == item.id ? Color.white.opacity(0.08) : Color.clear)
+                            .fill(isHovered == item.id ? DS.border : Color.clear)
                     )
                 }
                 .buttonStyle(.plain)
@@ -91,7 +91,7 @@ struct BlockContextMenu: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                .stroke(DS.borderActive, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
         .scaleEffect(appeared ? 1.0 : 0.8)

@@ -94,7 +94,7 @@ struct ThinkspaceSidebar: View {
             header
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(DS.borderActive)
 
             // Main content
             ScrollView {
@@ -130,7 +130,7 @@ struct ThinkspaceSidebar: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.4), radius: 20, x: 5, y: 0)
         .offset(x: shouldShowSidebar ? 0 : -sidebarWidth - 20)
@@ -182,7 +182,7 @@ struct ThinkspaceSidebar: View {
 
             Text("Loading...")
                 .font(.system(size: 12))
-                .foregroundColor(Color.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
         }
         .frame(maxWidth: .infinity, minHeight: 100)
         .accessibilityLabel("Loading ThinkSpaces")
@@ -198,11 +198,11 @@ struct ThinkspaceSidebar: View {
 
             Text("Failed to load")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.8))
+                .foregroundColor(DS.text)
 
             Text(error)
                 .font(.system(size: 11))
-                .foregroundColor(Color.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .multilineTextAlignment(.center)
 
             Button {
@@ -232,7 +232,7 @@ struct ThinkspaceSidebar: View {
         HStack {
             Text("THINKSPACES")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.5))
+                .foregroundColor(DS.textSecondary)
                 .tracking(1.2)
 
             Spacer()
@@ -245,7 +245,7 @@ struct ThinkspaceSidebar: View {
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isLocked ? .white : Color.white.opacity(0.4))
+                    .foregroundColor(isLocked ? DS.text : DS.textMuted)
                     .padding(6)
                     .background(
                         isLocked
@@ -298,16 +298,16 @@ struct ThinkspaceSidebar: View {
             HStack {
                 Text("PROJECTS")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : Color.white.opacity(0.5))
+                    .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : DS.textSecondary)
                     .tracking(1)
 
                 if !projects.isEmpty {
                     Text("\(projects.count)")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08), in: Capsule())
+                        .background(DS.border, in: Capsule())
                 }
 
                 Spacer()
@@ -350,16 +350,16 @@ struct ThinkspaceSidebar: View {
                 VStack(spacing: 8) {
                     Image(systemName: isDropTargetActive ? "folder.fill.badge.plus" : "folder.badge.plus")
                         .font(.system(size: 20))
-                        .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : Color.white.opacity(0.2))
+                        .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : DS.textMuted)
 
                     Text(isDropTargetActive ? "Drop to create project" : "No projects yet")
                         .font(.system(size: 12))
-                        .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : Color.white.opacity(0.3))
+                        .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : DS.textMuted)
 
                     if !isDropTargetActive {
                         Text("Drag a ThinkSpace here to create a project")
                             .font(.system(size: 10))
-                            .foregroundColor(Color.white.opacity(0.2))
+                            .foregroundColor(DS.textMuted)
                             .multilineTextAlignment(.center)
                     }
                 }
@@ -371,7 +371,7 @@ struct ThinkspaceSidebar: View {
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
                                 .strokeBorder(
-                                    isDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.5) : Color.white.opacity(0.05),
+                                    isDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.5) : DS.borderSubtle,
                                     style: StrokeStyle(lineWidth: 1, dash: isDropTargetActive ? [] : [4, 4])
                                 )
                         )
@@ -437,7 +437,7 @@ struct ThinkspaceSidebar: View {
 
     private var sectionDivider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.1))
+            .fill(DS.borderActive)
             .frame(height: 1)
             .padding(.horizontal, 4)
     }
@@ -450,17 +450,17 @@ struct ThinkspaceSidebar: View {
             HStack {
                 Text("UNASSIGNED")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
                     .tracking(1)
 
                 let unassigned = manager.unassignedThinkspaces()
                 if !unassigned.isEmpty {
                     Text("\(unassigned.count)")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08), in: Capsule())
+                        .background(DS.border, in: Capsule())
                 }
             }
             .padding(.leading, 4)
@@ -477,15 +477,15 @@ struct ThinkspaceSidebar: View {
                 VStack(spacing: 8) {
                     Image(systemName: "rectangle.3.group")
                         .font(.system(size: 20))
-                        .foregroundColor(Color.white.opacity(0.2))
+                        .foregroundColor(DS.textMuted)
 
                     Text("No loose ThinkSpaces")
                         .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.3))
+                        .foregroundColor(DS.textMuted)
 
                     Text("Drag ThinkSpaces here to unassign from projects")
                         .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.2))
+                        .foregroundColor(DS.textMuted)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
@@ -544,7 +544,7 @@ struct ThinkspaceSidebar: View {
             TextField("Thinkspace name", text: $newName)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .focused($isNameFieldFocused)
                 .onSubmit {
                     createThinkspace()
@@ -559,7 +559,7 @@ struct ThinkspaceSidebar: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -901,7 +901,7 @@ struct ProjectTreeItem: View {
                     // Disclosure arrow
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .frame(width: 12)
 
                     // Project icon/emoji
@@ -911,7 +911,7 @@ struct ProjectTreeItem: View {
                     // Project name - disable hit testing to prevent text cursor
                     Text(project.title ?? "Untitled Project")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .lineLimit(1)
                         .allowsHitTesting(false)
 
@@ -920,10 +920,10 @@ struct ProjectTreeItem: View {
                     // ThinkSpace count
                     Text("\(thinkspaces.count)")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08), in: Capsule())
+                        .background(DS.border, in: Capsule())
                         .allowsHitTesting(false)
 
                     // Hover actions
@@ -936,7 +936,7 @@ struct ProjectTreeItem: View {
                                 } label: {
                                     Image(systemName: "plus")
                                         .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(Color.white.opacity(0.5))
+                                        .foregroundColor(DS.textSecondary)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -951,7 +951,7 @@ struct ProjectTreeItem: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isHovered ? Color.white.opacity(0.05) : Color.clear)
+                        .fill(isHovered ? DS.borderSubtle : Color.clear)
                 )
                 .contentShape(Rectangle())
             }
@@ -982,7 +982,7 @@ struct ProjectTreeItem: View {
                         HStack(spacing: 6) {
                             // Tree line
                             Rectangle()
-                                .fill(Color.white.opacity(0.1))
+                                .fill(DS.borderActive)
                                 .frame(width: 1)
                                 .padding(.leading, 16)
 
@@ -1099,7 +1099,7 @@ struct ThinkspaceCard: View {
                     TextField("Name", text: $renameText)
                         .textFieldStyle(.plain)
                         .font(.system(size: isCompact ? 12 : 13, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.text)
                         .focused($isRenameFieldFocused)
                         .onSubmit {
                             submitRename()
@@ -1120,7 +1120,7 @@ struct ThinkspaceCard: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .foregroundColor(DS.textSecondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1180,12 +1180,12 @@ struct ThinkspaceCard: View {
             Circle()
                 .fill(isActive
                       ? accentColor.opacity(0.2)
-                      : Color.white.opacity(0.05))
+                      : DS.borderSubtle)
                 .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
                 .overlay(
                     Image(systemName: thinkspace.isRootThinkspace ? "rectangle.3.group.fill" : "rectangle.3.group")
                         .font(.system(size: isCompact ? 10 : 11, weight: .medium))
-                        .foregroundColor(isActive ? accentColor : Color.white.opacity(0.5))
+                        .foregroundColor(isActive ? accentColor : DS.textSecondary)
                 )
 
             // Text - disable hit testing to prevent text cursor
@@ -1193,7 +1193,7 @@ struct ThinkspaceCard: View {
                 HStack(spacing: 4) {
                     Text(thinkspace.name)
                         .font(.system(size: isCompact ? 12 : 13, weight: isActive ? .semibold : .medium))
-                        .foregroundColor(isActive ? .white : Color.white.opacity(0.8))
+                        .foregroundColor(DS.text)
                         .lineLimit(1)
 
                     if thinkspace.isRootThinkspace {
@@ -1209,7 +1209,7 @@ struct ThinkspaceCard: View {
                 if !isCompact {
                     Text("\(thinkspace.blockCount) blocks · \(thinkspace.lastOpenedFormatted)")
                         .font(.system(size: 10))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                 }
             }
             .allowsHitTesting(false)  // Prevent text cursor on hover
@@ -1226,7 +1226,7 @@ struct ThinkspaceCard: View {
                         } label: {
                             Image(systemName: "plus")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.5))
+                                .foregroundColor(DS.textSecondary)
                         }
                         .buttonStyle(.plain)
                         .help("Add sub-ThinkSpace")
@@ -1244,7 +1244,7 @@ struct ThinkspaceCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(isActive
                       ? accentColor.opacity(0.15)
-                      : (isHovered ? Color.white.opacity(0.05) : Color.clear))
+                      : (isHovered ? DS.borderSubtle : Color.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -1385,7 +1385,7 @@ struct AnimatedTrashButton: View {
                 // Trash can base
                 Image(systemName: "trash")
                     .font(.system(size: 10))
-                    .foregroundColor(isHovered ? Color(hex: "FF5F57") : Color.white.opacity(0.4))
+                    .foregroundColor(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
                     .opacity(isHovered ? 0 : 1)
 
                 // Trash can with open lid (shown on hover)
@@ -1433,23 +1433,23 @@ struct RecentlyDeletedSection: View {
                 HStack(spacing: 6) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .foregroundColor(DS.textMuted)
                         .frame(width: 10)
 
                     AnimatedTrashIcon(isExpanded: isExpanded)
 
                     Text("RECENTLY DELETED")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.5))
+                        .foregroundColor(DS.textSecondary)
                         .tracking(1)
 
                     if !deletedItems.isEmpty {
                         Text("\(deletedItems.count)")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.3))
+                            .foregroundColor(DS.textMuted)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .background(DS.border, in: Capsule())
                     }
 
                     Spacer()
@@ -1476,11 +1476,11 @@ struct RecentlyDeletedSection: View {
                     VStack(spacing: 8) {
                         Image(systemName: "trash.slash")
                             .font(.system(size: 16))
-                            .foregroundColor(Color.white.opacity(0.2))
+                            .foregroundColor(DS.textMuted)
 
                         Text("Trash is empty")
                             .font(.system(size: 11))
-                            .foregroundColor(Color.white.opacity(0.3))
+                            .foregroundColor(DS.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -1590,13 +1590,13 @@ struct AnimatedTrashIcon: View {
             // Base trash icon
             Image(systemName: "trash")
                 .font(.system(size: 12))
-                .foregroundColor(isHovered ? Color(hex: "FF5F57") : Color.white.opacity(0.4))
+                .foregroundColor(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
 
             // Lid overlay that animates
             if isHovered || isExpanded {
                 // Custom lid animation
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(isHovered ? Color(hex: "FF5F57") : Color.white.opacity(0.4))
+                    .fill(isHovered ? Color(hex: "FF5F57") : DS.textMuted)
                     .frame(width: 10, height: 2)
                     .offset(y: -5)
                     .rotationEffect(
@@ -1626,20 +1626,20 @@ struct DeletedItemRow: View {
             // Type icon
             Image(systemName: item.type == .project ? "folder" : "rectangle.3.group")
                 .font(.system(size: 10))
-                .foregroundColor(Color.white.opacity(0.4))
+                .foregroundColor(DS.textMuted)
                 .frame(width: 16)
 
             // Name and time
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 12))
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
-                    .strikethrough(true, color: Color.white.opacity(0.3))
+                    .strikethrough(true, color: DS.textMuted)
 
                 Text(item.daysRemaining)
                     .font(.system(size: 9))
-                    .foregroundColor(Color.white.opacity(0.3))
+                    .foregroundColor(DS.textMuted)
             }
             .allowsHitTesting(false)
 
@@ -1670,7 +1670,7 @@ struct DeletedItemRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? Color.white.opacity(0.03) : Color.clear)
+                .fill(isHovered ? DS.borderSubtle : Color.clear)
         )
         .contentShape(Rectangle())
     }

@@ -56,6 +56,16 @@ struct ThinkspaceSidebar: View {
 
     // Drop state for project creation
     @State private var isDropTargetActive: Bool = false
+    @State private var isBottomDropTargetActive: Bool = false
+
+    // Nest drop target (for unassigned thinkspace nesting)
+    @State private var nestDropTargetId: String?
+    @State private var isUnnestDropTargetActive: Bool = false
+
+    // Project creation state
+    @State private var isCreatingProject = false
+    @State private var newProjectName = ""
+    @FocusState private var isProjectNameFieldFocused: Bool
 
     // Child docs expand/collapse state
     @State private var expandedThinkspaces: Set<String> = []
@@ -92,9 +102,22 @@ struct ThinkspaceSidebar: View {
             }
         }
 
-        // Add unassigned thinkspaces
-        for thinkspace in manager.unassignedThinkspaces() {
+        // Add unassigned thinkspaces (root-level only, with nested children)
+        for thinkspace in manager.rootUnassignedThinkspaces() {
             items.append(.thinkspace(thinkspace, projectId: nil))
+            // Insert child thinkspaces if expanded
+            if expandedThinkspaces.contains(thinkspace.id) {
+                for child in manager.childThinkspaces(of: thinkspace.id) {
+                    items.append(.thinkspace(child, projectId: nil))
+                    // Child thinkspace's own child docs
+                    if expandedThinkspaces.contains(child.id),
+                       let childDocs = manager.childDocsCache[child.id] {
+                        for doc in childDocs {
+                            items.append(.childDoc(doc, thinkspaceId: child.id))
+                        }
+                    }
+                }
+            }
             // Insert child docs if this thinkspace is expanded
             if expandedThinkspaces.contains(thinkspace.id),
                let docs = manager.childDocsCache[thinkspace.id] {
@@ -164,7 +187,7 @@ struct ThinkspaceSidebar: View {
         .onKeyPress(.upArrow) { handleKeyUp(); return .handled }
         .onKeyPress(.return) {
             // Don't intercept return when text field is active
-            if isCreatingThinkspace || isCreatingSubThinkspace || renamingThinkspaceId != nil {
+            if isCreatingThinkspace || isCreatingSubThinkspace || isCreatingProject || renamingThinkspaceId != nil {
                 return .ignored  // Let TextField handle it
             }
             handleKeyReturn()
@@ -331,6 +354,23 @@ struct ThinkspaceSidebar: View {
 
                 Spacer()
 
+                // New project button
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        isCreatingProject = true
+                        newProjectName = ""
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        isProjectNameFieldFocused = true
+                    }
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+                .help("New Project")
+
                 // Drop hint when dragging
                 if isDropTargetActive {
                     Text("Drop to create project")
@@ -364,7 +404,12 @@ struct ThinkspaceSidebar: View {
             }
             .accessibilityLabel("Projects section, \(projects.count) projects. Drop a ThinkSpace here to create a project")
 
-            if projects.isEmpty {
+            // Inline project creation row
+            if isCreatingProject {
+                newProjectRow
+            }
+
+            if projects.isEmpty && !isCreatingProject {
                 // Enhanced empty state - also a drop target
                 VStack(spacing: 8) {
                     Image(systemName: isDropTargetActive ? "folder.fill.badge.plus" : "folder.badge.plus")
@@ -376,7 +421,7 @@ struct ThinkspaceSidebar: View {
                         .foregroundColor(isDropTargetActive ? CosmoColors.thinkspacePurple : DS.textMuted)
 
                     if !isDropTargetActive {
-                        Text("Drag a ThinkSpace here to create a project")
+                        Text("Drag a ThinkSpace here or tap +")
                             .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)
                             .multilineTextAlignment(.center)
@@ -461,6 +506,9 @@ struct ThinkspaceSidebar: View {
                         }
                     )
                 }
+
+                // Bottom drop zone for creating projects from dragged thinkspaces
+                bottomProjectDropZone
             }
         }
     }
@@ -478,11 +526,11 @@ struct ThinkspaceSidebar: View {
 
     private var unassignedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Section header with count
+            // Section header with count — also a drop target to unnest
             HStack {
                 Text("UNASSIGNED")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(isUnnestDropTargetActive ? CosmoColors.thinkspacePurple : DS.textSecondary)
                     .tracking(1)
 
                 let unassigned = manager.unassignedThinkspaces()
@@ -494,17 +542,47 @@ struct ThinkspaceSidebar: View {
                         .padding(.vertical, 2)
                         .background(DS.border, in: Capsule())
                 }
+
+                Spacer()
+
+                if isUnnestDropTargetActive {
+                    Text("Drop to unnest")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(CosmoColors.thinkspacePurple)
+                        .transition(.opacity)
+                }
             }
             .padding(.leading, 4)
-            .accessibilityLabel("Unassigned section, \(manager.unassignedThinkspaces().count) ThinkSpaces")
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isUnnestDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.15) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(isUnnestDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.5) : Color.clear, lineWidth: 1)
+                    )
+            )
+            .animation(ProMotionSprings.snappy, value: isUnnestDropTargetActive)
+            .dropDestination(for: String.self) { items, location in
+                guard let thinkspaceId = items.first else { return false }
+                Task {
+                    await manager.reparentThinkspace(thinkspaceId, to: nil)
+                }
+                return true
+            } isTargeted: { isTargeted in
+                withAnimation(ProMotionSprings.snappy) {
+                    isUnnestDropTargetActive = isTargeted
+                }
+            }
+            .accessibilityLabel("Unassigned section, \(manager.unassignedThinkspaces().count) ThinkSpaces. Drop a ThinkSpace here to unnest")
 
             // New ThinkSpace creation row
             if isCreatingThinkspace && parentForNewThinkspace == nil {
                 newThinkspaceRow
             }
 
-            let unassigned = manager.unassignedThinkspaces()
-            if unassigned.isEmpty && !isCreatingThinkspace {
+            let rootUnassigned = manager.rootUnassignedThinkspaces()
+            if rootUnassigned.isEmpty && !isCreatingThinkspace {
                 // Enhanced empty state
                 VStack(spacing: 8) {
                     Image(systemName: "rectangle.3.group")
@@ -524,48 +602,139 @@ struct ThinkspaceSidebar: View {
                 .padding(.vertical, 16)
                 .accessibilityLabel("No unassigned ThinkSpaces")
             } else {
-                ForEach(unassigned) { thinkspace in
-                    ThinkspaceCard(
-                        thinkspace: thinkspace,
-                        isActive: manager.currentThinkspace?.id == thinkspace.id,
-                        isHovered: hoveredThinkspaceId == thinkspace.id,
-                        showAddButton: true,
-                        isExpanded: expandedThinkspaces.contains(thinkspace.id),
-                        onToggleExpand: {
-                            toggleThinkspaceExpand(thinkspace)
-                        },
-                        childDocs: manager.childDocsCache[thinkspace.id] ?? [],
-                        isLoadingChildren: childDocsLoading.contains(thinkspace.id),
-                        hoveredChildDocId: hoveredChildDocId,
-                        onChildDocTap: { doc in
-                            navigateToChildDoc(doc)
-                        },
-                        onHoverChildDoc: { id in
-                            hoveredChildDocId = id
-                        },
-                        onSelect: {
-                            selectThinkspace(thinkspace)
-                        },
-                        onAddSubThinkspace: {
-                            withAnimation(ProMotionSprings.snappy) {
-                                isCreatingSubThinkspace = true
-                                parentForNewThinkspace = thinkspace
-                                newName = ""
+                ForEach(rootUnassigned) { thinkspace in
+                    VStack(alignment: .leading, spacing: 2) {
+                        // Root thinkspace card
+                        ThinkspaceCard(
+                            thinkspace: thinkspace,
+                            isActive: manager.currentThinkspace?.id == thinkspace.id,
+                            isHovered: hoveredThinkspaceId == thinkspace.id,
+                            showAddButton: true,
+                            isExpanded: expandedThinkspaces.contains(thinkspace.id),
+                            onToggleExpand: {
+                                toggleThinkspaceExpand(thinkspace)
+                            },
+                            childDocs: manager.childDocsCache[thinkspace.id] ?? [],
+                            isLoadingChildren: childDocsLoading.contains(thinkspace.id),
+                            hoveredChildDocId: hoveredChildDocId,
+                            onChildDocTap: { doc in
+                                navigateToChildDoc(doc)
+                            },
+                            onHoverChildDoc: { id in
+                                hoveredChildDocId = id
+                            },
+                            onSelect: {
+                                selectThinkspace(thinkspace)
+                            },
+                            onAddSubThinkspace: {
+                                withAnimation(ProMotionSprings.snappy) {
+                                    isCreatingSubThinkspace = true
+                                    parentForNewThinkspace = thinkspace
+                                    newName = ""
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    isNameFieldFocused = true
+                                }
+                            },
+                            onDelete: {
+                                Task {
+                                    await manager.delete(thinkspace)
+                                }
+                            },
+                            onRename: { newName in
+                                Task {
+                                    await manager.rename(thinkspace, to: newName)
+                                }
                             }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                isNameFieldFocused = true
-                            }
-                        },
-                        onDelete: {
+                        )
+                        .onHover { hovering in
+                            hoveredThinkspaceId = hovering ? thinkspace.id : nil
+                        }
+                        .draggable(thinkspace.id)
+                        .dropDestination(for: String.self) { items, location in
+                            guard let droppedId = items.first, droppedId != thinkspace.id else { return false }
                             Task {
-                                await manager.delete(thinkspace)
+                                await manager.reparentThinkspace(droppedId, to: thinkspace.id)
+                            }
+                            return true
+                        } isTargeted: { isTargeted in
+                            withAnimation(ProMotionSprings.snappy) {
+                                nestDropTargetId = isTargeted ? thinkspace.id : nil
                             }
                         }
-                    )
-                    .onHover { hovering in
-                        hoveredThinkspaceId = hovering ? thinkspace.id : nil
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(nestDropTargetId == thinkspace.id ? CosmoColors.thinkspacePurple.opacity(0.6) : Color.clear, lineWidth: 1.5)
+                        )
+
+                        // Nested child thinkspaces (when expanded)
+                        if expandedThinkspaces.contains(thinkspace.id) {
+                            let children = manager.childThinkspaces(of: thinkspace.id)
+                            ForEach(children) { child in
+                                HStack(spacing: 6) {
+                                    // Tree connector line
+                                    Rectangle()
+                                        .fill(DS.borderActive)
+                                        .frame(width: 1)
+                                        .padding(.leading, 16)
+
+                                    ThinkspaceCard(
+                                        thinkspace: child,
+                                        isActive: manager.currentThinkspace?.id == child.id,
+                                        isHovered: hoveredThinkspaceId == child.id,
+                                        showAddButton: true,
+                                        isCompact: true,
+                                        isExpanded: expandedThinkspaces.contains(child.id),
+                                        onToggleExpand: {
+                                            toggleThinkspaceExpand(child)
+                                        },
+                                        childDocs: manager.childDocsCache[child.id] ?? [],
+                                        isLoadingChildren: childDocsLoading.contains(child.id),
+                                        hoveredChildDocId: hoveredChildDocId,
+                                        onChildDocTap: { doc in
+                                            navigateToChildDoc(doc)
+                                        },
+                                        onHoverChildDoc: { id in
+                                            hoveredChildDocId = id
+                                        },
+                                        onSelect: {
+                                            selectThinkspace(child)
+                                        },
+                                        onAddSubThinkspace: {
+                                            withAnimation(ProMotionSprings.snappy) {
+                                                isCreatingSubThinkspace = true
+                                                parentForNewThinkspace = child
+                                                newName = ""
+                                            }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                                isNameFieldFocused = true
+                                            }
+                                        },
+                                        onDelete: {
+                                            Task {
+                                                await manager.delete(child)
+                                            }
+                                        },
+                                        onRename: { newName in
+                                            Task {
+                                                await manager.rename(child, to: newName)
+                                            }
+                                        },
+                                        onUnnest: {
+                                            Task {
+                                                await manager.reparentThinkspace(child.id, to: nil)
+                                            }
+                                        }
+                                    )
+                                    .onHover { hovering in
+                                        hoveredThinkspaceId = hovering ? child.id : nil
+                                    }
+                                    .draggable(child.id)
+                                }
+                            }
+                            .padding(.leading, 8)
+                        }
                     }
-                    .draggable(thinkspace.id) // Enable drag for unassigned
                 }
             }
         }
@@ -622,6 +791,93 @@ struct ThinkspaceSidebar: View {
             insertion: .scale(scale: 0.95).combined(with: .opacity),
             removal: .opacity
         ))
+    }
+
+    // MARK: - New Project Row
+
+    private var newProjectRow: some View {
+        HStack(spacing: 10) {
+            // Icon
+            Text("💼")
+                .font(.system(size: 14))
+                .frame(width: 28, height: 28)
+
+            // Text field
+            TextField("Project name", text: $newProjectName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.text)
+                .focused($isProjectNameFieldFocused)
+                .onSubmit {
+                    createNewProject()
+                }
+
+            // Cancel button
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    isCreatingProject = false
+                    newProjectName = ""
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(CosmoColors.thinkspacePurple.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(CosmoColors.thinkspacePurple.opacity(0.3), lineWidth: 1)
+                )
+        )
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.95).combined(with: .opacity),
+            removal: .opacity
+        ))
+    }
+
+    // MARK: - Bottom Project Drop Zone
+
+    private var bottomProjectDropZone: some View {
+        HStack(spacing: 6) {
+            if isBottomDropTargetActive {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(CosmoColors.thinkspacePurple)
+
+                Text("Drop to create project")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(CosmoColors.thinkspacePurple)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: isBottomDropTargetActive ? 40 : 16)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isBottomDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.1) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isBottomDropTargetActive ? CosmoColors.thinkspacePurple.opacity(0.4) : Color.clear, lineWidth: 1)
+                )
+        )
+        .contentShape(Rectangle())
+        .animation(ProMotionSprings.snappy, value: isBottomDropTargetActive)
+        .dropDestination(for: String.self) { items, location in
+            guard let thinkspaceId = items.first else { return false }
+            Task {
+                await createProjectFromThinkspace(thinkspaceId: thinkspaceId)
+            }
+            return true
+        } isTargeted: { isTargeted in
+            withAnimation(ProMotionSprings.snappy) {
+                isBottomDropTargetActive = isTargeted
+            }
+        }
     }
 
     // MARK: - Background
@@ -737,6 +993,11 @@ struct ThinkspaceSidebar: View {
             withAnimation(ProMotionSprings.snappy) {
                 isCreatingThinkspace = false
                 isCreatingSubThinkspace = false
+            }
+        } else if isCreatingProject {
+            withAnimation(ProMotionSprings.snappy) {
+                isCreatingProject = false
+                newProjectName = ""
             }
         } else if renamingThinkspaceId != nil {
             withAnimation(ProMotionSprings.snappy) {
@@ -877,6 +1138,39 @@ struct ThinkspaceSidebar: View {
                 isCreatingSubThinkspace = false
                 if !isLocked {
                     isVisible = false
+                }
+            }
+        }
+    }
+
+    /// Create a new project directly (from the "+" button)
+    private func createNewProject() {
+        let trimmed = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            withAnimation(ProMotionSprings.snappy) {
+                isCreatingProject = false
+                newProjectName = ""
+            }
+            return
+        }
+
+        Task {
+            do {
+                let project = try await repository.createProject(title: trimmed)
+                await manager.loadThinkspaces()
+                await loadProjects()
+
+                // Auto-expand the new project
+                withAnimation(ProMotionSprings.snappy) {
+                    expandedProjects.insert(project.uuid)
+                    isCreatingProject = false
+                    newProjectName = ""
+                }
+            } catch {
+                print("❌ Failed to create project: \(error)")
+                withAnimation(ProMotionSprings.snappy) {
+                    isCreatingProject = false
+                    newProjectName = ""
                 }
             }
         }
@@ -1202,6 +1496,7 @@ struct ThinkspaceCard: View {
     var onDelete: (() -> Void)?
     var onRename: ((String) -> Void)?
     var onDuplicate: (() -> Void)?
+    var onUnnest: (() -> Void)?
 
     @State private var showDeleteConfirm = false
     @State private var isRenaming = false
@@ -1487,6 +1782,14 @@ struct ThinkspaceCard: View {
                 onAdd()
             } label: {
                 Label("New Sub-ThinkSpace", systemImage: "plus.rectangle.on.rectangle")
+            }
+        }
+
+        if let onUnnest = onUnnest {
+            Button {
+                onUnnest()
+            } label: {
+                Label("Move to Root", systemImage: "arrow.uturn.up")
             }
         }
 

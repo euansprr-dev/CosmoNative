@@ -450,6 +450,12 @@ class ThinkspaceManager: ObservableObject {
             .sorted { $0.lastOpened > $1.lastOpened }
     }
 
+    /// Get root-level unassigned ThinkSpaces (no parent, no project)
+    func rootUnassignedThinkspaces() -> [Thinkspace] {
+        thinkspaces.filter { $0.projectUuid == nil && $0.parentThinkspaceId == nil }
+            .sorted { $0.lastOpened > $1.lastOpened }
+    }
+
     /// Get child ThinkSpaces of a parent ThinkSpace
     func childThinkspaces(of parentId: String) -> [Thinkspace] {
         thinkspaces.filter { $0.parentThinkspaceId == parentId }
@@ -542,6 +548,15 @@ class ThinkspaceManager: ObservableObject {
 
     /// Reparent a ThinkSpace to become a child of another ThinkSpace
     func reparentThinkspace(_ thinkspaceId: String, to newParentId: String?) async {
+        // Self-nesting guard
+        if thinkspaceId == newParentId { return }
+
+        // Circular reference guard
+        if let newParentId = newParentId, isDescendant(newParentId, of: thinkspaceId) {
+            print("⚠️ Cannot reparent: would create circular reference")
+            return
+        }
+
         do {
             guard var atom = try await repository.fetch(uuid: thinkspaceId) else {
                 print("❌ ThinkSpace not found for reparenting")
@@ -579,6 +594,19 @@ class ThinkspaceManager: ObservableObject {
         } catch {
             print("❌ Failed to reparent ThinkSpace: \(error)")
         }
+    }
+
+    /// Check if `candidateId` is a descendant of `ancestorId` by walking the parent chain
+    private func isDescendant(_ candidateId: String, of ancestorId: String) -> Bool {
+        var currentId: String? = candidateId
+        var visited = Set<String>()
+        while let id = currentId {
+            if id == ancestorId { return true }
+            if visited.contains(id) { break }  // Break infinite loops from corrupted data
+            visited.insert(id)
+            currentId = thinkspaces.first(where: { $0.id == id })?.parentThinkspaceId
+        }
+        return false
     }
 
     // MARK: - Child Docs

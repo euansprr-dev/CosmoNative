@@ -37,12 +37,6 @@ struct FocusCanvasView: View {
     /// Gesture state for smooth panning
     @GestureState private var panOffset: CGSize = .zero
 
-    /// Distance from center to show recenter button
-    private var distanceFromCenter: CGFloat {
-        let totalOffsetX = canvasOffset.width + panOffset.width
-        return abs(totalOffsetX)
-    }
-
     init(entity: EntitySelection) {
         self.entity = entity
     }
@@ -126,18 +120,6 @@ struct FocusCanvasView: View {
                             )
 
                             Spacer()
-
-                            // MARK: - Recenter Button (appears when panned far from center)
-                            if distanceFromCenter > 200 {
-                                FocusRecenterButton {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                                        canvasOffset = .zero
-                                    }
-                                }
-                                .padding(.top, 20)
-                                .padding(.trailing, 20)
-                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                            }
                         }
 
                         Spacer()
@@ -1011,38 +993,3 @@ struct FocusBlockView: View {
     }
 }
 
-// MARK: - Focus Recenter Button
-/// Button to recenter the focus mode canvas (horizontal position only)
-/// Preserves vertical scroll position within the document
-struct FocusRecenterButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "scope")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Recenter")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(isHovered ? CosmoColors.textPrimary : CosmoColors.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(CosmoColors.softWhite, in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(CosmoColors.glassGrey.opacity(0.5), lineWidth: 1)
-            )
-            .shadow(color: CosmoColors.glassGrey.opacity(isHovered ? 0.6 : 0.4), radius: isHovered ? 10 : 6, y: 2)
-            .scaleEffect(isHovered ? 1.02 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.2)) {
-                isHovered = hovering
-            }
-        }
-    }
-}

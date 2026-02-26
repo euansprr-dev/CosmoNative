@@ -20,6 +20,7 @@ struct CalendarWindowView: View {
     private let minHeight: CGFloat = 400
     private let cornerRadius: CGFloat = 12
     private let resizeHandleSize: CGFloat = 8
+    private let referenceSize = CGSize(width: 800, height: 580)
 
     init(block: CanvasBlock) {
         self.block = block
@@ -28,9 +29,24 @@ struct CalendarWindowView: View {
         _size = State(initialValue: initialSize)
     }
 
+    private var contentScale: CGFloat {
+        let area = max(size.width * size.height, 1)
+        let referenceArea = referenceSize.width * referenceSize.height
+        return max(sqrt(area / referenceArea), 0.5)
+    }
+
+    private var unscaledSize: CGSize {
+        CGSize(
+            width: size.width / contentScale,
+            height: size.height / contentScale
+        )
+    }
+
     var body: some View {
         SchedulerView()
-            .frame(width: size.width, height: size.height)
+            .frame(width: unscaledSize.width, height: unscaledSize.height)
+            .scaleEffect(contentScale, anchor: .topLeading)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay(
                 // Subtle outline that's always visible

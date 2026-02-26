@@ -31,6 +31,7 @@ struct ConnectionFocusModeView: View {
     @State private var showSidebar = false
     @State private var showSettings = false
     @State private var activeRelationArea: RelationAreaState?
+    @State private var editableTitle: String
     @StateObject private var coDevEngine = ConnectionCoDevEngine()
 
     // MARK: - Initialization
@@ -38,6 +39,7 @@ struct ConnectionFocusModeView: View {
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
         self.onClose = onClose
+        self._editableTitle = State(initialValue: atom.title ?? "New Connection")
         self._viewModel = StateObject(wrappedValue: ConnectionFocusModeViewModel(atom: atom))
         self._panelManager = StateObject(wrappedValue: FloatingPanelManager(focusAtomUUID: atom.uuid))
         self._floatingBlocksManager = StateObject(wrappedValue: FocusFloatingBlocksManager(ownerAtomUUID: atom.uuid))
@@ -284,9 +286,14 @@ struct ConnectionFocusModeView: View {
                     .font(.system(size: 20))
                     .foregroundColor(CosmoColors.blockConnection)
 
-                Text(atom.title ?? "New Connection")
+                TextField("New Connection", text: $editableTitle)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(DS.text)
+                    .multilineTextAlignment(.center)
+                    .onChange(of: editableTitle) { _, newTitle in
+                        viewModel.updateTitle(newTitle)
+                    }
             }
 
             // Stats
@@ -356,10 +363,14 @@ struct ConnectionFocusModeView: View {
             .buttonStyle(.plain)
 
             // Title
-            Text(atom.title ?? "Connection")
+            TextField("Connection", text: $editableTitle)
+                .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(DS.text)
-                .lineLimit(1)
+                .frame(maxWidth: 300)
+                .onChange(of: editableTitle) { _, newTitle in
+                    viewModel.updateTitle(newTitle)
+                }
 
             // Type badge
             HStack(spacing: 4) {
@@ -869,6 +880,20 @@ class ConnectionFocusModeViewModel: ObservableObject {
 
         // Also save to atom.structured
         saveToAtom()
+    }
+
+    func updateTitle(_ newTitle: String) {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let atomUUID = atom.uuid
+        Task {
+            try? await CosmoDatabase.shared.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                )
+            }
+        }
     }
 
     private func parseAtomStructuredData() {

@@ -14,6 +14,8 @@ struct ConnectionBlockView: View {
     @State private var atom: Atom?
     @State private var isExpanded = false
     @State private var observationCancellable: AnyCancellable?
+    @State private var editableTitle: String = ""
+    @State private var isEditingTitle = false
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Purple accent for connections
@@ -122,10 +124,22 @@ struct ConnectionBlockView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(block.title.isEmpty ? "Untitled Connection" : block.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(2)
+                if isEditingTitle {
+                    TextField("Untitled Connection", text: $editableTitle, onCommit: {
+                        commitTitleEdit()
+                    })
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.text)
+                } else {
+                    Text(editableTitle.isEmpty ? "Untitled Connection" : editableTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.text)
+                        .lineLimit(2)
+                        .onTapGesture(count: 2) {
+                            isEditingTitle = true
+                        }
+                }
 
                 Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
                     .font(.system(size: 11))
@@ -166,6 +180,9 @@ struct ConnectionBlockView: View {
                 receiveValue: { atom in
                     guard let atom else { return }
                     self.atom = atom
+                    if !isEditingTitle {
+                        self.editableTitle = atom.title ?? ""
+                    }
                     self.parseSections(from: atom)
                 }
             )
@@ -184,10 +201,13 @@ struct ConnectionBlockView: View {
             return
         }
 
+        editableTitle = block.title
+
         Task {
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
                 await MainActor.run {
                     atom = loaded
+                    editableTitle = loaded.title ?? block.title
                     parseSections(from: loaded)
                 }
             }
@@ -287,6 +307,23 @@ struct ConnectionBlockView: View {
         focusState.sections = sections
         focusState.lastModified = Date()
         focusState.save()
+    }
+
+    // MARK: - Title Editing
+
+    private func commitTitleEdit() {
+        isEditingTitle = false
+        let newTitle = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newTitle.isEmpty, let atom = atom else { return }
+        let atomUUID = atom.uuid
+        Task {
+            try? await CosmoDatabase.shared.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [newTitle, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                )
+            }
+        }
     }
 
     // MARK: - Focus Mode

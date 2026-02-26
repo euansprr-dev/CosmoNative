@@ -104,6 +104,90 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Fetch atom UUIDs that belong to project thinkspaces (canvas_blocks) or have explicit project links.
+    /// Returns a dictionary mapping project UUID → Set of owned atom UUIDs, plus a flattened set of all owned UUIDs.
+    func fetchProjectOwnedAtomUUIDs(projectThinkspaceIds: [String], projectUUIDs: [String]) async throws -> (allOwned: Set<String>, perProject: [String: Set<String>]) {
+        guard !projectThinkspaceIds.isEmpty || !projectUUIDs.isEmpty else {
+            return ([], [:])
+        }
+
+        // 1. Query canvas_blocks for entity_uuid values in project thinkspaces
+        var canvasAtomToProject: [String: String] = [:] // atomUUID → projectUUID
+
+        if !projectThinkspaceIds.isEmpty {
+            // We need thinkspaceId → projectUUID mapping, passed in via ThinkspaceManager
+            let placeholders = projectThinkspaceIds.map { _ in "?" }.joined(separator: ", ")
+            let rows: [Row] = try await database.asyncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT entity_uuid, thinkspace_id
+                    FROM canvas_blocks
+                    WHERE is_deleted = 0
+                      AND entity_uuid IS NOT NULL
+                      AND thinkspace_id IN (\(placeholders))
+                """, arguments: StatementArguments(projectThinkspaceIds))
+            }
+
+            // Build thinkspaceId → projectUUID lookup from ThinkspaceManager
+            let tsToProject = ThinkspaceManager.shared.thinkspaces
+                .filter { $0.projectUuid != nil }
+                .reduce(into: [String: String]()) { dict, ts in
+                    dict[ts.id] = ts.projectUuid!
+                }
+
+            for row in rows {
+                if let entityUuid: String = row["entity_uuid"],
+                   let tsId: String = row["thinkspace_id"],
+                   let projUuid = tsToProject[tsId] {
+                    canvasAtomToProject[entityUuid] = projUuid
+                }
+            }
+        }
+
+        // 2. Query atoms with explicit project links
+        var linkAtomToProject: [String: String] = [:]
+        for projectUUID in projectUUIDs {
+            let atoms: [Atom] = try await database.asyncRead { db in
+                try Atom
+                    .filter(Atom.CodingKeys.isDeleted == false)
+                    .filter(sql: "links LIKE ?", arguments: ["%\(projectUUID)%"])
+                    .fetchAll(db)
+            }
+            for atom in atoms where atom.type != .project && atom.type != .thinkspace {
+                linkAtomToProject[atom.uuid] = projectUUID
+            }
+        }
+
+        // 3. Merge both sources into per-project sets
+        var perProject: [String: Set<String>] = [:]
+        for (atomUUID, projUUID) in canvasAtomToProject {
+            perProject[projUUID, default: []].insert(atomUUID)
+        }
+        for (atomUUID, projUUID) in linkAtomToProject {
+            perProject[projUUID, default: []].insert(atomUUID)
+        }
+
+        let allOwned = Set(canvasAtomToProject.keys).union(linkAtomToProject.keys)
+        return (allOwned, perProject)
+    }
+
+    /// Fetch atom UUIDs from canvas_blocks for specific thinkspace IDs
+    func fetchAtomUUIDsInThinkspaces(_ thinkspaceIds: [String]) async throws -> Set<String> {
+        guard !thinkspaceIds.isEmpty else { return [] }
+
+        let placeholders = thinkspaceIds.map { _ in "?" }.joined(separator: ", ")
+        let rows: [Row] = try await database.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT DISTINCT entity_uuid
+                FROM canvas_blocks
+                WHERE is_deleted = 0
+                  AND entity_uuid IS NOT NULL
+                  AND thinkspace_id IN (\(placeholders))
+            """, arguments: StatementArguments(thinkspaceIds))
+        }
+
+        return Set(rows.compactMap { $0["entity_uuid"] as String? })
+    }
+
     /// Fetch atoms by multiple types
     func fetchAll(types: [AtomType]) async throws -> [Atom] {
         let typeStrings = types.map { $0.rawValue }

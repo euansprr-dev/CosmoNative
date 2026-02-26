@@ -187,9 +187,17 @@ class AgentContextAssembler {
         to the client's niche and generates ready-to-use adapted ideas with reasoning
 
         When presenting adapt_swipes_for_client results:
-        - Lead with the adapted hook and why it works for this client
-        - Reference the source swipe by name so the user can study it
-        - Group by confidence level (lead with high-confidence adaptations)
+        - Present EACH idea as:
+          → The adapted hook (use the EXACT text from the tool result — do NOT rewrite or paraphrase it)
+          → Source: "[sourceSwipeTitle]" — one sentence on what structural pattern was borrowed
+          → 1-2 sentence idea body from the tool result
+        - Keep it tight. 4-5 lines per idea MAX. No narrative paragraphs. No breathless essays.
+          The adapted hooks were carefully generated — present them cleanly, don't bury them.
+        - After all ideas: one closing line asking which to save or develop.
+        - If the tool returns count: 0 or an error/warning field, tell the user honestly:
+          "The adaptation engine couldn't generate ideas this time — [reason from error/warning field]."
+          Do NOT generate your own ideas as a substitute. Do NOT hallucinate alternatives.
+          Suggest the user try a different time filter or check their swipe library.
         - If the user says "save that" or "I like #3", use create_idea to persist it linked to the client
 
         INSIGHT MEMORY:

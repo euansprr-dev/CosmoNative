@@ -81,7 +81,6 @@ struct CanvasView: View {
                     x: screenCenter.x / geo.size.width,
                     y: screenCenter.y / geo.size.height
                 ))
-                .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.85), value: effectiveScale)
 
                 // Drawing elements layer (screen coordinates, outside scaled container
                 // to prevent frame clipping at non-100% zoom levels)
@@ -112,10 +111,6 @@ struct CanvasView: View {
                 )
             }
             .environmentObject(expansionManager)
-            .overlay(alignment: .topLeading) {
-                // Controls overlay stays at screen coordinates (not zoomed)
-                controlsOverlay
-            }
             .overlay(alignment: .bottomTrailing) {
                 // Zoom indicator
                 zoomIndicator
@@ -423,26 +418,6 @@ struct CanvasView: View {
                block.metadata["isSwipeFile"] == "true"
     }
 
-    private var controlsOverlay: some View {
-        VStack {
-            HStack {
-                if distanceFromOrigin > 400 {
-                    CanvasRecenterButton {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                            canvasOffset = .zero
-                        }
-                    }
-                    .padding(.leading, 20)
-                    .padding(.top, 16)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-                Spacer()
-            }
-            Spacer()
-        }
-        .animation(.spring(response: 0.3), value: distanceFromOrigin > 400)
-    }
-
     private var panGestureBackground: some View {
         Color.clear
             .contentShape(Rectangle())
@@ -456,7 +431,7 @@ struct CanvasView: View {
                 }
                 spatialEngine.blocks = updatedBlocks
                 selectedBlockId = nil
-                drawingState.selectedDrawingId = nil
+                drawingState.clearSelection()
 
                 // Post notification AFTER state change is complete
                 DispatchQueue.main.async {
@@ -485,11 +460,11 @@ struct CanvasView: View {
                         state = value.magnification
                     }
                     .onEnded { value in
-                        // Clamp scale to reasonable bounds with spring animation
+                        // Commit pinch scale without extra animation. The gesture state's
+                        // magnification resets to 1.0 at end; animating this commit can
+                        // produce a visible snap/bounce in drawing overlays.
                         let newScale = canvasScale * value.magnification
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            canvasScale = min(max(newScale, minScale), maxScale)
-                        }
+                        canvasScale = min(max(newScale, minScale), maxScale)
                     }
             )
     }
@@ -903,10 +878,7 @@ struct CanvasView: View {
                             let zoomFactor = 1.0 + (delta * zoomSensitivity)
                             let newScale = canvasScale * zoomFactor
 
-                            // Smooth animation for zoom
-                            withAnimation(.interactiveSpring(response: 0.15, dampingFraction: 0.9)) {
-                                canvasScale = min(max(newScale, minScale), maxScale)
-                            }
+                            canvasScale = min(max(newScale, minScale), maxScale)
 
                             // Consume the event when zooming
                             return nil
@@ -1040,13 +1012,6 @@ struct CanvasView: View {
     }
 
     // MARK: - Computed Properties
-
-    /// Distance from canvas origin (0,0) - used to show recenter button
-    private var distanceFromOrigin: CGFloat {
-        let totalOffsetX = canvasOffset.width + scaledPanOffset.width
-        let totalOffsetY = canvasOffset.height + scaledPanOffset.height
-        return sqrt(totalOffsetX * totalOffsetX + totalOffsetY * totalOffsetY)
-    }
 
     // MARK: - Calendar Window Handler
     private func handleOpenCalendarWindow(notification: Notification) {
@@ -1458,16 +1423,6 @@ struct CanvasView: View {
         // 2. Single atomic assignment triggers only ONE objectWillChange
         spatialEngine.blocks = updatedBlocks
         selectedBlockId = blockId
-
-        // 3. Post voice notification AFTER the UI update is complete
-        // Use async to ensure SwiftUI has finished processing the state change
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: .blockSelected,
-                object: nil,
-                userInfo: ["blockId": blockId]
-            )
-        }
     }
 
     // MARK: - Voice Command Handlers
@@ -2319,6 +2274,20 @@ struct CanvasView: View {
 struct FloatingBlockView: View {
     let block: CanvasBlock
     @State private var isHovered = false
+    private let referenceSize = CGSize(width: 280, height: 180)
+
+    private var contentScale: CGFloat {
+        let area = max(block.size.width * block.size.height, 1)
+        let referenceArea = referenceSize.width * referenceSize.height
+        return max(sqrt(area / referenceArea), 0.5)
+    }
+
+    private var unscaledSize: CGSize {
+        CGSize(
+            width: block.size.width / contentScale,
+            height: block.size.height / contentScale
+        )
+    }
 
     // Get the pastel color for this entity type
     private var blockColor: Color {
@@ -2388,9 +2357,11 @@ struct FloatingBlockView: View {
                 }
             }
             .padding(12)
-            .frame(width: block.size.width, height: block.size.height - 36) // Subtract title bar height
+            .frame(width: unscaledSize.width, height: max(unscaledSize.height - 36, 0))
         }
-        .frame(width: block.size.width, height: block.size.height)
+        .frame(width: unscaledSize.width, height: unscaledSize.height)
+        .scaleEffect(contentScale, anchor: .topLeading)
+        .frame(width: block.size.width, height: block.size.height, alignment: .topLeading)
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
         .onHover { hovering in
@@ -2469,41 +2440,6 @@ struct CanvasControls: View {
                 .shadow(color: CosmoColors.glassGrey.opacity(0.4), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Canvas Recenter Button
-/// Appears when canvas is panned far from origin, allows quick return to center
-private struct CanvasRecenterButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "scope")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Recenter")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(isHovered ? CosmoColors.textPrimary : CosmoColors.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(CosmoColors.softWhite, in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(CosmoColors.glassGrey.opacity(0.5), lineWidth: 1)
-            )
-            .shadow(color: CosmoColors.glassGrey.opacity(isHovered ? 0.6 : 0.4), radius: isHovered ? 10 : 6, y: 2)
-            .scaleEffect(isHovered ? 1.02 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.2)) {
-                isHovered = hovering
-            }
-        }
     }
 }
 

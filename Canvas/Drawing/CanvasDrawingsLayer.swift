@@ -3,6 +3,7 @@
 // Lives OUTSIDE the scaled ZStack — renders in screen coordinates to prevent clipping
 
 import SwiftUI
+import AppKit
 
 struct CanvasDrawingsLayer: View {
     @ObservedObject var drawingState: DrawingStateManager
@@ -16,6 +17,9 @@ struct CanvasDrawingsLayer: View {
     private enum Constants {
         static let hitTestWidth: CGFloat = 20
         static let deleteButtonOffset: CGFloat = 20
+        static let selectionPadding: CGFloat = 8
+        static let resizeHandleSize: CGFloat = 10
+        static let resizeHandleHitSize: CGFloat = 22
     }
 
     // MARK: - Coordinate Conversion
@@ -46,6 +50,23 @@ struct CanvasDrawingsLayer: View {
         return canvasToScreen(CGPoint(x: p.x + drag.width, y: p.y + drag.height))
     }
 
+    private func canvasRectToScreen(_ rect: CGRect) -> CGRect {
+        let minPt = canvasToScreen(rect.origin)
+        let maxPt = canvasToScreen(CGPoint(x: rect.maxX, y: rect.maxY))
+        return CGRect(
+            x: min(minPt.x, maxPt.x),
+            y: min(minPt.y, maxPt.y),
+            width: abs(maxPt.x - minPt.x),
+            height: abs(maxPt.y - minPt.y)
+        )
+    }
+
+    private func drawingRectWithDrag(_ drawing: CanvasDrawing) -> CGRect {
+        let rect = drawing.boundingRect
+        let drag = dragOffset(for: drawing.id)
+        return rect.offsetBy(dx: drag.width, dy: drag.height)
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -63,11 +84,14 @@ struct CanvasDrawingsLayer: View {
             // 4. Freehand hit areas (invisible fat paths for tap detection)
             freehandHitLayer
 
-            // 5. Active drawing preview (in-progress shape or freehand)
+            // 5. Group selection outline + resize handles for selected shapes
+            selectionOverlayLayer
+
+            // 6. Active drawing preview (in-progress shape or freehand)
             activePreviewLayer
                 .allowsHitTesting(false)
 
-            // 6. Delete button for selected element
+            // 7. Delete button for selected element
             deleteButtonLayer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -111,7 +135,8 @@ struct CanvasDrawingsLayer: View {
             shapeView(for: drawing)
                 .gesture(selectModeDragGesture(for: drawing))
                 .onTapGesture {
-                    handleTap(drawing)
+                    let additive = NSEvent.modifierFlags.contains(.shift)
+                    handleTap(drawing, additive: additive)
                 }
         }
     }
@@ -132,7 +157,6 @@ struct CanvasDrawingsLayer: View {
             width: abs(screenMax.x - screenMin.x),
             height: abs(screenMax.y - screenMin.y)
         )
-        let isSelected = drawingState.selectedDrawingId == drawing.id
         let scaledStroke = drawing.strokeWidth * effectiveScale
 
         Group {
@@ -150,14 +174,6 @@ struct CanvasDrawingsLayer: View {
             }
         }
         .opacity(drawing.opacity)
-        .overlay {
-            if isSelected {
-                Rectangle()
-                    .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .frame(width: screenRect.width + 8, height: screenRect.height + 8)
-                    .position(x: screenRect.midX, y: screenRect.midY)
-            }
-        }
     }
 
     @ViewBuilder
@@ -255,7 +271,7 @@ struct CanvasDrawingsLayer: View {
     private func textView(for drawing: CanvasDrawing) -> some View {
         let weight = drawing.textWeight ?? .M
         let isEditing = drawingState.editingTextId == drawing.id
-        let isSelected = drawingState.selectedDrawingId == drawing.id
+        let isSelected = drawingState.isSelected(drawing.id)
         let screenPos = canvasToScreenDragged(drawing.origin, drawingId: drawing.id)
         let scaledFontSize = weight.fontSize * effectiveScale
 
@@ -278,7 +294,8 @@ struct CanvasDrawingsLayer: View {
                         } else if drawingState.toolMode == .text {
                             drawingState.editingTextId = drawing.id
                         } else {
-                            handleTap(drawing)
+                            let additive = NSEvent.modifierFlags.contains(.shift)
+                            handleTap(drawing, additive: additive)
                         }
                     }
                     .onTapGesture(count: 2) {
@@ -323,8 +340,92 @@ struct CanvasDrawingsLayer: View {
         .strokedPath(StrokeStyle(lineWidth: Constants.hitTestWidth * effectiveScale, lineCap: .round))
         .fill(Color.white.opacity(0.001))
         .onTapGesture {
-            handleTap(drawing)
+            let additive = NSEvent.modifierFlags.contains(.shift)
+            handleTap(drawing, additive: additive)
         }
+    }
+
+    // MARK: - Shape Group Selection Overlay
+
+    private var selectionOverlayLayer: some View {
+        Group {
+            if drawingState.toolMode == .select,
+               let screenRect = selectedShapeScreenBounds {
+                let padded = screenRect.insetBy(dx: -Constants.selectionPadding, dy: -Constants.selectionPadding)
+
+                Rectangle()
+                    .stroke(Color.blue.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .frame(width: max(padded.width, 1), height: max(padded.height, 1))
+                    .position(x: padded.midX, y: padded.midY)
+
+                ForEach(ShapeResizeCorner.allCases, id: \.self) { corner in
+                    resizeHandle(corner: corner, in: padded)
+                }
+            }
+        }
+    }
+
+    private var selectedShapeScreenBounds: CGRect? {
+        let selectedShapes = drawingState.drawings.filter {
+            $0.drawingType == .shape && drawingState.isSelected($0.id)
+        }
+        guard !selectedShapes.isEmpty else { return nil }
+
+        let canvasBounds = selectedShapes
+            .map(drawingRectWithDrag)
+            .dropFirst()
+            .reduce(drawingRectWithDrag(selectedShapes[0])) { partial, rect in
+                partial.union(rect)
+            }
+        return canvasRectToScreen(canvasBounds)
+    }
+
+    @ViewBuilder
+    private func resizeHandle(corner: ShapeResizeCorner, in rect: CGRect) -> some View {
+        let point = resizeHandlePoint(for: corner, in: rect)
+
+        Circle()
+            .fill(Color.white)
+            .frame(width: Constants.resizeHandleSize, height: Constants.resizeHandleSize)
+            .overlay(
+                Circle()
+                    .stroke(Color.blue.opacity(0.9), lineWidth: 1.5)
+            )
+            .frame(width: Constants.resizeHandleHitSize, height: Constants.resizeHandleHitSize)
+            .contentShape(Circle())
+            .position(point)
+            .gesture(groupResizeGesture(corner: corner))
+    }
+
+    private func resizeHandlePoint(for corner: ShapeResizeCorner, in rect: CGRect) -> CGPoint {
+        switch corner {
+        case .topLeft:
+            return CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight:
+            return CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft:
+            return CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight:
+            return CGPoint(x: rect.maxX, y: rect.maxY)
+        }
+    }
+
+    private func groupResizeGesture(corner: ShapeResizeCorner) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard drawingState.toolMode == .select else { return }
+                drawingState.updateSelectedShapeResize(
+                    corner: corner,
+                    translation: CGSize(
+                        width: value.translation.width / effectiveScale,
+                        height: value.translation.height / effectiveScale
+                    )
+                )
+            }
+            .onEnded { _ in
+                guard drawingState.toolMode == .select else { return }
+                drawingState.finishSelectedShapeResize()
+            }
     }
 
     // MARK: - Active Preview
@@ -414,12 +515,13 @@ struct CanvasDrawingsLayer: View {
 
     private var deleteButtonLayer: some View {
         Group {
-            if let selectedId = drawingState.selectedDrawingId,
+            if drawingState.selectedDrawingIds.count == 1,
+               let selectedId = drawingState.selectedDrawingIds.first,
                let drawing = drawingState.drawings.first(where: { $0.id == selectedId }) {
                 drawingDeleteButton(for: drawing)
             }
         }
-        .animation(ProMotionSprings.snappy, value: drawingState.selectedDrawingId)
+        .animation(ProMotionSprings.snappy, value: drawingState.selectedDrawingIds)
     }
 
     @ViewBuilder
@@ -460,6 +562,10 @@ struct CanvasDrawingsLayer: View {
         DragGesture(minimumDistance: 5)
             .onChanged { value in
                 guard drawingState.toolMode == .select else { return }
+                if drawingState.selectedDrawingIds.count > 1,
+                   drawingState.isSelected(drawing.id) {
+                    return
+                }
                 if drawingState.draggingDrawingId != drawing.id {
                     drawingState.beginDragDrawing(id: drawing.id)
                 }
@@ -471,24 +577,25 @@ struct CanvasDrawingsLayer: View {
             }
             .onEnded { _ in
                 guard drawingState.toolMode == .select else { return }
+                if drawingState.selectedDrawingIds.count > 1,
+                   drawingState.isSelected(drawing.id) {
+                    return
+                }
                 drawingState.finishDragDrawing()
             }
     }
 
     // MARK: - Tap Handling
 
-    private func handleTap(_ drawing: CanvasDrawing) {
+    private func handleTap(_ drawing: CanvasDrawing, additive: Bool = false) {
         if drawingState.toolMode == .erase {
             withAnimation(ProMotionSprings.snappy) {
                 drawingState.deleteDrawing(drawing.id)
             }
         } else {
             withAnimation(ProMotionSprings.snappy) {
-                if drawingState.selectedDrawingId == drawing.id {
-                    drawingState.selectedDrawingId = nil
-                } else {
-                    drawingState.selectedDrawingId = drawing.id
-                }
+                let allowAdditiveSelection = additive && drawing.drawingType == .shape
+                drawingState.toggleSelection(drawing.id, additive: allowAdditiveSelection)
             }
         }
     }

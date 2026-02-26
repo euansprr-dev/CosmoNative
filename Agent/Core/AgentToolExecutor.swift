@@ -688,14 +688,25 @@ class AgentToolExecutor {
                 ] as [String: Any]
             }
 
-            return jsonEncode([
+            var response: [String: Any] = [
                 "clientName": result.clientName,
                 "totalSwipesScanned": result.totalSwipesScanned,
                 "candidatesEvaluated": result.candidatesEvaluated,
                 "adaptedIdeas": ideas,
                 "count": ideas.count,
                 "timeFilter": result.timeFilter ?? "all time"
-            ] as [String: Any])
+            ]
+
+            if let engineError = result.engineError {
+                response["error"] = engineError
+                response["message"] = "The adaptation engine encountered an error. The ideas below may be incomplete."
+            }
+
+            if ideas.isEmpty && result.candidatesEvaluated > 0 {
+                response["warning"] = "Screening found \(result.candidatesEvaluated) candidates but adaptation generated 0 ideas. This likely indicates an API error."
+            }
+
+            return jsonEncode(response as [String: Any])
         } catch {
             return jsonError("Swipe adaptation failed: \(error.localizedDescription)")
         }

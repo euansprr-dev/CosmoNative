@@ -55,16 +55,8 @@ struct CanvasDrawingToolbar: View {
             colorButton
                 .drawingToolReveal(
                     visible: toolsVisible,
-                    index: toolItems.count + 1,
-                    total: toolItems.count + 2
-                )
-
-            // Width buttons
-            widthButtons
-                .drawingToolReveal(
-                    visible: toolsVisible,
                     index: toolItems.count,
-                    total: toolItems.count + 2
+                    total: toolItems.count + 1
                 )
 
             // Tool buttons (select, shape, draw, text, erase)
@@ -74,7 +66,7 @@ struct CanvasDrawingToolbar: View {
                     .drawingToolReveal(
                         visible: toolsVisible,
                         index: toolItems.count - 1 - index,
-                        total: toolItems.count + 2
+                        total: toolItems.count + 1
                     )
             }
         }
@@ -92,7 +84,7 @@ struct CanvasDrawingToolbar: View {
                 } else {
                     drawingState.toolMode = mode
                 }
-                drawingState.selectedDrawingId = nil
+                drawingState.clearSelection()
             }
         } label: {
             Image(systemName: icon)
@@ -120,25 +112,6 @@ struct CanvasDrawingToolbar: View {
         .buttonStyle(.plain)
         .popover(isPresented: $showColorPicker) {
             colorPickerPopover
-        }
-    }
-
-    // MARK: - Width Buttons
-
-    private var widthButtons: some View {
-        HStack(spacing: 0) {
-            ForEach([(1.0, "S"), (2.0, "M"), (4.0, "L")], id: \.1) { width, label in
-                Button {
-                    drawingState.currentStrokeWidth = CGFloat(width)
-                } label: {
-                    Text(label)
-                        .font(.system(size: 10, weight: drawingState.currentStrokeWidth == CGFloat(width) ? .bold : .regular))
-                        .foregroundColor(drawingState.currentStrokeWidth == CGFloat(width) ? .white : DS.textMuted)
-                        .frame(width: 20, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
         }
     }
 

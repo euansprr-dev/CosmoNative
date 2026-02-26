@@ -474,7 +474,7 @@ struct LibraryItem: Identifiable {
     let thumbnailURL: String?
     let statusBadge: String?
 
-    init(atom: Atom) {
+    init(atom: Atom, childCount: Int = 0) {
         self.id = atom.uuid
         self.uuid = atom.uuid
         self.title = atom.title ?? "Untitled"
@@ -525,7 +525,7 @@ struct LibraryItem: Identifiable {
         }
 
         // Child count for folders
-        self.childCount = 0
+        self.childCount = childCount
 
         // Relative date
         let formatter = ISO8601DateFormatter()
@@ -563,6 +563,12 @@ final class LibraryViewModel: ObservableObject {
     private var sortMode: LibrarySortMode = .dateAdded
     private var libraryLoaded = false
 
+    /// UUIDs of atoms that belong to a project (via thinkspace or link) — excluded from top-level
+    private var projectOwnedAtomUUIDs: Set<String> = []
+
+    /// Per-project child counts (for folder card badges)
+    private var projectChildCounts: [String: Int] = [:]
+
     var isAtHome: Bool {
         currentFolderUUID == nil
     }
@@ -577,7 +583,25 @@ final class LibraryViewModel: ObservableObject {
             let userTypes: [AtomType] = [.content, .research, .connection, .project]
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
 
-            allItems = atoms.filter { !$0.isDeleted && !$0.isSwipeFileAtom }.map { LibraryItem(atom: $0) }
+            // Compute project-owned atom UUIDs (atoms on project thinkspaces or with project links)
+            let projectThinkspaces = ThinkspaceManager.shared.thinkspaces.filter { $0.projectUuid != nil }
+            let projectThinkspaceIds = projectThinkspaces.map(\.id)
+            let projectAtoms = atoms.filter { $0.type == .project }
+            let projectUUIDs = projectAtoms.map(\.uuid)
+
+            let (allOwned, perProject) = try await AtomRepository.shared.fetchProjectOwnedAtomUUIDs(
+                projectThinkspaceIds: projectThinkspaceIds,
+                projectUUIDs: projectUUIDs
+            )
+            projectOwnedAtomUUIDs = allOwned
+            projectChildCounts = perProject.mapValues(\.count)
+
+            allItems = atoms.filter { !$0.isDeleted && !$0.isSwipeFileAtom }.map { atom in
+                if atom.type == .project, let count = projectChildCounts[atom.uuid] {
+                    return LibraryItem(atom: atom, childCount: count)
+                }
+                return LibraryItem(atom: atom)
+            }
             applySort()
             applyFilters()
 
@@ -738,8 +762,27 @@ final class LibraryViewModel: ObservableObject {
 
     private func loadFolderContents(_ folderUUID: String) async {
         do {
-            let atoms = try await AtomRepository.shared.fetchByProject(projectUuid: folderUUID)
-            displayItems = atoms.filter { !$0.isDeleted }.map { LibraryItem(atom: $0) }
+            // 1. Get atoms with explicit project links
+            let linkedAtoms = try await AtomRepository.shared.fetchByProject(projectUuid: folderUUID)
+
+            // 2. Get atoms on project thinkspaces (canvas_blocks)
+            let projectThinkspaceIds = ThinkspaceManager.shared.thinkspacesForProject(folderUUID).map(\.id)
+            let thinkspaceAtomUUIDs = try await AtomRepository.shared.fetchAtomUUIDsInThinkspaces(projectThinkspaceIds)
+
+            // 3. Merge: start with linked atoms, then add thinkspace atoms not already included
+            var seenUUIDs = Set(linkedAtoms.map(\.uuid))
+            var allAtoms = linkedAtoms.filter { !$0.isDeleted && $0.type != .project && $0.type != .thinkspace }
+
+            let missingUUIDs = thinkspaceAtomUUIDs.subtracting(seenUUIDs)
+            for uuid in missingUUIDs {
+                if let atom = try await AtomRepository.shared.fetch(uuid: uuid),
+                   !atom.isDeleted && atom.type != .project && atom.type != .thinkspace {
+                    allAtoms.append(atom)
+                    seenUUIDs.insert(uuid)
+                }
+            }
+
+            displayItems = allAtoms.filter { !$0.isSwipeFileAtom }.map { LibraryItem(atom: $0) }
             applySortToDisplay()
         } catch {
             print("⚠️ Folder load failed: \(error)")
@@ -788,18 +831,23 @@ final class LibraryViewModel: ObservableObject {
 
         var items = allItems
 
-        // Folders first, then individual items
-        let folders = items.filter(\.isFolder)
-        let nonFolders = items.filter { !$0.isFolder }
-        items = folders + nonFolders
-
-        // Search filter
+        // When searching, show ALL atoms (including project-owned) so search finds them
         if !searchFilter.isEmpty {
             items = items.filter {
                 $0.title.localizedCaseInsensitiveContains(searchFilter) ||
                 ($0.preview?.localizedCaseInsensitiveContains(searchFilter) ?? false)
             }
+        } else {
+            // At home level without search: exclude non-folder atoms owned by a project
+            items = items.filter { item in
+                item.isFolder || !projectOwnedAtomUUIDs.contains(item.uuid)
+            }
         }
+
+        // Folders first, then individual items
+        let folders = items.filter(\.isFolder)
+        let nonFolders = items.filter { !$0.isFolder }
+        items = folders + nonFolders
 
         displayItems = items
     }

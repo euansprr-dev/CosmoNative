@@ -67,6 +67,10 @@ struct ThinkspaceSidebar: View {
     @State private var newProjectName = ""
     @FocusState private var isProjectNameFieldFocused: Bool
 
+    // Inline project rename state (after drag-to-create)
+    @State private var editingProjectId: String?
+    @State private var editingProjectName: String = ""
+
     // Child docs expand/collapse state
     @State private var expandedThinkspaces: Set<String> = []
     @State private var childDocsLoading: Set<String> = []
@@ -187,7 +191,7 @@ struct ThinkspaceSidebar: View {
         .onKeyPress(.upArrow) { handleKeyUp(); return .handled }
         .onKeyPress(.return) {
             // Don't intercept return when text field is active
-            if isCreatingThinkspace || isCreatingSubThinkspace || isCreatingProject || renamingThinkspaceId != nil {
+            if isCreatingThinkspace || isCreatingSubThinkspace || isCreatingProject || editingProjectId != nil || renamingThinkspaceId != nil {
                 return .ignored  // Let TextField handle it
             }
             handleKeyReturn()
@@ -200,7 +204,11 @@ struct ThinkspaceSidebar: View {
             await loadProjects()
         }
         .onReceive(NotificationCenter.default.publisher(for: .atomsDidChange)) { _ in
-            Task { await loadProjects() }
+            Task {
+                await loadProjects()
+                // Refresh child docs for all expanded thinkspaces so titles stay in sync
+                await manager.refreshChildDocs(for: expandedThinkspaces)
+            }
         }
         .onChange(of: shouldShowSidebar) { _, newValue in
             updateManagerVisibility(newValue)
@@ -491,6 +499,23 @@ struct ThinkspaceSidebar: View {
                                 await deleteProject(projectToDelete)
                             }
                         },
+                        onRenameProject: { newName in
+                            Task {
+                                await renameProject(project, to: newName)
+                            }
+                        },
+                        onDeleteThinkspace: { thinkspace in
+                            Task {
+                                await manager.delete(thinkspace)
+                            }
+                        },
+                        onRenameThinkspace: { thinkspace, newName in
+                            Task {
+                                await manager.rename(thinkspace, to: newName)
+                            }
+                        },
+                        isEditingName: editingProjectId == project.uuid,
+                        editingName: $editingProjectName,
                         expandedThinkspaces: expandedThinkspaces,
                         childDocsCache: manager.childDocsCache,
                         childDocsLoading: childDocsLoading,
@@ -999,6 +1024,11 @@ struct ThinkspaceSidebar: View {
                 isCreatingProject = false
                 newProjectName = ""
             }
+        } else if editingProjectId != nil {
+            withAnimation(ProMotionSprings.snappy) {
+                editingProjectId = nil
+                editingProjectName = ""
+            }
         } else if renamingThinkspaceId != nil {
             withAnimation(ProMotionSprings.snappy) {
                 renamingThinkspaceId = nil
@@ -1224,36 +1254,53 @@ struct ThinkspaceSidebar: View {
         }
     }
 
+    /// Rename a project and clear editing state
+    private func renameProject(_ project: Atom, to newName: String) async {
+        do {
+            var updated = project
+            updated.title = newName
+            updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+            try await repository.update(updated)
+            await loadProjects()
+
+            withAnimation(ProMotionSprings.snappy) {
+                editingProjectId = nil
+                editingProjectName = ""
+            }
+        } catch {
+            print("❌ Failed to rename project: \(error)")
+        }
+    }
+
     /// Create a new project from a ThinkSpace
-    /// The ThinkSpace becomes the root ThinkSpace of the new project (no duplicate created)
+    /// Reuses the existing ThinkSpace (no duplicate), then enters project rename mode
     private func createProjectFromThinkspace(thinkspaceId: String) async {
         // Find the thinkspace
-        guard let thinkspace = manager.unassignedThinkspaces().first(where: { $0.id == thinkspaceId }) else {
+        guard let thinkspace = manager.thinkspaces.first(where: { $0.id == thinkspaceId }) else {
             print("⚠️ ThinkSpace not found for project creation: \(thinkspaceId)")
             return
         }
 
         do {
-            // Create project using the existing thinkspace as root
-            // This avoids creating a duplicate - the thinkspace becomes the root
+            // Create project reusing the existing thinkspace (no duplicate created)
             let project = try await repository.createProjectFromThinkspace(
                 thinkspaceUuid: thinkspaceId,
                 thinkspaceName: thinkspace.name,
-                color: "#8B5CF6"  // Purple
+                color: "#8B5CF6"
             )
 
-            // Reload thinkspaces to reflect the change
+            // Reload data
             await manager.loadThinkspaces()
-
-            // Refresh projects list
             await loadProjects()
 
-            // Expand the new project
-            _ = withAnimation(ProMotionSprings.snappy) {
+            // Expand the project and enter inline rename mode
+            withAnimation(ProMotionSprings.snappy) {
                 expandedProjects.insert(project.uuid)
+                editingProjectId = project.uuid
+                editingProjectName = thinkspace.name
             }
 
-            print("✅ Created project '\(thinkspace.name)' from ThinkSpace (as root)")
+            print("✅ Created project '\(thinkspace.name)' from ThinkSpace")
         } catch {
             print("❌ Failed to create project from ThinkSpace: \(error)")
         }
@@ -1273,6 +1320,13 @@ struct ProjectTreeItem: View {
     let onCreateSubThinkspace: (Thinkspace) -> Void
     let onHoverThinkspace: (String?) -> Void
     var onDeleteProject: ((Atom) -> Void)?
+    var onRenameProject: ((String) -> Void)?
+    var onDeleteThinkspace: ((Thinkspace) -> Void)?
+    var onRenameThinkspace: ((Thinkspace, String) -> Void)?
+
+    // Inline rename state (passed from parent)
+    var isEditingName: Bool = false
+    @Binding var editingName: String
 
     // Child docs state
     var expandedThinkspaces: Set<String> = []
@@ -1285,6 +1339,7 @@ struct ProjectTreeItem: View {
 
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
+    @FocusState private var isEditFieldFocused: Bool
 
     private var projectColor: Color {
         if let metadata = project.metadataValue(as: ProjectMetadata.self),
@@ -1297,83 +1352,60 @@ struct ProjectTreeItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Project header row
-            Button(action: onToggleExpand) {
+            if isEditingName {
+                // Inline rename field
                 HStack(spacing: 8) {
-                    // Disclosure arrow
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                        .frame(width: 12)
-
-                    // Project icon/emoji
                     Text(projectIcon)
                         .font(.system(size: 14))
 
-                    // Project name - disable hit testing to prevent text cursor
-                    Text(project.title ?? "Untitled Project")
+                    TextField("Project name", text: $editingName)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(DS.text)
-                        .lineLimit(1)
-                        .allowsHitTesting(false)
-
-                    Spacer()
-
-                    // ThinkSpace count
-                    Text("\(thinkspaces.count)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.border, in: Capsule())
-                        .allowsHitTesting(false)
-
-                    // Hover actions
-                    if isHovered {
-                        HStack(spacing: 4) {
-                            // Add button
-                            if let rootThinkspace = thinkspaces.first(where: { $0.isRootThinkspace }) {
-                                Button {
-                                    onCreateSubThinkspace(rootThinkspace)
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(DS.textSecondary)
-                                }
-                                .buttonStyle(.plain)
+                        .focused($isEditFieldFocused)
+                        .onSubmit {
+                            let trimmed = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                onRenameProject?(trimmed)
                             }
-
-                            // Delete available via right-click context menu
                         }
-                        .transition(.opacity)
+
+                    Button {
+                        let trimmed = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            onRenameProject?(trimmed)
+                        }
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(projectColor)
                     }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isHovered ? DS.borderSubtle : Color.clear)
+                        .fill(projectColor.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(projectColor.opacity(0.3), lineWidth: 1)
+                        )
                 )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                isHovered = hovering
-            }
-            .contextMenu {
-                projectContextMenu
-            }
-            .confirmationDialog(
-                "Delete \"\(project.title ?? "Untitled Project")\"?",
-                isPresented: $showDeleteConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Delete", role: .destructive) {
-                    onDeleteProject?(project)
+                .onAppear {
+                    isEditFieldFocused = true
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This project and all its ThinkSpaces will be moved to Recently Deleted for 30 days.")
+            } else {
+                Button(action: onToggleExpand) {
+                    projectHeaderContent
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isHovered = hovering
+                }
+                .contextMenu {
+                    projectContextMenu
+                }
             }
 
             // Child ThinkSpaces (when expanded)
@@ -1409,7 +1441,12 @@ struct ProjectTreeItem: View {
                                 onAddSubThinkspace: {
                                     onCreateSubThinkspace(thinkspace)
                                 },
-                                onDelete: nil  // Can't delete from project view (only root)
+                                onDelete: {
+                                    onDeleteThinkspace?(thinkspace)
+                                },
+                                onRename: { newName in
+                                    onRenameThinkspace?(thinkspace, newName)
+                                }
                             )
                             .onHover { hovering in
                                 onHoverThinkspace(hovering ? thinkspace.id : nil)
@@ -1433,11 +1470,82 @@ struct ProjectTreeItem: View {
                 isHovered = true
             }
         }
+        .confirmationDialog(
+            "Delete \"\(project.title ?? "Untitled Project")\"?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                onDeleteProject?(project)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This project and all its ThinkSpaces will be moved to Recently Deleted for 30 days.")
+        }
     }
 
     private var projectIcon: String {
         // Could parse from project metadata in future
         "💼"
+    }
+
+    // MARK: - Project Header Content
+
+    private var projectHeaderContent: some View {
+        HStack(spacing: 8) {
+            // Disclosure arrow
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.textMuted)
+                .frame(width: 12)
+
+            // Project icon/emoji
+            Text(projectIcon)
+                .font(.system(size: 14))
+
+            // Project name
+            Text(project.title ?? "Untitled Project")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(DS.text)
+                .lineLimit(1)
+                .allowsHitTesting(false)
+
+            Spacer()
+
+            // ThinkSpace count
+            Text("\(thinkspaces.count)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.textMuted)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.border, in: Capsule())
+                .allowsHitTesting(false)
+
+            // Hover actions
+            if isHovered {
+                HStack(spacing: 4) {
+                    if let firstThinkspace = thinkspaces.first {
+                        Button {
+                            onCreateSubThinkspace(firstThinkspace)
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DS.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? DS.borderSubtle : Color.clear)
+        )
+        .contentShape(Rectangle())
     }
 
     // MARK: - Context Menu
@@ -1452,9 +1560,9 @@ struct ProjectTreeItem: View {
 
         Divider()
 
-        if let rootThinkspace = thinkspaces.first(where: { $0.isRootThinkspace }) {
+        if let firstThinkspace = thinkspaces.first {
             Button {
-                onCreateSubThinkspace(rootThinkspace)
+                onCreateSubThinkspace(firstThinkspace)
             } label: {
                 Label("New ThinkSpace", systemImage: "plus.rectangle.on.rectangle")
             }
@@ -1562,9 +1670,6 @@ struct ThinkspaceCard: View {
                         cardContent
                     }
                     .buttonStyle(.plain)
-                    .contextMenu {
-                        contextMenuContent
-                    }
                 }
             }
 
@@ -1572,6 +1677,9 @@ struct ThinkspaceCard: View {
             if isExpanded {
                 childDocsSection
             }
+        }
+        .contextMenu {
+            contextMenuContent
         }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .animation(ProMotionSprings.snappy, value: isRenaming)
@@ -1675,28 +1783,17 @@ struct ThinkspaceCard: View {
                       : DS.borderSubtle)
                 .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
                 .overlay(
-                    Image(systemName: thinkspace.isRootThinkspace ? "rectangle.3.group.fill" : "rectangle.3.group")
+                    Image(systemName: "rectangle.3.group")
                         .font(.system(size: isCompact ? 10 : 11, weight: .medium))
                         .foregroundColor(isActive ? accentColor : DS.textSecondary)
                 )
 
             // Text - disable hit testing to prevent text cursor
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(thinkspace.name)
-                        .font(.system(size: isCompact ? 12 : 13, weight: isActive ? .semibold : .medium))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
-
-                    if thinkspace.isRootThinkspace {
-                        Text("Root")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(accentColor.opacity(0.8))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(accentColor.opacity(0.15), in: Capsule())
-                    }
-                }
+                Text(thinkspace.name)
+                    .font(.system(size: isCompact ? 12 : 13, weight: isActive ? .semibold : .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
 
                 if !isCompact {
                     Text("\(thinkspace.blockCount) blocks · \(thinkspace.lastOpenedFormatted)")
@@ -1709,7 +1806,7 @@ struct ThinkspaceCard: View {
             Spacer()
 
             // Hover actions
-            if isHovered && !thinkspace.isRootThinkspace {
+            if isHovered {
                 HStack(spacing: 4) {
                     // Add sub-thinkspace
                     if showAddButton, let onAdd = onAddSubThinkspace {
@@ -1757,16 +1854,14 @@ struct ThinkspaceCard: View {
 
         Divider()
 
-        if !thinkspace.isRootThinkspace {
-            Button {
-                renameText = thinkspace.name
-                isRenaming = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isRenameFieldFocused = true
-                }
-            } label: {
-                Label("Rename", systemImage: "pencil")
+        Button {
+            renameText = thinkspace.name
+            isRenaming = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isRenameFieldFocused = true
             }
+        } label: {
+            Label("Rename", systemImage: "pencil")
         }
 
         if let onDuplicate = onDuplicate {
@@ -1793,7 +1888,7 @@ struct ThinkspaceCard: View {
             }
         }
 
-        if !thinkspace.isRootThinkspace, let _ = onDelete {
+        if let _ = onDelete {
             Divider()
 
             Button(role: .destructive) {
@@ -1808,9 +1903,6 @@ struct ThinkspaceCard: View {
 
     private var accessibilityDescription: String {
         var desc = "ThinkSpace: \(thinkspace.name)"
-        if thinkspace.isRootThinkspace {
-            desc += ", Root canvas"
-        }
         desc += ", \(thinkspace.blockCount) blocks"
         desc += ", last opened \(thinkspace.lastOpenedFormatted)"
         return desc
@@ -1826,7 +1918,14 @@ struct ThinkspaceCard: View {
             return
         }
 
-        onRename?(trimmed)
+        if let onRename = onRename {
+            onRename(trimmed)
+        } else {
+            // Fallback: rename directly via manager if callback not wired
+            Task {
+                await ThinkspaceManager.shared.rename(thinkspace, to: trimmed)
+            }
+        }
         isRenaming = false
         renameText = ""
     }

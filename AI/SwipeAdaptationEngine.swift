@@ -21,6 +21,11 @@ struct SwipeAdaptationCandidate {
 struct ScreeningResult: Codable {
     let selectedIndices: [Int]
     let reasoning: [String]?
+    var usedFallback: Bool = false   // true if JSON parsing failed and positional fallback was used
+
+    enum CodingKeys: String, CodingKey {
+        case selectedIndices, reasoning
+    }
 }
 
 struct AdaptedIdea: Codable {
@@ -42,6 +47,7 @@ struct SwipeAdaptationResult {
     let adaptedIdeas: [AdaptedIdea]
     let sourceSwipes: [SwipeAdaptationCandidate]
     let timeFilter: String?
+    let engineError: String?    // nil = success, non-nil = Pass 1 or 2 failed
 }
 
 // MARK: - Engine
@@ -133,18 +139,26 @@ final class SwipeAdaptationEngine {
                 candidatesEvaluated: 0,
                 adaptedIdeas: [],
                 sourceSwipes: [],
-                timeFilter: timeFilter
+                timeFilter: timeFilter,
+                engineError: nil
             )
         }
 
         // 7. Pass 1: Claude screens entire library (Haiku)
+        var engineError: String? = nil
         let maxCandidates = min(maxResults + 5, 25)
         let screeningResult = try await screenCandidates(
             compactSwipes: compactSwipes,
             clientProfile: clientMeta,
             clientName: resolvedName,
-            maxCandidates: maxCandidates
+            maxCandidates: maxCandidates,
+            topPerformerFirstLines: topPerformerFirstLines
         )
+
+        // Track if screening fell back to positional selection
+        if screeningResult.usedFallback {
+            engineError = "Pass 1 screening fell back to positional selection (Haiku response was unparseable)"
+        }
 
         // 8. Load full bodies for selected swipes + build candidates
         let selectedCandidates: [SwipeAdaptationCandidate] = screeningResult.selectedIndices.enumerated().compactMap { reasonIdx, swipeIdx in
@@ -183,20 +197,34 @@ final class SwipeAdaptationEngine {
                 candidatesEvaluated: selectedCandidates.count,
                 adaptedIdeas: [],
                 sourceSwipes: [],
-                timeFilter: timeFilter
+                timeFilter: timeFilter,
+                engineError: engineError
             )
         }
 
         // 10. Pass 2: Claude generates adapted ideas (Sonnet, with prompt caching)
-        let adaptedIdeas = await generateAdaptations(
+        let adaptationResult = await generateAdaptations(
             candidates: deduplicated,
             clientProfile: clientMeta,
             clientName: resolvedName,
-            existingIdeas: existingIdeaTitles
+            existingIdeas: existingIdeaTitles,
+            topPerformerFirstLines: topPerformerFirstLines
         )
 
-        // 11. Trim to requested maxResults
-        let finalIdeas = Array(adaptedIdeas.prefix(maxResults))
+        // Thread Pass 2 error (takes priority over Pass 1 fallback warning)
+        if let pass2Error = adaptationResult.error {
+            engineError = pass2Error
+        }
+
+        // 11. Post-adaptation dedup: remove generated ideas too similar to existing content
+        let dedupedIdeas = deduplicateAdaptedIdeas(
+            adaptationResult.ideas,
+            existingIdeaTitles: existingIdeaTitles,
+            topPerformerFirstLines: topPerformerFirstLines
+        )
+
+        // 12. Trim to requested maxResults
+        let finalIdeas = Array(dedupedIdeas.prefix(maxResults))
 
         return SwipeAdaptationResult(
             clientName: resolvedName,
@@ -205,7 +233,8 @@ final class SwipeAdaptationEngine {
             candidatesEvaluated: deduplicated.count,
             adaptedIdeas: finalIdeas,
             sourceSwipes: deduplicated,
-            timeFilter: timeFilter
+            timeFilter: timeFilter,
+            engineError: engineError
         )
     }
 
@@ -215,14 +244,16 @@ final class SwipeAdaptationEngine {
         compactSwipes: [(index: Int, atom: Atom, display: String)],
         clientProfile: ClientProfileMetadata?,
         clientName: String,
-        maxCandidates: Int
+        maxCandidates: Int,
+        topPerformerFirstLines: [String] = []
     ) async throws -> ScreeningResult {
 
         let prompt = buildScreeningPrompt(
             compactSwipes: compactSwipes,
             clientProfile: clientProfile,
             clientName: clientName,
-            maxCandidates: maxCandidates
+            maxCandidates: maxCandidates,
+            topPerformerFirstLines: topPerformerFirstLines
         )
 
         let response = try await ResearchService.shared.analyze(
@@ -239,7 +270,8 @@ final class SwipeAdaptationEngine {
         compactSwipes: [(index: Int, atom: Atom, display: String)],
         clientProfile: ClientProfileMetadata?,
         clientName: String,
-        maxCandidates: Int
+        maxCandidates: Int,
+        topPerformerFirstLines: [String] = []
     ) -> String {
         var sections: [String] = []
 
@@ -269,6 +301,16 @@ final class SwipeAdaptationEngine {
             }
         }
         sections.append(clientSection)
+
+        // Top performer angle exclusion
+        if !topPerformerFirstLines.isEmpty {
+            let angleList = topPerformerFirstLines.prefix(10).map { "- \($0)" }.joined(separator: "\n")
+            sections.append("""
+            ANGLES ALREADY PROVEN FOR THIS CLIENT (deprioritize swipes covering the same themes):
+            \(angleList)
+            Prefer swipes that open entirely NEW structural angles for this client.
+            """)
+        }
 
         // Swipe list
         let swipeList = compactSwipes.map { $0.display }.joined(separator: "\n")
@@ -311,10 +353,12 @@ final class SwipeAdaptationEngine {
         // Fallback: if parsing fails, return first N indices as a safe default
         print("⚠️ [SwipeAdaptationEngine] Failed to parse screening response, using positional fallback")
         let fallbackCount = min(20, swipeCount)
-        return ScreeningResult(
+        var fallbackResult = ScreeningResult(
             selectedIndices: Array(1...fallbackCount),
             reasoning: nil
         )
+        fallbackResult.usedFallback = true
+        return fallbackResult
     }
 
     private func sanitizeScreeningResult(_ result: ScreeningResult, swipeCount: Int) -> ScreeningResult {
@@ -345,21 +389,51 @@ final class SwipeAdaptationEngine {
         }
     }
 
+    /// Post-adaptation dedup: removes generated ideas that are too similar to existing content.
+    /// Uses a lower threshold (0.6) than pre-adaptation dedup (0.8) since we're comparing
+    /// generated text against reference text.
+    private func deduplicateAdaptedIdeas(
+        _ ideas: [AdaptedIdea],
+        existingIdeaTitles: [String],
+        topPerformerFirstLines: [String]
+    ) -> [AdaptedIdea] {
+        let allExisting = existingIdeaTitles + topPerformerFirstLines
+        guard !allExisting.isEmpty else { return ideas }
+
+        return ideas.filter { idea in
+            let hookLower = idea.adaptedHook.lowercased()
+            let titleLower = idea.ideaTitle.lowercased()
+            for existing in allExisting {
+                if levenshteinRatio(hookLower, existing) > 0.6 {
+                    print("⚠️ [SwipeAdaptationEngine] Post-dedup removed idea (hook too similar): \(idea.ideaTitle)")
+                    return false
+                }
+                if levenshteinRatio(titleLower, existing) > 0.6 {
+                    print("⚠️ [SwipeAdaptationEngine] Post-dedup removed idea (title too similar): \(idea.ideaTitle)")
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     // MARK: - Pass 2: Claude-Powered Adaptation (Sonnet, cached)
 
     private func generateAdaptations(
         candidates: [SwipeAdaptationCandidate],
         clientProfile: ClientProfileMetadata?,
         clientName: String,
-        existingIdeas: [String]
-    ) async -> [AdaptedIdea] {
+        existingIdeas: [String],
+        topPerformerFirstLines: [String] = []
+    ) async -> (ideas: [AdaptedIdea], error: String?) {
 
         let hookExpertise = buildHookExpertisePrompt()
         let userPrompt = buildUserPrompt(
             candidates: candidates,
             clientProfile: clientProfile,
             clientName: clientName,
-            existingIdeas: existingIdeas
+            existingIdeas: existingIdeas,
+            topPerformerFirstLines: topPerformerFirstLines
         )
 
         do {
@@ -373,10 +447,10 @@ final class SwipeAdaptationEngine {
                 model: AgentModelTier.strategist.modelId,
                 maxTokens: 8192
             )
-            return parseAdaptationResponse(response, sourceSwipes: candidates)
+            return (ideas: parseAdaptationResponse(response, sourceSwipes: candidates), error: nil)
         } catch {
-            print("⚠️ [SwipeAdaptationEngine] Claude API failed: \(error). Returning empty.")
-            return []
+            print("⚠️ [SwipeAdaptationEngine] Pass 2 failed: \(error)")
+            return (ideas: [], error: "Pass 2 API failed: \(error.localizedDescription)")
         }
     }
 
@@ -437,7 +511,8 @@ final class SwipeAdaptationEngine {
         candidates: [SwipeAdaptationCandidate],
         clientProfile: ClientProfileMetadata?,
         clientName: String,
-        existingIdeas: [String]
+        existingIdeas: [String],
+        topPerformerFirstLines: [String] = []
     ) -> String {
         var sections: [String] = []
 
@@ -481,10 +556,17 @@ final class SwipeAdaptationEngine {
         }
         sections.append(clientSection)
 
-        // Existing ideas to avoid
-        if !existingIdeas.isEmpty {
-            let avoidList = existingIdeas.prefix(10).map { "- \($0)" }.joined(separator: "\n")
-            sections.append("HOOKS TO ALREADY AVOID (client already has ideas covering these):\n\(avoidList)")
+        // Angles to avoid (existing ideas + top performer first lines)
+        let allAvoidanceItems = existingIdeas.prefix(10) + topPerformerFirstLines.prefix(10)
+        if !allAvoidanceItems.isEmpty {
+            let avoidList = allAvoidanceItems.map { "- \($0)" }.joined(separator: "\n")
+            sections.append("""
+            ANGLES TO AVOID — The client already has proven content covering these. Generate FRESH angles only:
+            \(avoidList)
+
+            Do NOT generate ideas that cover the same angle, theme, or narrative framing as the \
+            items above, even with different wording. The user wants NEW angles they haven't explored.
+            """)
         }
 
         // Swipe candidates with full body excerpts

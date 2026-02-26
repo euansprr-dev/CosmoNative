@@ -4,6 +4,13 @@
 import SwiftUI
 import GRDB
 
+enum ShapeResizeCorner: CaseIterable, Hashable {
+    case topLeft
+    case topRight
+    case bottomLeft
+    case bottomRight
+}
+
 @MainActor
 final class DrawingStateManager: ObservableObject {
 
@@ -20,11 +27,25 @@ final class DrawingStateManager: ObservableObject {
 
     @Published var drawings: [CanvasDrawing] = []
     @Published var selectedDrawingId: String?
+    @Published var selectedDrawingIds: Set<String> = []
 
     // MARK: - Drag-to-Move State
 
     @Published var draggingDrawingId: String?
     @Published var drawingDragOffset: CGSize = .zero
+
+    // MARK: - Group Shape Resize State
+
+    private struct GroupShapeResizeSession {
+        let corner: ShapeResizeCorner
+        let initialBounds: CGRect
+        let snapshots: [String: CGRect]
+        let selectedShapeIds: [String]
+    }
+
+    private let minimumGroupDimension: CGFloat = 12
+    private let minimumShapeDimension: CGFloat = 4
+    private var groupShapeResizeSession: GroupShapeResizeSession?
 
     // MARK: - Active Drawing (in-progress preview)
 
@@ -62,9 +83,72 @@ final class DrawingStateManager: ObservableObject {
                     }
                 }
                 self.drawings = records.map { CanvasDrawing(from: $0) }
+                self.clearSelection()
+                self.editingTextId = nil
+                self.draggingDrawingId = nil
+                self.drawingDragOffset = .zero
             } catch {
                 print("DrawingStateManager: loadDrawings failed: \(error)")
             }
+        }
+    }
+
+    // MARK: - Selection
+
+    func isSelected(_ id: String) -> Bool {
+        selectedDrawingIds.contains(id)
+    }
+
+    func clearSelection() {
+        selectedDrawingIds.removeAll()
+        selectedDrawingId = nil
+        groupShapeResizeSession = nil
+    }
+
+    func selectSingleDrawing(_ id: String?) {
+        guard let id else {
+            clearSelection()
+            return
+        }
+        selectedDrawingIds = [id]
+        selectedDrawingId = id
+        groupShapeResizeSession = nil
+    }
+
+    func toggleSelection(_ id: String, additive: Bool) {
+        if additive {
+            if selectedDrawingIds.contains(id) {
+                selectedDrawingIds.remove(id)
+                if selectedDrawingId == id {
+                    selectedDrawingId = primarySelectedDrawingId()
+                }
+            } else {
+                selectedDrawingIds.insert(id)
+                selectedDrawingId = id
+            }
+            if selectedDrawingIds.isEmpty {
+                selectedDrawingId = nil
+            }
+        } else {
+            if selectedDrawingIds.count == 1, selectedDrawingIds.contains(id) {
+                clearSelection()
+                return
+            }
+            selectedDrawingIds = [id]
+            selectedDrawingId = id
+        }
+        groupShapeResizeSession = nil
+    }
+
+    func selectedShapeDrawings() -> [CanvasDrawing] {
+        drawings.filter { selectedDrawingIds.contains($0.id) && $0.drawingType == .shape }
+    }
+
+    func selectedShapeBounds() -> CGRect? {
+        let selectedShapes = selectedShapeDrawings()
+        guard !selectedShapes.isEmpty else { return nil }
+        return selectedShapes.dropFirst().reduce(selectedShapes[0].boundingRect) { partial, drawing in
+            partial.union(drawing.boundingRect)
         }
     }
 
@@ -95,11 +179,18 @@ final class DrawingStateManager: ObservableObject {
 
     func deleteDrawing(_ id: String) {
         drawings.removeAll { $0.id == id }
+        selectedDrawingIds.remove(id)
         if selectedDrawingId == id {
+            selectedDrawingId = primarySelectedDrawingId()
+        }
+        if selectedDrawingIds.isEmpty {
             selectedDrawingId = nil
         }
         if editingTextId == id {
             editingTextId = nil
+        }
+        if groupShapeResizeSession?.selectedShapeIds.contains(id) == true {
+            groupShapeResizeSession = nil
         }
 
         // Soft-delete in DB
@@ -120,8 +211,12 @@ final class DrawingStateManager: ObservableObject {
     // MARK: - Drag-to-Move
 
     func beginDragDrawing(id: String) {
+        if !selectedDrawingIds.contains(id) {
+            selectSingleDrawing(id)
+        }
         draggingDrawingId = id
         drawingDragOffset = .zero
+        groupShapeResizeSession = nil
     }
 
     func updateDragDrawing(translation: CGSize) {
@@ -156,6 +251,91 @@ final class DrawingStateManager: ObservableObject {
 
         draggingDrawingId = nil
         drawingDragOffset = .zero
+    }
+
+    // MARK: - Group Shape Resize
+
+    func beginSelectedShapeResize(corner: ShapeResizeCorner) {
+        let shapes = selectedShapeDrawings()
+        guard !shapes.isEmpty else {
+            groupShapeResizeSession = nil
+            return
+        }
+
+        let initialBounds = shapes.dropFirst().reduce(shapes[0].boundingRect) { partial, drawing in
+            partial.union(drawing.boundingRect)
+        }
+        let snapshots = Dictionary(uniqueKeysWithValues: shapes.map { ($0.id, $0.boundingRect) })
+
+        groupShapeResizeSession = GroupShapeResizeSession(
+            corner: corner,
+            initialBounds: initialBounds,
+            snapshots: snapshots,
+            selectedShapeIds: shapes.map(\.id)
+        )
+    }
+
+    func updateSelectedShapeResize(corner: ShapeResizeCorner, translation: CGSize) {
+        if groupShapeResizeSession == nil || groupShapeResizeSession?.corner != corner {
+            beginSelectedShapeResize(corner: corner)
+        }
+        guard let session = groupShapeResizeSession else { return }
+
+        let initial = session.initialBounds
+        let minWidth = max(minimumGroupDimension, 1)
+        let minHeight = max(minimumGroupDimension, 1)
+        var target = initial
+
+        switch corner {
+        case .topLeft:
+            let newMinX = min(initial.minX + translation.width, initial.maxX - minWidth)
+            let newMinY = min(initial.minY + translation.height, initial.maxY - minHeight)
+            target = CGRect(x: newMinX, y: newMinY, width: initial.maxX - newMinX, height: initial.maxY - newMinY)
+        case .topRight:
+            let newMaxX = max(initial.maxX + translation.width, initial.minX + minWidth)
+            let newMinY = min(initial.minY + translation.height, initial.maxY - minHeight)
+            target = CGRect(x: initial.minX, y: newMinY, width: newMaxX - initial.minX, height: initial.maxY - newMinY)
+        case .bottomLeft:
+            let newMinX = min(initial.minX + translation.width, initial.maxX - minWidth)
+            let newMaxY = max(initial.maxY + translation.height, initial.minY + minHeight)
+            target = CGRect(x: newMinX, y: initial.minY, width: initial.maxX - newMinX, height: newMaxY - initial.minY)
+        case .bottomRight:
+            let newMaxX = max(initial.maxX + translation.width, initial.minX + minWidth)
+            let newMaxY = max(initial.maxY + translation.height, initial.minY + minHeight)
+            target = CGRect(x: initial.minX, y: initial.minY, width: newMaxX - initial.minX, height: newMaxY - initial.minY)
+        }
+
+        let baseWidth = max(initial.width, 1)
+        let baseHeight = max(initial.height, 1)
+        let sx = target.width / baseWidth
+        let sy = target.height / baseHeight
+
+        for id in session.selectedShapeIds {
+            guard let snapshot = session.snapshots[id],
+                  let idx = drawings.firstIndex(where: { $0.id == id }) else { continue }
+
+            let relativeX = snapshot.minX - initial.minX
+            let relativeY = snapshot.minY - initial.minY
+            let newWidth = max(minimumShapeDimension, snapshot.width * sx)
+            let newHeight = max(minimumShapeDimension, snapshot.height * sy)
+            let newOrigin = CGPoint(
+                x: target.minX + relativeX * sx,
+                y: target.minY + relativeY * sy
+            )
+
+            drawings[idx].origin = newOrigin
+            drawings[idx].size = CGSize(width: newWidth, height: newHeight)
+        }
+    }
+
+    func finishSelectedShapeResize() {
+        guard let session = groupShapeResizeSession else { return }
+        groupShapeResizeSession = nil
+
+        for id in session.selectedShapeIds {
+            guard let drawing = drawings.first(where: { $0.id == id }) else { continue }
+            saveDrawing(drawing)
+        }
     }
 
     // MARK: - Shape Gesture Handling
@@ -301,5 +481,9 @@ final class DrawingStateManager: ObservableObject {
         let projX = lineStart.x + t * dx
         let projY = lineStart.y + t * dy
         return hypot(point.x - projX, point.y - projY)
+    }
+
+    private func primarySelectedDrawingId() -> String? {
+        drawings.last(where: { selectedDrawingIds.contains($0.id) })?.id ?? selectedDrawingIds.first
     }
 }

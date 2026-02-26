@@ -127,8 +127,9 @@ private struct LibraryCardView: View {
                     .foregroundColor(DS.text)
                     .lineLimit(2)
 
-                if let preview = item.preview, !preview.isEmpty, item.thumbnailURL != nil {
+                if let preview = item.preview, !preview.isEmpty, item.thumbnailURL != nil, item.atomType != .research {
                     // Only show body snippet if there's a thumbnail (otherwise it's already in preview area)
+                    // Skip for research items — their body is raw transcript JSON
                     Text(preview)
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
@@ -319,14 +320,6 @@ private struct LibraryCardView: View {
             Image(systemName: "book.fill")
                 .font(.system(size: 32))
                 .foregroundColor(item.color.opacity(0.6))
-
-            if let preview = item.preview, !preview.isEmpty {
-                Text(String(preview.prefix(60)))
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-            }
             Spacer(minLength: 0)
         }
     }

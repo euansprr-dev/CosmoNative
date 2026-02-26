@@ -1,6 +1,6 @@
 // CosmoOS/AI/GhostSuggestionEngine.swift
 // Engine for generating ghost suggestions for Connection sections
-// Uses semantic search and relationship mining to suggest relevant content
+// Uses AI analysis via ResearchService to suggest relevant content
 // December 2025 - Connection Focus Mode integration
 
 import Foundation
@@ -8,8 +8,8 @@ import Foundation
 // MARK: - Ghost Suggestion Engine
 
 /// Engine for generating ghost suggestions for Connection sections.
-/// Analyzes connected atoms, journal entries, research annotations to suggest
-/// relevant content for each section type.
+/// Uses ResearchService (Haiku tier) to analyze connected atoms and produce
+/// synthesized suggestions grounded in source material.
 actor GhostSuggestionEngine {
     // MARK: - Singleton
 
@@ -17,11 +17,11 @@ actor GhostSuggestionEngine {
 
     // MARK: - Configuration
 
-    /// Minimum confidence threshold for suggestions (60%)
-    private let confidenceThreshold: Double = 0.6
-
     /// Maximum suggestions per section
     private let maxSuggestionsPerSection = 5
+
+    /// Maximum characters per source for the prompt
+    private let maxSourceChars = 800
 
     // MARK: - Public Methods
 
@@ -44,72 +44,71 @@ actor GhostSuggestionEngine {
         }
 
         // Gather source content from related atoms
-        let sourceContent = await gatherSourceContent(atomUUIDs: relatedAtomUUIDs)
+        let sources = await gatherSourceContent(atomUUIDs: relatedAtomUUIDs)
+        guard !sources.isEmpty else { return allSuggestions }
 
-        // Generate suggestions for each section
-        for sectionType in ConnectionSectionType.allCases {
-            let suggestions = await generateSectionsuggest(
-                sectionType: sectionType,
-                connectionTitle: connectionTitle,
-                existingItems: existingItems,
-                sourceContent: sourceContent
+        // Build existing items digest for dedup
+        let existingDigest = existingItems.map { $0.content }.joined(separator: "\n")
+
+        // Build source digest
+        var sourceDigest = ""
+        for source in sources.prefix(6) {
+            let body = String(source.cleanText.prefix(maxSourceChars))
+            sourceDigest += "[\(source.title)]: \(body)\n---\n"
+        }
+
+        let sectionNames = ConnectionSectionType.allCases.map { $0.displayName }.joined(separator: ", ")
+
+        let systemPrompt = """
+        You generate section suggestions for a Connection framework. \
+        Each suggestion must be grounded in the provided source materials. \
+        Write 1-2 sentence synthesized insights, not raw quotes. \
+        Skip sections where sources have nothing relevant. \
+        Do not repeat items that already exist.
+        """
+
+        let prompt = """
+        Connection: "\(connectionTitle)"
+        Sections: \(sectionNames)
+
+        Source materials:
+        \(sourceDigest)
+
+        \(existingDigest.isEmpty ? "" : "Existing items (do NOT repeat these):\n\(existingDigest)\n")
+        For each section where sources provide relevant information, generate 1-3 suggestions.
+        Each suggestion must reference a specific source.
+
+        Respond ONLY with lines in this exact format (one per line):
+        SECTION: <section name> | SOURCE: <source title> | TEXT: <suggested content>
+        """
+
+        do {
+            let response = try await ResearchService.shared.analyze(
+                prompt: prompt,
+                systemPrompt: systemPrompt,
+                tier: .sensor,
+                maxTokens: 1500
             )
-            allSuggestions[sectionType] = suggestions
+
+            let suggestions = parseResponse(response, sources: sources)
+            let deduped = deduplicateSuggestions(suggestions, existingItems: existingItems)
+
+            // Group by section type
+            for suggestion in deduped {
+                allSuggestions[suggestion.targetSectionType, default: []].append(suggestion)
+            }
+
+            // Limit per section
+            for sectionType in ConnectionSectionType.allCases {
+                if let sectionSuggestions = allSuggestions[sectionType], sectionSuggestions.count > maxSuggestionsPerSection {
+                    allSuggestions[sectionType] = Array(sectionSuggestions.prefix(maxSuggestionsPerSection))
+                }
+            }
+        } catch {
+            // Silently return empty suggestions on API failure
         }
 
         return allSuggestions
-    }
-
-    /// Generate suggestions for a specific section
-    /// - Parameters:
-    ///   - sectionType: The section to generate suggestions for
-    ///   - connectionTitle: Title of the Connection
-    ///   - existingItems: Already added items
-    ///   - sourceContent: Content from related atoms
-    /// - Returns: Array of ghost suggestions
-    func generateSectionsuggest(
-        sectionType: ConnectionSectionType,
-        connectionTitle: String,
-        existingItems: [ConnectionItem],
-        sourceContent: [SourceContent]
-    ) async -> [GhostSuggestion] {
-        var suggestions: [GhostSuggestion] = []
-
-        for source in sourceContent {
-            // Extract relevant snippets based on section type
-            let relevantSnippets = extractRelevantSnippets(
-                from: source,
-                for: sectionType,
-                connectionTitle: connectionTitle
-            )
-
-            for snippet in relevantSnippets {
-                // Check if similar content already exists
-                if isDuplicate(snippet.content, existingItems: existingItems) {
-                    continue
-                }
-
-                let suggestion = GhostSuggestion(
-                    content: snippet.content,
-                    sourceAtomUUID: source.atomUUID,
-                    sourceAtomTitle: source.title,
-                    sourceSnippet: snippet.originalText,
-                    targetSectionType: sectionType,
-                    confidence: snippet.confidence
-                )
-
-                if suggestion.shouldShow {
-                    suggestions.append(suggestion)
-                }
-            }
-        }
-
-        // Sort by confidence and limit
-        return Array(
-            suggestions
-                .sorted { $0.confidence > $1.confidence }
-                .prefix(maxSuggestionsPerSection)
-        )
     }
 
     // MARK: - Source Content Gathering
@@ -122,236 +121,161 @@ actor GhostSuggestionEngine {
                 continue
             }
 
-            // Extract content based on atom type
-            var snippets: [String] = []
+            let title = atom.title ?? "Untitled"
+            let cleanText = extractCleanText(from: atom)
 
-            // Main body content
-            if let body = atom.body, !body.isEmpty {
-                snippets.append(contentsOf: splitIntoSnippets(body))
-            }
-
-            // Annotations from research atoms
-            if atom.type == .research, let structured = atom.structured {
-                if let annotations = extractAnnotations(from: structured) {
-                    snippets.append(contentsOf: annotations)
-                }
-            }
-
-            // Journal entry highlights
-            if atom.type == .journalEntry, let structured = atom.structured {
-                if let highlights = extractHighlights(from: structured) {
-                    snippets.append(contentsOf: highlights)
-                }
-            }
+            guard !cleanText.isEmpty else { continue }
 
             content.append(SourceContent(
                 atomUUID: uuid,
-                title: atom.title ?? "Untitled",
+                title: title,
                 type: atom.type,
-                snippets: snippets
+                cleanText: cleanText
             ))
         }
 
         return content
     }
 
-    // MARK: - Snippet Extraction
+    /// Extract clean text from an atom, handling JSON transcript arrays
+    private func extractCleanText(from atom: Atom) -> String {
+        var parts: [String] = []
 
-    private func extractRelevantSnippets(
-        from source: SourceContent,
-        for sectionType: ConnectionSectionType,
-        connectionTitle: String
-    ) -> [RelevantSnippet] {
-        var relevant: [RelevantSnippet] = []
-
-        for snippet in source.snippets {
-            let confidence = calculateRelevance(
-                snippet: snippet,
-                sectionType: sectionType,
-                connectionTitle: connectionTitle
-            )
-
-            if confidence >= confidenceThreshold {
-                // Summarize long snippets
-                let content = snippet.count > 150
-                    ? summarizeSnippet(snippet)
-                    : snippet
-
-                relevant.append(RelevantSnippet(
-                    content: content,
-                    originalText: snippet,
-                    confidence: confidence
-                ))
-            }
+        // Main body — detect and clean JSON transcript arrays
+        if let body = atom.body, !body.isEmpty {
+            parts.append(cleanBodyText(body))
         }
 
-        return relevant
-    }
-
-    private func calculateRelevance(
-        snippet: String,
-        sectionType: ConnectionSectionType,
-        connectionTitle: String
-    ) -> Double {
-        var score: Double = 0.5 // Base score
-
-        let snippetLower = snippet.lowercased()
-        let titleWords = connectionTitle.lowercased().split(separator: " ")
-
-        // Keyword matching for section types
-        let keywords = sectionTypeKeywords(sectionType)
-        for keyword in keywords {
-            if snippetLower.contains(keyword) {
-                score += 0.15
-            }
-        }
-
-        // Title word matching
-        for word in titleWords where word.count > 3 {
-            if snippetLower.contains(word) {
-                score += 0.1
-            }
-        }
-
-        // Structural indicators
-        switch sectionType {
-        case .goal:
-            if snippetLower.contains("goal") || snippetLower.contains("aim") ||
-               snippetLower.contains("objective") || snippetLower.contains("want to") {
-                score += 0.15
-            }
-
-        case .problems:
-            if snippetLower.contains("problem") || snippetLower.contains("issue") ||
-               snippetLower.contains("challenge") || snippetLower.contains("struggle") {
-                score += 0.15
-            }
-
-        case .benefits:
-            if snippetLower.contains("benefit") || snippetLower.contains("advantage") ||
-               snippetLower.contains("improve") || snippetLower.contains("helps") {
-                score += 0.15
-            }
-
-        case .examples:
-            if snippetLower.contains("example") || snippetLower.contains("for instance") ||
-               snippetLower.contains("such as") || snippetLower.contains("case study") {
-                score += 0.15
-            }
-
-        case .beliefsObjections:
-            if snippetLower.contains("but") || snippetLower.contains("however") ||
-               snippetLower.contains("argue") || snippetLower.contains("believe") {
-                score += 0.15
-            }
-
-        case .process:
-            if snippetLower.contains("step") || snippetLower.contains("first") ||
-               snippetLower.contains("then") || snippetLower.contains("process") {
-                score += 0.15
-            }
-
-        case .conceptName:
-            // Less likely to find suggestions for this
-            score -= 0.2
-
-        case .references:
-            if snippetLower.contains("study") || snippetLower.contains("research") ||
-               snippetLower.contains("according to") || snippetLower.contains("found that") {
-                score += 0.15
-            }
-        }
-
-        return min(score, 1.0)
-    }
-
-    private func sectionTypeKeywords(_ type: ConnectionSectionType) -> [String] {
-        switch type {
-        case .goal:
-            return ["goal", "aim", "objective", "outcome", "achieve", "want", "desire"]
-        case .problems:
-            return ["problem", "issue", "challenge", "pain", "struggle", "difficulty", "obstacle"]
-        case .benefits:
-            return ["benefit", "advantage", "improve", "better", "positive", "gain", "help"]
-        case .examples:
-            return ["example", "instance", "case", "application", "real-world", "practice"]
-        case .beliefsObjections:
-            return ["believe", "think", "argue", "objection", "counter", "however", "but"]
-        case .process:
-            return ["step", "process", "how to", "method", "approach", "first", "then", "next"]
-        case .conceptName:
-            return ["name", "call", "term", "concept", "idea", "framework"]
-        case .references:
-            return ["study", "research", "source", "reference", "evidence", "data", "found"]
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func splitIntoSnippets(_ text: String) -> [String] {
-        // Split by sentence/paragraph
-        let separators = CharacterSet(charactersIn: ".!?\n\n")
-        return text
-            .components(separatedBy: separators)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.count >= 20 && $0.count <= 500 }
-    }
-
-    private func summarizeSnippet(_ snippet: String) -> String {
-        // Simple truncation with ellipsis
-        // In production, would use AI summarization
-        if snippet.count > 150 {
-            let endIndex = snippet.index(snippet.startIndex, offsetBy: 147)
-            return String(snippet[..<endIndex]) + "..."
-        }
-        return snippet
-    }
-
-    private func isDuplicate(_ content: String, existingItems: [ConnectionItem]) -> Bool {
-        let contentLower = content.lowercased()
-
-        for item in existingItems {
-            let itemLower = item.content.lowercased()
-
-            // Check for high similarity (simple check)
-            if contentLower == itemLower {
-                return true
-            }
-
-            // Check for significant overlap
-            let contentWords = Set(contentLower.split(separator: " "))
-            let itemWords = Set(itemLower.split(separator: " "))
-
-            if contentWords.count > 0 {
-                let overlap = contentWords.intersection(itemWords).count
-                let similarity = Double(overlap) / Double(contentWords.count)
-                if similarity > 0.7 {
-                    return true
+        // Annotations from research atoms
+        if atom.type == .research, let structured = atom.structured,
+           let data = structured.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let annotations = json["annotations"] as? [[String: Any]] {
+            for annotation in annotations {
+                if let content = annotation["content"] as? String, !content.isEmpty {
+                    parts.append(content)
                 }
             }
         }
 
-        return false
+        return parts.joined(separator: "\n")
     }
 
-    private func extractAnnotations(from structured: String) -> [String]? {
-        guard let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let annotations = json["annotations"] as? [[String: Any]] else {
-            return nil
+    /// Clean body text — extract just text fields from JSON transcript arrays
+    private func cleanBodyText(_ body: String) -> String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Detect JSON transcript array: starts with [ and contains "text" keys
+        if trimmed.hasPrefix("["),
+           let data = trimmed.data(using: .utf8),
+           let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            let texts = jsonArray.compactMap { $0["text"] as? String }
+            if !texts.isEmpty {
+                return texts.joined(separator: " ")
+            }
         }
 
-        return annotations.compactMap { $0["content"] as? String }
+        return body
     }
 
-    private func extractHighlights(from structured: String) -> [String]? {
-        guard let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let highlights = json["highlights"] as? [String] else {
-            return nil
+    // MARK: - Response Parsing
+
+    private func parseResponse(_ response: String, sources: [SourceContent]) -> [GhostSuggestion] {
+        var suggestions: [GhostSuggestion] = []
+
+        for line in response.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.contains("SECTION:") && trimmed.contains("TEXT:") else { continue }
+
+            // Parse: SECTION: <name> | SOURCE: <title> | TEXT: <content>
+            let parts = trimmed.components(separatedBy: "|")
+            guard parts.count >= 3 else { continue }
+
+            let sectionPart = parts[0].replacingOccurrences(of: "SECTION:", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let sourcePart = parts[1].replacingOccurrences(of: "SOURCE:", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let textPart = parts[2...].joined(separator: "|")
+                .replacingOccurrences(of: "TEXT:", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard let sectionType = matchSectionType(sectionPart.lowercased()),
+                  !textPart.isEmpty else { continue }
+
+            // Find matching source atom
+            let matchingSource = sources.first {
+                $0.title.lowercased().contains(sourcePart.lowercased()) ||
+                sourcePart.lowercased().contains($0.title.lowercased())
+            } ?? sources.first
+
+            guard let source = matchingSource else { continue }
+
+            suggestions.append(GhostSuggestion(
+                content: textPart,
+                sourceAtomUUID: source.atomUUID,
+                sourceAtomTitle: source.title,
+                sourceSnippet: sourcePart,
+                targetSectionType: sectionType,
+                confidence: 0.75
+            ))
         }
 
-        return highlights
+        return suggestions
+    }
+
+    private func matchSectionType(_ name: String) -> ConnectionSectionType? {
+        let normalized = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for type in ConnectionSectionType.allCases {
+            if type.displayName.lowercased() == normalized ||
+               type.rawValue.lowercased() == normalized {
+                return type
+            }
+        }
+        // Fuzzy matching
+        if normalized.contains("goal") { return .goal }
+        if normalized.contains("problem") { return .problems }
+        if normalized.contains("benefit") { return .benefits }
+        if normalized.contains("example") { return .examples }
+        if normalized.contains("belief") || normalized.contains("objection") { return .beliefsObjections }
+        if normalized.contains("process") || normalized.contains("step") { return .process }
+        if normalized.contains("concept") || normalized.contains("name") { return .conceptName }
+        if normalized.contains("reference") || normalized.contains("source") { return .references }
+        return nil
+    }
+
+    // MARK: - Deduplication
+
+    private func deduplicateSuggestions(
+        _ suggestions: [GhostSuggestion],
+        existingItems: [ConnectionItem]
+    ) -> [GhostSuggestion] {
+        var kept: [GhostSuggestion] = []
+
+        for suggestion in suggestions {
+            let contentWords = Set(suggestion.content.lowercased().split(separator: " "))
+
+            // Check against existing items
+            let duplicatesExisting = existingItems.contains { item in
+                let itemWords = Set(item.content.lowercased().split(separator: " "))
+                guard !contentWords.isEmpty else { return false }
+                let overlap = Double(contentWords.intersection(itemWords).count) / Double(contentWords.count)
+                return overlap > 0.7
+            }
+            guard !duplicatesExisting else { continue }
+
+            // Check against already-kept suggestions
+            let duplicatesKept = kept.contains { other in
+                let otherWords = Set(other.content.lowercased().split(separator: " "))
+                guard !contentWords.isEmpty else { return false }
+                let overlap = Double(contentWords.intersection(otherWords).count) / Double(contentWords.count)
+                return overlap > 0.7
+            }
+            guard !duplicatesKept else { continue }
+
+            kept.append(suggestion)
+        }
+
+        return kept
     }
 }
 
@@ -362,12 +286,5 @@ struct SourceContent {
     let atomUUID: String
     let title: String
     let type: AtomType
-    let snippets: [String]
-}
-
-/// A snippet identified as relevant to a section
-struct RelevantSnippet {
-    let content: String
-    let originalText: String
-    let confidence: Double
+    let cleanText: String
 }

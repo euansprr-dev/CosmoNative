@@ -81,7 +81,16 @@ struct CosmoBlockWrapper<Content: View>: View {
     }
 
     private var contentScale: CGFloat {
-        effectiveWidth / referenceWidth
+        let area = max(effectiveWidth * effectiveHeight, 1)
+        let referenceArea = referenceWidth * referenceHeight
+        return max(sqrt(area / referenceArea), 0.5)
+    }
+
+    private var unscaledContentSize: CGSize {
+        CGSize(
+            width: effectiveWidth / contentScale,
+            height: effectiveHeight / contentScale
+        )
     }
 
     // Onyx neutral shadow elevation
@@ -111,7 +120,13 @@ struct CosmoBlockWrapper<Content: View>: View {
             VStack(spacing: 0) {
                 // Content area - fills available space naturally
                 content()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(
+                        width: unscaledContentSize.width,
+                        height: unscaledContentSize.height,
+                        alignment: .topLeading
+                    )
+                    .scaleEffect(contentScale, anchor: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .clipped()
                     .contentShape(Rectangle())
             }

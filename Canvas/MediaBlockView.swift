@@ -37,9 +37,20 @@ struct MediaBlockView: View {
     private let minHeight: CGFloat = 150
     private let maxWidth: CGFloat = 800
     private let maxHeight: CGFloat = 1000
+    private let referenceSize = CGSize(width: 300, height: 260)
+
+    private var contentScale: CGFloat {
+        let area = max(blockSize.width * blockSize.height, 1)
+        let referenceArea = referenceSize.width * referenceSize.height
+        return max(sqrt(area / referenceArea), 0.5)
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        value * contentScale
+    }
 
     // Text reserve below media area (title + separator + transcript toggle)
-    private let textReserve: CGFloat = 65
+    private var textReserve: CGFloat { scaled(65) }
 
     init(block: CanvasBlock) {
         self.block = block
@@ -194,7 +205,7 @@ struct MediaBlockView: View {
             guard ratio > 0 else { return }
             // Width-primary: compute ideal height from width
             let idealMediaHeight = newSize.width / ratio
-            let transcriptExtra: CGFloat = isDropdownOpen ? 160 : 0
+            let transcriptExtra: CGFloat = isDropdownOpen ? scaled(160) : 0
             let idealHeight = idealMediaHeight + textReserve + transcriptExtra
             let clamped = min(max(idealHeight, CGFloat(minHeight)), maxHeight)
             if abs(clamped - newSize.height) > 1 {
@@ -220,20 +231,20 @@ struct MediaBlockView: View {
 
             // Title + metadata section
             titleSection
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
+                .padding(.horizontal, scaled(12))
+                .padding(.top, scaled(8))
+                .padding(.bottom, scaled(6))
 
             // Thin separator
             Rectangle()
                 .fill(DS.borderSubtle)
-                .frame(height: 1)
-                .padding(.horizontal, 8)
+                .frame(height: scaled(1))
+                .padding(.horizontal, scaled(8))
 
             // Collapsible transcript dropdown
             transcriptDropdown
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, scaled(12))
+                .padding(.vertical, scaled(4))
         }
         .background(
             ZStack {
@@ -282,26 +293,26 @@ struct MediaBlockView: View {
     @ViewBuilder
     private var swipeBadge: some View {
         if isSwipeFile {
-            HStack(spacing: 3) {
+            HStack(spacing: scaled(3)) {
                 Image(systemName: "bookmark.fill")
-                    .font(.system(size: 8))
+                    .font(.system(size: scaled(8)))
                 Text("SWIPE")
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.5)
+                    .font(.system(size: scaled(8), weight: .bold))
+                    .tracking(scaled(0.5))
             }
             .foregroundColor(Color(hex: "FFD700"))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, scaled(6))
+            .padding(.vertical, scaled(3))
             .background(
                 Capsule()
                     .fill(Color(hex: "FFD700").opacity(0.15))
             )
             .overlay(
                 Capsule()
-                    .stroke(Color(hex: "FFD700").opacity(0.3), lineWidth: 0.5)
+                    .stroke(Color(hex: "FFD700").opacity(0.3), lineWidth: scaled(0.5))
             )
-            .padding(.top, 8)
-            .padding(.trailing, 8)
+            .padding(.top, scaled(8))
+            .padding(.trailing, scaled(8))
             .zIndex(10)
         }
     }
@@ -442,19 +453,19 @@ struct MediaBlockView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, scaled(4))
 
                 // Page dots
                 VStack {
                     Spacer()
-                    HStack(spacing: 4) {
+                    HStack(spacing: scaled(4)) {
                         ForEach(0..<min(items.count, 10), id: \.self) { i in
                             Circle()
                                 .fill(i == carouselIndex ? Color.white : Color.white.opacity(0.4))
-                                .frame(width: 4, height: 4)
+                                .frame(width: scaled(4), height: scaled(4))
                         }
                     }
-                    .padding(.bottom, 6)
+                    .padding(.bottom, scaled(6))
                 }
             }
         }
@@ -464,9 +475,9 @@ struct MediaBlockView: View {
 
     private func carouselNavArrow(systemName: String) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: scaled(10), weight: .semibold))
             .foregroundColor(.white)
-            .frame(width: 22, height: 22)
+            .frame(width: scaled(22), height: scaled(22))
             .background(.ultraThinMaterial)
             .clipShape(Circle())
     }
@@ -555,7 +566,7 @@ struct MediaBlockView: View {
             Circle()
                 .fill(Color.black.opacity(0.5))
                 .frame(width: playButtonSize, height: playButtonSize)
-                .blur(radius: 1)
+                .blur(radius: scaled(1))
 
             Circle()
                 .fill(Color.black.opacity(0.6))
@@ -564,25 +575,25 @@ struct MediaBlockView: View {
             Image(systemName: "play.fill")
                 .font(.system(size: playIconSize))
                 .foregroundColor(.white)
-                .offset(x: 1)
+                .offset(x: scaled(1))
         }
     }
 
     private var playButtonSize: CGFloat {
         switch mediaType {
-        case .reel: return 40
-        case .youtube: return 48
-        case .carousel: return 44
-        case .generic: return 48
+        case .reel: return scaled(40)
+        case .youtube: return scaled(48)
+        case .carousel: return scaled(44)
+        case .generic: return scaled(48)
         }
     }
 
     private var playIconSize: CGFloat {
         switch mediaType {
-        case .reel: return 16
-        case .youtube: return 20
-        case .carousel: return 18
-        case .generic: return 20
+        case .reel: return scaled(16)
+        case .youtube: return scaled(20)
+        case .carousel: return scaled(18)
+        case .generic: return scaled(20)
         }
     }
 
@@ -596,7 +607,7 @@ struct MediaBlockView: View {
                 endPoint: .bottomTrailing
             )
             Image(systemName: mediaTypeIcon)
-                .font(.system(size: 28))
+                .font(.system(size: scaled(28)))
                 .foregroundColor(accentColor.opacity(0.4))
         }
         .frame(maxWidth: .infinity)
@@ -610,14 +621,14 @@ struct MediaBlockView: View {
             RoundedRectangle(cornerRadius: 0)
                 .fill(accentColor.opacity(0.06))
 
-            VStack(spacing: 8) {
+            VStack(spacing: scaled(8)) {
                 Image(systemName: mediaTypeIcon)
-                    .font(.system(size: 28, weight: .medium))
+                    .font(.system(size: scaled(28), weight: .medium))
                     .foregroundColor(accentColor.opacity(0.5))
 
                 if let plat = platform {
                     Text(plat)
-                        .font(.system(size: 10))
+                        .font(.system(size: scaled(10)))
                         .foregroundColor(DS.textMuted)
                 }
             }
@@ -629,9 +640,9 @@ struct MediaBlockView: View {
     // MARK: - Title Section
 
     private var titleSection: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: scaled(3)) {
             Text(block.title.isEmpty ? "Untitled" : block.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: scaled(12), weight: .semibold))
                 .foregroundColor(DS.text)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -642,23 +653,23 @@ struct MediaBlockView: View {
 
     @ViewBuilder
     private var authorSourceRow: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: scaled(4)) {
             if let auth = author, !auth.isEmpty {
                 Text(auth)
-                    .font(.system(size: 10))
+                    .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             }
 
             if author != nil && platform != nil {
                 Text("\u{00B7}")
-                    .font(.system(size: 10))
+                    .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textMuted)
             }
 
             if let plat = platform, !plat.isEmpty {
                 Text(plat)
-                    .font(.system(size: 10))
+                    .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             }
@@ -688,13 +699,13 @@ struct MediaBlockView: View {
     }
 
     private var transcriptToggleLabel: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: scaled(5)) {
             Image(systemName: isDropdownOpen ? "chevron.up" : "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: scaled(8), weight: .semibold))
                 .foregroundColor(accentColor)
 
             Text("Transcript")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: scaled(10), weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
             Spacer()
@@ -702,11 +713,11 @@ struct MediaBlockView: View {
             if !transcriptText.isEmpty {
                 let count = transcriptText.count
                 Text("\(count > 1000 ? "\(count / 1000)k+" : "\(count)") chars")
-                    .font(.system(size: 9))
+                    .font(.system(size: scaled(9)))
                     .foregroundColor(DS.textMuted)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, scaled(4))
         .contentShape(Rectangle())
     }
 
@@ -716,23 +727,23 @@ struct MediaBlockView: View {
             HStack {
                 Spacer()
                 Text("No transcript available")
-                    .font(.system(size: 10))
+                    .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textMuted)
                     .italic()
                 Spacer()
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, scaled(8))
         } else {
             ScrollView(.vertical, showsIndicators: true) {
                 Text(transcriptText)
-                    .font(.system(size: 10))
+                    .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textSecondary)
-                    .lineSpacing(3)
+                    .lineSpacing(scaled(3))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: max(blockSize.height - mediaAreaHeight - 80, 60))
-            .padding(.top, 2)
-            .padding(.bottom, 4)
+            .frame(maxHeight: max(blockSize.height - mediaAreaHeight - scaled(80), scaled(60)))
+            .padding(.top, scaled(2))
+            .padding(.bottom, scaled(4))
         }
     }
 
@@ -740,8 +751,8 @@ struct MediaBlockView: View {
 
     private var mediaAreaHeight: CGFloat {
         // When transcript dropdown is open, shrink media to make room for transcript content
-        let transcriptReserve: CGFloat = isDropdownOpen ? 160 : 0
-        return max(blockSize.height - textReserve - transcriptReserve, 80)
+        let transcriptReserve: CGFloat = isDropdownOpen ? scaled(160) : 0
+        return max(blockSize.height - textReserve - transcriptReserve, scaled(80))
     }
 
     private var mediaTypeIcon: String {

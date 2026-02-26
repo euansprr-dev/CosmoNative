@@ -1014,6 +1014,11 @@ struct MainView: View {
                 return event
             }
 
+            // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
+            if thinkspaceManager.isSidebarVisible && screenPoint.x < 300 {
+                return event
+            }
+
             // Hit-test against tracked block frames
             if let hitBlockId = blockFrameTracker.hitTest(at: screenPoint) {
                 // Show block context menu

@@ -93,7 +93,11 @@ struct Thinkspace: Identifiable, Equatable {
     }
 
     static func == (lhs: Thinkspace, rhs: Thinkspace) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.projectUuid == rhs.projectUuid &&
+        lhs.parentThinkspaceId == rhs.parentThinkspaceId &&
+        lhs.blockCount == rhs.blockCount
     }
 }
 
@@ -509,13 +513,6 @@ class ThinkspaceManager: ObservableObject {
                 return
             }
 
-            // Check if it's a root ThinkSpace - cannot unassign
-            if let metadata = atom.metadataValue(as: ThinkspaceMetadata.self),
-               metadata.isRootThinkspace {
-                print("⚠️ Cannot unassign root ThinkSpace from project")
-                return
-            }
-
             if var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) {
                 metadata.projectUuid = nil
                 metadata.parentThinkspaceId = nil
@@ -563,13 +560,6 @@ class ThinkspaceManager: ObservableObject {
                 return
             }
 
-            // Cannot reparent root ThinkSpaces
-            if let metadata = atom.metadataValue(as: ThinkspaceMetadata.self),
-               metadata.isRootThinkspace {
-                print("⚠️ Cannot reparent root ThinkSpace")
-                return
-            }
-
             if var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) {
                 // If new parent is specified, inherit its project
                 if let newParentId = newParentId,
@@ -611,32 +601,47 @@ class ThinkspaceManager: ObservableObject {
 
     // MARK: - Child Docs
 
-    /// Fetch child docs (canvas blocks) for a thinkspace
+    /// Fetch child docs (canvas blocks) for a thinkspace, joining atoms for fresh titles
     func fetchChildDocs(for thinkspaceId: String) async {
         do {
             let tsId = thinkspaceId
-            let blocks: [CanvasBlockRecord] = try await database.asyncRead { db in
-                try CanvasBlockRecord
-                    .filter(Column("thinkspace_id") == tsId)
-                    .filter(Column("is_deleted") == false)
-                    .order(Column("entity_title"))
-                    .fetchAll(db)
+            let rows: [Row] = try await database.asyncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT cb.id, cb.entity_type, cb.entity_id, cb.entity_uuid,
+                           COALESCE(a.title, cb.entity_title, 'Untitled') AS live_title
+                    FROM canvas_blocks cb
+                    LEFT JOIN atoms a ON a.uuid = cb.entity_uuid
+                    WHERE cb.thinkspace_id = ? AND cb.is_deleted = 0
+                    ORDER BY live_title
+                """, arguments: [tsId])
             }
 
-            let docs = blocks.compactMap { block -> ChildDoc? in
-                guard let type = EntityType(rawValue: block.entityType) else { return nil }
+            let docs = rows.compactMap { row -> ChildDoc? in
+                guard let id: String = row["id"],
+                      let entityTypeStr: String = row["entity_type"],
+                      let type = EntityType(rawValue: entityTypeStr),
+                      let entityId: Int64 = row["entity_id"] else { return nil }
+                let entityUuid: String = row["entity_uuid"] ?? ""
+                let title: String = row["live_title"] ?? "Untitled"
                 return ChildDoc(
-                    id: block.id,
+                    id: id,
                     entityType: type,
-                    entityId: Int64(block.entityId),
-                    entityUuid: block.entityUuid ?? "",
-                    title: block.entityTitle ?? "Untitled"
+                    entityId: entityId,
+                    entityUuid: entityUuid,
+                    title: title
                 )
             }
 
             childDocsCache[thinkspaceId] = docs
         } catch {
             print("❌ Failed to fetch child docs: \(error)")
+        }
+    }
+
+    /// Refresh child docs for a set of expanded thinkspace IDs
+    func refreshChildDocs(for thinkspaceIds: Set<String>) async {
+        for id in thinkspaceIds {
+            await fetchChildDocs(for: id)
         }
     }
 

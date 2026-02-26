@@ -1276,25 +1276,30 @@ class CosmoAgentService: ObservableObject {
         return nil
     }
 
-    /// Returns a human-readable display label for a tool call, used by live activity UI
+    /// Returns a human-readable display label for a tool call, used by live activity UI.
+    /// Includes atom names/titles from args where available for specific context.
     private func toolDisplayLabel(for toolName: String, args: [String: String]) -> String {
+        let client = args["clientName"] ?? args["client_name"] ?? args["name"] ?? ""
+        let clientSuffix = client.isEmpty ? "" : " for \(client)"
+        let title = args["title"] ?? ""
+
         switch toolName {
         case "search_swipes": return "Searching swipes for \"\(args["query"] ?? "")\""
         case "search_ideas": return "Searching ideas for \"\(args["query"] ?? "")\""
         case "get_idea": return "Reading idea"
         case "get_swipe_analysis": return "Analyzing swipe"
-        case "get_client_profile": return "Loading client profile \"\(args["client_name"] ?? args["name"] ?? "")\""
+        case "get_client_profile": return client.isEmpty ? "Loading client profile" : "Loading profile: \(client)"
         case "get_content": return "Reading content"
-        case "get_content_pipeline": return "Checking content pipeline"
-        case "generate_outline": return "Generating outline"
-        case "generate_draft": return "Writing draft"
-        case "generate_hooks": return "Generating hook variants"
-        case "revise_draft": return "Revising draft"
+        case "get_content_pipeline": return "Checking content pipeline\(clientSuffix)"
+        case "generate_outline": return "Generating outline\(clientSuffix)"
+        case "generate_draft": return "Writing draft\(clientSuffix)"
+        case "generate_hooks": return "Generating hook variants\(clientSuffix)"
+        case "revise_draft": return "Revising draft\(clientSuffix)"
         case "score_draft": return "Scoring draft"
         case "get_beat_patterns": return "Analyzing beat patterns"
         case "capture_swipe": return "Capturing swipe"
-        case "create_content": return "Creating content"
-        case "create_idea": return "Creating idea"
+        case "create_content": return title.isEmpty ? "Creating content\(clientSuffix)" : "Creating: \(title)"
+        case "create_idea": return title.isEmpty ? "Creating idea" : "Creating idea: \(title)"
         case "web_search": return "Searching the web for \"\(args["query"] ?? "")\""
         case "list_all_swipes": return "Loading swipe library"
         case "filter_swipes_by_taxonomy": return "Filtering swipes"

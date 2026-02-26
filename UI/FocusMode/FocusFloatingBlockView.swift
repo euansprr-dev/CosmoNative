@@ -202,14 +202,129 @@ struct FocusFloatingBlockView: View {
     }
 }
 
+// MARK: - Focus Canvas Block View (Full Thinkspace Block)
+
+/// Renders a full thinkspace-style block on a focus mode canvas.
+/// Replaces the compact tab appearance with the same rich block views
+/// used on the main Thinkspace canvas.
+struct FocusCanvasBlockView: View {
+    let block: FocusFloatingBlock
+    let canvasBlock: CanvasBlock
+    let onRemove: () -> Void
+    let onPositionChange: (CGPoint) -> Void
+
+    @State private var isHovered = false
+    @State private var dragOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            blockContent
+
+            // Remove button on hover
+            if isHovered {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .shadow(color: .black.opacity(0.5), radius: 4)
+                }
+                .buttonStyle(.plain)
+                .padding(8)
+                .transition(.opacity)
+            }
+        }
+        .position(
+            x: block.positionX + dragOffset.width,
+            y: block.positionY + dragOffset.height
+        )
+        .gesture(dragGesture)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                isHovered = hovering
+            }
+        }
+        .contextMenu {
+            Button {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openBlockInFocusMode,
+                    object: nil,
+                    userInfo: ["atomUUID": block.linkedAtomUUID]
+                )
+            } label: {
+                Label("Open Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: onRemove) {
+                Label("Remove from Canvas", systemImage: "xmark.circle")
+            }
+        }
+    }
+
+    // MARK: - Block Content (Type-Specific Dispatch)
+
+    @ViewBuilder
+    private var blockContent: some View {
+        switch canvasBlock.entityType {
+        case .research:
+            if hasMediaContent(canvasBlock) {
+                MediaBlockView(block: canvasBlock)
+            } else {
+                ResearchBlockView(block: canvasBlock)
+            }
+        case .connection:
+            ConnectionBlockView(block: canvasBlock)
+        case .idea:
+            IdeaBlockView(block: canvasBlock)
+        case .content:
+            ContentBlockView(block: canvasBlock)
+        case .task:
+            TaskBlockView(block: canvasBlock)
+        case .note:
+            NoteBlockView(block: canvasBlock)
+        case .cosmoAI:
+            CosmoAIBlockView(block: canvasBlock)
+        default:
+            FloatingBlockView(block: canvasBlock)
+        }
+    }
+
+    // MARK: - Drag Gesture
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 5)
+            .onChanged { value in
+                dragOffset = value.translation
+            }
+            .onEnded { value in
+                let newPosition = CGPoint(
+                    x: block.positionX + value.translation.width,
+                    y: block.positionY + value.translation.height
+                )
+                dragOffset = .zero
+                onPositionChange(newPosition)
+            }
+    }
+
+    // MARK: - Helpers
+
+    private func hasMediaContent(_ block: CanvasBlock) -> Bool {
+        let url = (block.metadata["url"] ?? "").lowercased()
+        return url.contains("youtube") || url.contains("youtu.be") ||
+               url.contains("instagram") || url.contains("tiktok") ||
+               block.metadata["isSwipeFile"] == "true"
+    }
+}
+
 // MARK: - Focus Floating Blocks Layer
 
 /// Renders all persistent floating blocks for a focus mode.
-/// Used in the floatingContent closure of InfiniteCanvasView.
-/// Must fill the parent so that `.position()` on child blocks
-/// uses the full coordinate space.
+/// Uses the same full block views as the Thinkspace canvas when loaded,
+/// with a compact placeholder while atom data is being fetched.
 struct FocusFloatingBlocksLayer: View {
     @ObservedObject var manager: FocusFloatingBlocksManager
+    @StateObject private var expansionManager = BlockExpansionManager()
 
     var body: some View {
         ZStack {
@@ -220,24 +335,40 @@ struct FocusFloatingBlocksLayer: View {
                 .allowsHitTesting(false)
 
             ForEach(manager.blocks) { block in
-                FocusFloatingBlockView(
-                    block: block,
-                    content: manager.content(for: block.id),
-                    onRemove: {
-                        manager.removeBlock(id: block.id)
-                    },
-                    onOpenFocusMode: {
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Navigation.openBlockInFocusMode,
-                            object: nil,
-                            userInfo: ["atomUUID": block.linkedAtomUUID]
-                        )
-                    },
-                    onPositionChange: { newPosition in
-                        manager.updatePosition(block.id, position: newPosition)
-                    }
-                )
+                if let canvasBlock = manager.canvasBlocks[block.id] {
+                    // Full block loaded — render as thinkspace block
+                    FocusCanvasBlockView(
+                        block: block,
+                        canvasBlock: canvasBlock,
+                        onRemove: {
+                            manager.removeBlock(id: block.id)
+                        },
+                        onPositionChange: { newPosition in
+                            manager.updatePosition(block.id, position: newPosition)
+                        }
+                    )
+                } else {
+                    // Loading placeholder — compact view while atom data loads
+                    FocusFloatingBlockView(
+                        block: block,
+                        content: manager.content(for: block.id),
+                        onRemove: {
+                            manager.removeBlock(id: block.id)
+                        },
+                        onOpenFocusMode: {
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                                object: nil,
+                                userInfo: ["atomUUID": block.linkedAtomUUID]
+                            )
+                        },
+                        onPositionChange: { newPosition in
+                            manager.updatePosition(block.id, position: newPosition)
+                        }
+                    )
+                }
             }
         }
+        .environmentObject(expansionManager)
     }
 }

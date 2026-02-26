@@ -8,6 +8,7 @@ struct CanvasView: View {
     @StateObject private var spatialEngine = SpatialEngine()
     @StateObject private var expansionManager = BlockExpansionManager()
     @StateObject private var connectManager = DragToConnectManager()
+    @StateObject private var drawingState = DrawingStateManager()
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
@@ -82,6 +83,25 @@ struct CanvasView: View {
                 ))
                 .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.85), value: effectiveScale)
 
+                // Drawing elements layer (screen coordinates, outside scaled container
+                // to prevent frame clipping at non-100% zoom levels)
+                CanvasDrawingsLayer(
+                    drawingState: drawingState,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale,
+                    screenCenter: screenCenter
+                )
+
+                // Drawing gesture capture (screen coordinates, outside scaled container)
+                CanvasDrawingGestureLayer(
+                    drawingState: drawingState,
+                    canvasOffset: canvasOffset,
+                    scaledPanOffset: scaledPanOffset,
+                    effectiveScale: effectiveScale,
+                    screenCenter: screenCenter
+                )
+
                 // Drag-to-connect overlay (screen coordinates, outside scaled container)
                 DragToConnectOverlay(
                     connectManager: connectManager,
@@ -101,15 +121,20 @@ struct CanvasView: View {
                 zoomIndicator
             }
             .overlay(alignment: .topTrailing) {
-                // Settings cog
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundColor(DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Circle())
+                // Drawing tools + settings cog — unified top-right strip
+                HStack(spacing: 0) {
+                    CanvasDrawingToolbar(drawingState: drawingState)
+
+                    // Settings cog
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundColor(DS.textMuted)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
                 .padding(.trailing, 16)
                 .padding(.top, 16)
             }
@@ -421,6 +446,7 @@ struct CanvasView: View {
     private var panGestureBackground: some View {
         Color.clear
             .contentShape(Rectangle())
+            .allowsHitTesting(drawingState.toolMode == .select)
             .onTapGesture {
                 // Clear selection when tapping background (blur active blocks)
                 // CRITICAL: Batch update to avoid multiple @Published notifications
@@ -430,6 +456,7 @@ struct CanvasView: View {
                 }
                 spatialEngine.blocks = updatedBlocks
                 selectedBlockId = nil
+                drawingState.selectedDrawingId = nil
 
                 // Post notification AFTER state change is complete
                 DispatchQueue.main.async {
@@ -509,6 +536,7 @@ struct CanvasView: View {
                 Task { @MainActor in
                     let thinkspaceId = thinkspaceManager.currentThinkspace?.id
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                    drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
                 }
 
@@ -536,6 +564,7 @@ struct CanvasView: View {
                             thinkspaceId = nil
                         }
                         await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                        drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                         print("🔄 Reloaded blocks for ThinkSpace: \(thinkspaceId ?? "default")")
                     }
                 }

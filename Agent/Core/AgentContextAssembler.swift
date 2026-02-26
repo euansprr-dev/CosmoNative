@@ -174,6 +174,24 @@ class AgentContextAssembler {
         the idea further ("what do you think?", "how should we approach this?"), or asks you to activate \
         it into content. A simple idea dump is not a request for analysis.
 
+        SWIPE ADAPTATION:
+        When the user asks for "ideas based on swipes for [client]", "adapt swipes for [client]", \
+        "what can we make for [client] from the swipe library", "look at my recent swipes and find \
+        ideas for [client]", "give me ideas for [client]", or any request to generate content ideas \
+        grounded in their swipe collection for a specific client — call adapt_swipes_for_client. \
+        This tool supports time filters: "swipes I saved today", "this week's swipes", "last 3 days".
+
+        This is DIFFERENT from search_swipes:
+        - search_swipes finds swipes matching a keyword/topic
+        - adapt_swipes_for_client scores EVERY hook in the library for structural adaptability \
+        to the client's niche and generates ready-to-use adapted ideas with reasoning
+
+        When presenting adapt_swipes_for_client results:
+        - Lead with the adapted hook and why it works for this client
+        - Reference the source swipe by name so the user can study it
+        - Group by confidence level (lead with high-confidence adaptations)
+        - If the user says "save that" or "I like #3", use create_idea to persist it linked to the client
+
         INSIGHT MEMORY:
         - After performing deep analysis of multiple swipes or content pieces, use save_analysis to \
         preserve your findings for future reference. Include the client name and relevant tags.
@@ -1034,17 +1052,22 @@ class AgentContextAssembler {
 
                 let title = atom.title ?? "Untitled"
                 let typeLabel = atom.type.rawValue
-                let body = String((atom.body ?? "").prefix(1500))
-                parts.append("[\(typeLabel)] \(title) (UUID: \(uuid))")
-                if !body.isEmpty {
-                    parts.append("  Content: \(body)")
-                }
 
-                // Include swipe analysis summary for swipe file atoms
-                if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
-                    let summary = MentionContextHelper.swipeAnalysisSummary(analysis)
-                    if !summary.isEmpty {
-                        parts.append("  Swipe Analysis: \(summary)")
+                if atom.isSwipeFileAtom {
+                    // Swipe files are REFERENCE MATERIAL — show analysis summary, not body text
+                    parts.append("[SWIPE REFERENCE] \(title) (UUID: \(uuid))")
+                    if let analysis = atom.swipeAnalysis {
+                        let summary = MentionContextHelper.swipeAnalysisSummary(analysis)
+                        if !summary.isEmpty {
+                            parts.append("  Swipe Analysis: \(summary)")
+                        }
+                    }
+                    parts.append("  NOTE: This is a structural reference swipe, not the content being drafted.")
+                } else {
+                    let body = String((atom.body ?? "").prefix(1500))
+                    parts.append("[\(typeLabel)] \(title) (UUID: \(uuid))")
+                    if !body.isEmpty {
+                        parts.append("  Content: \(body)")
                     }
                 }
 

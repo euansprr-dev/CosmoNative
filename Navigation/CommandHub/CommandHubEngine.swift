@@ -581,24 +581,39 @@ class CommandHubEngine: ObservableObject {
 
     private func searchThinkspaces(query: String) async -> [PaletteResult] {
         do {
-            let thinkspaces: [Atom] = try await database.asyncRead { db in
-                try Atom
+            let results: [(Atom, Int)] = try await database.asyncRead { db in
+                let thinkspaces = try Atom
                     .filter(Column("type") == AtomType.thinkspace.rawValue)
                     .filter(Column("is_deleted") == false)
                     .filter(Column("title").like("%\(query)%"))
                     .order(Column("updated_at").desc)
                     .limit(10)
                     .fetchAll(db)
-            }
 
-            return thinkspaces.map { atom in
-                // Parse metadata to get block count
-                var blockCount = 0
-                if let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) {
-                    blockCount = metadata.blockIds.count
+                // Query real block counts for these thinkspaces
+                let uuids = thinkspaces.map { $0.uuid }
+                var counts: [String: Int] = [:]
+                if !uuids.isEmpty {
+                    let placeholders = uuids.map { _ in "?" }.joined(separator: ", ")
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT thinkspace_id, COUNT(*) as block_count
+                        FROM canvas_blocks
+                        WHERE is_deleted = 0 AND thinkspace_id IN (\(placeholders))
+                        GROUP BY thinkspace_id
+                    """, arguments: StatementArguments(uuids))
+                    for row in rows {
+                        if let tsId: String = row["thinkspace_id"],
+                           let count: Int = row["block_count"] {
+                            counts[tsId] = count
+                        }
+                    }
                 }
 
-                return PaletteResult(
+                return thinkspaces.map { ($0, counts[$0.uuid] ?? 0) }
+            }
+
+            return results.map { (atom, blockCount) in
+                PaletteResult(
                     icon: "rectangle.3.group",
                     iconColor: CosmoColors.thinkspacePurple,
                     title: atom.title ?? "Untitled Thinkspace",

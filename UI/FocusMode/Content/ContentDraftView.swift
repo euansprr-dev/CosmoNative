@@ -34,6 +34,7 @@ struct ContentDraftView: View {
     @Binding var state: ContentFocusModeState
     let atom: Atom
     @Binding var editableTitle: String
+    @Binding var selectedText: String
     var writingEngine: UnifiedWritingEngine? = nil
     let onBack: () -> Void
     let onNext: () -> Void
@@ -957,6 +958,7 @@ struct ContentDraftView: View {
 
     private func handleSelectionChange(_ info: DraftSelectionInfo) {
         selectionInfo = info
+        selectedText = info.text
 
         if info.text.isEmpty || info.range.length == 0 {
             // Selection cleared — dismiss bar (but NOT if showing result)

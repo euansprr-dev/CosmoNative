@@ -20,6 +20,9 @@ class FocusFloatingBlocksManager: ObservableObject {
     /// Content loaded for each block (keyed by block ID)
     @Published private(set) var blockContents: [String: FloatingPanelContent] = [:]
 
+    /// CanvasBlock instances for full block rendering (keyed by floating block ID)
+    @Published private(set) var canvasBlocks: [String: CanvasBlock] = [:]
+
     // MARK: - Properties
 
     /// The atom whose metadata stores these blocks
@@ -88,6 +91,7 @@ class FocusFloatingBlocksManager: ObservableObject {
         withAnimation(ProMotionSprings.snappy) {
             blocks.removeAll { $0.id == id }
             blockContents.removeValue(forKey: id)
+            canvasBlocks.removeValue(forKey: id)
         }
         debouncedSave()
     }
@@ -131,6 +135,7 @@ class FocusFloatingBlocksManager: ObservableObject {
         withAnimation(ProMotionSprings.snappy) {
             blocks.removeAll()
             blockContents.removeAll()
+            canvasBlocks.removeAll()
         }
         debouncedSave()
     }
@@ -168,10 +173,16 @@ class FocusFloatingBlocksManager: ObservableObject {
 
             await MainActor.run {
                 blockContents[block.id] = content
-                // Also update cached title if it changed
-                if let index = blocks.firstIndex(where: { $0.id == block.id }),
-                   blocks[index].title != (atom.title ?? "Untitled") {
-                    blocks[index].title = atom.title ?? "Untitled"
+                // Build CanvasBlock for full block rendering
+                let canvasBlock = CanvasBlock.fromAtom(atom, position: block.position)
+                canvasBlocks[block.id] = canvasBlock
+                // Update block size to match thinkspace sizing and refresh title
+                if let index = blocks.firstIndex(where: { $0.id == block.id }) {
+                    blocks[index].width = canvasBlock.size.width
+                    blocks[index].height = canvasBlock.size.height
+                    if blocks[index].title != (atom.title ?? "Untitled") {
+                        blocks[index].title = atom.title ?? "Untitled"
+                    }
                     debouncedSave()
                 }
             }
@@ -263,16 +274,20 @@ class FocusFloatingBlocksManager: ObservableObject {
             return CGSize(width: 200, height: 60)
         case "expanded":
             return CGSize(width: 380, height: 280)
-        default: // "standard"
+        default: // "standard" — match thinkspace block sizes
             switch atomType {
             case .research:
-                return CGSize(width: 280, height: 160)
+                return CGSize(width: 320, height: 340)
             case .connection:
-                return CGSize(width: 280, height: 160)
+                return CGSize(width: 340, height: 400)
             case .content:
-                return CGSize(width: 280, height: 140)
+                return CGSize(width: 320, height: 340)
+            case .task:
+                return CGSize(width: 280, height: 120)
+            case .project:
+                return CGSize(width: 320, height: 240)
             default:
-                return CGSize(width: 280, height: 140)
+                return CGSize(width: 280, height: 180)
             }
         }
     }

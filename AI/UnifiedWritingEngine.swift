@@ -176,12 +176,20 @@ final class UnifiedWritingEngine: ObservableObject {
     private var refinementIterations = 0
     private var cachedExperienceBuffer: String = ""
 
+    /// On-demand reference material cache — bodies loaded via tools persist in Block 3.
+    private var cachedReferenceMaterial: [String: String] = [:]
+    private var referenceMaterialCharCount: Int { cachedReferenceMaterial.values.reduce(0) { $0 + $1.count } }
+    private let referenceMaterialMaxChars = 25_000
+
+    /// Client post metadata index — populated during init, no body text.
+    private var clientPostIndex: [(id: UUID, title: String, category: String, engagement: String, charCount: Int, format: String)] = []
+
     private let database = CosmoDatabase.shared
 
     // MARK: - Constants
 
     private let writerModel = ContentModelTier.writer.rawValue
-    private let brainstormModel = ContentModelTier.strategist.rawValue  // Sonnet for outline/hooks — analytical, not creative
+    private let brainstormModel = ContentModelTier.writer.rawValue  // Opus for ALL phases — outline quality matters
     private let scorecardModel = ContentModelTier.strategist.rawValue
     private let maxRetries = 2
     private let tokenSummarizationThreshold = 20_000
@@ -189,12 +197,12 @@ final class UnifiedWritingEngine: ObservableObject {
     // MARK: - Phase-Aware Model Selection
 
     /// Returns the appropriate model for each writing phase.
-    /// Brainstorm (outline/hooks) is analytical work where Sonnet matches Opus.
-    /// Draft/polish is where Opus's creative reasoning justifies the cost.
+    /// All phases use Opus — outline quality is the foundation, and skill modules
+    /// (Dinner Table Test, Hook Craft, Causal Chaining) need Opus-level reasoning.
     private func modelForPhase(_ phase: ContentStep) -> String {
         switch phase {
         case .brainstorm:
-            return brainstormModel  // Sonnet — structural/analytical
+            return brainstormModel  // Opus — outline quality matters
         case .draft, .polish:
             return writerModel      // Opus — creative writing
         }
@@ -213,6 +221,8 @@ final class UnifiedWritingEngine: ObservableObject {
         self.selectedSwipes = []
         self.refinementIterations = 0
         self.cachedExperienceBuffer = ""
+        self.cachedReferenceMaterial = [:]
+        self.clientPostIndex = []
 
         // Restore persisted conversation — prefer in-memory messages, fall back to atom persistence
         if !existingMessages.isEmpty {
@@ -232,7 +242,8 @@ final class UnifiedWritingEngine: ObservableObject {
         onContextActivity?(.started(name: "load_client_profile", displayLabel: "Loading client profile", args: [:]))
         await loadClientProfile(contentAtom: contentAtom)
         let clientName = clientMeta?.clientName ?? "none"
-        onContextActivity?(.completed(name: "load_client_profile", displayLabel: "Client profile loaded", resultPreview: clientName == "none" ? "No profile linked" : clientName))
+        let clientLabel = clientName == "none" ? "No profile linked" : clientName
+        onContextActivity?(.completed(name: "load_client_profile", displayLabel: "Loaded profile: \(clientLabel)", resultPreview: clientLabel))
         print("🔧 [UnifiedWritingEngine] Client profile: \(clientMeta?.clientName ?? "NONE") (profileAtom: \(clientProfileAtom?.uuid ?? "nil"))")
 
         onContextActivity?(.started(name: "select_swipes", displayLabel: "Selecting swipe examples", args: [:]))
@@ -340,7 +351,9 @@ final class UnifiedWritingEngine: ObservableObject {
         }
         await loadClientProfile(contentAtom: self.contentAtom!)
         cachedBlock2 = nil
+        cachedReferenceMaterial.removeAll()
         buildCachedBlocks(contentAtom: self.contentAtom!)
+        await autoLoadPrimarySwipeBody()
     }
 
     // MARK: - Conversation
@@ -890,12 +903,40 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Selected swipe examples (compressed)
         if !selectedSwipes.isEmpty {
+            // Niche guard — remind the LLM that swipe topics may differ from client niche
+            let clientNiche = clientMeta?.intelligenceModel?.nicheAndPositioning.specificNiche
+                ?? clientMeta?.niche
+            if let niche = clientNiche, !niche.isEmpty {
+                lines.append("CLIENT NICHE: \(niche). All generated content must be about this niche. Swipe examples below are STRUCTURAL references — their topics may differ.")
+                lines.append("")
+            }
+
             lines.append("--- SWIPE EXAMPLES (\(selectedSwipes.count) selected) ---")
             for (i, swipe) in selectedSwipes.enumerated() {
-                lines.append("SWIPE #\(i + 1):")
+                lines.append("SWIPE #\(i + 1) (UUID: \(swipe.id.uuidString)):")
                 lines.append(swipe.formatted())
                 lines.append("")
             }
+
+            // Persistent swipe application rules — survive across all turns including revisions
+            lines.append("--- SWIPE APPLICATION RULES (apply on EVERY turn, including revisions) ---")
+            let primarySwipe = selectedSwipes.first(where: { $0.isPrimary })
+            if let primary = primarySwipe {
+                lines.append("PRIMARY BLUEPRINT: \"\(primary.title)\"")
+                lines.append("  Beat pattern: \(primary.beatSequence.joined(separator: " > "))")
+                lines.append("  Hook type: \(primary.hookType) (score: \(String(format: "%.1f", primary.hookScore))/10)")
+            }
+            lines.append("""
+            RULES:
+            1. These \(selectedSwipes.count) swipe examples are your PERMANENT reference for this session.
+            2. On EVERY revision, maintain the PRIMARY swipe's structural DNA — beat pattern, hook type, section count, and emotional arc.
+            3. When the user asks to shorten/lengthen slides, REDISTRIBUTE content to maintain the same beat pattern — do NOT flatten or simplify the structure.
+            4. When the user asks for stats or data, pull from the swipe examples above — they contain real data points.
+            5. NEVER drop the structural patterns from these swipes, even when making formatting changes.
+            6. Use read_swipe_body to load full body text of any swipe for deeper analysis. The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL.
+            7. Use list_client_posts + read_client_post to access the client's post bodies on demand.
+            """)
+            lines.append("")
         }
 
         // Current content state
@@ -955,6 +996,19 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Knowledge context (connections) — assembled lazily if budget allows
         // Omitted from Block 3 to save tokens; available via explicit search_connections tool
+
+        // On-demand reference material (loaded via tools, persists across all turns)
+        if !cachedReferenceMaterial.isEmpty {
+            lines.append("")
+            lines.append("=== REFERENCE MATERIAL (loaded on demand — always available) ===")
+            lines.append("These full-text bodies persist across all turns. Reference them directly.")
+            lines.append("")
+            for (key, content) in cachedReferenceMaterial.sorted(by: { $0.key < $1.key }) {
+                lines.append("--- \(key.uppercased()) ---")
+                lines.append(content)
+                lines.append("")
+            }
+        }
 
         // Experience buffer (pre-fetched during initialize)
         if !cachedExperienceBuffer.isEmpty {
@@ -1103,7 +1157,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // search_swipes — always available
         tools.append(buildTool(
             name: "search_swipes",
-            description: "Search the swipe file library for relevant examples. Returns compressed swipe summaries.",
+            description: "Search the swipe file library for relevant examples. Returns compressed swipe summaries with UUIDs. Use read_swipe_body to load the full body text of any result.",
             properties: [
                 "query": ["type": "string", "description": "Search query for finding relevant swipes"],
                 "format": ["type": "string", "description": "Filter by format (optional)"],
@@ -1111,6 +1165,34 @@ final class UnifiedWritingEngine: ObservableObject {
                 "minScore": ["type": "number", "description": "Minimum hook score filter (optional)"]
             ],
             required: ["query"]
+        ))
+
+        // list_client_posts — always available
+        tools.append(buildTool(
+            name: "list_client_posts",
+            description: "List all client posts with title, category, engagement metrics, and char count. No body text — use read_client_post to load specific post bodies. Recommended: load 4-5 same-format posts for voice reference.",
+            properties: [:],
+            required: []
+        ))
+
+        // read_client_post — always available
+        tools.append(buildTool(
+            name: "read_client_post",
+            description: "Load a client post's full body text into the REFERENCE MATERIAL section (persists across all turns). Use list_client_posts first to find the post ID.",
+            properties: [
+                "post_id": ["type": "string", "description": "The UUID of the client post to load"]
+            ],
+            required: ["post_id"]
+        ))
+
+        // read_swipe_body — always available
+        tools.append(buildTool(
+            name: "read_swipe_body",
+            description: "Load a swipe's full body text into the REFERENCE MATERIAL section (persists across all turns). Use the UUID from the swipe examples or search_swipes results.",
+            properties: [
+                "swipe_id": ["type": "string", "description": "The UUID of the swipe to load"]
+            ],
+            required: ["swipe_id"]
         ))
 
         // search_connections — always available
@@ -1242,6 +1324,18 @@ final class UnifiedWritingEngine: ObservableObject {
 
                 case "run_scorecard":
                     resultContent = await handleRunScorecard()
+                    isError = false
+
+                case "list_client_posts":
+                    resultContent = handleListClientPosts()
+                    isError = false
+
+                case "read_client_post":
+                    resultContent = await handleReadClientPost(call.input)
+                    isError = false
+
+                case "read_swipe_body":
+                    resultContent = await handleReadSwipeBody(call.input)
                     isError = false
 
                 default:
@@ -1720,7 +1814,7 @@ final class UnifiedWritingEngine: ObservableObject {
 
                 let compressed = compressSwipe(atom)
                 if let compressed = compressed {
-                    swipeResults.append(compressed.formatted())
+                    swipeResults.append("UUID: \(compressed.id.uuidString)\n\(compressed.formatted())")
                 }
 
                 if swipeResults.count >= 5 { break }
@@ -1797,6 +1891,7 @@ final class UnifiedWritingEngine: ObservableObject {
         self.clientMeta = meta
         self.cachedBlock2 = nil
         _ = assembleBlock2()
+        await buildClientPostIndex(targetFormat: detectContentFormat())
 
         // Build comprehensive response
         var lines: [String] = []
@@ -1827,24 +1922,10 @@ final class UnifiedWritingEngine: ObservableObject {
             }
         }
 
-        // Top performing posts
-        let reelTranscripts = ClientIntelligenceEngine.shared.getTopTranscripts(profile: profileAtom, count: 3, category: .reel)
-        if !reelTranscripts.isEmpty {
-            lines.append("\n--- TOP PERFORMING REELS (\(reelTranscripts.count)) ---")
-            for (i, t) in reelTranscripts.enumerated() {
-                let truncated = t.count > 1500 ? String(t.prefix(1500)) + "..." : t
-                lines.append("REEL #\(i + 1):\n\(truncated)\n")
-            }
-        }
-
-        let threadTranscripts = ClientIntelligenceEngine.shared.getTopTranscripts(profile: profileAtom, count: 3, category: .thread)
-        if !threadTranscripts.isEmpty {
-            lines.append("--- TOP PERFORMING THREADS (\(threadTranscripts.count)) ---")
-            for (i, t) in threadTranscripts.enumerated() {
-                let truncated = t.count > 1500 ? String(t.prefix(1500)) + "..." : t
-                lines.append("THREAD #\(i + 1):\n\(truncated)\n")
-            }
-        }
+        // Client posts — metadata only, bodies available on demand via tools
+        lines.append("\n--- CLIENT POSTS (\(clientPostIndex.count) available) ---")
+        lines.append("Use list_client_posts to browse all posts with metadata.")
+        lines.append("Use read_client_post to load specific post bodies into reference material.")
 
         // Documents
         if let documents = meta.documents, !documents.isEmpty {
@@ -1870,6 +1951,132 @@ final class UnifiedWritingEngine: ObservableObject {
 
         print("🔧 [UnifiedWritingEngine] get_client_profile loaded: \(meta.clientName)")
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Reference Material Tool Handlers
+
+    private func handleListClientPosts() -> String {
+        guard !clientPostIndex.isEmpty else {
+            return "No client posts available. Load a client profile first with get_client_profile."
+        }
+
+        let budgetUsed = referenceMaterialCharCount
+        let budgetRemaining = referenceMaterialMaxChars - budgetUsed
+
+        var lines: [String] = []
+        lines.append("CLIENT POSTS (\(clientPostIndex.count) available) — Reference material budget: \(budgetRemaining) chars remaining")
+        lines.append("")
+
+        let sameFormat = clientPostIndex.filter { $0.format == "same_format" }
+        let crossFormat = clientPostIndex.filter { $0.format == "cross_format" }
+        let underperforming = clientPostIndex.filter { $0.format == "underperforming" }
+
+        if !sameFormat.isEmpty {
+            lines.append("SAME FORMAT (\(sameFormat.count)):")
+            for post in sameFormat {
+                let loaded = cachedReferenceMaterial["client_post:\(post.id.uuidString)"] != nil ? " [LOADED]" : ""
+                lines.append("  ID: \(post.id.uuidString) | \"\(post.title)\" | \(post.engagement) | \(post.charCount) chars\(loaded)")
+            }
+            lines.append("")
+        }
+
+        if !crossFormat.isEmpty {
+            lines.append("CROSS FORMAT (\(crossFormat.count)):")
+            for post in crossFormat {
+                let loaded = cachedReferenceMaterial["client_post:\(post.id.uuidString)"] != nil ? " [LOADED]" : ""
+                lines.append("  ID: \(post.id.uuidString) | \"\(post.title)\" | \(post.engagement) | \(post.charCount) chars\(loaded)")
+            }
+            lines.append("")
+        }
+
+        if !underperforming.isEmpty {
+            lines.append("UNDERPERFORMING (\(underperforming.count)) [study what NOT to do]:")
+            for post in underperforming {
+                let loaded = cachedReferenceMaterial["client_post:\(post.id.uuidString)"] != nil ? " [LOADED]" : ""
+                lines.append("  ID: \(post.id.uuidString) | [UNDERPERFORMING] \"\(post.title)\" | \(post.engagement) | \(post.charCount) chars\(loaded)")
+            }
+            lines.append("")
+        }
+
+        lines.append("RECOMMENDATION: Load 4-5 same-format posts + 1-2 underperforming for voice reference.")
+        lines.append("Use read_client_post with the post ID to load body text into REFERENCE MATERIAL.")
+        return lines.joined(separator: "\n")
+    }
+
+    private func handleReadClientPost(_ input: [String: Any]) async -> String {
+        let postIdString = input["post_id"] as? String ?? ""
+        guard let postId = UUID(uuidString: postIdString) else {
+            return "Error: invalid post_id. Use list_client_posts to get valid IDs."
+        }
+
+        // Check if already loaded
+        let cacheKey = "client_post:\(postId.uuidString)"
+        if cachedReferenceMaterial[cacheKey] != nil {
+            return "This client post is already loaded in REFERENCE MATERIAL. Read it directly from the system prompt."
+        }
+
+        // Find the document
+        guard let meta = clientMeta, let documents = meta.documents else {
+            return "Error: no client profile loaded."
+        }
+        guard let doc = documents.first(where: { $0.id == postId }) else {
+            return "Error: no client post found with ID \(postIdString). Use list_client_posts to see available posts."
+        }
+
+        // Check budget
+        let bodySize = doc.content.count
+        if referenceMaterialCharCount + bodySize > referenceMaterialMaxChars {
+            return "Error: reference material budget exceeded. Currently using \(referenceMaterialCharCount)/\(referenceMaterialMaxChars) chars. This post is \(bodySize) chars. Remove other material or skip this post."
+        }
+
+        // Cache it
+        let engagement = formatEngagement(doc: doc)
+        cachedReferenceMaterial[cacheKey] = """
+        [CLIENT POST] "\(doc.title)" (\(doc.category.displayName))
+        Engagement: \(engagement.isEmpty ? "N/A" : engagement)
+        Full body text:
+        \(doc.content)
+        """
+
+        print("🔧 [UnifiedWritingEngine] Loaded client post into reference material: \(doc.title) (\(bodySize) chars)")
+        return "Loaded \"\(doc.title)\" (\(bodySize) chars) into REFERENCE MATERIAL section. It is now visible in the system prompt above — read it directly from there."
+    }
+
+    private func handleReadSwipeBody(_ input: [String: Any]) async -> String {
+        let swipeIdString = input["swipe_id"] as? String ?? ""
+        guard let swipeUUID = UUID(uuidString: swipeIdString) else {
+            return "Error: invalid swipe_id UUID format."
+        }
+
+        // Check if already loaded
+        let cacheKey = "swipe:\(swipeUUID.uuidString)"
+        if cachedReferenceMaterial[cacheKey] != nil {
+            return "This swipe body is already loaded in REFERENCE MATERIAL. Read it directly from the system prompt."
+        }
+
+        // Fetch from database
+        guard let atom = try? await database.asyncRead({ db in
+            try Atom.filter(Column("uuid") == swipeUUID.uuidString).filter(Column("is_deleted") == false).fetchOne(db)
+        }), let body = atom.body, !body.isEmpty else {
+            return "Error: swipe not found or has no body text."
+        }
+
+        let title = atom.title ?? "Untitled"
+
+        // Check budget
+        if referenceMaterialCharCount + body.count > referenceMaterialMaxChars {
+            return "Error: reference material budget exceeded. Currently using \(referenceMaterialCharCount)/\(referenceMaterialMaxChars) chars. This swipe body is \(body.count) chars."
+        }
+
+        // Cache it
+        cachedReferenceMaterial[cacheKey] = """
+        [SWIPE] "\(title)"
+        Full body text:
+        \(body)
+        """
+
+        print("🔧 [UnifiedWritingEngine] Loaded swipe body into reference material: \(title) (\(body.count) chars)")
+        return "Loaded swipe \"\(title)\" (\(body.count) chars) into REFERENCE MATERIAL section. It is now visible in the system prompt above — read it directly from there."
     }
 
     private func handleRunScorecard() async -> String {
@@ -1982,7 +2189,7 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // First: inherited swipes from idea activation
         if let swipeUUIDs = metadata?.inheritedSwipeUUIDs {
-            for uuid in swipeUUIDs.prefix(15) {
+            for uuid in swipeUUIDs.prefix(20) {
                 if let swipe = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
                 }) {
@@ -1992,13 +2199,13 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         // Second: search for more if needed
-        if candidates.count < 10 {
+        if candidates.count < 15 {
             let query = contentAtom.title ?? contentAtom.body ?? ""
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let existingUUIDs = Set(candidates.map(\.uuid))
                 if let results = try? await HybridSearchEngine.shared.search(
                     query: query,
-                    limit: 15,
+                    limit: 25,
                     entityTypes: [.research]
                 ) {
                     for result in results {
@@ -2008,7 +2215,7 @@ final class UnifiedWritingEngine: ObservableObject {
                         }), atom.isSwipeFileAtom {
                             candidates.append(atom)
                         }
-                        if candidates.count >= 25 { break }
+                        if candidates.count >= 35 { break }
                     }
                 }
             }
@@ -2022,9 +2229,9 @@ final class UnifiedWritingEngine: ObservableObject {
         let targetFormatFamily = targetWritingFormat.swipeFormatFamily
         let contentFormat = targetWritingFormat.rawValue
 
-        // C1: Increased limits — up to 5 library swipes, minimum 3 for quality
-        let maxSwipes = 5
-        let minSwipes = 3
+        // C1: Increased limits — up to 8 library swipes, minimum 5 for quality
+        let maxSwipes = 8
+        let minSwipes = 5
 
         guard !analyzed.isEmpty else {
             // C1: Even with no analyzed swipes, try broader fallback before giving up
@@ -2034,7 +2241,8 @@ final class UnifiedWritingEngine: ObservableObject {
                 needed: minSwipes,
                 existingUUIDs: Set()
             )
-            await appendClientTopPosts(targetFormat: targetWritingFormat)
+            await buildClientPostIndex(targetFormat: targetWritingFormat)
+            await autoLoadPrimarySwipeBody()
             return
         }
 
@@ -2161,8 +2369,9 @@ final class UnifiedWritingEngine: ObservableObject {
             }
         }
 
-        // C2: Append client's top-performing posts as client examples
-        await appendClientTopPosts(targetFormat: targetWritingFormat)
+        // Build metadata-only client post index (bodies loaded on demand via tools)
+        await buildClientPostIndex(targetFormat: targetWritingFormat)
+        await autoLoadPrimarySwipeBody()
     }
 
     /// C1: Broader fallback search when scored selection doesn't meet minimum.
@@ -2211,8 +2420,7 @@ final class UnifiedWritingEngine: ObservableObject {
                         keyTransitions: [],
                         ctaText: "",
                         framework: "Unknown",
-                        format: formatQuery,
-                        fullBodyExcerpt: String(body.prefix(1500))
+                        format: formatQuery
                     ))
                 }
             }
@@ -2235,7 +2443,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // Load same-format top posts
         let sameFormatTranscripts = ClientIntelligenceEngine.shared.getTopTranscripts(
             profile: profileAtom,
-            count: 5,
+            count: 8,
             category: targetCategory
         )
 
@@ -2302,6 +2510,41 @@ final class UnifiedWritingEngine: ObservableObject {
         if clientPostCount > 0 {
             print("🔧 [UnifiedWritingEngine] Appended \(clientPostCount) client top posts (\(sameFormatTranscripts.count) same-format, \(otherFormatTranscripts.count) other-format)")
         }
+    }
+
+    /// Build metadata-only index of client posts — no body text stored.
+    /// Includes ALL categories (reels, threads, underperforming) so the AI can choose "what not to do" examples.
+    private func buildClientPostIndex(targetFormat: WritingContentFormat) async {
+        guard let meta = clientMeta, let documents = meta.documents else {
+            clientPostIndex = []
+            return
+        }
+        let targetCategory: ProfileDocumentCategory = targetFormat.isVideoFormat ? .reel : .thread
+        var index: [(id: UUID, title: String, category: String, engagement: String, charCount: Int, format: String)] = []
+        for doc in documents {
+            let isSameFormat = doc.category == targetCategory
+            let isUnderperformer = doc.category == .underperformingReel || doc.category == .underperformingThread
+            let formatLabel = isUnderperformer ? "underperforming" : (isSameFormat ? "same_format" : "cross_format")
+            index.append((id: doc.id, title: doc.title, category: doc.category.displayName,
+                           engagement: formatEngagement(doc: doc), charCount: doc.content.count, format: formatLabel))
+        }
+        clientPostIndex = index
+        print("🔧 [UnifiedWritingEngine] Built client post index: \(index.count) posts")
+    }
+
+    /// Auto-load the primary (blueprint) swipe body into reference material so it's always available.
+    private func autoLoadPrimarySwipeBody() async {
+        guard let primary = selectedSwipes.first(where: { $0.isPrimary }) else { return }
+        let uuid = primary.id.uuidString
+        guard let atom = try? await database.asyncRead({ db in
+            try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
+        }), let body = atom.body, !body.isEmpty else { return }
+        cachedReferenceMaterial["swipe:\(uuid)"] = """
+        [PRIMARY BLUEPRINT SWIPE] "\(primary.title)"
+        Full body text:
+        \(body)
+        """
+        print("🔧 [UnifiedWritingEngine] Auto-loaded primary swipe body: \(primary.title) (\(body.count) chars)")
     }
 
     /// Format engagement metrics from a ProfileDocument into a human-readable string.
@@ -2392,8 +2635,51 @@ final class UnifiedWritingEngine: ObservableObject {
             ctaText: String(ctaText.prefix(150)),
             framework: analysis.frameworkType?.displayName ?? "Unknown",
             format: analysis.frameworkType?.displayName ?? "Unknown",
-            fullBodyExcerpt: String(body.prefix(1500))
+            structuralBreakdown: buildStructuralBreakdown(analysis: analysis, body: body)
         )
+    }
+
+    /// Build a topic-free structural breakdown from SwipeAnalysis.
+    /// Describes WHAT each section DOES (function, density, emotion) without WHAT IT SAYS (content).
+    private func buildStructuralBreakdown(analysis: SwipeAnalysis, body: String) -> String {
+        var lines: [String] = []
+
+        // Per-section function breakdown from analysis.sections
+        if let sections = analysis.sections, !sections.isEmpty {
+            let slideCount = analysis.transcriptSlides?.count ?? sections.count
+            lines.append("Structure (\(slideCount) slides/sections):")
+            for (i, section) in sections.enumerated() {
+                var parts: [String] = [section.purpose]
+                if let emotion = section.emotion { parts.append(emotion.rawValue) }
+                if let size = section.sizePercent, size > 0 {
+                    parts.append(String(format: "%.0f%% of content", size * 100))
+                }
+                lines.append("  \(i + 1). [\(section.label)]: \(parts.joined(separator: ", "))")
+            }
+        }
+
+        // Word density from transcript slides (if available)
+        if let slides = analysis.transcriptSlides, !slides.isEmpty {
+            let wordCounts = slides.map { $0.text.split(separator: " ").count }
+            let avgWords = wordCounts.reduce(0, +) / max(wordCounts.count, 1)
+            lines.append("Slide count: \(slides.count)")
+            lines.append("Density: \(avgWords) avg words/slide (range: \(wordCounts.min() ?? 0)-\(wordCounts.max() ?? 0))")
+        } else if !body.isEmpty {
+            // Fallback: estimate from body text
+            let paragraphs = body.components(separatedBy: "\n\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            let totalWords = body.split(separator: " ").count
+            if !paragraphs.isEmpty {
+                lines.append("Sections: \(paragraphs.count), Total words: \(totalWords)")
+            }
+        }
+
+        // Emotional arc
+        if let arc = analysis.emotionalArc, !arc.isEmpty {
+            let arcLabels = arc.prefix(6).map { $0.emotion.rawValue }
+            lines.append("Emotional arc: \(arcLabels.joined(separator: " → "))")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Validation
@@ -2576,9 +2862,19 @@ final class UnifiedWritingEngine: ObservableObject {
 
         do {
             let summaryPrompt = """
-            Summarize the following conversation history into a concise summary (max 500 words). \
-            Focus on: creative decisions made, outline/hook choices, framework selection, voice notes, \
-            and any user preferences expressed. This summary will replace the original messages.
+            Summarize the following conversation history into a concise summary (max 700 words). \
+            This summary will replace the original messages, so PRESERVE ALL of the following:
+
+            CRITICAL — preserve in full detail:
+            - Swipe analysis: which swipes were analyzed, their hook types, structural patterns, beat sequences, \
+            section counts, and density metrics. This is the structural DNA the AI must maintain across revisions.
+            - Specific data points and statistics from swipes that were referenced or used in the draft.
+
+            Also preserve:
+            - Creative decisions made, outline/hook choices, framework selection
+            - Voice notes and client-specific preferences
+            - Any user preferences or revision instructions expressed
+            - Format constraints (slide count, character limits, line break style)
 
             \(summaryInput)
             """
@@ -2627,6 +2923,9 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Conversation summary
         total += conversationSummary.count / 4
+
+        // Reference material cache (lives in Block 3)
+        total += referenceMaterialCharCount / 4
 
         return total
     }
@@ -2900,10 +3199,26 @@ final class UnifiedWritingEngine: ObservableObject {
         // Swipe library
         if !selectedSwipes.isEmpty {
             let titles = selectedSwipes.map { "\"\($0.title)\"" }.joined(separator: ", ")
+            let hasPrimaryBody = selectedSwipes.contains(where: { $0.isPrimary }) && cachedReferenceMaterial.keys.contains(where: { $0.hasPrefix("swipe:") })
             parts.append("SWIPE EXAMPLES (\(selectedSwipes.count) loaded): \(titles)")
             parts.append("→ You MUST use the think tool to analyze these swipes first. Reference specific hooks, structures, and scores from the swipe data in your response.")
+            if hasPrimaryBody {
+                parts.append("→ The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL. Use read_swipe_body to load other swipe bodies.")
+            } else {
+                parts.append("→ Use read_swipe_body to load full body text of any swipe for deeper analysis.")
+            }
         } else {
             parts.append("SWIPE EXAMPLES: None loaded. Use the search_swipes tool to find relevant examples before making recommendations.")
+        }
+        parts.append("")
+
+        // Client posts
+        if !clientPostIndex.isEmpty {
+            let sameFormatCount = clientPostIndex.filter { $0.format == "same_format" }.count
+            let crossFormatCount = clientPostIndex.filter { $0.format == "cross_format" }.count
+            parts.append("CLIENT POSTS AVAILABLE: \(clientPostIndex.count) posts (\(sameFormatCount) same-format, \(crossFormatCount) cross-format)")
+            parts.append("→ Use list_client_posts to browse, read_client_post to load bodies")
+            parts.append("→ Recommended: load 4-5 same-format posts + 1-2 underperforming for voice reference")
         }
         parts.append("")
 
@@ -2919,13 +3234,9 @@ final class UnifiedWritingEngine: ObservableObject {
                 profileParts.append("Signature Phrases: \(phrases.joined(separator: " | "))")
             }
             let hasIntelligenceModel = meta.intelligenceModel != nil
-            let hasTopPosts = meta.topPerformingTranscripts?.isEmpty == false || hasIntelligenceModel
             parts.append("CONTENT PROFILE: \(profileParts.joined(separator: " | "))")
             if hasIntelligenceModel {
                 parts.append("→ Intelligence Model loaded with voice fingerprint, failure rules, and performance data.")
-            }
-            if hasTopPosts {
-                parts.append("→ Top-performing posts loaded. Study their structure and voice before generating.")
             }
             parts.append("→ You MUST reference the client's voice, beliefs, and stance in every response. Do NOT respond as a generic AI — respond as someone who deeply knows this creator.")
         } else {
@@ -2959,19 +3270,27 @@ final class UnifiedWritingEngine: ObservableObject {
     }
 
     private func labelForTool(_ name: String) -> String {
+        let atomTitle = contentAtom?.title ?? ""
+        let shortTitle = atomTitle.isEmpty ? "" : ": \(String(atomTitle.prefix(40)))"
+
         switch name {
-        case "think": return "Reasoning..."
+        case "think": return "Reasoning\(shortTitle.isEmpty ? "..." : " about\(shortTitle)")"
         case "set_title": return "Setting title"
-        case "update_outline": return "Updating outline"
-        case "add_hooks": return "Generating hooks"
+        case "update_outline": return "Updating outline\(shortTitle)"
+        case "add_hooks": return "Generating hooks\(shortTitle)"
         case "set_description": return "Setting description"
-        case "write_draft": return "Writing draft"
-        case "edit_section": return "Editing section"
+        case "write_draft": return "Writing draft\(shortTitle)"
+        case "edit_section": return "Editing section\(shortTitle)"
         case "search_swipes": return "Searching swipe library"
         case "search_connections": return "Searching knowledge graph"
-        case "read_draft": return "Reading current draft"
-        case "get_client_profile": return "Loading client profile"
-        case "run_scorecard": return "Running scorecard"
+        case "read_draft": return "Reading current draft\(shortTitle)"
+        case "get_client_profile":
+            let client = clientMeta?.clientName ?? ""
+            return client.isEmpty ? "Loading client profile" : "Loading profile: \(client)"
+        case "run_scorecard": return "Running scorecard\(shortTitle)"
+        case "list_client_posts": return "Browsing client posts"
+        case "read_client_post": return "Loading client post"
+        case "read_swipe_body": return "Loading swipe body"
         default: return "Processing..."
         }
     }

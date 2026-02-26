@@ -5,13 +5,20 @@
 
 import SwiftUI
 
-// MARK: - Annotation Card Position Preference Key
+// MARK: - Annotation Geometry Preference Keys
 
-/// Reports annotation card center-Y positions to the annotation column
-/// so connection lines can track actual card positions instead of guessing.
-private struct AnnotationCardCenterYKey: PreferenceKey {
-    static var defaultValue: [UUID: CGFloat] = [:]
-    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+/// Reports anchor points in transcript space for each annotation.
+private struct AnnotationAnchorPointKey: PreferenceKey {
+    static var defaultValue: [UUID: CGPoint] = [:]
+    static func reduce(value: inout [UUID: CGPoint], nextValue: () -> [UUID: CGPoint]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// Reports annotation card centers in transcript-space coordinates.
+private struct AnnotationCardCenterPointKey: PreferenceKey {
+    static var defaultValue: [UUID: CGPoint] = [:]
+    static func reduce(value: inout [UUID: CGPoint], nextValue: () -> [UUID: CGPoint]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
@@ -54,6 +61,12 @@ struct TranscriptSpineView: View {
 
     @State private var hoveredSectionID: UUID?
     @State private var expandedAnnotationID: UUID?
+    @State private var annotationAnchorPoints: [UUID: CGPoint] = [:]
+    @State private var annotationCardCenters: [UUID: CGPoint] = [:]
+
+    private var allAnnotations: [ResearchAnnotation] {
+        sections.flatMap(\.annotations)
+    }
 
     // MARK: - Body
 
@@ -65,19 +78,14 @@ struct TranscriptSpineView: View {
             // Scrollable transcript content
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ForEach(sections) { section in
                             TranscriptSectionRow(
                                 section: section,
                                 isPlaying: isPlaying(section),
                                 isHovered: hoveredSectionID == section.id,
-                                expandedAnnotationID: $expandedAnnotationID,
                                 onTap: { onSectionTap(section) },
                                 onAddAnnotation: { type in onAddAnnotation(section, type) },
-                                onAnnotationTap: onAnnotationTap,
-                                onAnnotationEdit: onAnnotationEdit,
-                                onAnnotationDelete: onAnnotationDelete,
-                                onAnnotationPositionChange: onAnnotationPositionChange,
                                 onCreateHighlightAnnotation: onCreateHighlightAnnotation
                             )
                             .id(section.id)
@@ -86,10 +94,9 @@ struct TranscriptSpineView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 20)
-                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .padding(.horizontal, 16)
                 }
-                .scrollClipDisabled(true)
                 .onChange(of: currentTimestamp) { _, newTime in
                     // Auto-scroll to current section
                     if let currentSection = sections.first(where: {
@@ -101,6 +108,18 @@ struct TranscriptSpineView: View {
                     }
                 }
             }
+        }
+        .coordinateSpace(name: "transcriptSpineRoot")
+        .overlay {
+            if !allAnnotations.isEmpty {
+                annotationCanvasLayer
+            }
+        }
+        .onPreferenceChange(AnnotationAnchorPointKey.self) { points in
+            annotationAnchorPoints = points
+        }
+        .onPreferenceChange(AnnotationCardCenterPointKey.self) { points in
+            annotationCardCenters = points
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
@@ -149,6 +168,76 @@ struct TranscriptSpineView: View {
     private func isPlaying(_ section: TranscriptSection) -> Bool {
         currentTimestamp >= section.startTime && currentTimestamp < section.endTime
     }
+
+    private var annotationCanvasLayer: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(allAnnotations) { annotation in
+                if annotation.hasCustomPosition {
+                    AnnotationConnectionLine(
+                        from: anchorPoint(for: annotation),
+                        to: cardCenter(for: annotation),
+                        color: annotation.type.color
+                    )
+                }
+            }
+            .allowsHitTesting(false)
+
+            ForEach(allAnnotations) { annotation in
+                let anchor = anchorPoint(for: annotation)
+                let defaultCenter = CGPoint(x: anchor.x + 180, y: anchor.y)
+
+                AnnotationCardView(
+                    annotation: annotation,
+                    isExpanded: expandedAnnotationID == annotation.id,
+                    onTap: {
+                        withAnimation(ProMotionSprings.snappy) {
+                            expandedAnnotationID = expandedAnnotationID == annotation.id ? nil : annotation.id
+                        }
+                        onAnnotationTap(annotation)
+                    },
+                    onEdit: { newContent in
+                        onAnnotationEdit(annotation, newContent)
+                    },
+                    onDelete: {
+                        onAnnotationDelete(annotation)
+                    },
+                    onPositionChange: { newOffset in
+                        onAnnotationPositionChange(annotation, newOffset)
+                    }
+                )
+                .position(defaultCenter)
+                .background(
+                    GeometryReader { geo in
+                        let frame = geo.frame(in: .named("transcriptSpineRoot"))
+                        Color.clear.preference(
+                            key: AnnotationCardCenterPointKey.self,
+                            value: [annotation.id: CGPoint(x: frame.midX, y: frame.midY)]
+                        )
+                    }
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func anchorPoint(for annotation: ResearchAnnotation) -> CGPoint {
+        if let anchor = annotationAnchorPoints[annotation.id] {
+            return anchor
+        }
+
+        let index = allAnnotations.firstIndex(where: { $0.id == annotation.id }) ?? 0
+        return CGPoint(x: 420, y: 100 + CGFloat(index * 72))
+    }
+
+    private func cardCenter(for annotation: ResearchAnnotation) -> CGPoint {
+        if let cardCenter = annotationCardCenters[annotation.id] {
+            return cardCenter
+        }
+
+        let anchor = anchorPoint(for: annotation)
+        let offset = annotation.customOffset ?? .zero
+        return CGPoint(x: anchor.x + 180 + offset.x, y: anchor.y + offset.y)
+    }
 }
 
 // MARK: - Transcript Section Row
@@ -158,50 +247,33 @@ struct TranscriptSectionRow: View {
     let section: TranscriptSection
     let isPlaying: Bool
     let isHovered: Bool
-    @Binding var expandedAnnotationID: UUID?
 
     let onTap: () -> Void
     let onAddAnnotation: (AnnotationType) -> Void
-    let onAnnotationTap: (ResearchAnnotation) -> Void
-    let onAnnotationEdit: (ResearchAnnotation, String) -> Void
-    let onAnnotationDelete: (ResearchAnnotation) -> Void
-    let onAnnotationPositionChange: (ResearchAnnotation, CGPoint) -> Void
     let onCreateHighlightAnnotation: (UUID, AnnotationType, String, NSRange) -> Void
 
-    @State private var showAnnotationMenu = false
     @State private var selectedTextInfo: (String, NSRange)? = nil
     @State private var showAnnotationPopover = false
-    @State private var cardCenterYs: [UUID: CGFloat] = [:]
 
-    // All annotations go to the right (differentiated by color/icon)
     private var allAnnotations: [ResearchAnnotation] {
         section.annotations
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            // SPINE + TRANSCRIPT (left side)
-            HStack(alignment: .top, spacing: 12) {
-                // Spine line with timestamp
-                VStack(spacing: 0) {
-                    timestampBadge
+        HStack(alignment: .top, spacing: 8) {
+            // Spine line with timestamp
+            VStack(spacing: 0) {
+                timestampBadge
 
-                    Rectangle()
-                        .fill(spineColor)
-                        .frame(width: 2)
-                        .frame(maxHeight: .infinity)
-                }
-                .frame(width: 50)
-
-                // Transcript text
-                transcriptContent
+                Rectangle()
+                    .fill(spineColor)
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
             }
+            .frame(width: 50)
 
-            // ALL ANNOTATIONS (right side only)
-            annotationColumn(annotations: allAnnotations)
-                .frame(minWidth: 200, alignment: .leading)
+            transcriptContent
         }
-        .fixedSize(horizontal: true, vertical: false)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -254,7 +326,15 @@ struct TranscriptSectionRow: View {
                     showAnnotationPopover = true
                 }
             )
-            .frame(width: 260)
+            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            .background(
+                GeometryReader { textGeo in
+                    Color.clear.preference(
+                        key: AnnotationAnchorPointKey.self,
+                        value: annotationAnchorPoints(in: textGeo.frame(in: .named("transcriptSpineRoot")))
+                    )
+                }
+            )
 
             // Add annotation button (on hover)
             if isHovered {
@@ -262,7 +342,8 @@ struct TranscriptSectionRow: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .frame(width: 280, alignment: .leading)
+        .layoutPriority(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
@@ -313,74 +394,27 @@ struct TranscriptSectionRow: View {
         .padding(.top, 4)
     }
 
-    // MARK: - Annotation Column
+    // MARK: - Helpers
 
-    @ViewBuilder
-    private func annotationColumn(annotations: [ResearchAnnotation]) -> some View {
-        ZStack(alignment: .topLeading) {
-            // Connection lines for annotations with custom positions.
-            // Uses tracked card center-Y positions instead of a static formula
-            // so lines stay aligned when cards have variable heights.
-            ForEach(annotations) { annotation in
-                if annotation.hasCustomPosition,
-                   let centerY = cardCenterYs[annotation.id] {
-                    let anchorX: CGFloat = 12.0
-                    let anchor = CGPoint(x: anchorX, y: centerY)
-                    let cardPos = CGPoint(
-                        x: anchorX + (annotation.customOffset?.x ?? 0),
-                        y: centerY + (annotation.customOffset?.y ?? 0)
-                    )
-
-                    AnnotationConnectionLine(
-                        from: anchor,
-                        to: cardPos,
-                        color: annotation.type.color
-                    )
-                }
-            }
-
-            // Annotation cards
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(annotations) { annotation in
-                    AnnotationCardView(
-                        annotation: annotation,
-                        isExpanded: expandedAnnotationID == annotation.id,
-                        onTap: {
-                            withAnimation(ProMotionSprings.snappy) {
-                                if expandedAnnotationID == annotation.id {
-                                    expandedAnnotationID = nil
-                                } else {
-                                    expandedAnnotationID = annotation.id
-                                }
-                            }
-                            onAnnotationTap(annotation)
-                        },
-                        onEdit: { newContent in onAnnotationEdit(annotation, newContent) },
-                        onDelete: { onAnnotationDelete(annotation) },
-                        onPositionChange: { newOffset in
-                            onAnnotationPositionChange(annotation, newOffset)
-                        }
-                    )
-                    .background(
-                        GeometryReader { cardGeo in
-                            Color.clear.preference(
-                                key: AnnotationCardCenterYKey.self,
-                                value: [annotation.id: cardGeo.frame(in: .named("annotationColumn")).midY]
-                            )
-                        }
-                    )
-                    .zIndex(annotation.hasCustomPosition ? 1 : 0)
-                }
-            }
-            .padding(.leading, 12)
+    private func annotationAnchorPoints(in textFrame: CGRect) -> [UUID: CGPoint] {
+        var points: [UUID: CGPoint] = [:]
+        for annotation in allAnnotations {
+            points[annotation.id] = anchorPoint(for: annotation, in: textFrame)
         }
-        .coordinateSpace(name: "annotationColumn")
-        .onPreferenceChange(AnnotationCardCenterYKey.self) { positions in
-            cardCenterYs = positions
-        }
+        return points
     }
 
-    // MARK: - Helpers
+    private func anchorPoint(for annotation: ResearchAnnotation, in textFrame: CGRect) -> CGPoint {
+        let anchorX = textFrame.maxX - 8
+        guard let highlight = section.highlights.first(where: { $0.annotationID == annotation.id }) else {
+            return CGPoint(x: anchorX, y: textFrame.midY)
+        }
+
+        let textLength = max(1, (section.text as NSString).length)
+        let progress = min(1, max(0, CGFloat(highlight.startCharIndex) / CGFloat(textLength)))
+        let anchorY = textFrame.minY + (progress * max(textFrame.height, 1))
+        return CGPoint(x: anchorX, y: anchorY)
+    }
 
     private var spineColor: Color {
         isPlaying ? CosmoColors.blockResearch : DS.borderActive
@@ -521,7 +555,7 @@ struct AnnotationCardView: View {
             y: (annotation.customOffset?.y ?? 0) + dragOffset.height
         )
         .zIndex(isDragging || annotation.hasCustomPosition ? 1 : 0)
-        .gesture(
+        .highPriorityGesture(
             DragGesture(minimumDistance: 5)
                 .onChanged { value in
                     isDragging = true

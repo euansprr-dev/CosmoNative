@@ -134,6 +134,7 @@ class AgentToolExecutor {
         case "get_swipe_analysis": return try await getSwipeAnalysis(arguments)
         case "find_similar_swipes": return try await findSimilarSwipes(arguments)
         case "get_swipe_stats": return try await getSwipeStats(arguments)
+        case "adapt_swipes_for_client": return try await adaptSwipesForClient(arguments)
         // Capture
         case "capture_swipe": return try await captureSwipe(arguments)
         case "capture_swipe_with_idea": return try await captureSwipeWithIdea(arguments)
@@ -646,6 +647,58 @@ class AgentToolExecutor {
             "topHooks": topHooks,
             "topFrameworks": topFrameworks
         ] as [String: Any])
+    }
+
+    // MARK: - Swipe Adaptation
+
+    private func adaptSwipesForClient(_ args: [String: Any]) async throws -> String {
+        guard let clientName = args["clientName"] as? String else {
+            return jsonError("Missing required parameter: clientName")
+        }
+        let timeFilter = args["timeFilter"] as? String
+        let maxResults = min(args["maxResults"] as? Int ?? 10, 25)
+
+        onToolActivity?(.started(name: "adapt_swipes_for_client", displayLabel: "Scoring swipe library for \(clientName)...", args: ["clientName": clientName]))
+
+        do {
+            let result = try await SwipeAdaptationEngine.shared.adaptSwipesForClient(
+                clientName: clientName,
+                timeFilter: timeFilter,
+                maxResults: maxResults
+            )
+
+            let ideas: [[String: Any]] = result.adaptedIdeas.enumerated().map { (idx, idea) in
+                // Map sourceIndex back to source swipe title
+                let sourceTitle: String
+                if idea.sourceIndex >= 1 && idea.sourceIndex <= result.sourceSwipes.count {
+                    sourceTitle = result.sourceSwipes[idea.sourceIndex - 1].title
+                } else {
+                    sourceTitle = "Unknown source"
+                }
+
+                return [
+                    "adaptedHook": idea.adaptedHook,
+                    "ideaTitle": idea.ideaTitle,
+                    "ideaBody": idea.ideaBody,
+                    "sourceSwipeTitle": sourceTitle,
+                    "hookType": idea.hookType,
+                    "suggestedFramework": idea.suggestedFramework,
+                    "adaptationReasoning": idea.adaptationReasoning,
+                    "confidence": idea.confidence
+                ] as [String: Any]
+            }
+
+            return jsonEncode([
+                "clientName": result.clientName,
+                "totalSwipesScanned": result.totalSwipesScanned,
+                "candidatesEvaluated": result.candidatesEvaluated,
+                "adaptedIdeas": ideas,
+                "count": ideas.count,
+                "timeFilter": result.timeFilter ?? "all time"
+            ] as [String: Any])
+        } catch {
+            return jsonError("Swipe adaptation failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - List All Swipes
@@ -1260,6 +1313,21 @@ class AgentToolExecutor {
             return jsonError("Failed to save research: \(error.localizedDescription)")
         }
 
+        // Run full URL processing (title, transcript, thumbnail) — same pipeline as Command-K
+        if let urlString = url,
+           let parsedURL = URL(string: urlString),
+           let itemId = item.id {
+            let urlType = URLClassifier.classify(parsedURL)
+            do {
+                try await ResearchProcessor.shared.processURL(into: itemId, url: parsedURL, type: urlType)
+                if let processed = try? await atomRepo.fetch(uuid: item.uuid) {
+                    item = processed
+                }
+            } catch {
+                print("Agent: Research URL processing failed (non-fatal): \(error)")
+            }
+        }
+
         // Generate embedding in background
         Task {
             let textToEmbed = [title, body ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
@@ -1280,11 +1348,12 @@ class AgentToolExecutor {
             userInfo: ["research": item, "uuid": item.uuid]
         )
 
+        let resolvedTitle = item.title ?? title
         return jsonEncode([
             "success": true,
             "uuid": item.uuid,
-            "title": title,
-            "message": "Research captured: \(title)"
+            "title": resolvedTitle,
+            "message": "Research captured: \(resolvedTitle)"
         ] as [String: Any])
     }
 
@@ -2318,6 +2387,9 @@ class AgentToolExecutor {
         6. Preserve EVERY slide that the feedback didn't mention. Only change what was called out.
         7. After making changes, use write_draft to output the COMPLETE revised draft — every single \
         slide, including unchanged ones.
+        8. SWIPE CONTEXT: Your system prompt contains loaded swipe examples with structural patterns, \
+        data points, and statistics. Reference these swipes when revising — they are your permanent \
+        blueprint. If the user asks for stats or data, pull from the swipe examples in your context.
         """
 
         // If the draft is available, include it so the engine doesn't need to guess

@@ -171,6 +171,19 @@ class AgentToolRegistry {
                     "required": [] as [String]
                 ]
             ),
+            LLMToolDefinition(
+                name: "adapt_swipes_for_client",
+                description: "Analyze the ENTIRE swipe library and generate content ideas adapted to a specific client's niche, voice, and audience. Use this when the user asks for ideas based on swipes, like 'give me ideas for [client]', 'adapt swipes for [client]', 'what can we make from the swipe library for [client]', or 'look at recent swipes and find ideas for [client]'. This is DIFFERENT from search_swipes — it scores every hook for structural adaptability and generates ready-to-use adapted ideas. Supports time filters like 'today', 'this week', 'last 7 days'.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "clientName": ["type": "string", "description": "The client name to adapt swipes for (e.g. 'Ben', 'Michael')"] as [String: Any],
+                        "timeFilter": ["type": "string", "description": "Optional time filter: 'today', 'yesterday', 'this week', 'this month', 'last N days'"] as [String: Any],
+                        "maxResults": ["type": "integer", "description": "Max adapted ideas to return (default 10, max 25)"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["clientName"]
+                ]
+            ),
         ]
     }
 

@@ -57,6 +57,11 @@ struct ThinkspaceSidebar: View {
     // Drop state for project creation
     @State private var isDropTargetActive: Bool = false
 
+    // Child docs expand/collapse state
+    @State private var expandedThinkspaces: Set<String> = []
+    @State private var childDocsLoading: Set<String> = []
+    @State private var hoveredChildDocId: String?
+
     private let sidebarWidth: CGFloat = 280
     private let repository = AtomRepository.shared
 
@@ -76,6 +81,13 @@ struct ThinkspaceSidebar: View {
             if expandedProjects.contains(project.uuid) {
                 for thinkspace in manager.thinkspacesForProject(project.uuid) {
                     items.append(.thinkspace(thinkspace, projectId: project.uuid))
+                    // Insert child docs if this thinkspace is expanded
+                    if expandedThinkspaces.contains(thinkspace.id),
+                       let docs = manager.childDocsCache[thinkspace.id] {
+                        for doc in docs {
+                            items.append(.childDoc(doc, thinkspaceId: thinkspace.id))
+                        }
+                    }
                 }
             }
         }
@@ -83,6 +95,13 @@ struct ThinkspaceSidebar: View {
         // Add unassigned thinkspaces
         for thinkspace in manager.unassignedThinkspaces() {
             items.append(.thinkspace(thinkspace, projectId: nil))
+            // Insert child docs if this thinkspace is expanded
+            if expandedThinkspaces.contains(thinkspace.id),
+               let docs = manager.childDocsCache[thinkspace.id] {
+                for doc in docs {
+                    items.append(.childDoc(doc, thinkspaceId: thinkspace.id))
+                }
+            }
         }
 
         return items
@@ -426,6 +445,19 @@ struct ThinkspaceSidebar: View {
                             Task {
                                 await deleteProject(projectToDelete)
                             }
+                        },
+                        expandedThinkspaces: expandedThinkspaces,
+                        childDocsCache: manager.childDocsCache,
+                        childDocsLoading: childDocsLoading,
+                        hoveredChildDocId: hoveredChildDocId,
+                        onToggleThinkspaceExpand: { thinkspace in
+                            toggleThinkspaceExpand(thinkspace)
+                        },
+                        onChildDocTap: { doc in
+                            navigateToChildDoc(doc)
+                        },
+                        onHoverChildDoc: { id in
+                            hoveredChildDocId = id
                         }
                     )
                 }
@@ -498,6 +530,19 @@ struct ThinkspaceSidebar: View {
                         isActive: manager.currentThinkspace?.id == thinkspace.id,
                         isHovered: hoveredThinkspaceId == thinkspace.id,
                         showAddButton: true,
+                        isExpanded: expandedThinkspaces.contains(thinkspace.id),
+                        onToggleExpand: {
+                            toggleThinkspaceExpand(thinkspace)
+                        },
+                        childDocs: manager.childDocsCache[thinkspace.id] ?? [],
+                        isLoadingChildren: childDocsLoading.contains(thinkspace.id),
+                        hoveredChildDocId: hoveredChildDocId,
+                        onChildDocTap: { doc in
+                            navigateToChildDoc(doc)
+                        },
+                        onHoverChildDoc: { id in
+                            hoveredChildDocId = id
+                        },
                         onSelect: {
                             selectThinkspace(thinkspace)
                         },
@@ -682,6 +727,8 @@ struct ThinkspaceSidebar: View {
             }
         case .thinkspace(let thinkspace, _):
             selectThinkspace(thinkspace)
+        case .childDoc(let doc, _):
+            navigateToChildDoc(doc)
         }
     }
 
@@ -708,10 +755,15 @@ struct ThinkspaceSidebar: View {
         guard selectedIndex < items.count else { return }
 
         let item = items[selectedIndex]
-        if case .project(let project) = item {
+        switch item {
+        case .project(let project):
             _ = withAnimation(ProMotionSprings.snappy) {
                 expandedProjects.insert(project.uuid)
             }
+        case .thinkspace(let thinkspace, _):
+            toggleThinkspaceExpand(thinkspace)
+        case .childDoc:
+            break
         }
     }
 
@@ -720,10 +772,17 @@ struct ThinkspaceSidebar: View {
         guard selectedIndex < items.count else { return }
 
         let item = items[selectedIndex]
-        if case .project(let project) = item {
+        switch item {
+        case .project(let project):
             _ = withAnimation(ProMotionSprings.snappy) {
                 expandedProjects.remove(project.uuid)
             }
+        case .thinkspace(let thinkspace, _):
+            withAnimation(ProMotionSprings.snappy) {
+                expandedThinkspaces.remove(thinkspace.id)
+            }
+        case .childDoc:
+            break
         }
     }
 
@@ -735,8 +794,14 @@ struct ThinkspaceSidebar: View {
         case .project(let project):
             hoveredProjectId = project.uuid
             hoveredThinkspaceId = nil
+            hoveredChildDocId = nil
         case .thinkspace(let thinkspace, _):
             hoveredThinkspaceId = thinkspace.id
+            hoveredProjectId = nil
+            hoveredChildDocId = nil
+        case .childDoc(let doc, _):
+            hoveredChildDocId = doc.id
+            hoveredThinkspaceId = nil
             hoveredProjectId = nil
         }
     }
@@ -747,6 +812,39 @@ struct ThinkspaceSidebar: View {
         }
 
         // Only close if not locked
+        if !isLocked {
+            withAnimation(ProMotionSprings.snappy) {
+                isVisible = false
+            }
+        }
+    }
+
+    private func toggleThinkspaceExpand(_ thinkspace: Thinkspace) {
+        withAnimation(ProMotionSprings.snappy) {
+            if expandedThinkspaces.contains(thinkspace.id) {
+                expandedThinkspaces.remove(thinkspace.id)
+            } else {
+                expandedThinkspaces.insert(thinkspace.id)
+                // Lazy-load child docs on first expand
+                if manager.childDocsCache[thinkspace.id] == nil {
+                    childDocsLoading.insert(thinkspace.id)
+                    Task {
+                        await manager.fetchChildDocs(for: thinkspace.id)
+                        childDocsLoading.remove(thinkspace.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func navigateToChildDoc(_ doc: ChildDoc) {
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: ["type": doc.entityType, "id": doc.entityId]
+        )
+
+        // Close sidebar if not locked
         if !isLocked {
             withAnimation(ProMotionSprings.snappy) {
                 isVisible = false
@@ -882,6 +980,15 @@ struct ProjectTreeItem: View {
     let onHoverThinkspace: (String?) -> Void
     var onDeleteProject: ((Atom) -> Void)?
 
+    // Child docs state
+    var expandedThinkspaces: Set<String> = []
+    var childDocsCache: [String: [ChildDoc]] = [:]
+    var childDocsLoading: Set<String> = []
+    var hoveredChildDocId: String?
+    var onToggleThinkspaceExpand: ((Thinkspace) -> Void)?
+    var onChildDocTap: ((ChildDoc) -> Void)?
+    var onHoverChildDoc: ((String?) -> Void)?
+
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
@@ -993,6 +1100,15 @@ struct ProjectTreeItem: View {
                                 showAddButton: true,
                                 isCompact: true,
                                 accentColor: projectColor,
+                                isExpanded: expandedThinkspaces.contains(thinkspace.id),
+                                onToggleExpand: {
+                                    onToggleThinkspaceExpand?(thinkspace)
+                                },
+                                childDocs: childDocsCache[thinkspace.id] ?? [],
+                                isLoadingChildren: childDocsLoading.contains(thinkspace.id),
+                                hoveredChildDocId: hoveredChildDocId,
+                                onChildDocTap: onChildDocTap,
+                                onHoverChildDoc: onHoverChildDoc,
                                 onSelect: {
                                     onSelectThinkspace(thinkspace)
                                 },
@@ -1071,6 +1187,16 @@ struct ThinkspaceCard: View {
     let showAddButton: Bool
     var isCompact: Bool = false
     var accentColor: Color = CosmoColors.thinkspacePurple
+
+    // Child docs
+    var isExpanded: Bool = false
+    var onToggleExpand: (() -> Void)?
+    var childDocs: [ChildDoc] = []
+    var isLoadingChildren: Bool = false
+    var hoveredChildDocId: String?
+    var onChildDocTap: ((ChildDoc) -> Void)?
+    var onHoverChildDoc: ((String?) -> Void)?
+
     let onSelect: () -> Void
     var onAddSubThinkspace: (() -> Void)?
     var onDelete: (() -> Void)?
@@ -1083,70 +1209,78 @@ struct ThinkspaceCard: View {
     @FocusState private var isRenameFieldFocused: Bool
 
     var body: some View {
-        Group {
-            if isRenaming {
-                // Inline rename field
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(accentColor.opacity(0.2))
-                        .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
-                        .overlay(
-                            Image(systemName: "pencil")
-                                .font(.system(size: isCompact ? 10 : 11, weight: .medium))
-                                .foregroundColor(accentColor)
-                        )
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if isRenaming {
+                    // Inline rename field
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(accentColor.opacity(0.2))
+                            .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
+                            .overlay(
+                                Image(systemName: "pencil")
+                                    .font(.system(size: isCompact ? 10 : 11, weight: .medium))
+                                    .foregroundColor(accentColor)
+                            )
 
-                    TextField("Name", text: $renameText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: isCompact ? 12 : 13, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .focused($isRenameFieldFocused)
-                        .onSubmit {
+                        TextField("Name", text: $renameText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: isCompact ? 12 : 13, weight: .medium))
+                            .foregroundColor(DS.text)
+                            .focused($isRenameFieldFocused)
+                            .onSubmit {
+                                submitRename()
+                            }
+
+                        Button {
                             submitRename()
+                        } label: {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(accentColor)
                         }
+                        .buttonStyle(.plain)
 
-                    Button {
-                        submitRename()
-                    } label: {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(accentColor)
+                        Button {
+                            isRenaming = false
+                            renameText = ""
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(DS.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, isCompact ? 8 : 10)
+                    .padding(.vertical, isCompact ? 6 : 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(accentColor.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(accentColor.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                } else {
+                    // Normal card view
+                    Button(action: onSelect) {
+                        cardContent
                     }
                     .buttonStyle(.plain)
-
-                    Button {
-                        isRenaming = false
-                        renameText = ""
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
+                    .contextMenu {
+                        contextMenuContent
                     }
-                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, isCompact ? 8 : 10)
-                .padding(.vertical, isCompact ? 6 : 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(accentColor.opacity(0.1))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(accentColor.opacity(0.3), lineWidth: 1)
-                        )
-                )
-            } else {
-                // Normal card view
-                Button(action: onSelect) {
-                    cardContent
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    contextMenuContent
-                }
+            }
+
+            // Child docs (when expanded)
+            if isExpanded {
+                childDocsSection
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .animation(ProMotionSprings.snappy, value: isRenaming)
+        .animation(ProMotionSprings.snappy, value: isExpanded)
         .confirmationDialog(
             "Delete \"\(thinkspace.name)\"?",
             isPresented: $showDeleteConfirm,
@@ -1165,10 +1299,73 @@ struct ThinkspaceCard: View {
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
+    // MARK: - Child Docs Section
+
+    @ViewBuilder
+    private var childDocsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isLoadingChildren {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(DS.borderActive)
+                        .frame(width: 1)
+                        .padding(.leading, isCompact ? 20 : 25)
+
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
+                        .scaleEffect(0.6)
+
+                    Text("Loading...")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.textMuted)
+                }
+                .padding(.vertical, 6)
+            } else if childDocs.isEmpty {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(DS.borderActive)
+                        .frame(width: 1)
+                        .padding(.leading, isCompact ? 20 : 25)
+
+                    Text("No blocks")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.textMuted)
+                }
+                .padding(.vertical, 6)
+            } else {
+                ForEach(childDocs) { doc in
+                    ChildDocRow(
+                        doc: doc,
+                        isHovered: hoveredChildDocId == doc.id,
+                        isCompact: isCompact,
+                        onTap: {
+                            onChildDocTap?(doc)
+                        }
+                    )
+                    .onHover { hovering in
+                        onHoverChildDoc?(hovering ? doc.id : nil)
+                    }
+                }
+            }
+        }
+        .padding(.leading, isCompact ? 4 : 8)
+    }
+
     // MARK: - Card Content
 
     private var cardContent: some View {
         HStack(spacing: 8) {
+            // Disclosure chevron for expand/collapse
+            if let onToggle = onToggleExpand {
+                Button(action: onToggle) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(.plain)
+            }
+
             // Active indicator
             if !isCompact {
                 Circle()
@@ -1354,12 +1551,78 @@ struct ThinkspaceSidebarTrigger: View {
     }
 }
 
+// MARK: - Child Doc Row
+
+/// A single child doc row showing entity type icon + title
+struct ChildDocRow: View {
+    let doc: ChildDoc
+    let isHovered: Bool
+    var isCompact: Bool = false
+    let onTap: () -> Void
+
+    @State private var showTypeLabel = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                // Tree connector line
+                Rectangle()
+                    .fill(DS.borderActive)
+                    .frame(width: 1)
+                    .padding(.leading, isCompact ? 16 : 21)
+
+                // Horizontal connector
+                Rectangle()
+                    .fill(DS.borderActive)
+                    .frame(width: 8, height: 1)
+
+                // Entity type icon in colored square
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(doc.entityType.color.opacity(0.2))
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Image(systemName: doc.entityType.icon)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(doc.entityType.color)
+                    )
+
+                // Title
+                Text(doc.title)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                // Entity type label on hover
+                if isHovered {
+                    Text(doc.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.trailing, 8)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? DS.borderSubtle : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(doc.entityType.rawValue): \(doc.title)")
+        .accessibilityHint("Double-tap to open in focus mode")
+    }
+}
+
 // MARK: - Navigable Item (for keyboard navigation)
 
 /// Represents an item in the sidebar that can be navigated to with keyboard
 enum NavigableItem {
     case project(Atom)
     case thinkspace(Thinkspace, projectId: String?)
+    case childDoc(ChildDoc, thinkspaceId: String)
 
     var id: String {
         switch self {
@@ -1367,6 +1630,8 @@ enum NavigableItem {
             return "project-\(atom.uuid)"
         case .thinkspace(let thinkspace, _):
             return "thinkspace-\(thinkspace.id)"
+        case .childDoc(let doc, _):
+            return "childDoc-\(doc.id)"
         }
     }
 }

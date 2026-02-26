@@ -1444,6 +1444,40 @@ class CosmoDatabase: ObservableObject {
             print("✅ atoms _local_pending migration complete")
         }
 
+        // Create canvas_drawings table for freeform drawing elements (shapes, freehand, text)
+        migrator.registerMigration("create_canvas_drawings") { db in
+            print("🔨 Creating canvas_drawings table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_drawings (
+                    id TEXT PRIMARY KEY,
+                    thinkspace_id TEXT,
+                    drawing_type TEXT NOT NULL,
+                    shape_kind TEXT,
+                    origin_x REAL NOT NULL,
+                    origin_y REAL NOT NULL,
+                    width REAL,
+                    height REAL,
+                    rotation REAL DEFAULT 0,
+                    path_data TEXT,
+                    text_content TEXT,
+                    text_weight TEXT,
+                    stroke_color TEXT NOT NULL DEFAULT '#FFFFFF',
+                    fill_color TEXT,
+                    stroke_width REAL NOT NULL DEFAULT 2.0,
+                    opacity REAL NOT NULL DEFAULT 1.0,
+                    z_index INTEGER DEFAULT 0,
+                    is_deleted INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_canvas_drawings_thinkspace
+                    ON canvas_drawings(thinkspace_id, is_deleted)
+            """)
+            print("✅ canvas_drawings table created")
+        }
+
         return migrator
     }
 

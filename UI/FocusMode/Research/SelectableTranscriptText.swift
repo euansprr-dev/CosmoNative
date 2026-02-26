@@ -29,17 +29,27 @@ struct SelectableTranscriptText: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 0, height: 0)
         textView.delegate = context.coordinator
 
-        // Size configuration — vertical resizing, fixed width
-        textView.isVerticallyResizable = true
+        // Size configuration — SwiftUI controls the height via sizeThatFits.
+        textView.isVerticallyResizable = false
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.textContainer?.lineBreakMode = .byWordWrapping
         textView.textContainer?.lineFragmentPadding = 0
 
         return textView
     }
 
     func updateNSView(_ textView: NSTextView, context: Context) {
+        context.coordinator.parent = self
+
+        // Avoid replacing text storage when nothing changed. Rewriting every
+        // frame causes unstable layout with many transcript rows.
+        guard context.coordinator.shouldUpdate(text: text, highlights: highlights, isPlaying: isPlaying) else {
+            return
+        }
+
         // Build attributed string with highlights applied
         let attributed = buildAttributedString()
 
@@ -48,22 +58,22 @@ struct SelectableTranscriptText: NSViewRepresentable {
         textView.textStorage?.beginEditing()
         textView.textStorage?.setAttributedString(attributed)
         textView.textStorage?.endEditing()
+
+        context.coordinator.record(text: text, highlights: highlights, isPlaying: isPlaying)
     }
 
-    /// Tell SwiftUI the exact height this text view needs
+    /// Tell SwiftUI the exact height this text view needs.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? 260
+        let measuredWidth = proposal.width ?? nsView.bounds.width
+        let width = max(1, measuredWidth > 0 ? measuredWidth : 260)
 
         guard let layoutManager = nsView.layoutManager,
               let textContainer = nsView.textContainer else {
             return CGSize(width: width, height: 50)
         }
 
-        // Set container width so layout computes correct line wrapping
+        // Set container width so layout computes correct line wrapping.
         textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-
-        // Invalidate entire layout BEFORE ensureLayout to clear stale cached
-        // line fragment positions that cause garbled/overlapping text
         let fullRange = NSRange(location: 0, length: nsView.textStorage?.length ?? 0)
         layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
         layoutManager.ensureLayout(for: textContainer)
@@ -124,9 +134,22 @@ struct SelectableTranscriptText: NSViewRepresentable {
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SelectableTranscriptText
+        private var lastText: String = ""
+        private var lastHighlights: [TextHighlight] = []
+        private var lastIsPlaying = false
 
         init(parent: SelectableTranscriptText) {
             self.parent = parent
+        }
+
+        func shouldUpdate(text: String, highlights: [TextHighlight], isPlaying: Bool) -> Bool {
+            text != lastText || highlights != lastHighlights || isPlaying != lastIsPlaying
+        }
+
+        func record(text: String, highlights: [TextHighlight], isPlaying: Bool) {
+            lastText = text
+            lastHighlights = highlights
+            lastIsPlaying = isPlaying
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

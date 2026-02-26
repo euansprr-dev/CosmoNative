@@ -89,8 +89,11 @@ struct CompressedSwipe: Identifiable {
     /// Engagement score string for client examples (e.g., "1.2K likes, 340 saves")
     var engagementSummary: String = ""
 
-    /// Full body excerpt for primary swipes (set during compression)
+    /// Full body excerpt for client example posts (their body text IS the correct topic)
     var fullBodyExcerpt: String = ""
+
+    /// Structural breakdown for PRIMARY swipes — section functions, density, arc (NO topical text)
+    var structuralBreakdown: String = ""
 
     /// Format as injection text (~200 tokens for non-primary, ~600 tokens for PRIMARY)
     func formatted() -> String {
@@ -126,8 +129,8 @@ struct CompressedSwipe: Identifiable {
             The hook must use the same syntactic structure and tension mechanism. \
             The section sequence must follow the same function order.
             """
-            if !fullBodyExcerpt.isEmpty {
-                result += "\n\nFull Swipe Content (first 1500 chars):\n\(fullBodyExcerpt)"
+            if !structuralBreakdown.isEmpty {
+                result += "\n\nStructural Blueprint (extract structure only — topic may differ from client):\n\(structuralBreakdown)"
             }
             return result
         } else {

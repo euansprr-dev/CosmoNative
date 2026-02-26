@@ -27,6 +27,9 @@ struct ContentFocusModeView: View {
     /// Tracks the last AI-generated draft content so we can detect user edits for lesson extraction
     @State private var lastAIGeneratedDraft: String?
 
+    /// Currently selected text in the draft editor (empty when no selection)
+    @State private var selectedText: String = ""
+
     // Feature flag: when true, the embedded AI Collaborator is hidden (replaced by global Cosmo window)
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
@@ -177,6 +180,8 @@ struct ContentFocusModeView: View {
             }
         }
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
+            // Clear selection when switching steps
+            selectedText = ""
             // Extract lessons when advancing phases (user may have edited AI draft)
             extractLessonsIfEdited()
 
@@ -304,6 +309,7 @@ struct ContentFocusModeView: View {
                 state: $viewModel.state,
                 atom: atom,
                 editableTitle: $editableTitle,
+                selectedText: $selectedText,
                 writingEngine: cosmoWindowEnabled ? nil : writingEngine,
                 onBack: {
                     viewModel.goToStep(.brainstorm)
@@ -356,10 +362,12 @@ struct ContentFocusModeView: View {
                 .foregroundColor(DS.textMuted)
                 .tracking(0.24)
 
-            // Word/outline count — 11px, DS.textMuted
+            // Word + character count — selection-aware
             if !viewModel.state.draftContent.isEmpty {
-                let words = viewModel.state.draftContent.split(separator: " ").count
-                Text("\(words) words")
+                let textToCount = selectedText.isEmpty ? viewModel.state.draftContent : selectedText
+                let words = textToCount.split(whereSeparator: \.isWhitespace).count
+                let chars = textToCount.count
+                Text("\(words) words · \(chars) chars")
                     .font(.system(size: 11, weight: .regular))
                     .foregroundColor(DS.textMuted)
             }
@@ -517,10 +525,12 @@ struct ContentFocusModeView: View {
 
             Spacer()
 
-            // Word count pill
+            // Word + character count pill — selection-aware
             if !viewModel.state.draftContent.isEmpty {
-                let words = viewModel.state.draftContent.split(separator: " ").count
-                Text("\(words) words")
+                let textToCount = selectedText.isEmpty ? viewModel.state.draftContent : selectedText
+                let words = textToCount.split(whereSeparator: \.isWhitespace).count
+                let chars = textToCount.count
+                Text("\(words) words · \(chars) chars")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.textMuted)
                     .padding(.horizontal, 8)
@@ -650,7 +660,10 @@ class ContentFocusModeViewModel: ObservableObject {
             .sink { [weak self] notification in
                 guard let self, !self.isClosed,
                       let content = notification.userInfo?["content"] as? String else { return }
-                self.state.draftContent = content
+                // Convert carousel/thread JSON to readable slide format for display.
+                // Raw JSON stays in atom.body (written by handleWriteDraft); draftContent
+                // gets the human-readable version for the editor and read_draft tool.
+                self.state.draftContent = AgentToolExecutor.renderDraftForDisplay(content)
                 self.state.lastModified = Date()
                 self.writeToAtom()
             }

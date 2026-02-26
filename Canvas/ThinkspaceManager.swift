@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Combine
+import GRDB
 
 // MARK: - Thinkspace Metadata
 
@@ -96,6 +97,17 @@ struct Thinkspace: Identifiable, Equatable {
     }
 }
 
+// MARK: - Child Doc Model
+
+/// Lightweight model for displaying canvas blocks inside a thinkspace in the sidebar
+struct ChildDoc: Identifiable, Equatable {
+    let id: String          // CanvasBlockRecord.id
+    let entityType: EntityType
+    let entityId: Int64
+    let entityUuid: String
+    let title: String
+}
+
 // MARK: - Thinkspace Manager
 
 /// Manages Thinkspace CRUD operations and switching
@@ -114,12 +126,16 @@ class ThinkspaceManager: ObservableObject {
     /// Loading state
     @Published private(set) var isLoading = false
 
+    /// Cached child docs per thinkspace ID
+    @Published private(set) var childDocsCache: [String: [ChildDoc]] = [:]
+
     /// Sidebar visibility state - shared for coordinating UI elements
     @Published var isSidebarVisible: Bool = false
 
     // MARK: - Private Properties
 
     private let repository = AtomRepository.shared
+    private let database = CosmoDatabase.shared
     private var cancellables = Set<AnyCancellable>()
 
     // UserDefaults key for last opened Thinkspace
@@ -143,10 +159,21 @@ class ThinkspaceManager: ObservableObject {
 
         do {
             let atoms = try await repository.fetchAll(type: .thinkspace)
-            thinkspaces = atoms
+            var loaded = atoms
                 .filter { !$0.isDeleted }
                 .map { Thinkspace(from: $0) }
                 .sorted { $0.lastOpened > $1.lastOpened }
+
+            // Query real block counts from canvas_blocks table
+            let realCounts = await fetchRealBlockCounts()
+            for i in loaded.indices {
+                loaded[i].blockCount = realCounts[loaded[i].id] ?? 0
+            }
+
+            thinkspaces = loaded
+
+            // Invalidate child docs cache so expanded thinkspaces refresh
+            invalidateChildDocsCache()
 
             print("📚 Loaded \(thinkspaces.count) Thinkspaces")
         } catch {
@@ -554,7 +581,73 @@ class ThinkspaceManager: ObservableObject {
         }
     }
 
+    // MARK: - Child Docs
+
+    /// Fetch child docs (canvas blocks) for a thinkspace
+    func fetchChildDocs(for thinkspaceId: String) async {
+        do {
+            let tsId = thinkspaceId
+            let blocks: [CanvasBlockRecord] = try await database.asyncRead { db in
+                try CanvasBlockRecord
+                    .filter(Column("thinkspace_id") == tsId)
+                    .filter(Column("is_deleted") == false)
+                    .order(Column("entity_title"))
+                    .fetchAll(db)
+            }
+
+            let docs = blocks.compactMap { block -> ChildDoc? in
+                guard let type = EntityType(rawValue: block.entityType) else { return nil }
+                return ChildDoc(
+                    id: block.id,
+                    entityType: type,
+                    entityId: Int64(block.entityId),
+                    entityUuid: block.entityUuid ?? "",
+                    title: block.entityTitle ?? "Untitled"
+                )
+            }
+
+            childDocsCache[thinkspaceId] = docs
+        } catch {
+            print("❌ Failed to fetch child docs: \(error)")
+        }
+    }
+
+    /// Invalidate child docs cache (called after thinkspace data changes)
+    func invalidateChildDocsCache(for thinkspaceId: String? = nil) {
+        if let id = thinkspaceId {
+            childDocsCache.removeValue(forKey: id)
+        } else {
+            childDocsCache.removeAll()
+        }
+    }
+
     // MARK: - Private Methods
+
+    /// Query the canvas_blocks table for real block counts per thinkspace
+    private func fetchRealBlockCounts() async -> [String: Int] {
+        do {
+            let rows: [Row] = try await database.asyncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT thinkspace_id, COUNT(*) as block_count
+                    FROM canvas_blocks
+                    WHERE is_deleted = 0 AND thinkspace_id IS NOT NULL
+                    GROUP BY thinkspace_id
+                """)
+            }
+
+            var counts: [String: Int] = [:]
+            for row in rows {
+                if let tsId: String = row["thinkspace_id"],
+                   let count: Int = row["block_count"] {
+                    counts[tsId] = count
+                }
+            }
+            return counts
+        } catch {
+            print("❌ Failed to fetch real block counts: \(error)")
+            return [:]
+        }
+    }
 
     private func openLastThinkspace() async {
         guard let lastId = UserDefaults.standard.string(forKey: lastThinkspaceKey),

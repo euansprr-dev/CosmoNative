@@ -20,6 +20,9 @@ struct CanvasDrawingsLayer: View {
         static let selectionPadding: CGFloat = 8
         static let resizeHandleSize: CGFloat = 10
         static let resizeHandleHitSize: CGFloat = 22
+        static let shapeHitPadding: CGFloat = 10
+        static let minimumShapeHitDimension: CGFloat = 28
+        static let lineHitExpansion: CGFloat = 12
     }
 
     // MARK: - Coordinate Conversion
@@ -173,7 +176,70 @@ struct CanvasDrawingsLayer: View {
                 triangleShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
             }
         }
+        .overlay {
+            shapeHitArea(for: drawing, rect: screenRect, scaledStroke: scaledStroke)
+        }
         .opacity(drawing.opacity)
+    }
+
+    @ViewBuilder
+    private func shapeHitArea(for drawing: CanvasDrawing, rect: CGRect, scaledStroke: CGFloat) -> some View {
+        let kind = drawing.shapeKind ?? .rectangle
+
+        switch kind {
+        case .line:
+            Path { path in
+                path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+                path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            }
+            .strokedPath(StrokeStyle(
+                lineWidth: max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion),
+                lineCap: .round,
+                lineJoin: .round
+            ))
+            .fill(Color.white.opacity(0.001))
+
+        case .arrow:
+            let start = CGPoint(x: rect.minX, y: rect.minY)
+            let end = CGPoint(x: rect.maxX, y: rect.maxY)
+
+            Path { path in
+                path.move(to: start)
+                path.addLine(to: end)
+
+                let angle = atan2(end.y - start.y, end.x - start.x)
+                let headLength: CGFloat = 12 * effectiveScale
+                let headAngle: CGFloat = .pi / 6
+
+                path.move(to: end)
+                path.addLine(to: CGPoint(
+                    x: end.x - headLength * cos(angle - headAngle),
+                    y: end.y - headLength * sin(angle - headAngle)
+                ))
+                path.move(to: end)
+                path.addLine(to: CGPoint(
+                    x: end.x - headLength * cos(angle + headAngle),
+                    y: end.y - headLength * sin(angle + headAngle)
+                ))
+            }
+            .strokedPath(StrokeStyle(
+                lineWidth: max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion),
+                lineCap: .round,
+                lineJoin: .round
+            ))
+            .fill(Color.white.opacity(0.001))
+
+        case .rectangle, .circle, .triangle:
+            // Expand interaction area so small shapes remain easy to select/drag.
+            Rectangle()
+                .fill(Color.white.opacity(0.001))
+                .frame(
+                    width: max(rect.width + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension),
+                    height: max(rect.height + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension)
+                )
+                .position(x: rect.midX, y: rect.midY)
+                .contentShape(Rectangle())
+        }
     }
 
     @ViewBuilder
@@ -357,6 +423,7 @@ struct CanvasDrawingsLayer: View {
                     .stroke(Color.blue.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .frame(width: max(padded.width, 1), height: max(padded.height, 1))
                     .position(x: padded.midX, y: padded.midY)
+                    .allowsHitTesting(false)
 
                 ForEach(ShapeResizeCorner.allCases, id: \.self) { corner in
                     resizeHandle(corner: corner, in: padded)

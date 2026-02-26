@@ -1,6 +1,6 @@
 // CosmoOS/AI/SwipeAdaptationEngine.swift
 // Dedicated engine for adapting swipe hook patterns to specific client niches.
-// Two-pass Claude architecture: Haiku screening (Pass 1) → Sonnet adaptation (Pass 2).
+// Two-pass Claude architecture: Haiku screening (Pass 1) → Opus adaptation (Pass 2).
 
 import Foundation
 
@@ -31,11 +31,13 @@ struct ScreeningResult: Codable {
 struct AdaptedIdea: Codable {
     let sourceIndex: Int
     let adaptedHook: String
+    let hookVariants: [String]?
     let ideaTitle: String
     let ideaBody: String
     let hookType: String
     let suggestedFramework: String
     let adaptationReasoning: String
+    let whyItWorks: String?
     let confidence: String
 }
 
@@ -146,7 +148,7 @@ final class SwipeAdaptationEngine {
 
         // 7. Pass 1: Claude screens entire library (Haiku)
         var engineError: String? = nil
-        let maxCandidates = min(maxResults + 5, 25)
+        let maxCandidates = min(max(maxResults * 3, 20), 30)
         let screeningResult = try await screenCandidates(
             compactSwipes: compactSwipes,
             clientProfile: clientMeta,
@@ -202,7 +204,7 @@ final class SwipeAdaptationEngine {
             )
         }
 
-        // 10. Pass 2: Claude generates adapted ideas (Sonnet, with prompt caching)
+        // 10. Pass 2: Claude generates adapted ideas (Opus, with prompt caching)
         let adaptationResult = await generateAdaptations(
             candidates: deduplicated,
             clientProfile: clientMeta,
@@ -417,7 +419,7 @@ final class SwipeAdaptationEngine {
         }
     }
 
-    // MARK: - Pass 2: Claude-Powered Adaptation (Sonnet, cached)
+    // MARK: - Pass 2: Claude-Powered Adaptation (Opus, cached)
 
     private func generateAdaptations(
         candidates: [SwipeAdaptationCandidate],
@@ -444,7 +446,7 @@ final class SwipeAdaptationEngine {
                 messages: [
                     ["role": "user", "content": userPrompt]
                 ],
-                model: AgentModelTier.strategist.modelId,
+                model: AgentModelTier.writer.modelId,
                 maxTokens: 8192
             )
             return (ideas: parseAdaptationResponse(response, sourceSwipes: candidates), error: nil)
@@ -596,16 +598,28 @@ final class SwipeAdaptationEngine {
           "adaptedIdeas": [
             {
               "sourceIndex": 1,
-              "adaptedHook": "The actual adapted hook text for this client",
-              "ideaTitle": "Short title for the idea (3-8 words)",
+              "adaptedHook": "Best hook variant (the primary pick)",
+              "hookVariants": ["Hook variant 1", "Hook variant 2", "Hook variant 3"],
+              "ideaTitle": "Short title (3-8 words)",
               "ideaBody": "2-3 sentence expansion. Map a 4-beat arc: tension → relatability → insight → CTA.",
               "hookType": "curiosityGap",
               "suggestedFramework": "pas",
-              "adaptationReasoning": "One sentence: what structural pattern was borrowed and how it was transplanted",
+              "adaptationReasoning": "What structural pattern was borrowed",
+              "whyItWorks": "Why this specific pattern would resonate with \(clientName)'s audience — reference their pain points, aspirations, or proven angles",
               "confidence": "high"
             }
           ]
         }
+
+        Generate 2-3 distinct hook variants for each idea. Each variant should use the same underlying \
+        mechanism but different wording, angle, or emotional trigger. The first variant is the primary pick \
+        and should also be used as adaptedHook.
+
+        For each idea, write a "whyItWorks" sentence explaining WHY this specific pattern would resonate \
+        with this client's audience. Reference their pain points, aspirations, or what's already working. \
+        This is NOT a structural explanation — it's a persuasion argument.
+
+        Rank ideas by LEVERAGE — highest viral potential first. The user will only see 3-5, so frontload the best.
 
         Valid hookTypes: curiosityGap, boldClaim, question, story, statistic, controversy, contrast, howTo, list, challenge, hiddenGem, contrarian, personal, transformation
         Valid frameworks: aida, pas, bab, escalationArc, storyLoop, listicle, tutorial, caseStudy, interview, beforeAfter, mythBusting, dayInLife

@@ -22,7 +22,7 @@ class AgentContextAssembler {
     // MARK: - Context Cache (conversation-scoped TTL)
 
     /// Cached dynamic context to avoid re-fetching from GRDB on every message.
-    private var cachedDynamicContext: (conversationId: String, intent: AgentIntent?, context: String, timestamp: Date)?
+    private var cachedDynamicContext: (conversationId: String, intent: AgentIntent?, activeClientUUID: String?, context: String, timestamp: Date)?
 
     /// Cached linked atom context (separate from main context since linked UUIDs can change mid-conversation).
     private var cachedLinkedContext: (uuids: [String], context: String, timestamp: Date)?
@@ -187,14 +187,22 @@ class AgentContextAssembler {
         to the client's niche and generates ready-to-use adapted ideas with reasoning
 
         When presenting adapt_swipes_for_client results:
-        - Present EACH idea as:
-          → The adapted hook (use the EXACT text from the tool result — do NOT rewrite or paraphrase it)
-          → Source: "[sourceSwipeTitle]" — one sentence on what structural pattern was borrowed
-          → 1-2 sentence idea body from the tool result
-        - Keep it tight. 4-5 lines per idea MAX. No narrative paragraphs. No breathless essays.
-          The adapted hooks were carefully generated — present them cleanly, don't bury them.
+        - For EACH idea, present in this EXACT format:
+
+          **IDEA [N]: [ideaTitle]**
+          Source: "[sourceSwipeTitle]"
+          Why: [whyItWorks field — one sentence on why this works for this client]
+          Hooks:
+            → "[hookVariant 1]"
+            → "[hookVariant 2]"
+            → "[hookVariant 3]"
+
+        - Use the EXACT hook text from hookVariants. Do NOT rewrite, paraphrase, or add commentary.
+        - No narrative paragraphs. No filler. No "let me analyze" preamble. No "breathless essays."
+        - One short intro line ("Here are the [N] highest-leverage ideas from your swipe library \
+        for [client]:") then jump straight to the ideas.
         - After all ideas: one closing line asking which to save or develop.
-        - If the tool returns count: 0 or an error/warning field, tell the user honestly:
+        - NEVER generate your own ideas if the tool returns count: 0 — report the error honestly:
           "The adaptation engine couldn't generate ideas this time — [reason from error/warning field]."
           Do NOT generate your own ideas as a substitute. Do NOT hallucinate alternatives.
           Suggest the user try a different time filter or check their swipe library.
@@ -355,9 +363,43 @@ class AgentContextAssembler {
         var usedTokens = estimateTokens(cachedPrompt)
 
         let convId = conversation?.id ?? ""
+
+        // Resolve active client UUID for cache keying (prevents cross-client contamination)
+        var activeClientUUID: String? = nil
+        if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
+            for uuid in conv.linkedAtomUUIDs.reversed() {
+                if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
+                   let clientUUID = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID {
+                    activeClientUUID = clientUUID
+                    break
+                }
+                if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .clientProfile {
+                    activeClientUUID = uuid
+                    break
+                }
+            }
+        }
+
+        // Fallback: extract client name from latest user message (handles first-turn case)
+        if activeClientUUID == nil, let conv = conversation,
+           let lastUserMsg = conv.messages.last(where: { $0.role == .user }) {
+            let lower = lastUserMsg.content.lowercased()
+            if let clients = try? await atomRepo.clientProfiles() {
+                for client in clients {
+                    guard let name = client.title, !name.isEmpty else { continue }
+                    let nameLower = name.lowercased()
+                    if lower.contains("for \(nameLower)") || lower.contains("about \(nameLower)") {
+                        activeClientUUID = client.uuid
+                        break
+                    }
+                }
+            }
+        }
+
         let cacheHit = cachedDynamicContext.map { cached in
             cached.conversationId == convId &&
             cached.intent == intent &&
+            cached.activeClientUUID == activeClientUUID &&
             Date().timeIntervalSince(cached.timestamp) < contextCacheTTL
         } ?? false
 
@@ -394,16 +436,11 @@ class AgentContextAssembler {
             // Layer 5.5: Auto-load saved analyses for creative intents (WP6)
             let analysisIntents: Set<AgentIntent> = [.draft, .strategy, .analyze, .brainstorm]
             if let intent = intent, analysisIntents.contains(intent) {
+                // Reuse already-resolved activeClientUUID to scope analyses
                 var activeClientName: String? = nil
-                if let conv = conversation, !conv.linkedAtomUUIDs.isEmpty {
-                    for uuid in conv.linkedAtomUUIDs.reversed() {
-                        if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
-                           let clientUUID = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
-                           let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
-                            activeClientName = clientAtom.title
-                            break
-                        }
-                    }
+                if let clientUUID = activeClientUUID,
+                   let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
+                    activeClientName = clientAtom.title
                 }
                 let analysisContext = await loadRecentAnalyses(filteredToClient: activeClientName)
                 if !analysisContext.isEmpty {
@@ -412,7 +449,7 @@ class AgentContextAssembler {
             }
 
             let combinedGrdbContext = grdbSections.joined(separator: "\n\n")
-            cachedDynamicContext = (conversationId: convId, intent: intent, context: combinedGrdbContext, timestamp: Date())
+            cachedDynamicContext = (conversationId: convId, intent: intent, activeClientUUID: activeClientUUID, context: combinedGrdbContext, timestamp: Date())
 
             if !combinedGrdbContext.isEmpty {
                 dynamicSections.append((priority: 1, content: combinedGrdbContext))
@@ -537,8 +574,8 @@ class AgentContextAssembler {
             return await buildCaptureContext()
 
         case .brainstorm:
-            // Ideas + swipe stats + client profiles
-            return await buildBrainstormContext()
+            // Ideas + swipe stats + client profiles (scoped to active client)
+            return await buildBrainstormContext(linkedAtomUUIDs: linkedAtomUUIDs)
 
         case .reflect:
             // Dimensions + quest summary + recent activity
@@ -888,7 +925,7 @@ class AgentContextAssembler {
         return parts.joined(separator: "\n")
     }
 
-    private func buildBrainstormContext() async -> String {
+    private func buildBrainstormContext(linkedAtomUUIDs: [String] = []) async -> String {
         var parts: [String] = ["[USER CONTEXT - Brainstorm]"]
 
         // Surface in-progress content so the agent doesn't create duplicates
@@ -925,10 +962,41 @@ class AgentContextAssembler {
             }
         } catch {}
 
-        // Include full client profiles for voice-aware brainstorming
-        let clientDetails = await fetchClientProfileDetails()
-        if !clientDetails.isEmpty {
-            parts.append(contentsOf: clientDetails)
+        // Resolve active client from linked atoms (scoped brainstorming)
+        var activeClient: Atom? = nil
+        for uuid in linkedAtomUUIDs.reversed() {
+            if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .content,
+               let clientUUID = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID,
+               let clientAtom = try? await atomRepo.fetch(uuid: clientUUID) {
+                activeClient = clientAtom
+                break
+            }
+            if let atom = try? await atomRepo.fetch(uuid: uuid), atom.type == .clientProfile {
+                activeClient = atom
+                break
+            }
+        }
+
+        if let client = activeClient {
+            // Active client found: inject ONLY this client's full profile
+            let profile = formatSingleClientProfile(client)
+            if !profile.isEmpty {
+                parts.append("Active client profile:")
+                parts.append(contentsOf: profile)
+            }
+            // List other client names (no details) for awareness
+            let allNames = await fetchClientProfileNames()
+            let otherNames = allNames.filter { $0.lowercased() != (client.title ?? "").lowercased() }
+            if !otherNames.isEmpty {
+                parts.append("Other clients (names only): \(otherNames.joined(separator: ", "))")
+            }
+        } else {
+            // No active client: inject names only, instruct LLM to ask
+            let names = await fetchClientProfileNames()
+            if !names.isEmpty {
+                parts.append("Available clients: \(names.joined(separator: ", "))")
+                parts.append("NOTE: No specific client is active. If brainstorming for a client, ask the user which client before proceeding. Do NOT mix data from different clients.")
+            }
         }
 
         return parts.joined(separator: "\n")
@@ -979,13 +1047,15 @@ class AgentContextAssembler {
                       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let subtype = dict["subtype"] as? String else { return false }
                 guard subtype == "agent_analysis" else { return false }
-                // Filter to active client if specified
-                if let clientFilter = filteredToClient,
-                   let clientName = dict["clientName"] as? String,
-                   !clientName.isEmpty {
-                    return clientName.lowercased() == clientFilter.lowercased()
+                // Strict client scoping: with client filter, only show that client's analyses;
+                // without client filter, only show client-agnostic analyses (no cross-client leakage)
+                let analysisClientName = dict["clientName"] as? String ?? ""
+                if let clientFilter = filteredToClient {
+                    return !analysisClientName.isEmpty &&
+                           analysisClientName.lowercased() == clientFilter.lowercased()
+                } else {
+                    return analysisClientName.isEmpty
                 }
-                return true
             }
 
             guard !analyses.isEmpty else { return "" }
@@ -1532,6 +1602,28 @@ class AgentContextAssembler {
         } catch {
             return []
         }
+    }
+
+    /// Format a single client's full profile (niche, voice, handles) for scoped injection.
+    private func formatSingleClientProfile(_ client: Atom) -> [String] {
+        var parts: [String] = []
+        let name = client.title ?? "Untitled"
+        parts.append("  \(name):")
+        if let meta = client.metadata,
+           let data = meta.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let niche = dict["niche"] as? String, !niche.isEmpty {
+                parts.append("    Niche: \(niche)")
+            }
+            if let brandVoice = dict["brandVoice"] as? String, !brandVoice.isEmpty {
+                parts.append("    Voice: \(String(brandVoice.prefix(200)))")
+            }
+            if let handles = dict["handles"] as? [String: String], !handles.isEmpty {
+                let handleStr = handles.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+                parts.append("    Handles: \(handleStr)")
+            }
+        }
+        return parts
     }
 
     /// Fetch full client profile details including voice, niche, and brand context.

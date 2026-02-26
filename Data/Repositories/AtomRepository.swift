@@ -815,17 +815,35 @@ extension AtomRepository {
         try await fetchAll(types: types)
     }
 
-    /// Fuzzy find client profile by name or handle
+    /// Fuzzy find client profile by name (title-only, exact-first to prevent cross-client contamination)
     func fuzzyFindClient(query: String) async throws -> Atom? {
-        let pattern = "%\(query)%"
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
         return try await database.asyncRead { db in
-            try Atom
+            // Phase 1: Exact title match (SQLite LIKE is case-insensitive for ASCII)
+            if let exact = try Atom
                 .filter(Atom.CodingKeys.type == AtomType.clientProfile.rawValue)
                 .filter(Atom.CodingKeys.isDeleted == false)
-                .filter(
-                    Column("title").like(pattern) ||
-                    Column("metadata").like(pattern)
-                )
+                .filter(Column("title").like(trimmed))
+                .fetchOne(db) {
+                return exact
+            }
+
+            // Phase 2: Title starts with query (e.g. "Ben" → "Ben Johnson")
+            if let startsWith = try Atom
+                .filter(Atom.CodingKeys.type == AtomType.clientProfile.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(Column("title").like("\(trimmed)%"))
+                .fetchOne(db) {
+                return startsWith
+            }
+
+            // Phase 3: Title contains query (e.g. "Ben" → "Sir Ben Kingsley")
+            return try Atom
+                .filter(Atom.CodingKeys.type == AtomType.clientProfile.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(Column("title").like("%\(trimmed)%"))
                 .order(Atom.CodingKeys.updatedAt.desc)
                 .fetchOne(db)
         }

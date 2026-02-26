@@ -678,12 +678,14 @@ class AgentToolExecutor {
 
                 return [
                     "adaptedHook": idea.adaptedHook,
+                    "hookVariants": idea.hookVariants ?? [idea.adaptedHook],
                     "ideaTitle": idea.ideaTitle,
                     "ideaBody": idea.ideaBody,
                     "sourceSwipeTitle": sourceTitle,
                     "hookType": idea.hookType,
                     "suggestedFramework": idea.suggestedFramework,
                     "adaptationReasoning": idea.adaptationReasoning,
+                    "whyItWorks": idea.whyItWorks ?? idea.adaptationReasoning,
                     "confidence": idea.confidence
                 ] as [String: Any]
             }

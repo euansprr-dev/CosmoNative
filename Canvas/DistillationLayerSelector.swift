@@ -6,9 +6,9 @@ import SwiftUI
 
 struct DistillationLayerSelector {
     static func layer(for scale: CGFloat) -> DistillationLayer {
-        if scale > 1.5 { return .full }
-        if scale > 0.8 { return .summary }
-        if scale > 0.4 { return .essence }
+        if scale > 0.6 { return .full }
+        if scale > 0.35 { return .summary }
+        if scale > 0.2 { return .essence }
         return .glyph
     }
 }

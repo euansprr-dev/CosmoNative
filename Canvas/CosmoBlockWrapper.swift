@@ -34,6 +34,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Environment
     @EnvironmentObject private var expansionManager: BlockExpansionManager
     @Environment(\.distillationLayer) private var envDistillationLayer
+    @ObservedObject private var distillationEngine = DistillationEngine.shared
 
     // State
     @State private var isHovered = false
@@ -133,7 +134,7 @@ struct CosmoBlockWrapper<Content: View>: View {
 
     /// Resolved distillation layers data (from direct property or engine cache)
     private var resolvedDistillationLayers: DistillationLayers? {
-        distillationLayers ?? DistillationEngine.shared.layersCache[block.entityUuid]
+        distillationLayers ?? distillationEngine.layersCache[block.entityUuid]
     }
 
     // MARK: - Body
@@ -571,7 +572,7 @@ struct SimpleResizeOverlay: View {
                                 NotificationCenter.default.post(
                                     name: .saveBlockSize,
                                     object: nil,
-                                    userInfo: ["blockId": blockId, "size": size]
+                                    userInfo: ["blockId": blockId, "size": size, "oldSize": dragStartSize]
                                 )
                             }
                     )
@@ -608,7 +609,7 @@ struct SimpleResizeOverlay: View {
                             NotificationCenter.default.post(
                                 name: .saveBlockSize,
                                 object: nil,
-                                userInfo: ["blockId": blockId, "size": size]
+                                userInfo: ["blockId": blockId, "size": size, "oldSize": dragStartSize]
                             )
                         }
                 )
@@ -645,7 +646,7 @@ struct SimpleResizeOverlay: View {
                             NotificationCenter.default.post(
                                 name: .saveBlockSize,
                                 object: nil,
-                                userInfo: ["blockId": blockId, "size": size]
+                                userInfo: ["blockId": blockId, "size": size, "oldSize": dragStartSize]
                             )
                         }
                 )
@@ -884,12 +885,13 @@ struct EdgeResizeZone: View {
                         isResizing = false
                         isHovered = false
 
+                        let oldSize = dragStart
                         DispatchQueue.main.async {
                             NSCursor.arrow.set()
                             NotificationCenter.default.post(
                                 name: .saveBlockSize,
                                 object: nil,
-                                userInfo: ["blockId": finalBlockId, "size": finalSize]
+                                userInfo: ["blockId": finalBlockId, "size": finalSize, "oldSize": oldSize]
                             )
                         }
                     }
@@ -971,7 +973,7 @@ struct BlockResizeHandle: View {
                     NotificationCenter.default.post(
                         name: .saveBlockSize,
                         object: nil,
-                        userInfo: ["blockId": blockId, "size": size]
+                        userInfo: ["blockId": blockId, "size": size, "oldSize": dragStart]
                     )
                 }
         )

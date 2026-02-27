@@ -13,29 +13,60 @@ struct CanvasDrawingGestureLayer: View {
     var effectiveScale: CGFloat = 1.0
     var screenCenter: CGPoint = .zero
 
+    // Block frame tracker for lasso hit testing
+    @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
+
     // Forward magnification to parent
     @GestureState private var magnificationState: CGFloat = 1.0
     var onMagnification: ((CGFloat) -> Void)?
     var onMagnificationEnd: ((CGFloat) -> Void)?
 
+    // Lasso state
+    @State private var lassoPoints: [CGPoint] = []
+
     var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .allowsHitTesting(drawingState.toolMode != .select)
-            .gesture(drawingGesture)
-            .simultaneousGesture(
-                MagnifyGesture()
-                    .updating($magnificationState) { value, state, _ in
-                        state = value.magnification
-                        onMagnification?(value.magnification)
-                    }
-                    .onEnded { value in
-                        onMagnificationEnd?(value.magnification)
-                    }
-            )
-            .onTapGesture { location in
-                handleTap(at: screenToCanvas(location))
+        ZStack {
+            Color.clear
+                .contentShape(Rectangle())
+                .allowsHitTesting(drawingState.toolMode != .select)
+                .gesture(drawingGesture)
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .updating($magnificationState) { value, state, _ in
+                            state = value.magnification
+                            onMagnification?(value.magnification)
+                        }
+                        .onEnded { value in
+                            onMagnificationEnd?(value.magnification)
+                        }
+                )
+                .onTapGesture { location in
+                    handleTap(at: screenToCanvas(location))
+                }
+
+            // Lasso visual preview
+            if drawingState.toolMode == .lasso, lassoPoints.count > 1 {
+                lassoPreview
+                    .allowsHitTesting(false)
             }
+        }
+    }
+
+    // MARK: - Lasso Preview
+
+    private var lassoPreview: some View {
+        Path { path in
+            path.move(to: lassoPoints[0])
+            for i in 1..<lassoPoints.count {
+                path.addLine(to: lassoPoints[i])
+            }
+            // Close the path visually
+            path.addLine(to: lassoPoints[0])
+        }
+        .stroke(
+            DS.textMuted,
+            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [6, 4])
+        )
     }
 
     // MARK: - Screen → Canvas Coordinate Conversion
@@ -53,7 +84,7 @@ struct CanvasDrawingGestureLayer: View {
     // MARK: - Drawing Gesture
 
     private var drawingGesture: some Gesture {
-        DragGesture(minimumDistance: drawingState.toolMode == .draw ? 1 : 5)
+        DragGesture(minimumDistance: drawingState.toolMode == .draw || drawingState.toolMode == .lasso ? 1 : 5)
             .onChanged { value in
                 let canvasStart = screenToCanvas(value.startLocation)
                 let canvasLoc = screenToCanvas(value.location)
@@ -74,6 +105,13 @@ struct CanvasDrawingGestureLayer: View {
                 case .erase:
                     eraseAtPoint(canvasLoc)
 
+                case .lasso:
+                    // Collect screen-space points for lasso (hit test against screen-space block frames)
+                    if lassoPoints.isEmpty {
+                        lassoPoints = [value.startLocation]
+                    }
+                    lassoPoints.append(value.location)
+
                 case .text, .select:
                     break
                 }
@@ -84,10 +122,38 @@ struct CanvasDrawingGestureLayer: View {
                     drawingState.finishShape()
                 case .draw:
                     drawingState.finishFreehand()
+                case .lasso:
+                    finishLasso()
                 case .erase, .text, .select:
                     break
                 }
             }
+    }
+
+    // MARK: - Lasso Completion
+
+    private func finishLasso() {
+        guard lassoPoints.count >= 3 else {
+            lassoPoints = []
+            return
+        }
+
+        // Check which block centers fall inside the lasso polygon (screen space)
+        let enclosed = LassoGestureDetector.enclosedBlocks(
+            lassoPath: lassoPoints,
+            blockFrames: blockFrameTracker.blockFrames
+        )
+
+        lassoPoints = []
+
+        guard enclosed.count >= 2 else { return }
+
+        // Post notification with enclosed block IDs
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.lassoEnclosedBlocks,
+            object: nil,
+            userInfo: ["blockIds": enclosed]
+        )
     }
 
     // MARK: - Tap Handling
@@ -98,7 +164,7 @@ struct CanvasDrawingGestureLayer: View {
             drawingState.createText(at: location)
         case .erase:
             eraseAtPoint(location)
-        case .shape, .draw, .select:
+        case .shape, .draw, .select, .lasso:
             break
         }
     }

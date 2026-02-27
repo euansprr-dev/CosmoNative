@@ -34,6 +34,24 @@ final class HybridSearchEngine: ObservableObject {
 
     private init() {}
 
+    // MARK: - UUID Resolution
+
+    /// Resolve the atom UUID from entity type + id by querying the atoms table
+    private func resolveUUID(entityType: String, entityId: Int64) async -> String? {
+        guard entityId > 0 else { return nil }
+        do {
+            return try await database.asyncRead { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT uuid FROM atoms WHERE type = ? AND id = ? AND is_deleted = 0 LIMIT 1",
+                    arguments: [entityType, entityId]
+                )
+            }
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - Search Results
 
     struct SearchResult: Identifiable, Sendable {
@@ -117,19 +135,22 @@ final class HybridSearchEngine: ObservableObject {
             }
         } catch {
             print("  ⚠️ Embedding failed, using BM25 only: \(error.localizedDescription)")
-            return bm25Candidates.prefix(limit).map { candidate in
-                SearchResult(
+            var fallbackResults: [SearchResult] = []
+            for candidate in bm25Candidates.prefix(limit) {
+                let uuid = await resolveUUID(entityType: candidate.entityType, entityId: candidate.entityId)
+                fallbackResults.append(SearchResult(
                     entityType: EntityType(rawValue: candidate.entityType) ?? .idea,
                     entityId: candidate.entityId,
-                    entityUUID: nil,
+                    entityUUID: uuid,
                     title: candidate.title,
                     preview: String(candidate.content.prefix(200)),
                     bm25Score: candidate.bm25Score,
                     vectorSimilarity: 0,
                     combinedScore: candidate.bm25Score,
                     matchReason: .keywordMatch
-                )
+                ))
             }
+            return fallbackResults
         }
 
         // Stage 3: Compute vector similarity and combine scores
@@ -157,10 +178,12 @@ final class HybridSearchEngine: ObservableObject {
                 matchReason = .keywordMatch
             }
 
+            let resolvedUUID = await resolveUUID(entityType: candidate.entityType, entityId: candidate.entityId)
+
             let result = SearchResult(
                 entityType: EntityType(rawValue: candidate.entityType) ?? .idea,
                 entityId: candidate.entityId,
-                entityUUID: nil,
+                entityUUID: resolvedUUID,
                 title: candidate.title,
                 preview: String(candidate.content.prefix(200)),
                 bm25Score: candidate.bm25Score,
@@ -390,19 +413,22 @@ final class HybridSearchEngine: ObservableObject {
         }
 
         // Enrich with entity details and return
-        return Array(deduplicated.prefix(limit)).map { result in
-            SearchResult(
+        var enrichedResults: [SearchResult] = []
+        for result in deduplicated.prefix(limit) {
+            let uuid = await resolveUUID(entityType: result.entityType, entityId: result.entityId)
+            enrichedResults.append(SearchResult(
                 entityType: EntityType(rawValue: result.entityType) ?? .idea,
                 entityId: result.entityId,
-                entityUUID: nil,
+                entityUUID: uuid,
                 title: result.title,
                 preview: String(result.text.prefix(200)),
                 bm25Score: 0,
                 vectorSimilarity: Double(result.similarity),
                 combinedScore: Double(result.similarity),
                 matchReason: .semanticSimilarity
-            )
+            ))
         }
+        return enrichedResults
     }
 
     // MARK: - Vector Similarity Lookup

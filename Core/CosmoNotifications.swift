@@ -74,6 +74,20 @@ enum CosmoNotification {
         static let duplicateSelectedBlock = Notification.Name("com.cosmo.canvas.duplicateSelectedBlock")
         static let closeSelectedBlock = Notification.Name("com.cosmo.canvas.closeSelectedBlock")
 
+        // Ambient knowledge
+        static let pullAmbientToCanvas = Notification.Name("com.cosmo.canvas.pullAmbientToCanvas")
+
+        // Lasso synthesis
+        static let lassoEnclosedBlocks = Notification.Name("com.cosmo.canvas.lassoEnclosedBlocks")
+
+        // Trisociative collisions
+        static let collisionsGenerated = Notification.Name("com.cosmo.canvas.collisionsGenerated")
+        static let collisionPromoted = Notification.Name("com.cosmo.canvas.collisionPromoted")
+
+        // Provocation layer
+        static let provocationScanComplete = Notification.Name("com.cosmo.canvas.provocationScanComplete")
+        static let provocationDismissed = Notification.Name("com.cosmo.canvas.provocationDismissed")
+
         // Inbox blocks
         static let createInboxBlock = Notification.Name("com.cosmo.canvas.createInboxBlock")
         static let closeInboxBlock = Notification.Name("com.cosmo.canvas.closeInboxBlock")

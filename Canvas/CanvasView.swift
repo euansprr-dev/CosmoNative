@@ -45,6 +45,30 @@ struct CanvasView: View {
     @State private var showSettings = false
     @StateObject private var thinkspaceManager = ThinkspaceManager.shared
 
+    // Ambient knowledge panel
+    @StateObject private var ambientEngine = AmbientFieldEngine()
+    @State private var showAmbientPanel = false
+
+    // Crystallization heatmap
+    @State private var showCrystallizationHeatmap = false
+    @StateObject private var crystallizationEngine = CrystallizationEngine.shared
+
+    // Incubation engine (spaced repetition heartbeat)
+    @StateObject private var incubationEngine = IncubationEngine.shared
+
+    // Distillation engine (progressive zoom layers)
+    @StateObject private var distillationEngine = DistillationEngine.shared
+
+    // Lasso synthesis workspace
+    @State private var showSynthesisWorkspace = false
+    @State private var synthesisSourceBlockIds: [String] = []
+
+    // Trisociative collision engine
+    @StateObject private var trisociativeEngine = TrisociativeEngine.shared
+
+    // Provocation engine (AI devil's advocate)
+    @StateObject private var provocationEngine = ProvocationEngine.shared
+
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
 
@@ -109,6 +133,9 @@ struct CanvasView: View {
                     scaledPanOffset: scaledPanOffset,
                     effectiveScale: effectiveScale
                 )
+
+                // Provocation markers overlay (screen coordinates, on top of blocks)
+                ProvocationOverlay(provocationEngine: provocationEngine)
             }
             .environmentObject(expansionManager)
             .overlay(alignment: .bottomTrailing) {
@@ -150,6 +177,26 @@ struct CanvasView: View {
                 )
                 .padding(.leading, 16)
                 .padding(.top, 60)  // Below command bar
+            }
+            // Ambient knowledge panel (right edge)
+            .overlay(alignment: .trailing) {
+                if showAmbientPanel, let selectedId = selectedBlockId {
+                    let blockUUID = spatialEngine.blocks.first(where: { $0.id == selectedId })?.entityUuid ?? ""
+                    AmbientKnowledgePanel(
+                        engine: ambientEngine,
+                        sourceBlockUUID: blockUUID,
+                        onClose: { showAmbientPanel = false }
+                    )
+                    .padding(.trailing, 16)
+                    .padding(.top, 60)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            // Trisociative collision tray (bottom-left)
+            .overlay(alignment: .bottomLeading) {
+                CollisionTray(engine: trisociativeEngine)
+                    .padding(.leading, 16)
+                    .padding(.bottom, 16)
             }
             // Update block frame tracker for right-click hit-testing
             .onChange(of: spatialEngine.blocks.count) { _, _ in
@@ -297,9 +344,18 @@ struct CanvasView: View {
         }
     }
 
+    /// Current distillation layer based on zoom level
+    private var currentDistillationLayer: DistillationLayer {
+        DistillationLayerSelector.layer(for: effectiveScale)
+    }
+
     private var blocksLayer: some View {
         ForEach(spatialEngine.blocks) { block in
             blockView(for: block)
+        }
+        .environment(\.distillationLayer, currentDistillationLayer)
+        .onChange(of: currentDistillationLayer) { _, newLayer in
+            triggerDistillationForVisibleBlocks(layer: newLayer)
         }
         // NOTE: Removed .drawingGroup() - it was breaking async image loading in blocks
         // like ResearchBlockView that load thumbnails asynchronously. GPU acceleration
@@ -336,6 +392,8 @@ struct CanvasView: View {
             }
         }
         .expansionAware(blockId: block.id)
+        // Incubation heartbeat: gentle breathing for blocks due for review
+        .heartbeatAnimation(isActive: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid))
         // Position in canvas space (zoom is applied to container)
         .position(
             x: block.position.x + canvasOffset.width + scaledPanOffset.width + (blockDragOffsets[block.id]?.width ?? 0),
@@ -344,7 +402,7 @@ struct CanvasView: View {
         // Block's own scale only (zoom is applied to container)
         .scaleEffect(block.scale)
         .rotationEffect(.degrees(block.rotation))
-        .opacity(block.opacity * expansionManager.opacity(for: block.id))
+        .opacity(block.opacity * expansionManager.opacity(for: block.id) * heatmapOpacity(for: block))
         .zIndex(draggingBlockId == block.id ? 1000 : (expansionManager.zIndex(for: block.id) + Double(block.zIndex)))
         .gesture(
             DragGesture(minimumDistance: 2) // Small threshold to avoid accidental drags
@@ -862,6 +920,51 @@ struct CanvasView: View {
                     handleOpenEntityOnCanvas(notification: notification)
                 }
 
+                // Listen for ambient pull-to-canvas
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.pullAmbientToCanvas,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handlePullAmbientToCanvas(notification: notification)
+                }
+
+                // Listen for lasso-enclosed blocks
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.lassoEnclosedBlocks,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        if let blockIds = notification.userInfo?["blockIds"] as? [String] {
+                            synthesisSourceBlockIds = blockIds
+                            withAnimation(ProMotionSprings.snappy) {
+                                showSynthesisWorkspace = true
+                            }
+                            // Reset tool to select after lasso completes
+                            drawingState.toolMode = .select
+                        }
+                    }
+                }
+
+                // Listen for focus mode entry to record incubation interactions
+                NotificationCenter.default.addObserver(
+                    forName: .enterFocusMode,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    if let entityId = notification.userInfo?["id"] as? Int64 {
+                        // Find the block UUID for this entity
+                        if let block = spatialEngine.blocks.first(where: { $0.entityId == entityId }) {
+                            Task { @MainActor in
+                                await incubationEngine.recordInteraction(uuid: block.entityUuid)
+                            }
+                        }
+                    }
+                }
+
                 // MARK: - Scroll Wheel Zoom (Mouse)
                 // Set up scroll wheel event monitor for smooth mouse zoom
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
@@ -904,6 +1007,127 @@ struct CanvasView: View {
                 }
                 return .ignored
             }
+            // Cmd+Shift+H: Toggle crystallization heatmap
+            .onKeyPress(characters: .init(charactersIn: "hH")) { press in
+                guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
+                    return .ignored
+                }
+                withAnimation(ProMotionSprings.snappy) {
+                    showCrystallizationHeatmap.toggle()
+                }
+                return .handled
+            }
+            // Cmd+Shift+K: Toggle ambient knowledge panel
+            .onKeyPress(characters: .init(charactersIn: "kK")) { press in
+                guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
+                    return .ignored
+                }
+                withAnimation(ProMotionSprings.snappy) {
+                    showAmbientPanel.toggle()
+                }
+                return .handled
+            }
+            // Cmd+Shift+P: Trigger provocation scan on visible blocks
+            .onKeyPress(characters: .init(charactersIn: "pP")) { press in
+                guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
+                    return .ignored
+                }
+                let visibleUUIDs = spatialEngine.blocks.map { $0.entityUuid }
+                Task {
+                    await provocationEngine.scanBlocks(atomUUIDs: visibleUUIDs)
+                }
+                return .handled
+            }
+            // Synthesis workspace overlay
+            .sheet(isPresented: $showSynthesisWorkspace) {
+                synthesisWorkspaceOverlay
+                    .frame(minWidth: 900, minHeight: 600)
+            }
+        }
+    }
+
+    // MARK: - Synthesis Workspace
+
+    @ViewBuilder
+    private var synthesisWorkspaceOverlay: some View {
+        SynthesisWorkspaceLoader(
+            blockIds: synthesisSourceBlockIds,
+            blocks: spatialEngine.blocks,
+            onCreateConnection: { result in
+                Task {
+                    await createSynthesisConnection(result: result)
+                }
+                showSynthesisWorkspace = false
+            },
+            onDismiss: {
+                showSynthesisWorkspace = false
+            }
+        )
+    }
+
+    private func createSynthesisConnection(result: LassoSynthesisResult) async {
+        let atomRepo = AtomRepository.shared
+
+        // Build synthesis metadata
+        let synthMeta = SynthesisMetadata(
+            sourceAtomUUIDs: result.sourceAtomUUIDs,
+            themes: result.themes,
+            openQuestions: result.openQuestions,
+            evidenceSpans: result.evidenceSpans,
+            synthesizedAt: ISO8601DateFormatter().string(from: Date())
+        )
+
+        let metadataJSON: String
+        if let data = try? JSONEncoder().encode(synthMeta),
+           let json = String(data: data, encoding: .utf8) {
+            metadataJSON = json
+        } else {
+            metadataJSON = "{}"
+        }
+
+        // Create bidirectional links to all source atoms
+        let links: [AtomLink] = result.sourceAtomUUIDs.map {
+            AtomLink(linkType: .related, uuid: $0)
+        }
+
+        do {
+            let connectionAtom = try await atomRepo.create(
+                type: .connection,
+                title: result.suggestedTitle,
+                body: result.synthesizedArgument,
+                metadata: metadataJSON,
+                links: links
+            )
+
+            // Calculate center position of source blocks for placement
+            let sourceBlocks = spatialEngine.blocks.filter { block in
+                synthesisSourceBlockIds.contains(block.id)
+            }
+            let avgX = sourceBlocks.map(\.position.x).reduce(0, +) / max(CGFloat(sourceBlocks.count), 1)
+            let avgY = sourceBlocks.map(\.position.y).reduce(0, +) / max(CGFloat(sourceBlocks.count), 1)
+            let position = CGPoint(x: avgX, y: avgY + 300) // Place below source cluster
+
+            let canvasBlock = CanvasBlock.fromAtom(connectionAtom, position: position)
+            await spatialEngine.addBlock(canvasBlock, persist: true)
+
+            print("Synthesis: Created connection '\(result.suggestedTitle)' linking \(result.sourceAtomUUIDs.count) sources")
+        } catch {
+            print("Synthesis: Failed to create connection — \(error)")
+        }
+    }
+
+    // MARK: - Crystallization Heatmap
+
+    /// Returns opacity multiplier for a block when heatmap mode is active
+    private func heatmapOpacity(for block: CanvasBlock) -> CGFloat {
+        guard showCrystallizationHeatmap else { return 1.0 }
+        let level = crystallizationEngine.levels[block.entityUuid] ?? .raw
+        switch level {
+        case .raw: return 0.3
+        case .highlighted: return 0.5
+        case .distilled: return 0.7
+        case .connected: return 0.85
+        case .crystallized: return 1.0
         }
     }
 
@@ -1349,6 +1573,25 @@ struct CanvasView: View {
         print("✨ Created \(entityType) block at \(position)")
     }
 
+    // MARK: - Distillation Trigger
+
+    /// Trigger distillation generation for blocks visible in the viewport
+    private func triggerDistillationForVisibleBlocks(layer: DistillationLayer) {
+        guard layer != .full else { return }
+
+        // Get atoms for visible blocks and trigger generation
+        for block in spatialEngine.blocks {
+            let uuid = block.entityUuid
+            guard !uuid.isEmpty else { continue }
+
+            Task { @MainActor in
+                if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    distillationEngine.ensureLayersExist(for: atom, layer: layer)
+                }
+            }
+        }
+    }
+
     // MARK: - Gesture Handlers (Optimized)
 
     /// Optimized drag handler - updates only local @State, not @Published blocks array
@@ -1423,6 +1666,12 @@ struct CanvasView: View {
         // 2. Single atomic assignment triggers only ONE objectWillChange
         spatialEngine.blocks = updatedBlocks
         selectedBlockId = blockId
+
+        // 3. Update ambient knowledge context if panel is visible
+        if showAmbientPanel, let block = updatedBlocks.first(where: { $0.id == blockId }) {
+            let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
+            ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
+        }
     }
 
     // MARK: - Voice Command Handlers
@@ -2246,6 +2495,81 @@ struct CanvasView: View {
         selectedBlockId = block.id
 
         print("🆕 Created \(entityType) floating block for entity ID \(entityId)")
+    }
+
+    // MARK: - Ambient Pull-to-Canvas
+
+    private func handlePullAmbientToCanvas(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let atomUUID = userInfo["atomUUID"] as? String,
+              let sourceBlockUUID = userInfo["sourceBlockUUID"] as? String else { return }
+
+        Task { @MainActor in
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) else {
+                print("AmbientPull: atom not found for UUID \(atomUUID)")
+                return
+            }
+
+            // Position 200px to the right of the source block
+            let sourceBlock = spatialEngine.blocks.first(where: { $0.entityUuid == sourceBlockUUID })
+            let position: CGPoint
+            if let source = sourceBlock {
+                position = CGPoint(
+                    x: source.position.x + source.size.width + 200,
+                    y: source.position.y
+                )
+            } else {
+                position = CGPoint(
+                    x: canvasSize.width / 2 - canvasOffset.width + 200,
+                    y: canvasSize.height / 2 - canvasOffset.height
+                )
+            }
+
+            // Create canvas block from atom
+            let block = CanvasBlock.fromAtom(atom, position: position)
+
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                spatialEngine.blocks.append(block)
+            }
+            await spatialEngine.saveBlock(block)
+
+            // Create bidirectional AtomLink between source and pulled atom
+            await createBidirectionalLink(sourceUUID: sourceBlockUUID, targetUUID: atomUUID)
+
+            print("Ambient: Pulled \(atom.type.rawValue) '\(atom.title ?? "Untitled")' to canvas")
+        }
+    }
+
+    /// Creates a bidirectional .related link between two atoms
+    @MainActor
+    private func createBidirectionalLink(sourceUUID: String, targetUUID: String) async {
+        // Link source -> target
+        if var sourceAtom = try? await AtomRepository.shared.fetch(uuid: sourceUUID) {
+            var links = sourceAtom.linksList
+            guard !links.contains(where: { $0.uuid == targetUUID && $0.type == AtomLinkType.related.rawValue }) else { return }
+            links.append(AtomLink(linkType: .related, uuid: targetUUID))
+            if let data = try? JSONEncoder().encode(links),
+               let json = String(data: data, encoding: .utf8) {
+                sourceAtom.links = json
+                sourceAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                sourceAtom.localVersion += 1
+                try? await AtomRepository.shared.update(sourceAtom)
+            }
+        }
+
+        // Link target -> source
+        if var targetAtom = try? await AtomRepository.shared.fetch(uuid: targetUUID) {
+            var links = targetAtom.linksList
+            guard !links.contains(where: { $0.uuid == sourceUUID && $0.type == AtomLinkType.related.rawValue }) else { return }
+            links.append(AtomLink(linkType: .related, uuid: sourceUUID))
+            if let data = try? JSONEncoder().encode(links),
+               let json = String(data: data, encoding: .utf8) {
+                targetAtom.links = json
+                targetAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                targetAtom.localVersion += 1
+                try? await AtomRepository.shared.update(targetAtom)
+            }
+        }
     }
 
     // MARK: - Content Search Helper

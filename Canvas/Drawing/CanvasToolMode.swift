@@ -9,4 +9,5 @@ enum CanvasToolMode: String, CaseIterable {
     case draw
     case text
     case erase
+    case lasso
 }

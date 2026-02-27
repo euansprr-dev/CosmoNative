@@ -30,11 +30,14 @@ struct ResearchSidebarView: View {
     private let panelWidth: CGFloat = 320
     private let accentColor = OnyxColors.Dimension.knowledge
 
+    @StateObject private var ambientEngine = AmbientFieldEngine()
+
     enum SidebarSection: String, CaseIterable {
         case relatedKnowledge = "Related"
         case insightAtoms = "Insights"
         case aiAnalysis = "Analysis"
         case linkedItems = "Linked"
+        case ambient = "Ambient"
     }
 
     var body: some View {
@@ -55,6 +58,8 @@ struct ResearchSidebarView: View {
                             aiAnalysisSection
                         case .linkedItems:
                             linkedItemsSection
+                        case .ambient:
+                            ambientSection
                         }
                     }
                     .padding(16)
@@ -64,6 +69,9 @@ struct ResearchSidebarView: View {
             .background(DS.surface)
             .onAppear {
                 Task { await loadInitialData() }
+                // Seed ambient engine with research atom context
+                let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
+                ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
             }
             .onChange(of: state.allAnnotations.count) { _ in
                 Task { await refreshRelatedItems() }
@@ -1010,6 +1018,37 @@ struct ResearchSidebarView: View {
 
         guard let created = try? await AtomRepository.shared.create(connection) else { return }
         await linkToConnection(created.uuid)
+    }
+
+    // MARK: - Section 5: Ambient Knowledge
+
+    @ViewBuilder
+    private var ambientSection: some View {
+        if ambientEngine.isLoading {
+            loadingIndicator("Surfacing related knowledge...")
+        } else if ambientEngine.ambientResults.isEmpty {
+            emptyState(
+                icon: "sparkles",
+                message: "No ambient results yet",
+                detail: "Related knowledge will appear as you explore"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(ambientEngine.ambientResults) { result in
+                    AmbientResultCard(
+                        result: result,
+                        onPull: {
+                            ambientEngine.pullToCanvas(result: result, sourceBlockUUID: atom.uuid)
+                        },
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                ambientEngine.dismiss(uuid: result.id)
+                            }
+                        }
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Helpers

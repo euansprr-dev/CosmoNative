@@ -2093,6 +2093,17 @@ struct TaskMetadata: Codable, Sendable {
     var lastScheduledAt: String?
 }
 
+// MARK: - Synthesis Metadata (WP5 Lasso Synthesis)
+
+/// Metadata for connection atoms created via lasso synthesis
+struct SynthesisMetadata: Codable, Sendable {
+    var sourceAtomUUIDs: [String]
+    var themes: [String]
+    var openQuestions: [String]
+    var evidenceSpans: [LassoEvidenceSpan]?
+    var synthesizedAt: String  // ISO8601
+}
+
 // MARK: - Deep Work Session Metadata (WP2)
 
 /// Metadata for .deepWorkSession atoms — tracks individual focus sessions
@@ -2181,6 +2192,116 @@ struct ResearchMetadata: Codable, Sendable {
     var structureType: String?
     var isSwipeFile: Bool?
     var contentSource: String?
+}
+
+// MARK: - Progressive Distillation
+
+/// Representation layer that changes based on canvas zoom level
+enum DistillationLayer: Int, Codable, CaseIterable, Sendable {
+    case full = 0       // Full content (zoomed in)
+    case summary = 1    // 3-5 sentence summary (medium zoom)
+    case essence = 2    // Single sentence core insight (far zoom)
+    case glyph = 3      // 3-word label + icon (max zoom-out)
+}
+
+/// AI-generated content representations at different abstraction levels
+struct DistillationLayers: Codable, Sendable {
+    var summary: String?      // 3-5 sentence summary
+    var essence: String?      // Single sentence core insight
+    var glyph: String?        // 3-word label (e.g., "hooks beat structure")
+    var userOwnedFlags: Set<String> = []  // Fields user has manually edited ("summary", "essence", "glyph")
+    var lastGeneratedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case summary, essence, glyph, userOwnedFlags, lastGeneratedAt
+    }
+
+    init(summary: String? = nil, essence: String? = nil, glyph: String? = nil, userOwnedFlags: Set<String> = [], lastGeneratedAt: String? = nil) {
+        self.summary = summary
+        self.essence = essence
+        self.glyph = glyph
+        self.userOwnedFlags = userOwnedFlags
+        self.lastGeneratedAt = lastGeneratedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        essence = try container.decodeIfPresent(String.self, forKey: .essence)
+        glyph = try container.decodeIfPresent(String.self, forKey: .glyph)
+        userOwnedFlags = try container.decodeIfPresent(Set<String>.self, forKey: .userOwnedFlags) ?? []
+        lastGeneratedAt = try container.decodeIfPresent(String.self, forKey: .lastGeneratedAt)
+    }
+}
+
+// MARK: - Knowledge Crystallization
+
+/// Represents how deeply a piece of knowledge has been processed/internalized
+/// Progresses from raw capture through annotation, distillation, connection, and full crystallization
+enum CrystallizationLevel: Int, Codable, Sendable, CaseIterable, Comparable {
+    case raw = 0
+    case highlighted = 1
+    case distilled = 2
+    case connected = 3
+    case crystallized = 4
+
+    var description: String {
+        switch self {
+        case .raw: return "Raw"
+        case .highlighted: return "Highlighted"
+        case .distilled: return "Distilled"
+        case .connected: return "Connected"
+        case .crystallized: return "Crystallized"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .raw: return Color(hex: "#6B7280")
+        case .highlighted: return Color(hex: "#FBBF24")
+        case .distilled: return Color(hex: "#818CF8")
+        case .connected: return Color(hex: "#34D399")
+        case .crystallized: return Color(hex: "#38BDF8")
+        }
+    }
+
+    static func < (lhs: CrystallizationLevel, rhs: CrystallizationLevel) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+/// Metadata tracking crystallization state for an atom, stored in the `metadata` JSON field
+struct CrystallizationMetadata: Codable, Sendable {
+    var level: CrystallizationLevel
+    var annotationCount: Int
+    var linkCount: Int
+    var edgeCount: Int
+    var downstreamCount: Int
+    var lastComputedAt: String?
+    var userOverride: Int?
+}
+
+// MARK: - Incubation / Spaced Repetition
+
+/// Metadata for the Leitner-based review queue (stored in `metadata` JSON)
+struct ReviewQueueMetadata: Codable, Sendable {
+    var leitnerBox: Int = 1          // Box 1 (1-day), Box 2 (3-day), Box 3 (7-day)
+    var dueAt: String                // ISO8601 date when next review is due
+    var ignoreCount: Int = 0         // Times resurfaced but not interacted with
+    var snoozedUntil: String?        // Optional snooze date
+    var interactionHistory: [String] = []  // ISO8601 dates of interactions
+    var enrolledAt: String           // ISO8601 date when enrolled
+    var isDormant: Bool = false      // True after 3 ignores
+
+    /// Interval in days for current Leitner box
+    var intervalDays: Int {
+        switch leitnerBox {
+        case 1: return 1
+        case 2: return 3
+        case 3: return 7
+        default: return 7
+        }
+    }
 }
 
 /// Metadata for journal entry atoms

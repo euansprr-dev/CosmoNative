@@ -136,11 +136,6 @@ struct CanvasDrawingsLayer: View {
     private var shapesLayer: some View {
         ForEach(drawingState.drawings.filter { $0.drawingType == .shape }) { drawing in
             shapeView(for: drawing)
-                .gesture(selectModeDragGesture(for: drawing))
-                .onTapGesture {
-                    let additive = NSEvent.modifierFlags.contains(.shift)
-                    handleTap(drawing, additive: additive)
-                }
         }
     }
 
@@ -185,61 +180,246 @@ struct CanvasDrawingsLayer: View {
     @ViewBuilder
     private func shapeHitArea(for drawing: CanvasDrawing, rect: CGRect, scaledStroke: CGFloat) -> some View {
         let kind = drawing.shapeKind ?? .rectangle
+        let strokeHitWidth = max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion)
+        let baseWidth = max(rect.width, 1)
+        let baseHeight = max(rect.height, 1)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+
+        Group {
+            switch kind {
+            case .line:
+                let start = CGPoint(
+                    x: rect.width <= 1 ? baseWidth / 2 : 0,
+                    y: rect.height <= 1 ? baseHeight / 2 : 0
+                )
+                let end = CGPoint(
+                    x: rect.width <= 1 ? baseWidth / 2 : baseWidth,
+                    y: rect.height <= 1 ? baseHeight / 2 : baseHeight
+                )
+
+                Path { path in
+                    path.move(to: start)
+                    path.addLine(to: end)
+                }
+                .strokedPath(StrokeStyle(
+                    lineWidth: strokeHitWidth,
+                    lineCap: .round,
+                    lineJoin: .round
+                ))
+                .fill(Color.white.opacity(0.001))
+                .frame(width: baseWidth, height: baseHeight)
+                .position(center)
+
+            case .arrow:
+                let start = CGPoint(
+                    x: rect.width <= 1 ? baseWidth / 2 : 0,
+                    y: rect.height <= 1 ? baseHeight / 2 : 0
+                )
+                let end = CGPoint(
+                    x: rect.width <= 1 ? baseWidth / 2 : baseWidth,
+                    y: rect.height <= 1 ? baseHeight / 2 : baseHeight
+                )
+
+                Path { path in
+                    path.move(to: start)
+                    path.addLine(to: end)
+
+                    let angle = atan2(end.y - start.y, end.x - start.x)
+                    let headLength: CGFloat = 12 * effectiveScale
+                    let headAngle: CGFloat = .pi / 6
+
+                    path.move(to: end)
+                    path.addLine(to: CGPoint(
+                        x: end.x - headLength * cos(angle - headAngle),
+                        y: end.y - headLength * sin(angle - headAngle)
+                    ))
+                    path.move(to: end)
+                    path.addLine(to: CGPoint(
+                        x: end.x - headLength * cos(angle + headAngle),
+                        y: end.y - headLength * sin(angle + headAngle)
+                    ))
+                }
+                .strokedPath(StrokeStyle(
+                    lineWidth: strokeHitWidth,
+                    lineCap: .round,
+                    lineJoin: .round
+                ))
+                .fill(Color.white.opacity(0.001))
+                .frame(width: baseWidth, height: baseHeight)
+                .position(center)
+
+            case .rectangle:
+                if drawing.fillColor != nil {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.001))
+                        .frame(
+                            width: max(rect.width + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension),
+                            height: max(rect.height + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension)
+                        )
+                        .position(center)
+                        .contentShape(Rectangle())
+                } else {
+                    Rectangle()
+                        .stroke(Color.white.opacity(0.001), lineWidth: strokeHitWidth)
+                        .frame(width: baseWidth, height: baseHeight)
+                        .position(center)
+                }
+
+            case .circle:
+                if drawing.fillColor != nil {
+                    Ellipse()
+                        .fill(Color.white.opacity(0.001))
+                        .frame(
+                            width: max(rect.width + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension),
+                            height: max(rect.height + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension)
+                        )
+                        .position(center)
+                } else {
+                    Ellipse()
+                        .stroke(Color.white.opacity(0.001), lineWidth: strokeHitWidth)
+                        .frame(width: baseWidth, height: baseHeight)
+                        .position(center)
+                }
+
+            case .triangle:
+                let trianglePath = Path { path in
+                    path.move(to: CGPoint(x: baseWidth / 2, y: 0))
+                    path.addLine(to: CGPoint(x: baseWidth, y: baseHeight))
+                    path.addLine(to: CGPoint(x: 0, y: baseHeight))
+                    path.closeSubpath()
+                }
+
+                if drawing.fillColor != nil {
+                    trianglePath
+                        .fill(Color.white.opacity(0.001))
+                        .frame(width: baseWidth, height: baseHeight)
+                        .position(center)
+                } else {
+                    trianglePath
+                        .strokedPath(StrokeStyle(lineWidth: strokeHitWidth, lineCap: .round, lineJoin: .round))
+                        .fill(Color.white.opacity(0.001))
+                        .frame(width: baseWidth, height: baseHeight)
+                        .position(center)
+                }
+            }
+        }
+        .gesture(selectModeDragGesture(for: drawing, hitTest: { point in
+            shapeContainsPoint(point, drawing: drawing, rect: rect, scaledStroke: scaledStroke)
+        }))
+        .onTapGesture { location in
+            guard shapeContainsPoint(location, drawing: drawing, rect: rect, scaledStroke: scaledStroke) else {
+                return
+            }
+            let additive = NSEvent.modifierFlags.contains(.shift)
+            handleTap(drawing, additive: additive)
+        }
+    }
+
+    private func shapeContainsPoint(
+        _ point: CGPoint,
+        drawing: CanvasDrawing,
+        rect: CGRect,
+        scaledStroke: CGFloat
+    ) -> Bool {
+        let kind = drawing.shapeKind ?? .rectangle
+        let tolerance = max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion) / 2
 
         switch kind {
         case .line:
-            Path { path in
-                path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-                path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            }
-            .strokedPath(StrokeStyle(
-                lineWidth: max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion),
-                lineCap: .round,
-                lineJoin: .round
-            ))
-            .fill(Color.white.opacity(0.001))
+            let start = CGPoint(x: rect.minX, y: rect.minY)
+            let end = CGPoint(x: rect.maxX, y: rect.maxY)
+            return distanceToSegment(point: point, start: start, end: end) <= tolerance
 
         case .arrow:
             let start = CGPoint(x: rect.minX, y: rect.minY)
             let end = CGPoint(x: rect.maxX, y: rect.maxY)
-
-            Path { path in
-                path.move(to: start)
-                path.addLine(to: end)
-
-                let angle = atan2(end.y - start.y, end.x - start.x)
-                let headLength: CGFloat = 12 * effectiveScale
-                let headAngle: CGFloat = .pi / 6
-
-                path.move(to: end)
-                path.addLine(to: CGPoint(
-                    x: end.x - headLength * cos(angle - headAngle),
-                    y: end.y - headLength * sin(angle - headAngle)
-                ))
-                path.move(to: end)
-                path.addLine(to: CGPoint(
-                    x: end.x - headLength * cos(angle + headAngle),
-                    y: end.y - headLength * sin(angle + headAngle)
-                ))
+            if distanceToSegment(point: point, start: start, end: end) <= tolerance {
+                return true
             }
-            .strokedPath(StrokeStyle(
-                lineWidth: max(Constants.hitTestWidth, scaledStroke + Constants.lineHitExpansion),
-                lineCap: .round,
-                lineJoin: .round
-            ))
-            .fill(Color.white.opacity(0.001))
 
-        case .rectangle, .circle, .triangle:
-            // Expand interaction area so small shapes remain easy to select/drag.
-            Rectangle()
-                .fill(Color.white.opacity(0.001))
-                .frame(
-                    width: max(rect.width + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension),
-                    height: max(rect.height + (Constants.shapeHitPadding * 2), Constants.minimumShapeHitDimension)
-                )
-                .position(x: rect.midX, y: rect.midY)
-                .contentShape(Rectangle())
+            let angle = atan2(end.y - start.y, end.x - start.x)
+            let headLength: CGFloat = 12 * effectiveScale
+            let headAngle: CGFloat = .pi / 6
+            let leftHead = CGPoint(
+                x: end.x - headLength * cos(angle - headAngle),
+                y: end.y - headLength * sin(angle - headAngle)
+            )
+            let rightHead = CGPoint(
+                x: end.x - headLength * cos(angle + headAngle),
+                y: end.y - headLength * sin(angle + headAngle)
+            )
+            return distanceToSegment(point: point, start: end, end: leftHead) <= tolerance ||
+                distanceToSegment(point: point, start: end, end: rightHead) <= tolerance
+
+        case .rectangle:
+            if drawing.fillColor != nil {
+                let expanded = rect.insetBy(dx: -Constants.shapeHitPadding, dy: -Constants.shapeHitPadding)
+                return expanded.contains(point)
+            }
+            let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+            let inner = rect.insetBy(dx: tolerance, dy: tolerance)
+            if inner.width <= 0 || inner.height <= 0 {
+                return outer.contains(point)
+            }
+            return outer.contains(point) && !inner.contains(point)
+
+        case .circle:
+            if drawing.fillColor != nil {
+                let expanded = rect.insetBy(dx: -Constants.shapeHitPadding, dy: -Constants.shapeHitPadding)
+                return ellipseContains(point: point, in: expanded)
+            }
+            let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+            let inner = rect.insetBy(dx: tolerance, dy: tolerance)
+            let inOuter = ellipseContains(point: point, in: outer)
+            if inner.width <= 0 || inner.height <= 0 {
+                return inOuter
+            }
+            return inOuter && !ellipseContains(point: point, in: inner)
+
+        case .triangle:
+            let p1 = CGPoint(x: rect.midX, y: rect.minY)
+            let p2 = CGPoint(x: rect.maxX, y: rect.maxY)
+            let p3 = CGPoint(x: rect.minX, y: rect.maxY)
+
+            if drawing.fillColor != nil {
+                return pointInTriangle(point, p1, p2, p3)
+            }
+            return distanceToSegment(point: point, start: p1, end: p2) <= tolerance ||
+                distanceToSegment(point: point, start: p2, end: p3) <= tolerance ||
+                distanceToSegment(point: point, start: p3, end: p1) <= tolerance
         }
+    }
+
+    private func distanceToSegment(point: CGPoint, start: CGPoint, end: CGPoint) -> CGFloat {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0 else {
+            return hypot(point.x - start.x, point.y - start.y)
+        }
+        let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+        let projection = CGPoint(x: start.x + t * dx, y: start.y + t * dy)
+        return hypot(point.x - projection.x, point.y - projection.y)
+    }
+
+    private func ellipseContains(point: CGPoint, in rect: CGRect) -> Bool {
+        guard rect.width > 0, rect.height > 0 else { return false }
+        let nx = (point.x - rect.midX) / (rect.width / 2)
+        let ny = (point.y - rect.midY) / (rect.height / 2)
+        return (nx * nx) + (ny * ny) <= 1
+    }
+
+    private func pointInTriangle(_ point: CGPoint, _ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Bool {
+        let d1 = signedArea(point, a, b)
+        let d2 = signedArea(point, b, c)
+        let d3 = signedArea(point, c, a)
+        let hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+        let hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+        return !(hasNeg && hasPos)
+    }
+
+    private func signedArea(_ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint) -> CGFloat {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
     }
 
     @ViewBuilder
@@ -625,7 +805,10 @@ struct CanvasDrawingsLayer: View {
 
     // MARK: - Drag-to-Move Gesture
 
-    private func selectModeDragGesture(for drawing: CanvasDrawing) -> some Gesture {
+    private func selectModeDragGesture(
+        for drawing: CanvasDrawing,
+        hitTest: ((CGPoint) -> Bool)? = nil
+    ) -> some Gesture {
         DragGesture(minimumDistance: 5)
             .onChanged { value in
                 guard drawingState.toolMode == .select else { return }
@@ -634,6 +817,9 @@ struct CanvasDrawingsLayer: View {
                     return
                 }
                 if drawingState.draggingDrawingId != drawing.id {
+                    if let hitTest, !hitTest(value.startLocation) {
+                        return
+                    }
                     drawingState.beginDragDrawing(id: drawing.id)
                 }
                 // Convert screen-space translation to canvas-space

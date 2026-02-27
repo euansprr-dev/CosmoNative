@@ -12,6 +12,7 @@ struct CanvasDrawingToolbar: View {
     private var toolItems: [(CanvasToolMode, String)] {
         [
             (.select, "cursorarrow"),
+            (.lasso, "lasso"),
             (.shape, "square"),
             (.draw, "pencil.tip"),
             (.text, "textformat"),

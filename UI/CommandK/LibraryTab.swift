@@ -16,6 +16,7 @@ struct LibraryTab: View {
     @State private var typeFilter: AtomType? = nil
     @State private var showResearchURLInput = false
     @State private var researchURLText = ""
+    @StateObject private var incubationEngine = IncubationEngine.shared
 
     // MARK: - Filtered Items (Search-Library Bridge)
 
@@ -59,6 +60,13 @@ struct LibraryTab: View {
                     && libraryViewModel.isAtHome
                     && !libraryViewModel.smartCollections.isEmpty {
                     smartCollectionsRow
+                }
+
+                // Due for Review (incubation queue)
+                if !incubationEngine.dueAtoms.isEmpty
+                    && !libraryViewModel.showingRecentlyDeleted
+                    && searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                    dueForReviewRow
                 }
 
                 // Main content
@@ -823,6 +831,90 @@ struct LibraryTab: View {
         withAnimation(ProMotionSprings.snappy) {
             viewModel.clearSelection()
         }
+    }
+
+    // MARK: - Due for Review Row
+
+    private var dueForReviewRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "heart.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color(hex: "#F59E0B"))
+                Text("Due for Review")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.text)
+
+                Text("\(incubationEngine.dueAtoms.count)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(hex: "#F59E0B"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color(hex: "#F59E0B").opacity(0.15))
+                    )
+
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(incubationEngine.dueAtoms.prefix(10), id: \.uuid) { atom in
+                        dueReviewCard(for: atom)
+                    }
+                }
+                .padding(.horizontal, 24)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func dueReviewCard(for atom: Atom) -> some View {
+        let daysOverdue = daysOverdueForAtom(atom)
+
+        Button {
+            viewModel.select(uuid: atom.uuid)
+            viewModel.openSelected()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: atom.type.iconName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color(hex: "#F59E0B"))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(atom.title ?? "Untitled")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.text)
+                        .lineLimit(1)
+
+                    Text(daysOverdue > 0 ? "due \(daysOverdue)d ago" : "due today")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(hex: "#F59E0B").opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(hex: "#F59E0B").opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func daysOverdueForAtom(_ atom: Atom) -> Int {
+        guard let rq = atom.reviewQueueMetadata else { return 0 }
+        let formatter = ISO8601DateFormatter()
+        guard let dueDate = formatter.date(from: rq.dueAt) else { return 0 }
+        let days = Calendar.current.dateComponents([.day], from: dueDate, to: Date()).day ?? 0
+        return max(0, days)
     }
 }
 

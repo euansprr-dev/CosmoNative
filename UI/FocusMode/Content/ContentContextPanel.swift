@@ -24,6 +24,8 @@ struct ContentContextPanel: View {
     @State private var isGeneratingDraft = false
     @State private var metaPatternReport: MetaPatternReport?
     @State private var isLoadingMetaPattern = false
+    @StateObject private var ambientEngine = AmbientFieldEngine()
+    @State private var showAmbientSection = false
 
     private let panelWidth: CGFloat = 320
     private let accentColor = CosmoMentionColors.content // Blue
@@ -45,6 +47,7 @@ struct ContentContextPanel: View {
                         whatsWorkingSection
                         draftIntelligenceSection
                         relatedContentSection
+                        ambientKnowledgeSection
                         researchButton
                     }
                     .padding(16)
@@ -54,6 +57,9 @@ struct ContentContextPanel: View {
             .background(DS.surface.opacity(0.5))
             .onAppear {
                 Task { await loadInheritedContext() }
+                // Seed ambient engine with content atom context
+                let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
+                ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
             }
             .onChange(of: state.draftContent) { _ in
                 debounceRelatedRefresh()
@@ -762,6 +768,76 @@ struct ContentContextPanel: View {
             .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Ambient Knowledge Section
+
+    @ViewBuilder
+    private var ambientKnowledgeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    showAmbientSection.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showAmbientSection ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 12)
+
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                        .foregroundColor(OnyxColors.Dimension.knowledge)
+
+                    Text("AMBIENT KNOWLEDGE")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(DS.textMuted)
+
+                    Spacer()
+
+                    if !ambientEngine.ambientResults.isEmpty {
+                        Text("\(ambientEngine.ambientResults.count)")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(OnyxColors.Dimension.knowledge)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(OnyxColors.Dimension.knowledge.opacity(0.15), in: Capsule())
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showAmbientSection {
+                if ambientEngine.isLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(OnyxColors.Dimension.knowledge)
+                        Text("Searching...")
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textMuted)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                } else {
+                    ForEach(ambientEngine.ambientResults.prefix(5)) { result in
+                        AmbientResultCard(
+                            result: result,
+                            onPull: {
+                                ambientEngine.pullToCanvas(result: result, sourceBlockUUID: atom.uuid)
+                            },
+                            onDismiss: {
+                                withAnimation(ProMotionSprings.snappy) {
+                                    ambientEngine.dismiss(uuid: result.id)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Research Button

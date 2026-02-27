@@ -874,6 +874,123 @@ extension Atom {
     }
 }
 
+// MARK: - Distillation Extensions
+
+extension Atom {
+    /// Distillation layers stored in the `structured` JSON field under the "distillation" key
+    var distillationLayers: DistillationLayers? {
+        get {
+            guard let structuredStr = self.structured,
+                  let data = structuredStr.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let distillationJson = json["distillation"],
+                  let distillationData = try? JSONSerialization.data(withJSONObject: distillationJson) else {
+                return nil
+            }
+            return try? JSONDecoder().decode(DistillationLayers.self, from: distillationData)
+        }
+        set {
+            // Parse existing structured as raw dictionary to preserve all sibling keys
+            var dict: [String: Any] = [:]
+            if let existingStr = self.structured,
+               let data = existingStr.data(using: .utf8),
+               let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                dict = existing
+            }
+
+            if let newValue = newValue,
+               let encoded = try? JSONEncoder().encode(newValue),
+               let distillationObj = try? JSONSerialization.jsonObject(with: encoded) {
+                dict["distillation"] = distillationObj
+            } else {
+                dict.removeValue(forKey: "distillation")
+            }
+
+            if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
+               let jsonStr = String(data: jsonData, encoding: .utf8) {
+                self.structured = jsonStr
+            }
+        }
+    }
+}
+
+// MARK: - Crystallization Extensions
+
+extension Atom {
+    /// Crystallization metadata stored in the metadata JSON field
+    var crystallizationMetadata: CrystallizationMetadata? {
+        get { metadataValue(as: CrystallizationMetadata.self) }
+        set {
+            if let newValue = newValue,
+               let encoded = try? JSONEncoder().encode(newValue),
+               let jsonString = String(data: encoded, encoding: .utf8) {
+                // Merge into existing metadata dict to avoid overwriting other fields
+                var dict = metadataDict ?? [:]
+                if let newDict = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
+                    for (key, value) in newDict {
+                        dict[key] = value
+                    }
+                }
+                if let merged = try? JSONSerialization.data(withJSONObject: dict),
+                   let mergedString = String(data: merged, encoding: .utf8) {
+                    self.metadata = mergedString
+                } else {
+                    self.metadata = jsonString
+                }
+            }
+        }
+    }
+
+    /// Convenience: returns the crystallization level, defaulting to .raw
+    var crystallizationLevel: CrystallizationLevel {
+        crystallizationMetadata?.level ?? .raw
+    }
+}
+
+// MARK: - Incubation / Review Queue Extensions
+
+extension Atom {
+    /// Review queue metadata stored in the metadata JSON field (Leitner spaced repetition)
+    var reviewQueueMetadata: ReviewQueueMetadata? {
+        get {
+            // Decode the reviewQueue sub-object from metadata
+            guard let dict = metadataDict,
+                  let reviewDict = dict["reviewQueue"] as? [String: Any],
+                  let jsonData = try? JSONSerialization.data(withJSONObject: reviewDict) else {
+                return nil
+            }
+            return try? JSONDecoder().decode(ReviewQueueMetadata.self, from: jsonData)
+        }
+        set {
+            var dict = metadataDict ?? [:]
+            if let newValue = newValue,
+               let encoded = try? JSONEncoder().encode(newValue),
+               let reviewObj = try? JSONSerialization.jsonObject(with: encoded) {
+                dict["reviewQueue"] = reviewObj
+            } else {
+                dict.removeValue(forKey: "reviewQueue")
+            }
+            if let merged = try? JSONSerialization.data(withJSONObject: dict),
+               let mergedString = String(data: merged, encoding: .utf8) {
+                self.metadata = mergedString
+            }
+        }
+    }
+
+    /// Whether this atom is enrolled in the incubation review queue
+    var isInReviewQueue: Bool {
+        reviewQueueMetadata != nil
+    }
+
+    /// Whether this atom is due for review (dueAt <= now and not dormant and not snoozed)
+    var isDueForReview: Bool {
+        guard let rq = reviewQueueMetadata, !rq.isDormant else { return false }
+        let now = ISO8601DateFormatter().string(from: Date())
+        if let snoozed = rq.snoozedUntil, snoozed > now { return false }
+        return rq.dueAt <= now
+    }
+}
+
 // MARK: - Wrapper Initializer Compatibility
 
 extension Atom {

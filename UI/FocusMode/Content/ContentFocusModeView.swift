@@ -1,15 +1,16 @@
 // CosmoOS/UI/FocusMode/Content/ContentFocusModeView.swift
-// Main Content Focus Mode container - 3-step workflow (Brainstorm → Draft → Polish)
+// Main Content Focus Mode container — unified single-page editor
 // February 2026
 
 import SwiftUI
 import Combine
 import GRDB
+import AppKit
 
 // MARK: - Content Focus Mode View
 
-/// Main container for Content Focus Mode.
-/// Routes between 3 workflow steps with a persistent step indicator in the top bar.
+/// Unified single-page Content Focus Mode.
+/// Left sidebar (outline/hooks/core idea) + center editor + right sidebar (context OR polish).
 struct ContentFocusModeView: View {
     // MARK: - Properties
 
@@ -30,8 +31,43 @@ struct ContentFocusModeView: View {
     /// Currently selected text in the draft editor (empty when no selection)
     @State private var selectedText: String = ""
 
+    /// Polish mode: when active, highlights appear on text + right sidebar swaps to polish analysis
+    @State private var isPolishModeActive: Bool = false
+
+    /// Polish analysis for Hemingway highlights
+    @State private var polishAnalysis: WritingAnalysis?
+
+    // Inline AI state (moved from ContentDraftView)
+    @State private var selectionInfo: DraftSelectionInfo = .empty
+    @State private var inlineAIState: InlineAIState = .idle
+    @State private var showCustomPrompt = false
+    @State private var customPromptText = ""
+    @StateObject private var inlineAssistant = AIWritingAssistant()
+    @State private var textContentHeight: CGFloat = 400
+    @State private var editorAreaFrame: CGRect = .zero
+    @State private var selectedRephraseIndex: Int = 0
+
+    // Auto-save state
+    @State private var autoSaveTask: Task<Void, Never>?
+    @State private var saveState: DraftSaveState = .idle
+    private let autoSaveDelay: TimeInterval = 1.5
+
+    // AI Draft generation state
+    @State private var isGeneratingDraft = false
+    @State private var draftGenerationError: String?
+
+    // Left sidebar visibility
+    @State private var sidebarVisible: Bool = false
+
+    enum DraftSaveState { case idle, saving, saved }
+
     // Feature flag: when true, the embedded AI Collaborator is hidden (replaced by global Cosmo window)
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
+
+    private let editorMaxWidth: CGFloat = 780
 
     // MARK: - Initialization
 
@@ -59,16 +95,16 @@ struct ContentFocusModeView: View {
                     .ignoresSafeArea()
                 )
 
-            // Main content — editor takes center stage
+            // Main content
             VStack(spacing: 0) {
-                // Top bar spacer — matches the fixed header height
+                // Top bar spacer
                 Spacer().frame(height: 72)
 
-                // Full-width step content (no context panel)
-                stepContent
+                // Unified editor or post-creation phase
+                mainContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Unified bottom navigation bar
+                // Bottom bar
                 unifiedBottomBar
             }
 
@@ -78,6 +114,12 @@ struct ContentFocusModeView: View {
                 Spacer()
             }
             .zIndex(10)
+
+            // Left sidebar trigger + overlay (UniversalFocusSidebar)
+            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
+                leftSidebarOverlay
+                    .zIndex(50)
+            }
 
             // AI Collaborator floating popover (hidden when global Cosmo window is enabled)
             if !cosmoWindowEnabled && showAICollaborator {
@@ -106,6 +148,16 @@ struct ContentFocusModeView: View {
             VStack {
                 HStack {
                     Spacer()
+                    if isPaneContext {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(DS.textMuted)
+                                .frame(width: 28, height: 28)
+                                .background(DS.border, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Button(action: { showSettings = true }) {
                         Image(systemName: "gearshape")
                             .font(.system(size: 14, weight: .regular))
@@ -144,15 +196,31 @@ struct ContentFocusModeView: View {
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: viewModel.xpAwarded)
         .animation(ProMotionSprings.snappy, value: showAICollaborator)
+        .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .onAppear {
             viewModel.loadState()
             viewModel.startObservingState()
             Task {
                 await viewModel.searchRelatedAtoms()
             }
+            // Migration: auto-open sidebar if in brainstorm step, auto-activate polish if in polish step
+            if viewModel.state.currentStep == .brainstorm {
+                sidebarVisible = true
+            } else if viewModel.state.currentStep == .polish {
+                isPolishModeActive = true
+                updatePolishAnalysis()
+            }
             // Register context provider for global Cosmo window
             let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = ContentContextProvider(atom: atom, stateRef: { [viewModel] in viewModel.state }, phaseRef: { [viewModel] in viewModel.displayPhase })
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
         }
         .task {
             // Initialize engine with persisted conversation (only when legacy AI Collaborator is active)
@@ -258,15 +326,15 @@ struct ContentFocusModeView: View {
         }
     }
 
-    // MARK: - Step Content
+    // MARK: - Main Content
 
     @ViewBuilder
-    private var stepContent: some View {
+    private var mainContent: some View {
         if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-            // Creation phase -- use existing step routing
-            creationStepContent
+            // Creation phase — unified editor
+            unifiedEditorContent
         } else {
-            // Post-creation phase — main content + context sidebar
+            // Post-creation phase — unchanged
             HStack(spacing: 0) {
                 PostCreationPhaseView(
                     phase: viewModel.displayPhase,
@@ -287,131 +355,285 @@ struct ContentFocusModeView: View {
         }
     }
 
+    // MARK: - Unified Editor Content
+
+    private var unifiedEditorContent: some View {
+        HStack(spacing: 0) {
+            // Center: Editor area
+            editorArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Right sidebar: Context panel OR Polish sidebar
+            if isPolishModeActive {
+                ContentPolishSidebar(
+                    state: $viewModel.state,
+                    atom: atom,
+                    analysis: polishAnalysis
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                ContentContextPanel(
+                    atom: atom,
+                    state: $viewModel.state,
+                    isVisible: viewModel.state.isContextPanelVisible
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .background(DS.bg)
+        // Keyboard shortcuts for inline AI
+        .background(inlineAIKeyboardShortcuts)
+    }
+
+    // MARK: - Left Sidebar Overlay
+
     @ViewBuilder
-    private var creationStepContent: some View {
-        switch viewModel.state.currentStep {
-        case .brainstorm:
-            ContentBrainstormView(
-                state: $viewModel.state,
-                atom: atom,
-                writingEngine: cosmoWindowEnabled ? nil : writingEngine,
-                onNext: {
-                    viewModel.goToStep(.draft)
+    private var leftSidebarOverlay: some View {
+        // Trigger zone at left edge + sidebar overlay
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+            .overlay(alignment: .topLeading) {
+                FocusSidebarTrigger(isVisible: $sidebarVisible)
+                    .frame(maxHeight: .infinity)
+            }
+            .overlay(alignment: .topLeading) {
+                UniversalFocusSidebar(
+                    title: "Outline",
+                    icon: "list.bullet.indent",
+                    accentColor: CosmoMentionColors.content,
+                    isVisible: $sidebarVisible
+                ) {
+                    ContentOutlineSidebarContent(
+                        state: $viewModel.state,
+                        atom: atom,
+                        writingEngine: cosmoWindowEnabled ? nil : writingEngine
+                    )
                 }
-            )
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            ))
+                .padding(.leading, 16)
+                .padding(.top, 80) // Below top bar
+            }
+    }
 
-        case .draft:
-            ContentDraftView(
-                state: $viewModel.state,
-                atom: atom,
-                editableTitle: $editableTitle,
-                selectedText: $selectedText,
-                writingEngine: cosmoWindowEnabled ? nil : writingEngine,
-                onBack: {
-                    viewModel.goToStep(.brainstorm)
-                },
-                onNext: {
-                    viewModel.goToStep(.polish)
-                }
-            )
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            ))
+    // MARK: - Editor Area
 
-        case .polish:
-            ContentPolishView(
-                state: $viewModel.state,
-                atom: atom,
-                onBack: {
-                    viewModel.goToStep(.draft)
+    private var editorArea: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                // Centered editor with NSTextView
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Title (editable)
+                        TextField("Untitled Content", text: $editableTitle)
+                            .textFieldStyle(.plain)
+                            .font(DS.pageTitle)
+                            .foregroundColor(DS.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 8)
+
+                        // Description subtitle
+                        if !viewModel.state.contentDescription.isEmpty {
+                            Text(viewModel.state.contentDescription)
+                                .font(DS.body)
+                                .foregroundColor(DS.textSecondary)
+                                .lineLimit(3)
+                                .padding(.bottom, 20)
+                        }
+
+                        LinearGradient(
+                            colors: [DS.accent.opacity(0.3), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(height: 2)
+                        .frame(maxWidth: 430, alignment: .leading)
+                        .padding(.bottom, 24)
+
+                        // AI Draft button — visible when draft is empty
+                        if viewModel.state.draftContent.isEmpty {
+                            aiDraftButton
+                        }
+
+                        // Draft editor — NSTextView for selection tracking
+                        DraftEditorTextView(
+                            text: $viewModel.state.draftContent,
+                            contentHeight: $textContentHeight,
+                            polishHighlights: isPolishModeActive ? polishAnalysis : nil,
+                            onSelectionChanged: { info in
+                                handleSelectionChange(info)
+                            },
+                            onTextChanged: {
+                                triggerAutoSave()
+                                if isPolishModeActive { updatePolishAnalysis() }
+                            }
+                        )
+                        .frame(height: max(400, textContentHeight))
+                    }
+                    .frame(maxWidth: editorMaxWidth)
+                    .padding(.vertical, 48)
+                    .padding(.horizontal, 48)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-            )
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            ))
+                .frame(maxWidth: .infinity)
+
+                // Inline AI Action Bar — floats above selection
+                if inlineAIState == .showingBar && !selectionInfo.text.isEmpty {
+                    inlineActionBar
+                        .position(
+                            x: min(max(selectionInfo.rectInEditor.midX, 120), geo.size.width - 120),
+                            y: max(selectionInfo.rectInEditor.minY - 50, 20)
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
+                }
+
+                // Inline AI Result Popover
+                if case .processing = inlineAIState {
+                    inlineResultPopover
+                        .position(
+                            x: min(max(selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                            y: max(selectionInfo.rectInEditor.minY - 80, 60)
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+                } else if inlineAIState == .showingResult {
+                    inlineResultPopover
+                        .position(
+                            x: min(max(selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                            y: max(selectionInfo.rectInEditor.minY - 80, 60)
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+                }
+            }
+            .onAppear {
+                editorAreaFrame = geo.frame(in: .global)
+            }
+            .onChange(of: geo.size) { _, _ in
+                editorAreaFrame = geo.frame(in: .global)
+            }
         }
     }
 
-    // MARK: - Unified Bottom Navigation Bar
+    // MARK: - AI Draft Button
+
+    @ViewBuilder
+    private var aiDraftButton: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isGeneratingDraft {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(DS.accent)
+                    Text("Opus is writing your draft...")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
+                .padding(.vertical, 24)
+            } else {
+                Button(action: generateAIDraft) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Generate Draft with Opus")
+                            .font(DS.buttonText)
+                    }
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(DS.accentSoft)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                    .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let error = draftGenerationError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange.opacity(0.8))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 16)
+    }
+
+    private func generateAIDraft() {
+        isGeneratingDraft = true
+        draftGenerationError = nil
+        Task {
+            if let engine = cosmoWindowEnabled ? nil : writingEngine {
+                await engine.generateDraft()
+                await MainActor.run {
+                    isGeneratingDraft = false
+                    if let error = engine.error {
+                        draftGenerationError = "Draft generation failed: \(error)"
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    draftGenerationError = "Use Cosmo window to generate drafts"
+                    isGeneratingDraft = false
+                }
+            }
+        }
+    }
+
+    // MARK: - Unified Bottom Bar
 
     private var unifiedBottomBar: some View {
         HStack(spacing: 12) {
-            // Left: Back button — ghost style (hidden on first phase)
-            if let prevPhase = viewModel.displayPhase.previousPhase {
-                Button {
-                    viewModel.goToPhase(prevPhase)
-                } label: {
-                    backButtonLabel(prevPhase)
+            // Left: Save status
+            if saveState != .idle {
+                HStack(spacing: 4) {
+                    if saveState == .saving {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(DS.textMuted)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(DS.accent)
+                    }
+                    Text(saveState == .saving ? "Saving..." : "Saved")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textMuted)
                 }
-                .buttonStyle(.plain)
-            } else {
-                Color.clear.frame(width: 120, height: 1)
+                .transition(.opacity)
             }
 
             Spacer()
 
-            // Center: Phase name — 12px, DS.textMuted, 0.02em tracking
+            // Center: Phase name
             Text(viewModel.displayPhase.displayName)
                 .font(.system(size: 12, weight: .regular))
                 .foregroundColor(DS.textMuted)
                 .tracking(0.24)
 
-            // Word + character count — selection-aware
+            // Word count — selection-aware
             if !viewModel.state.draftContent.isEmpty {
                 let textToCount = selectedText.isEmpty ? viewModel.state.draftContent : selectedText
                 let words = textToCount.split(whereSeparator: \.isWhitespace).count
-                let chars = textToCount.count
-                Text("\(words) words · \(chars) chars")
+                Text("\(words) words")
                     .font(.system(size: 11, weight: .regular))
                     .foregroundColor(DS.textMuted)
             }
 
             Spacer()
 
-            // AI Collaborator toggle — hidden when global Cosmo window is enabled
-            if !cosmoWindowEnabled {
+            // Polish toggle
+            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
-                        showAICollaborator.toggle()
+                        isPolishModeActive.toggle()
+                        if isPolishModeActive { updatePolishAnalysis() }
                     }
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("AI")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(DS.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .fill(showAICollaborator ? DS.accent.opacity(0.15) : DS.accentSoft)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(DS.accent.opacity(0.15), lineWidth: 1)
-                    )
+                    polishToggleLabel
                 }
                 .buttonStyle(.plain)
-            }
-
-            // Right: Advance phase button — DS.accent solid, white text, glow
-            if let nextPhase = viewModel.displayPhase.nextPhase {
-                Button {
-                    viewModel.goToPhase(nextPhase)
-                } label: {
-                    nextButtonLabel(nextPhase)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Color.clear.frame(width: 120, height: 1)
             }
         }
         .padding(.horizontal, 24)
@@ -428,45 +650,463 @@ struct ContentFocusModeView: View {
         )
     }
 
-    /// Back button — ghost style: transparent bg, 1px DS.border, DS.textSecondary text
     @ViewBuilder
-    private func backButtonLabel(_ phase: ContentPhase) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.left")
+    private var polishToggleLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "sparkles")
                 .font(.system(size: 12, weight: .medium))
-            Text(phase.displayName)
-                .font(.system(size: 12, weight: .medium))
+            Text("Polish")
+                .font(.system(size: 11, weight: .semibold))
         }
-        .foregroundColor(DS.textSecondary)
-        .padding(.horizontal, 12)
+        .foregroundColor(isPolishModeActive ? Color(hex: "#34D399") : DS.textSecondary)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(Color.clear)
+                .fill(isPolishModeActive ? Color(hex: "#34D399").opacity(0.15) : DS.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(isPolishModeActive ? Color(hex: "#34D399").opacity(0.3) : DS.border, lineWidth: 1)
         )
     }
 
-    /// Advance button — DS.accent solid bg, white text, weight 500, accentGlow shadow 16px
-    @ViewBuilder
-    private func nextButtonLabel(_ phase: ContentPhase) -> some View {
-        HStack(spacing: 6) {
-            Text(phase.displayName)
-                .font(.system(size: 12, weight: .medium))
-            Image(systemName: "arrow.right")
-                .font(.system(size: 12, weight: .medium))
+    // MARK: - Polish Analysis
+
+    private func updatePolishAnalysis() {
+        let text = viewModel.state.draftContent
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            polishAnalysis = nil
+            return
         }
-        .foregroundColor(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        polishAnalysis = WritingAnalyzer.shared.analyze(text: text)
+    }
+
+    // MARK: - Inline AI
+
+    @ViewBuilder
+    private var inlineAIKeyboardShortcuts: some View {
+        Group {
+            Button(action: { triggerInlineAction(.expand) }) { EmptyView() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+            Button(action: { triggerInlineAction(.condense) }) { EmptyView() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            Button(action: { triggerInlineAction(.rephrase) }) { EmptyView() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            Button(action: { triggerInlineAction(.continueWriting) }) { EmptyView() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+    }
+
+    @ViewBuilder
+    private var inlineActionBar: some View {
+        HStack(spacing: 2) {
+            inlineBarButton(icon: "arrow.up.left.and.arrow.down.right", label: "Expand", action: .expand)
+            inlineBarButton(icon: "arrow.down.right.and.arrow.up.left", label: "Condense", action: .condense)
+            inlineBarButton(icon: "arrow.triangle.2.circlepath", label: "Rephrase", action: .rephrase)
+
+            Rectangle()
+                .fill(DS.borderActive)
+                .frame(width: 1, height: 20)
+                .padding(.horizontal, 2)
+
+            Button(action: {
+                withAnimation(ProMotionSprings.snappy) { showCustomPrompt.toggle() }
+            }) {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(DS.surfaceElevated)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(DS.borderActive, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
+        )
+        .overlay(alignment: .bottom) {
+            if showCustomPrompt {
+                customPromptField
+                    .offset(y: 46)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inlineBarButton(icon: String, label: String, action: AIWritingAction) -> some View {
+        Button(action: { triggerInlineAction(action) }) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(DS.text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(DS.border))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var customPromptField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "text.bubble")
+                .font(.system(size: 11))
+                .foregroundColor(DS.accent.opacity(0.7))
+
+            TextField("Custom instruction...", text: $customPromptText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(DS.text)
+                .onSubmit {
+                    guard !customPromptText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    triggerCustomPrompt(customPromptText)
+                    customPromptText = ""
+                    showCustomPrompt = false
+                }
+
+            Button(action: {
+                guard !customPromptText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                triggerCustomPrompt(customPromptText)
+                customPromptText = ""
+                showCustomPrompt = false
+            }) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(DS.accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(width: 260)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(DS.accent)
+                .fill(DS.surfaceElevated)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.accent.opacity(0.3), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
         )
-        .shadow(color: DS.accentGlow, radius: 16)
+    }
+
+    @ViewBuilder
+    private var inlineResultPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "sparkles")
+                    .foregroundColor(DS.accent)
+                    .font(.system(size: 12))
+                Text("AI Suggestion")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
+                Spacer()
+                Button(action: { dismissInlineAI() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
+            Rectangle().fill(DS.border).frame(height: 1)
+
+            // Body
+            if inlineAssistant.isProcessing {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.7).tint(DS.accent)
+                    Text("Generating...")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else if let result = inlineAssistant.currentResult {
+                inlineResultBody(result)
+            } else if let error = inlineAssistant.error {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 16))
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textSecondary)
+                    Button(action: { dismissInlineAI() }) {
+                        Text("Dismiss")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(14)
+            }
+        }
+        .frame(width: 320)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceElevated)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusMedium)
+                        .stroke(DS.borderActive, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
+        )
+    }
+
+    @ViewBuilder
+    private func inlineResultBody(_ result: AIWritingResult) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Action tag
+            HStack(spacing: 4) {
+                Image(systemName: result.action.iconName)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.accent)
+                Text(result.action.displayName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.accent)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(DS.accent.opacity(0.15)))
+
+            // Diff preview
+            if result.action == .continueWriting {
+                let continuation = String(result.suggestedText.dropFirst(result.originalText.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                ScrollView {
+                    Text(continuation)
+                        .font(.system(size: 11))
+                        .foregroundColor(.green.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(DS.borderSubtle))
+            } else {
+                let diffWords = inlineAssistant.computeWordDiff(
+                    original: result.originalText,
+                    suggested: result.suggestedText
+                )
+                ScrollView {
+                    InlineDiffText(words: diffWords)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(DS.borderSubtle))
+            }
+
+            // Accept / Reject
+            HStack(spacing: 8) {
+                Button(action: { acceptInlineResult(result) }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
+                        Text("Accept").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(DS.accent))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { dismissInlineAI() }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                        Text("Reject").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(DS.border))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+    }
+
+    // MARK: - Inline AI Actions
+
+    private func handleSelectionChange(_ info: DraftSelectionInfo) {
+        selectionInfo = info
+        selectedText = info.text
+
+        if info.text.isEmpty || info.range.length == 0 {
+            if inlineAIState == .showingBar {
+                withAnimation(ProMotionSprings.snappy) {
+                    inlineAIState = .idle
+                    showCustomPrompt = false
+                }
+            }
+        } else {
+            if inlineAIState == .idle {
+                withAnimation(ProMotionSprings.snappy) {
+                    inlineAIState = .showingBar
+                }
+            }
+        }
+    }
+
+    private func triggerInlineAction(_ action: AIWritingAction) {
+        let text = selectionInfo.text
+        guard !text.isEmpty else { return }
+
+        withAnimation(ProMotionSprings.snappy) {
+            inlineAIState = .processing(action)
+            showCustomPrompt = false
+        }
+
+        if action == .rephrase { selectedRephraseIndex = 0 }
+
+        let engineAction: UnifiedWritingEngine.InlineEditAction?
+        switch action {
+        case .expand: engineAction = .expand
+        case .condense: engineAction = .condense
+        case .rephrase: engineAction = .rephrase
+        case .continueWriting: engineAction = nil
+        }
+
+        Task {
+            let engine = cosmoWindowEnabled ? nil : writingEngine
+
+            if let engineAction = engineAction, let engine = engine {
+                let result = await engine.inlineEdit(
+                    action: engineAction,
+                    selectedText: text,
+                    context: surroundingContext() ?? text
+                )
+                if let result = result {
+                    await MainActor.run {
+                        inlineAssistant.currentResult = AIWritingResult(
+                            originalText: text,
+                            suggestedText: result,
+                            action: action,
+                            variants: nil
+                        )
+                    }
+                }
+            } else if let engineAction = engineAction {
+                let contextText = surroundingContext() ?? text
+                let result: AIWritingResult?
+                switch engineAction {
+                case .expand:
+                    result = await inlineAssistant.expand(text: text, context: contextText)
+                case .condense:
+                    result = await inlineAssistant.condense(text: text, context: contextText)
+                case .rephrase:
+                    result = await inlineAssistant.rephrase(text: text, context: contextText)
+                }
+                if let result = result {
+                    await MainActor.run { inlineAssistant.currentResult = result }
+                }
+            } else {
+                let outlineTexts = viewModel.state.outline.filter { !$0.isCompleted }.map(\.text)
+                _ = await inlineAssistant.continueWriting(
+                    text: text,
+                    outline: outlineTexts,
+                    coreIdea: viewModel.state.contentDescription
+                )
+            }
+
+            await MainActor.run {
+                withAnimation(ProMotionSprings.snappy) { inlineAIState = .showingResult }
+            }
+        }
+    }
+
+    private func triggerCustomPrompt(_ prompt: String) {
+        let text = selectionInfo.text
+        guard !text.isEmpty else { return }
+        withAnimation(ProMotionSprings.snappy) { inlineAIState = .processing(.rephrase) }
+        Task {
+            _ = await inlineAssistant.expand(text: text, context: "Custom instruction: \(prompt)")
+            await MainActor.run {
+                withAnimation(ProMotionSprings.snappy) { inlineAIState = .showingResult }
+            }
+        }
+    }
+
+    private func surroundingContext() -> String? {
+        let draft = viewModel.state.draftContent
+        guard draft.count > 200 else { return draft }
+        let nsString = draft as NSString
+        let selRange = selectionInfo.range
+        let contextStart = max(0, selRange.location - 250)
+        let contextEnd = min(nsString.length, selRange.location + selRange.length + 250)
+        let contextRange = NSRange(location: contextStart, length: contextEnd - contextStart)
+        return nsString.substring(with: contextRange)
+    }
+
+    private func acceptInlineResult(_ result: AIWritingResult) {
+        let replacement: String
+        if result.action == .rephrase, let variants = result.variants, selectedRephraseIndex < variants.count {
+            replacement = variants[selectedRephraseIndex]
+        } else {
+            replacement = result.suggestedText
+        }
+
+        if result.action == .continueWriting {
+            viewModel.state.draftContent = replacement
+        } else {
+            let nsString = viewModel.state.draftContent as NSString
+            let range = selectionInfo.range
+            if range.location + range.length <= nsString.length {
+                viewModel.state.draftContent = nsString.replacingCharacters(in: range, with: replacement)
+            } else {
+                viewModel.state.draftContent = viewModel.state.draftContent.replacingOccurrences(
+                    of: result.originalText, with: replacement
+                )
+            }
+        }
+
+        triggerAutoSave()
+        dismissInlineAI()
+    }
+
+    private func dismissInlineAI() {
+        withAnimation(ProMotionSprings.snappy) {
+            inlineAIState = .idle
+            inlineAssistant.currentResult = nil
+            inlineAssistant.error = nil
+            showCustomPrompt = false
+        }
+    }
+
+    // MARK: - Auto-save
+
+    private func triggerAutoSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    withAnimation(ProMotionSprings.snappy) { saveState = .saving }
+                    viewModel.state.lastModified = Date()
+                    viewModel.state.save()
+                    withAnimation(ProMotionSprings.snappy) { saveState = .saved }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation(ProMotionSprings.gentle) { saveState = .idle }
+                    }
+                }
+            } catch {}
+        }
     }
 
     // MARK: - Top Bar
@@ -510,18 +1150,6 @@ struct ContentFocusModeView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(OnyxColors.Dimension.creative.opacity(0.12), in: Capsule())
-
-            Spacer()
-
-            // Pipeline bar
-            ContentPipelineBar(
-                currentPhase: viewModel.displayPhase,
-                reachedPhase: viewModel.currentPhase,
-                phaseEnteredAt: viewModel.phaseEnteredAt,
-                onPhaseSelected: { phase in
-                    viewModel.goToPhase(phase)
-                }
-            )
 
             Spacer()
 
@@ -692,7 +1320,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .filter { $0.userInfo?["atomUUID"] as? String == atomUUID }
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                guard let self else { return }
+                guard let self, !self.isClosed else { return }
                 Task {
                     if let freshAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                         self.atom = freshAtom
@@ -814,6 +1442,8 @@ class ContentFocusModeViewModel: ObservableObject {
         // Cancel debounced notification subscription to prevent stale writes after close
         saveNotificationCancellable?.cancel()
         saveNotificationCancellable = nil
+        phaseChangeCancellable?.cancel()
+        phaseChangeCancellable = nil
         toolNotificationCancellables.removeAll()
         writeToAtom()
     }

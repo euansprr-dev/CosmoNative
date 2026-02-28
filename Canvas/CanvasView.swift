@@ -9,6 +9,7 @@ struct CanvasView: View {
     @StateObject private var expansionManager = BlockExpansionManager()
     @StateObject private var connectManager = DragToConnectManager()
     @StateObject private var drawingState = DrawingStateManager()
+    @StateObject private var clusterEngine = CanvasClusterEngine()
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
@@ -45,6 +46,9 @@ struct CanvasView: View {
     @State private var showSettings = false
     @StateObject private var thinkspaceManager = ThinkspaceManager.shared
 
+    // Zoom/pan persistence
+    @State private var zoomPanSaveTask: Task<Void, Never>?
+
     // Ambient knowledge panel
     @StateObject private var ambientEngine = AmbientFieldEngine()
     @State private var showAmbientPanel = false
@@ -56,12 +60,17 @@ struct CanvasView: View {
     // Incubation engine (spaced repetition heartbeat)
     @StateObject private var incubationEngine = IncubationEngine.shared
 
-    // Distillation engine (progressive zoom layers)
-    @StateObject private var distillationEngine = DistillationEngine.shared
-
     // Lasso synthesis workspace
     @State private var showSynthesisWorkspace = false
     @State private var synthesisSourceBlockIds: [String] = []
+
+    // Cluster creation popover
+    @State private var showClusterPopover = false
+    @State private var clusterPopoverBlockIds: [String] = []
+    @State private var clusterPopoverPosition: CGPoint = .zero
+
+    // Minimap overlay
+    @State private var showMinimap = false
 
     // Trisociative collision engine
     @StateObject private var trisociativeEngine = TrisociativeEngine.shared
@@ -88,6 +97,21 @@ struct CanvasView: View {
                 // Blocks container - scaled as a unit around screen center
                 // This keeps blocks at their relative positions while zooming
                 ZStack {
+                    // Cluster zones (auto-chunked + user-created, behind blocks)
+                    CanvasClusterLayer(
+                        clusters: clusterEngine.allClusters,
+                        blocks: spatialEngine.blocks,
+                        canvasOffset: canvasOffset,
+                        scaledPanOffset: scaledPanOffset,
+                        effectiveScale: effectiveScale,
+                        onRenameCluster: { id, newName in
+                            clusterEngine.renameUserCluster(id: id, to: newName)
+                        },
+                        onRemoveCluster: { id in
+                            clusterEngine.removeUserCluster(id: id)
+                        }
+                    )
+
                     blocksLayer
                     inboxBlocksLayer
 
@@ -143,19 +167,30 @@ struct CanvasView: View {
                 zoomIndicator
             }
             .overlay(alignment: .topTrailing) {
-                // Drawing tools + settings cog — unified top-right strip
-                HStack(spacing: 0) {
-                    CanvasDrawingToolbar(drawingState: drawingState)
+                // Drawing tools + settings cog + view layers
+                VStack(alignment: .trailing, spacing: 0) {
+                    // Top row: drawing toolbar + cog
+                    HStack(spacing: 0) {
+                        CanvasDrawingToolbar(drawingState: drawingState)
 
-                    // Settings cog
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundColor(DS.textMuted)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Circle())
+                        // Settings cog
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 14, weight: .regular))
+                                .foregroundColor(DS.textMuted)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+
+                    // View layers toolbar (below cog, right-aligned)
+                    CanvasViewLayersToolbar(
+                        showCrystallizationHeatmap: $showCrystallizationHeatmap,
+                        provocationEngine: provocationEngine,
+                        clusterEngine: clusterEngine,
+                        blockUUIDs: spatialEngine.blocks.map { $0.entityUuid }
+                    )
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 16)
@@ -207,6 +242,8 @@ struct CanvasView: View {
                     effectiveScale: effectiveScale,
                     screenCenter: screenCenter
                 )
+                clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
+                clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
             }
             .onChange(of: canvasOffset) { _, _ in
                 blockFrameTracker.updateFrames(
@@ -216,6 +253,7 @@ struct CanvasView: View {
                     effectiveScale: effectiveScale,
                     screenCenter: screenCenter
                 )
+                debouncedSaveZoomPan()
             }
             .onChange(of: canvasScale) { _, _ in
                 blockFrameTracker.updateFrames(
@@ -225,6 +263,7 @@ struct CanvasView: View {
                     effectiveScale: effectiveScale,
                     screenCenter: screenCenter
                 )
+                debouncedSaveZoomPan()
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -344,22 +383,10 @@ struct CanvasView: View {
         }
     }
 
-    /// Current distillation layer based on zoom level
-    private var currentDistillationLayer: DistillationLayer {
-        DistillationLayerSelector.layer(for: effectiveScale)
-    }
-
     private var blocksLayer: some View {
         ForEach(spatialEngine.blocks) { block in
             blockView(for: block)
         }
-        .environment(\.distillationLayer, currentDistillationLayer)
-        .onChange(of: currentDistillationLayer) { _, newLayer in
-            triggerDistillationForVisibleBlocks(layer: newLayer)
-        }
-        // NOTE: Removed .drawingGroup() - it was breaking async image loading in blocks
-        // like ResearchBlockView that load thumbnails asynchronously. GPU acceleration
-        // is applied at the component level (GridPatternView, etc.) instead.
     }
 
     @ViewBuilder
@@ -571,6 +598,18 @@ struct CanvasView: View {
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
+
+                    // Restore persisted zoom/pan for current thinkspace
+                    if let ts = thinkspaceManager.currentThinkspace {
+                        canvasScale = CGFloat(ts.zoomLevel)
+                        canvasOffset = ts.panOffset
+                    }
+
+                    // Load user-created clusters
+                    await clusterEngine.loadUserClusters(
+                        thinkspaceId: thinkspaceId,
+                        blocks: spatialEngine.blocks
+                    )
                 }
 
                 // Load persisted inbox blocks
@@ -598,7 +637,24 @@ struct CanvasView: View {
                         }
                         await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                         drawingState.loadDrawings(thinkspaceId: thinkspaceId)
+                        CosmoUndoManager.shared.clearHistory()
                         print("🔄 Reloaded blocks for ThinkSpace: \(thinkspaceId ?? "default")")
+
+                        // Restore zoom/pan for the switched-to thinkspace
+                        if let tsId = thinkspaceId,
+                           let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
+                            canvasScale = CGFloat(ts.zoomLevel)
+                            canvasOffset = ts.panOffset
+                        } else {
+                            canvasScale = 1.0
+                            canvasOffset = .zero
+                        }
+
+                        // Load user-created clusters for the thinkspace
+                        await clusterEngine.loadUserClusters(
+                            thinkspaceId: thinkspaceId,
+                            blocks: spatialEngine.blocks
+                        )
                     }
                 }
 
@@ -930,7 +986,7 @@ struct CanvasView: View {
                     handlePullAmbientToCanvas(notification: notification)
                 }
 
-                // Listen for lasso-enclosed blocks
+                // Listen for lasso-enclosed blocks — show choice popover (cluster vs synthesize)
                 NotificationCenter.default.addObserver(
                     forName: CosmoNotification.Canvas.lassoEnclosedBlocks,
                     object: nil,
@@ -938,13 +994,59 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
-                        if let blockIds = notification.userInfo?["blockIds"] as? [String] {
-                            synthesisSourceBlockIds = blockIds
+                        if let blockIds = notification.userInfo?["blockIds"] as? [String], blockIds.count >= 2 {
+                            // Compute center position of lassoed blocks for popover placement
+                            let lassoBlocks = spatialEngine.blocks.filter { blockIds.contains($0.id) }
+                            let avgX = lassoBlocks.map(\.position.x).reduce(0, +) / max(CGFloat(lassoBlocks.count), 1)
+                            let avgY = lassoBlocks.map(\.position.y).reduce(0, +) / max(CGFloat(lassoBlocks.count), 1)
+
+                            // Convert to screen coords
+                            let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                            let canvasX = avgX + canvasOffset.width + scaledPanOffset.width
+                            let canvasY = avgY + canvasOffset.height + scaledPanOffset.height
+                            let screenX = screenCenter.x + (canvasX - screenCenter.x) * effectiveScale
+                            let screenY = screenCenter.y + (canvasY - screenCenter.y) * effectiveScale
+
+                            clusterPopoverBlockIds = blockIds
+                            clusterPopoverPosition = CGPoint(x: screenX, y: screenY - 60)
                             withAnimation(ProMotionSprings.snappy) {
-                                showSynthesisWorkspace = true
+                                showClusterPopover = true
                             }
-                            // Reset tool to select after lasso completes
                             drawingState.toolMode = .select
+                        }
+                    }
+                }
+
+                // Listen for cluster creation from context menu
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.createClusterFromSelection,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        if let blockIds = notification.userInfo?["blockIds"] as? [String],
+                           let position = notification.userInfo?["position"] as? CGPoint {
+                            clusterPopoverBlockIds = blockIds
+                            clusterPopoverPosition = position
+                            withAnimation(ProMotionSprings.snappy) {
+                                showClusterPopover = true
+                            }
+                        }
+                    }
+                }
+
+                // Listen for cluster re-synthesis requests
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.clusterResynthesizeRequested,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        if let idStr = notification.userInfo?["clusterId"] as? String,
+                           let uuid = UUID(uuidString: idStr) {
+                            await clusterEngine.synthesizeCluster(id: uuid, blocks: spatialEngine.blocks)
                         }
                     }
                 }
@@ -997,8 +1099,20 @@ struct CanvasView: View {
                     scrollWheelMonitor = nil
                 }
             }
-            // Keyboard handler for ESC to collapse expanded blocks
+            // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
             .onKeyPress(.escape) {
+                if showMinimap {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showMinimap = false
+                    }
+                    return .handled
+                }
+                if showClusterPopover {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showClusterPopover = false
+                    }
+                    return .handled
+                }
                 if expansionManager.isAnyBlockExpanded {
                     withAnimation(BlockAnimations.collapse) {
                         expansionManager.collapse()
@@ -1006,6 +1120,13 @@ struct CanvasView: View {
                     return .handled
                 }
                 return .ignored
+            }
+            // TAB: Toggle minimap navigator
+            .onKeyPress(.tab) {
+                withAnimation(ProMotionSprings.snappy) {
+                    showMinimap.toggle()
+                }
+                return .handled
             }
             // Cmd+Shift+H: Toggle crystallization heatmap
             .onKeyPress(characters: .init(charactersIn: "hH")) { press in
@@ -1042,6 +1163,18 @@ struct CanvasView: View {
             .sheet(isPresented: $showSynthesisWorkspace) {
                 synthesisWorkspaceOverlay
                     .frame(minWidth: 900, minHeight: 600)
+            }
+            // Cluster creation popover
+            .overlay {
+                if showClusterPopover {
+                    clusterCreationOverlay
+                }
+            }
+            // Minimap navigator overlay
+            .overlay {
+                if showMinimap {
+                    minimapOverlay
+                }
             }
         }
     }
@@ -1113,6 +1246,100 @@ struct CanvasView: View {
             print("Synthesis: Created connection '\(result.suggestedTitle)' linking \(result.sourceAtomUUIDs.count) sources")
         } catch {
             print("Synthesis: Failed to create connection — \(error)")
+        }
+    }
+
+    // MARK: - Cluster Creation Overlay
+
+    @ViewBuilder
+    private var clusterCreationOverlay: some View {
+        // Dismiss backdrop
+        Color.clear
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(ProMotionSprings.snappy) {
+                    showClusterPopover = false
+                }
+            }
+
+        ClusterCreationPopover(
+            blockIds: clusterPopoverBlockIds,
+            position: clusterPopoverPosition,
+            onCreateCluster: { name, colorIndex in
+                // Convert block IDs to entity UUIDs for cluster membership
+                let blockUUIDs = spatialEngine.blocks
+                    .filter { clusterPopoverBlockIds.contains($0.id) }
+                    .map { $0.entityUuid }
+                let thinkspaceId = thinkspaceManager.currentThinkspace?.id
+                clusterEngine.createUserCluster(
+                    name: name,
+                    colorIndex: colorIndex,
+                    blockUUIDs: blockUUIDs,
+                    blocks: spatialEngine.blocks,
+                    thinkspaceId: thinkspaceId
+                )
+                withAnimation(ProMotionSprings.snappy) {
+                    showClusterPopover = false
+                }
+            },
+            onSynthesize: {
+                synthesisSourceBlockIds = clusterPopoverBlockIds
+                withAnimation(ProMotionSprings.snappy) {
+                    showClusterPopover = false
+                    showSynthesisWorkspace = true
+                }
+            },
+            onDismiss: {
+                withAnimation(ProMotionSprings.snappy) {
+                    showClusterPopover = false
+                }
+            }
+        )
+    }
+
+    // MARK: - Minimap Overlay
+
+    @ViewBuilder
+    private var minimapOverlay: some View {
+        CanvasMinimapOverlay(
+            blocks: spatialEngine.blocks,
+            clusters: clusterEngine.allClusters,
+            currentViewport: computeCurrentViewport(),
+            onNavigate: { canvasPosition in
+                navigateTo(canvasPosition: canvasPosition)
+            },
+            onDismiss: {
+                withAnimation(ProMotionSprings.snappy) {
+                    showMinimap = false
+                }
+            }
+        )
+    }
+
+    /// Compute current viewport rect in canvas coordinates
+    private func computeCurrentViewport() -> CGRect {
+        let viewWidth = canvasSize.width / effectiveScale
+        let viewHeight = canvasSize.height / effectiveScale
+        let centerX = canvasSize.width / 2 - canvasOffset.width
+        let centerY = canvasSize.height / 2 - canvasOffset.height
+        return CGRect(
+            x: centerX - viewWidth / 2,
+            y: centerY - viewHeight / 2,
+            width: viewWidth,
+            height: viewHeight
+        )
+    }
+
+    /// Animate viewport to center on a canvas position
+    private func navigateTo(canvasPosition: CGPoint) {
+        let screenCenterX = canvasSize.width / 2
+        let screenCenterY = canvasSize.height / 2
+        withAnimation(ProMotionSprings.snappy) {
+            canvasOffset = CGSize(
+                width: screenCenterX - canvasPosition.x,
+                height: screenCenterY - canvasPosition.y
+            )
         }
     }
 
@@ -1409,18 +1636,44 @@ struct CanvasView: View {
         }
     }
     
+    // MARK: - Zoom/Pan Persistence
+
+    private func debouncedSaveZoomPan() {
+        zoomPanSaveTask?.cancel()
+        zoomPanSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.0))
+            guard !Task.isCancelled else { return }
+            let blockIds = spatialEngine.blocks.map(\.id)
+            await thinkspaceManager.saveCurrentState(
+                zoomLevel: Double(canvasScale),
+                panOffset: canvasOffset,
+                blockIds: blockIds
+            )
+        }
+    }
+
     // MARK: - Save Block Size Handler
     private func handleSaveBlockSize(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let blockId = userInfo["blockId"] as? String else {
             return
         }
-        
+
         // Find the block and persist to database
         guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
             return
         }
-        
+
+        // Register undo action if old size was provided
+        if let oldSize = userInfo["oldSize"] as? CGSize {
+            let newSize = spatialEngine.blocks[blockIndex].size
+            if oldSize != newSize {
+                CosmoUndoManager.shared.register(
+                    ResizeBlockAction(blockId: blockId, oldSize: oldSize, newSize: newSize, spatialEngine: spatialEngine)
+                )
+            }
+        }
+
         Task {
             await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
         }
@@ -1568,28 +1821,10 @@ struct CanvasView: View {
 
         Task {
             await spatialEngine.addBlock(block, persist: true)
+
         }
 
         print("✨ Created \(entityType) block at \(position)")
-    }
-
-    // MARK: - Distillation Trigger
-
-    /// Trigger distillation generation for blocks visible in the viewport
-    private func triggerDistillationForVisibleBlocks(layer: DistillationLayer) {
-        guard layer != .full else { return }
-
-        // Get atoms for visible blocks and trigger generation
-        for block in spatialEngine.blocks {
-            let uuid = block.entityUuid
-            guard !uuid.isEmpty else { continue }
-
-            Task { @MainActor in
-                if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                    distillationEngine.ensureLayersExist(for: atom, layer: layer)
-                }
-            }
-        }
     }
 
     // MARK: - Gesture Handlers (Optimized)
@@ -1617,14 +1852,22 @@ struct CanvasView: View {
 
         // Commit final position to the @Published array (triggers one re-render)
         if let index = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
+            let oldPosition = spatialEngine.blocks[index].position
             let newPosition = CGPoint(
-                x: spatialEngine.blocks[index].position.x + translation.width,
-                y: spatialEngine.blocks[index].position.y + translation.height
+                x: oldPosition.x + translation.width,
+                y: oldPosition.y + translation.height
             )
             spatialEngine.blocks[index].position = newPosition
 
             // Fire-and-forget position save to database
             spatialEngine.updateBlockPosition(blockId, position: newPosition)
+
+            // Register undo action (only if position actually changed)
+            if oldPosition != newPosition {
+                CosmoUndoManager.shared.register(
+                    MoveBlockAction(blockId: blockId, oldPosition: oldPosition, newPosition: newPosition, spatialEngine: spatialEngine)
+                )
+            }
         }
 
         // Clear local drag state
@@ -1640,6 +1883,43 @@ struct CanvasView: View {
             effectiveScale: effectiveScale,
             screenCenter: screenCenter
         )
+
+        // Check cluster zone membership after drag
+        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            updateClusterMembership(for: block)
+        }
+    }
+
+    /// Update cluster membership when a block is dragged into/out of a user cluster zone
+    private func updateClusterMembership(for block: CanvasBlock) {
+        let blockUUID = block.entityUuid
+        let position = block.position
+
+        // Check if block landed inside any user cluster zone
+        if let targetCluster = clusterEngine.userCluster(containing: position) {
+            // Add to target cluster if not already a member
+            if !targetCluster.blockUUIDs.contains(blockUUID) {
+                clusterEngine.addBlockToCluster(
+                    blockUUID: blockUUID,
+                    clusterId: targetCluster.id,
+                    blocks: spatialEngine.blocks
+                )
+            }
+        }
+
+        // Remove from clusters where the block is no longer inside the zone
+        for cluster in clusterEngine.userClusters {
+            if cluster.blockUUIDs.contains(blockUUID) && !cluster.boundingRect.contains(position) {
+                clusterEngine.removeBlockFromCluster(
+                    blockUUID: blockUUID,
+                    clusterId: cluster.id,
+                    blocks: spatialEngine.blocks
+                )
+            }
+        }
+
+        // Recompute bounds
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
     }
 
     // Legacy handlers (kept for compatibility with other callers)
@@ -1817,6 +2097,13 @@ struct CanvasView: View {
         guard let userInfo = notification.userInfo,
               let blockId = userInfo["blockId"] as? String else {
             return
+        }
+
+        // Snapshot block before removal for undo
+        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            CosmoUndoManager.shared.register(
+                DeleteBlockAction(block: block, spatialEngine: spatialEngine)
+            )
         }
 
         Task {
@@ -2888,18 +3175,19 @@ struct MetalCanvasViewRepresentable: NSViewRepresentable {
 // MARK: - Notifications
 extension Notification.Name {
     // Note: placeBlocksOnCanvas, moveCanvasBlocks, expandSelectedBlock, closeSelectedBlock, and resizeSelectedBlock are defined in VoiceNotifications.swift
-    static let enterFocusMode = Notification.Name("enterFocusMode")
+    // Unified with CosmoNotification.Navigation to prevent mismatched notification names
+    static let enterFocusMode = CosmoNotification.Navigation.enterFocusMode
+    static let openBlockInFocusMode = CosmoNotification.Navigation.openBlockInFocusMode
+    static let openEntityOnCanvas = CosmoNotification.Navigation.openEntityOnCanvas
+    static let createEntityInFocusMode = CosmoNotification.Navigation.createEntityInFocusMode
+    static let switchToThinkspace = CosmoNotification.Navigation.switchToThinkspace
+
     static let toggleBlockPin = Notification.Name("toggleBlockPin")
     static let duplicateBlock = Notification.Name("duplicateBlock")
     static let removeBlock = Notification.Name("removeBlock")
-    // showCommandPalette is now defined in VoiceNotifications.swift
     static let arrangeCanvasBlocks = Notification.Name("arrangeCanvasBlocks")
     static let createNoteBlock = Notification.Name("createNoteBlock")
     static let collapseExpandedBlock = Notification.Name("collapseExpandedBlock")
-    static let openBlockInFocusMode = Notification.Name("openBlockInFocusMode")
-    static let openEntityOnCanvas = Notification.Name("openEntityOnCanvas")
-    static let createEntityInFocusMode = Notification.Name("createEntityInFocusMode")
-    static let switchToThinkspace = Notification.Name("switchToThinkspace")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
 }
 

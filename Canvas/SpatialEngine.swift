@@ -123,9 +123,21 @@ class SpatialEngine: ObservableObject {
                 }
             }
 
-            self.blocks = enrichedBlocks
+            // Deduplicate: if multiple blocks reference the same entity, keep only the first
+            var seenEntityUUIDs: Set<String> = []
+            let deduped = enrichedBlocks.filter { block in
+                guard !block.entityUuid.isEmpty else { return true } // notes may lack entityUuid
+                if seenEntityUUIDs.contains(block.entityUuid) {
+                    print("⚠️ Dedup: removing duplicate block for entity \(block.entityUuid)")
+                    return false
+                }
+                seenEntityUUIDs.insert(block.entityUuid)
+                return true
+            }
+
+            self.blocks = deduped
             isLoading = false
-            print("✅ Loaded \(loadedBlocks.count) canvas blocks for \(documentType)/\(documentId)")
+            print("✅ Loaded \(deduped.count) canvas blocks for \(documentType)/\(documentId) (\(enrichedBlocks.count - deduped.count) duplicates removed)")
 
         } catch {
             isLoading = false
@@ -225,12 +237,40 @@ class SpatialEngine: ObservableObject {
         }
     }
 
+    // MARK: - Restore Block (undo delete)
+    func restoreBlock(_ block: CanvasBlock) async {
+        blocks.append(block)
+
+        // Un-soft-delete in database
+        let db = database
+        Task.detached(priority: .background) {
+            do {
+                try await db.asyncWrite { database in
+                    try database.execute(
+                        sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        arguments: [block.id]
+                    )
+                }
+            } catch {
+                print("❌ Failed to restore block: \(error)")
+            }
+        }
+    }
+
     // MARK: - Add Block (with persistence)
     func addBlock(_ block: CanvasBlock, persist: Bool = true) async {
+        // Prevent duplicate blocks for the same entity
+        if !block.entityUuid.isEmpty,
+           blocks.contains(where: { $0.entityUuid == block.entityUuid }) {
+            print("⚠️ addBlock: skipping duplicate for entity \(block.entityUuid)")
+            return
+        }
         blocks.append(block)
 
         if persist {
             await saveBlock(block)
+            // Register undo (CosmoUndoManager ignores during undo/redo)
+            CosmoUndoManager.shared.register(CreateBlockAction(block: block, spatialEngine: self))
         }
     }
 

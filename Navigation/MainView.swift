@@ -36,6 +36,9 @@ struct MainView: View {
     @State private var showingSanctuary = true  // Changed: Sanctuary is now the default entry point
     @StateObject private var sanctuaryChoreographer = AnimationChoreographer()
 
+    // Split-pane system
+    @StateObject private var paneManager = PaneManager()
+
     // Cosmo Window (global floating AI chat panel, Option+A)
     @State private var showCosmoWindow = false
 
@@ -54,18 +57,36 @@ struct MainView: View {
 
     var body: some View {
         ZStack {
-            // Pure canvas view - the spatial workspace
-            // With fade/blur/scale when Sanctuary is open (simulates z-depth)
-            CanvasView()
-                .environmentObject(appState)
-                .environmentObject(database)
-                .environmentObject(voiceEngine)
-                .environmentObject(blockFrameTracker)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(showingSanctuary ? 0.3 : 1.0)
-                .blur(radius: showingSanctuary ? 15 : 0)
-                .scaleEffect(showingSanctuary ? 0.92 : 1.0)  // Simulates z-translate back
-                .animation(.easeInOut(duration: 0.4), value: showingSanctuary)
+            // Main content area with optional split-pane layout.
+            // SplitPaneContainer wraps either the canvas or focus mode as the left side,
+            // with any open panes stacked vertically on the right.
+            // z-index follows focus mode state: z-10 (canvas) or z-195 (focus mode above Sanctuary/Plannerum).
+            SplitPaneContainer(paneManager: paneManager) {
+                ZStack {
+                    // Keep CanvasView alive to prevent onAppear/loadBlocks thrash on focus mode enter/exit
+                    CanvasView()
+                        .environmentObject(appState)
+                        .environmentObject(database)
+                        .environmentObject(voiceEngine)
+                        .environmentObject(blockFrameTracker)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .opacity(appState.focusedEntity == nil && !showingSanctuary ? 1.0 : (showingSanctuary ? 0.3 : 0))
+                        .allowsHitTesting(appState.focusedEntity == nil)
+                        .blur(radius: showingSanctuary ? 15 : 0)
+                        .scaleEffect(showingSanctuary ? 0.92 : 1.0)
+
+                    if let focusEntity = appState.focusedEntity {
+                        FocusModeView(entity: focusEntity)
+                            .environmentObject(appState)
+                            .environmentObject(database)
+                            .environmentObject(voiceEngine)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    }
+                }
+            }
+            .zIndex(appState.focusedEntity != nil ? 195 : 10)
+            .animation(.easeInOut(duration: 0.4), value: showingSanctuary)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
 
             // Top-left escape hint
             VStack {
@@ -120,13 +141,7 @@ struct MainView: View {
             }
             .zIndex(40)
 
-            // Focus mode overlay (when editing an entity)
-            // zIndex 195: above Sanctuary (180) and Plannerum (190) so focus mode works from anywhere
-            if let focusEntity = appState.focusedEntity {
-                FocusModeView(entity: focusEntity)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    .zIndex(195)
-            }
+            // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
 
             // Command-K - The Cognition Hub
             // Revolutionary spatial command center that replaces Finder and sidebars
@@ -257,6 +272,7 @@ struct MainView: View {
                     blockId: blockId,
                     block: blockFrameTracker.trackedBlocks.first(where: { $0.id == blockId }) ?? CanvasBlock.placeholder,
                     position: blockContextMenuPosition,
+                    selectedBlockIds: blockFrameTracker.trackedBlocks.filter(\.isSelected).map(\.id),
                     onDismiss: {
                         withAnimation(.spring(response: 0.2)) {
                             showBlockContextMenu = false
@@ -438,6 +454,28 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
             withAnimation(.spring(response: 0.3)) {
                 appState.focusedEntity = nil
+            }
+        }
+        // MARK: - Open as Pane
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openAsPane)) { notification in
+            if let entityType = notification.userInfo?["type"] as? EntityType,
+               let entityId = notification.userInfo?["id"] as? Int64 {
+                guard paneManager.canOpen(entityId: entityId, appState: appState) else { return }
+                withAnimation(ProMotionSprings.snappy) {
+                    paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))
+                }
+            } else if let thinkspaceId = notification.userInfo?["thinkspaceId"] as? String {
+                guard paneManager.canOpenThinkspace(thinkspaceId: thinkspaceId) else { return }
+                withAnimation(ProMotionSprings.snappy) {
+                    paneManager.openPane(.thinkspace(thinkspaceId: thinkspaceId))
+                }
+            }
+            // Dismiss Command-K if it's open
+            if showCommandK {
+                withAnimation(.spring(response: 0.2)) {
+                    showCommandK = false
+                    commandKViewModel.clear()
+                }
             }
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
@@ -803,6 +841,14 @@ struct MainView: View {
                         } else if appState.focusedEntity != nil {
                             appState.focusedEntity = nil
                         }
+                    }
+                    return nil  // Consume event
+                }
+
+                // Close most recent pane (after focus mode/commandK/radial are handled)
+                if paneManager.isActive {
+                    withAnimation(ProMotionSprings.snappy) {
+                        paneManager.closeLastPane()
                     }
                     return nil  // Consume event
                 }

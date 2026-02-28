@@ -28,11 +28,14 @@ struct ConnectionFocusModeView: View {
     @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
-    @State private var showSidebar = false
+    @State private var sidebarVisible = false
     @State private var showSettings = false
     @State private var activeRelationArea: RelationAreaState?
     @State private var editableTitle: String
     @StateObject private var coDevEngine = ConnectionCoDevEngine()
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     // MARK: - Initialization
 
@@ -48,7 +51,7 @@ struct ConnectionFocusModeView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .trailing) {
+        ZStack {
             // Main canvas area
             ZStack {
                 // Infinite canvas with dotted grid background
@@ -95,42 +98,43 @@ struct ConnectionFocusModeView: View {
                 manager: floatingBlocksManager,
                 ownerAtomUUID: atom.uuid
             )
-
-            // Right sidebar (overlays on top)
-            if showSidebar {
-                HStack(spacing: 0) {
-                    Divider().background(DS.border)
-
-                    ConnectionSidebarView(
-                        atom: atom,
-                        viewModel: viewModel,
-                        isVisible: showSidebar,
-                        onDropSource: { source in
-                            dropSourceOnCanvas(source)
-                        }
-                    )
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Connection",
+                icon: "link",
+                accentColor: CosmoColors.blockConnection,
+                isVisible: $sidebarVisible
+            ) {
+                ConnectionSidebarView(
+                    atom: atom,
+                    viewModel: viewModel,
+                    isVisible: true,
+                    onDropSource: { source in
+                        dropSourceOnCanvas(source)
+                    }
+                )
             }
+            .padding(.leading, 8)
+            .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 8) {
-                // Sidebar toggle
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showSidebar.toggle()
+                // Pane close button
+                if isPaneContext {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DS.textMuted)
+                            .frame(width: 28, height: 28)
+                            .background(DS.border, in: Circle())
                     }
-                } label: {
-                    Image(systemName: showSidebar ? "sidebar.right.fill" : "sidebar.right")
-                        .font(.system(size: 13))
-                        .foregroundColor(showSidebar ? CosmoColors.blockConnection : DS.textSecondary)
-                        .padding(8)
-                        .background(
-                            showSidebar ? CosmoColors.blockConnection.opacity(0.15) : DS.border,
-                            in: Circle()
-                        )
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button(action: { showSettings = true }) {
                     Image(systemName: "gearshape")
@@ -141,10 +145,8 @@ struct ConnectionFocusModeView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.trailing, showSidebar ? 340 : 16)
+            .padding(.trailing, 16)
             .padding(.top, 16)
-            .transition(.opacity)
-            .animation(ProMotionSprings.snappy, value: showSidebar)
         }
         .onAppear {
             loadState()
@@ -154,9 +156,18 @@ struct ConnectionFocusModeView: View {
             }
             // Register context provider for global Cosmo window
             let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = ConnectionContextProvider(atom: atom, viewModel: viewModel)
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
         }
         .onDisappear {
+            viewModel.flushTitleSave(editableTitle)
             saveState()
             floatingBlocksManager.saveImmediately()
         }
@@ -187,9 +198,9 @@ struct ConnectionFocusModeView: View {
                 viewModel.radialMenuPosition = nil
                 return .handled
             }
-            if showSidebar {
+            if sidebarVisible {
                 withAnimation(ProMotionSprings.snappy) {
-                    showSidebar = false
+                    sidebarVisible = false
                 }
                 return .handled
             }
@@ -543,7 +554,8 @@ struct ConnectionFocusModeView: View {
             forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
             object: nil,
             queue: .main
-        ) { notification in
+        ) { [self] notification in
+            guard !self.isPaneContext || self.isPaneActive else { return }
             guard let userInfo = notification.userInfo,
                   let atomUUID = userInfo["atomUUID"] as? String,
                   let atomTypeRaw = userInfo["atomType"] as? String,
@@ -882,16 +894,48 @@ class ConnectionFocusModeViewModel: ObservableObject {
         saveToAtom()
     }
 
+    private var titleSaveTask: Task<Void, Never>?
+
     func updateTitle(_ newTitle: String) {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let atomUUID = atom.uuid
+
+        // Cancel previous debounced save
+        titleSaveTask?.cancel()
+        titleSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
+            guard !Task.isCancelled else { return }
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    )
+                }
+                print("✅ Connection title saved: \(trimmed.prefix(30))")
+            } catch {
+                print("❌ Connection title save failed: \(error)")
+            }
+        }
+    }
+
+    /// Force immediate title save (called on view disappear)
+    func flushTitleSave(_ title: String) {
+        titleSaveTask?.cancel()
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let atomUUID = atom.uuid
         Task {
-            try? await CosmoDatabase.shared.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                    arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
-                )
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    )
+                }
+            } catch {
+                print("❌ Connection title flush failed: \(error)")
             }
         }
     }

@@ -304,6 +304,7 @@ struct ContentDraftView: View {
                         DraftEditorTextView(
                             text: $state.draftContent,
                             contentHeight: $textContentHeight,
+                            polishHighlights: nil,
                             onSelectionChanged: { info in
                                 handleSelectionChange(info)
                             },
@@ -1165,6 +1166,7 @@ struct ContentDraftView: View {
 struct DraftEditorTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var contentHeight: CGFloat
+    let polishHighlights: WritingAnalysis?
     let onSelectionChanged: (DraftSelectionInfo) -> Void
     let onTextChanged: () -> Void
 
@@ -1176,7 +1178,7 @@ struct DraftEditorTextView: NSViewRepresentable {
 
         textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -1228,6 +1230,50 @@ struct DraftEditorTextView: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selectedRanges
         }
+
+        // Apply or clear Hemingway highlights
+        applyHighlighting(to: textView)
+    }
+
+    /// Apply Hemingway-style background highlighting to the text view.
+    /// Colors match the polish sidebar legend.
+    private func applyHighlighting(to textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let fullRange = NSRange(location: 0, length: storage.length)
+
+        // Clear all existing background colors
+        storage.beginEditing()
+        storage.removeAttribute(.backgroundColor, range: fullRange)
+
+        if let analysis = polishHighlights {
+            let textLength = storage.length
+
+            // Complex sentences (15-25 words): yellow
+            for range in analysis.complexSentenceRanges {
+                guard range.location + range.length <= textLength else { continue }
+                storage.addAttribute(.backgroundColor, value: NSColor.yellow.withAlphaComponent(0.15), range: range)
+            }
+
+            // Very complex sentences (>25 words): red
+            for range in analysis.veryComplexSentenceRanges {
+                guard range.location + range.length <= textLength else { continue }
+                storage.addAttribute(.backgroundColor, value: NSColor.red.withAlphaComponent(0.15), range: range)
+            }
+
+            // Passive voice: blue
+            for range in analysis.passiveVoiceRanges {
+                guard range.location + range.length <= textLength else { continue }
+                storage.addAttribute(.backgroundColor, value: NSColor.systemBlue.withAlphaComponent(0.15), range: range)
+            }
+
+            // Adverbs: purple
+            for range in analysis.adverbRanges {
+                guard range.location + range.length <= textLength else { continue }
+                storage.addAttribute(.backgroundColor, value: NSColor.purple.withAlphaComponent(0.15), range: range)
+            }
+        }
+
+        storage.endEditing()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1347,7 +1393,7 @@ struct DraftEditorTextView: NSViewRepresentable {
 // MARK: - Inline Diff Text
 
 /// Lightweight word-level diff display for inline result popover.
-private struct InlineDiffText: View {
+struct InlineDiffText: View {
     let words: [DiffWord]
 
     var body: some View {

@@ -1558,6 +1558,15 @@ struct ProjectTreeItem: View {
             Label(isExpanded ? "Collapse" : "Expand", systemImage: isExpanded ? "chevron.up" : "chevron.down")
         }
 
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane, object: nil,
+                userInfo: ["projectId": project.uuid]
+            )
+        } label: {
+            Label("Open as Pane", systemImage: "rectangle.split.2x1")
+        }
+
         Divider()
 
         if let firstThinkspace = thinkspaces.first {
@@ -1850,6 +1859,15 @@ struct ThinkspaceCard: View {
             onSelect()
         } label: {
             Label("Open", systemImage: "arrow.right.circle")
+        }
+
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane, object: nil,
+                userInfo: ["thinkspaceId": thinkspace.id]
+            )
+        } label: {
+            Label("Open as Pane", systemImage: "rectangle.split.2x1")
         }
 
         Divider()

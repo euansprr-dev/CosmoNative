@@ -186,6 +186,11 @@ struct CanvasConnectionLinesLayer: View {
         let sourceUUID = edge.sourceUUID
         let targetUUID = edge.targetUUID
 
+        // Register undo action before deleting
+        CosmoUndoManager.shared.register(
+            DeleteConnectionAction(sourceUUID: sourceUUID, targetUUID: targetUUID)
+        )
+
         selectedEdgeKey = nil
 
         deleteTask = Task {

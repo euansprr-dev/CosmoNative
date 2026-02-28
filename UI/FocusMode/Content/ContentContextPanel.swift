@@ -1,13 +1,14 @@
 // CosmoOS/UI/FocusMode/Content/ContentContextPanel.swift
 // Collapsible right sidebar showing inherited idea context for Content Focus Mode
-// February 2026
+// February 2026 — Redesigned to hide empty sections and match polish sidebar quality
 
 import SwiftUI
 
 // MARK: - Content Context Panel
 
 /// Collapsible right sidebar that shows the inherited context chain:
-/// Source Idea → Matched Swipes → Framework → Hooks → Related Content
+/// Source Idea → Matched Swipes → Framework → Hooks → Intelligence
+/// Only sections with data are displayed — no "No X found" empty states.
 struct ContentContextPanel: View {
     let atom: Atom
     @Binding var state: ContentFocusModeState
@@ -25,39 +26,67 @@ struct ContentContextPanel: View {
     @State private var metaPatternReport: MetaPatternReport?
     @State private var isLoadingMetaPattern = false
     @StateObject private var ambientEngine = AmbientFieldEngine()
-    @State private var showAmbientSection = false
+    @State private var showAllSwipes = false
+    @State private var showIntelligence = false
+    @State private var isLoading = true
 
     private let panelWidth: CGFloat = 320
     private let accentColor = CosmoMentionColors.content // Blue
 
+    /// Whether any content section has data to display.
+    /// When false, the panel collapses to zero width to give more space to the editor.
+    private var hasAnyContent: Bool {
+        sourceIdea != nil
+        || !matchedSwipeAtoms.isEmpty
+        || !inheritedConnectionAtoms.isEmpty
+        || (selectedFramework != nil && !selectedFramework!.isEmpty)
+        || !hooks.isEmpty
+        || hasIntelligenceData
+    }
+
+    private var hasIntelligenceData: Bool {
+        metaPatternReport != nil
+        || hasDraftIntelligence
+        || !relatedContent.isEmpty
+        || !ambientEngine.ambientResults.isEmpty
+    }
+
+    private var hasDraftIntelligence: Bool {
+        let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
+        let swipeUUIDs = metadata?.inheritedSwipeUUIDs ?? []
+        return !swipeUUIDs.isEmpty
+    }
+
     var body: some View {
-        if isVisible {
+        if isVisible && (isLoading || hasAnyContent) {
             VStack(spacing: 0) {
                 panelHeader
 
                 Divider().background(DS.border)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        sourceIdeaSection
-                        matchedSwipesSection
-                        inheritedConnectionsSection
-                        frameworkSection
-                        hooksSection
-                        whatsWorkingSection
-                        draftIntelligenceSection
-                        relatedContentSection
-                        ambientKnowledgeSection
-                        researchButton
+                if isLoading {
+                    loadingState
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            sourceIdeaSection
+                            matchedSwipesSection
+                            inheritedConnectionsSection
+                            frameworkSection
+                            hooksSection
+                            intelligenceSection
+                        }
+                        .padding(16)
                     }
-                    .padding(16)
                 }
             }
             .frame(width: panelWidth)
             .background(DS.surface.opacity(0.5))
             .onAppear {
-                Task { await loadInheritedContext() }
-                // Seed ambient engine with content atom context
+                Task {
+                    await loadInheritedContext()
+                    isLoading = false
+                }
                 let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
                 ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
             }
@@ -85,16 +114,56 @@ struct ContentContextPanel: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - Loading State
+
+    private var loadingState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+                .tint(DS.textMuted)
+            Text("Loading context...")
+                .font(.system(size: 11))
+                .foregroundColor(DS.textMuted)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            Image(systemName: "text.below.photo")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(DS.textMuted.opacity(0.5))
+
+            VStack(spacing: 4) {
+                Text("Start writing to build context")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+
+                Text("Context from linked ideas, swipes,\nand research will appear here")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted.opacity(0.7))
+                    .multilineTextAlignment(.center)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
     // MARK: - Source Idea Section
 
     @ViewBuilder
     private var sourceIdeaSection: some View {
-        sectionHeader(title: "SOURCE IDEA", icon: "lightbulb.fill")
-
         if let idea = sourceIdea {
+            sectionHeader(title: "SOURCE IDEA", icon: "lightbulb.fill")
             sourceIdeaCard(idea)
-        } else {
-            emptySourceIdea
         }
     }
 
@@ -116,6 +185,13 @@ struct ContentContextPanel: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.text)
                         .lineLimit(2)
+
+                    if let body = idea.body, !body.isEmpty {
+                        Text(String(body.prefix(80)))
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textMuted)
+                            .lineLimit(2)
+                    }
 
                     if let ideaMeta = idea.ideaMetadata,
                        let status = ideaMeta.ideaStatus {
@@ -149,20 +225,6 @@ struct ContentContextPanel: View {
         .background(status.color.opacity(0.15), in: Capsule())
     }
 
-    private var emptySourceIdea: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lightbulb")
-                .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
-            Text("Link an Idea")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
-    }
-
     // MARK: - Matched Swipes Section
 
     @ViewBuilder
@@ -171,11 +233,38 @@ struct ContentContextPanel: View {
             sectionHeader(title: "MATCHED SWIPES", icon: "doc.on.doc.fill")
 
             VStack(spacing: 6) {
-                ForEach(matchedSwipeAtoms, id: \.uuid) { swipe in
+                let displaySwipes = showAllSwipes ? matchedSwipeAtoms : Array(matchedSwipeAtoms.prefix(3))
+                ForEach(displaySwipes, id: \.uuid) { swipe in
                     swipeCard(swipe)
                 }
+
+                if matchedSwipeAtoms.count > 3 {
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            showAllSwipes.toggle()
+                        }
+                    } label: {
+                        showAllSwipesLabel
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(12)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
         }
+    }
+
+    @ViewBuilder
+    private var showAllSwipesLabel: some View {
+        HStack(spacing: 4) {
+            Text(showAllSwipes ? "Show less" : "Show all \(matchedSwipeAtoms.count)")
+                .font(.system(size: 9, weight: .medium))
+            Image(systemName: showAllSwipes ? "chevron.up" : "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundColor(DS.textMuted)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
     }
 
     private func swipeCard(_ swipe: Atom) -> some View {
@@ -186,24 +275,30 @@ struct ContentContextPanel: View {
                 userInfo: ["atomUUID": swipe.uuid]
             )
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.text.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#FFD700"))
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color(hex: "#FFD700"))
+                    .frame(width: 5, height: 5)
 
                 Text(swipe.title ?? "Untitled Swipe")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.text)
-                    .lineLimit(2)
+                    .lineLimit(1)
 
                 Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(DS.textMuted)
+                // Hook type badge if available
+                if let swipeAnalysis = swipe.swipeAnalysis,
+                   let hookType = swipeAnalysis.hookType {
+                    Text(hookType.displayName)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(Color(hex: "#FFD700"))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color(hex: "#FFD700").opacity(0.12), in: Capsule())
+                }
             }
-            .padding(10)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
     }
@@ -213,18 +308,21 @@ struct ContentContextPanel: View {
     @ViewBuilder
     private var inheritedConnectionsSection: some View {
         if !inheritedConnectionAtoms.isEmpty {
-            sectionHeader(title: "RELATED CONNECTIONS", icon: "link.circle.fill")
+            sectionHeader(title: "CONNECTIONS", icon: "link.circle.fill")
 
-            ForEach(inheritedConnectionAtoms, id: \.uuid) { conn in
-                inheritedConnectionCard(conn)
+            VStack(spacing: 6) {
+                ForEach(inheritedConnectionAtoms.prefix(3), id: \.uuid) { conn in
+                    inheritedConnectionCard(conn)
+                }
             }
+            .padding(12)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
     @ViewBuilder
     private func inheritedConnectionCard(_ conn: Atom) -> some View {
         let maturity = conn.connectionMaturityLevel ?? "emerging"
-        let model = conn.mentalModel
 
         Button {
             NotificationCenter.default.post(
@@ -233,27 +331,17 @@ struct ContentContextPanel: View {
                 userInfo: ["atomUUID": conn.uuid]
             )
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(conn.title ?? "Connection")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
+            HStack(spacing: 8) {
+                Text(conn.title ?? "Connection")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
 
-                    Spacer()
+                Spacer()
 
-                    inheritedConnectionMaturityBadge(maturity)
-                }
-
-                if let goal = model?.goal, !goal.isEmpty {
-                    Text(goal)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(2)
-                }
+                inheritedConnectionMaturityBadge(maturity)
             }
-            .padding(10)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
     }
@@ -284,28 +372,12 @@ struct ContentContextPanel: View {
         if let framework = selectedFramework, !framework.isEmpty {
             sectionHeader(title: "FRAMEWORK", icon: "rectangle.3.group.fill")
 
-            HStack(spacing: 8) {
-                Text(framework)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(accentColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(accentColor.opacity(0.12), in: Capsule())
-
-                Spacer()
-
-                Button {
-                    print("ContentContextPanel: Switch Framework tapped (placeholder)")
-                } label: {
-                    Text("Switch")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(DS.border, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
+            Text(framework)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(accentColor.opacity(0.12), in: Capsule())
         }
     }
 
@@ -316,71 +388,116 @@ struct ContentContextPanel: View {
         if !hooks.isEmpty {
             sectionHeader(title: "HOOKS", icon: "text.quote")
 
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 ForEach(Array(hooks.enumerated()), id: \.offset) { index, hook in
                     hookCard(hook, index: index)
                 }
             }
+            .padding(12)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
     private func hookCard(_ hook: String, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(index + 1)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(accentColor)
+                .frame(width: 16)
+
             Text(hook)
                 .font(.system(size: 11))
                 .foregroundColor(DS.textSecondary)
                 .lineLimit(3)
 
-            HStack(spacing: 8) {
-                hookActionButton(label: "Copy", icon: "doc.on.clipboard") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(hook, forType: .string)
-                }
+            Spacer(minLength: 4)
 
-                hookActionButton(label: "Insert", icon: "text.insert") {
-                    if state.draftContent.isEmpty {
-                        state.draftContent = hook
-                    } else {
-                        state.draftContent += "\n\n" + hook
-                    }
-                    state.save()
-                }
-            }
-        }
-        .padding(10)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func hookActionButton(label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(hook, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.clipboard")
                     .font(.system(size: 9))
-                Text(label)
-                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: 24, height: 24)
+                    .background(DS.border, in: Circle())
             }
-            .foregroundColor(DS.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.border, in: Capsule())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
-    // MARK: - What's Working Now Section
+    // MARK: - Intelligence Section (Collapsible)
 
     @ViewBuilder
-    private var whatsWorkingSection: some View {
+    private var intelligenceSection: some View {
+        if hasIntelligenceData || isLoadingMetaPattern || isLoadingRelated {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    showIntelligence.toggle()
+                }
+            } label: {
+                intelligenceHeaderLabel
+            }
+            .buttonStyle(.plain)
+
+            if showIntelligence {
+                VStack(alignment: .leading, spacing: 16) {
+                    whatsWorkingSubsection
+                    draftIntelligenceSubsection
+                    relatedContentSubsection
+                    ambientKnowledgeSubsection
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var intelligenceHeaderLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: showIntelligence ? "chevron.down" : "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .frame(width: 12)
+
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 9))
+                .foregroundColor(DS.textMuted)
+
+            Text("INTELLIGENCE")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(DS.textMuted)
+
+            Spacer()
+
+            let count = intelligenceItemCount
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(accentColor.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    private var intelligenceItemCount: Int {
+        var count = 0
+        if metaPatternReport != nil { count += 1 }
+        if hasDraftIntelligence { count += 1 }
+        count += relatedContent.count
+        count += ambientEngine.ambientResults.count
+        return count
+    }
+
+    // MARK: - What's Working Subsection
+
+    @ViewBuilder
+    private var whatsWorkingSubsection: some View {
         if let report = metaPatternReport {
             whatsWorkingContent(report)
         } else if isLoadingMetaPattern {
-            whatsWorkingLoading
-        }
-    }
-
-    private var whatsWorkingLoading: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader(title: "WHAT'S WORKING NOW", icon: "chart.line.uptrend.xyaxis")
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
@@ -394,27 +511,81 @@ struct ContentContextPanel: View {
 
     @ViewBuilder
     private func whatsWorkingContent(_ report: MetaPatternReport) -> some View {
-        sectionHeader(title: "WHAT'S WORKING NOW", icon: "chart.line.uptrend.xyaxis")
-
         VStack(alignment: .leading, spacing: 10) {
             // Scope badge
-            whatsWorkingScopeBadge(report)
+            HStack(spacing: 6) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 9))
+                    .foregroundColor(Color(hex: "#34D399"))
+                Text("WHAT'S WORKING")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.textMuted)
+            }
 
-            // Dominant hooks
+            HStack(spacing: 6) {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 9))
+                    .foregroundColor(Color(hex: "#34D399"))
+                Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(Color(hex: "#34D399"))
+                Spacer()
+                Text("\(report.sampleSize) swipes")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(DS.textMuted)
+            }
+
             if let topHook = report.dominantHooks.first {
-                whatsWorkingHookRow(topHook)
+                HStack(spacing: 8) {
+                    Image(systemName: "text.quote")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#818CF8"))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(topHook.hookType)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.text)
+                        Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content")
+                            .font(.system(size: 9))
+                            .foregroundColor(DS.textMuted)
+                    }
+                }
             }
 
-            // Winning framework
             if let topFw = report.winningStructures.first {
-                whatsWorkingFrameworkRow(topFw)
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.3.group.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#FBBF24"))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(topFw.framework)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.text)
+                        Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption")
+                            .font(.system(size: 9))
+                            .foregroundColor(DS.textMuted)
+                    }
+                }
             }
 
-            // Persuasion techniques
-            whatsWorkingPersuasionRow(report)
-
-            // Trends
-            whatsWorkingTrendsRow(report)
+            if !report.trendingTopics.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Color(hex: "#34D399"))
+                        .frame(width: 16)
+                    ForEach(report.trendingTopics.prefix(3), id: \.self) { item in
+                        Text(item)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(Color(hex: "#34D399"))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(hex: "#34D399").opacity(0.12), in: Capsule())
+                    }
+                }
+            }
         }
         .padding(12)
         .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
@@ -424,118 +595,25 @@ struct ContentContextPanel: View {
         )
     }
 
-    private func whatsWorkingScopeBadge(_ report: MetaPatternReport) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 9))
-                .foregroundColor(Color(hex: "#34D399"))
-            Text("\(report.platform.capitalized) \(report.format) -- \(report.niche)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(Color(hex: "#34D399"))
-            Spacer()
-            Text("\(report.sampleSize) swipes")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(DS.textMuted)
-        }
-    }
-
-    private func whatsWorkingHookRow(_ topHook: HookPattern) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "text.quote")
-                .font(.system(size: 10))
-                .foregroundColor(Color(hex: "#818CF8"))
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(topHook.hookType)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
-                Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content, avg \(String(format: "%.1f", topHook.avgScore))/10")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
-            }
-        }
-    }
-
-    private func whatsWorkingFrameworkRow(_ topFw: StructurePattern) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "rectangle.3.group.fill")
-                .font(.system(size: 10))
-                .foregroundColor(Color(hex: "#FBBF24"))
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(topFw.framework)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
-                Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption, ~\(topFw.avgSectionCount) sections")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
-            }
-        }
-    }
+    // MARK: - Draft Intelligence Subsection
 
     @ViewBuilder
-    private func whatsWorkingPersuasionRow(_ report: MetaPatternReport) -> some View {
-        if !report.persuasionTechniques.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "person.3.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "#FB7185"))
-                    .frame(width: 16)
-                let techNames = report.persuasionTechniques.prefix(3).map { $0.technique }
-                Text(techNames.joined(separator: ", "))
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textSecondary)
-                    .lineLimit(2)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func whatsWorkingTrendsRow(_ report: MetaPatternReport) -> some View {
-        if !report.trendingTopics.isEmpty || !report.decliningPatterns.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                if !report.trendingTopics.isEmpty {
-                    whatsWorkingTrendBadges(items: report.trendingTopics, isRising: true)
-                }
-                if !report.decliningPatterns.isEmpty {
-                    whatsWorkingTrendBadges(items: report.decliningPatterns, isRising: false)
-                }
-            }
-        }
-    }
-
-    private func whatsWorkingTrendBadges(items: [String], isRising: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: isRising ? "arrow.up.right" : "arrow.down.right")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(isRising ? Color(hex: "#34D399") : Color(hex: "#EF4444"))
-                .frame(width: 16)
-            ForEach(items.prefix(3), id: \.self) { item in
-                Text(item)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(isRising ? Color(hex: "#34D399") : Color(hex: "#EF4444"))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        (isRising ? Color(hex: "#34D399") : Color(hex: "#EF4444")).opacity(0.12),
-                        in: Capsule()
-                    )
-            }
-        }
-    }
-
-    // MARK: - Draft Intelligence Section
-
-    @ViewBuilder
-    private var draftIntelligenceSection: some View {
+    private var draftIntelligenceSubsection: some View {
         let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
         let swipeUUIDs = metadata?.inheritedSwipeUUIDs ?? []
 
         if !swipeUUIDs.isEmpty {
-            sectionHeader(title: "DRAFT INTELLIGENCE", icon: "sparkles")
-
             VStack(alignment: .leading, spacing: 10) {
-                // Swipe match count
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                        .foregroundColor(DS.textMuted)
+                    Text("DRAFT INTELLIGENCE")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(DS.textMuted)
+                }
+
                 HStack(spacing: 8) {
                     Image(systemName: "doc.on.doc.fill")
                         .font(.system(size: 11))
@@ -545,7 +623,6 @@ struct ContentContextPanel: View {
                         .foregroundColor(DS.textSecondary)
                 }
 
-                // Confidence indicator
                 if let draftPackageData = atom.structured,
                    let data = draftPackageData.data(using: .utf8),
                    let draftPackage = try? JSONDecoder().decode(ContentDraftPackage.self, from: data) {
@@ -559,31 +636,16 @@ struct ContentContextPanel: View {
                     }
                 }
 
-                // Generate Draft button
                 if metadata?.draftReady == true && state.draftContent.isEmpty {
                     Button(action: { generateDraftFromPanel() }) {
                         if isGeneratingDraft {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .tint(DS.text)
-                                Text("Generating...")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(DS.textSecondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(DS.accent.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+                            draftGeneratingLabel
                         } else {
                             draftButtonContent
                         }
                     }
                     .buttonStyle(.plain)
                     .disabled(isGeneratingDraft)
-                } else if metadata?.draftReady == false {
-                    Text(metadata?.draftingNote ?? "Need more swipes for AI drafting")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
                 }
             }
             .padding(12)
@@ -593,6 +655,21 @@ struct ContentContextPanel: View {
                     .stroke(DS.accent.opacity(0.2), lineWidth: 1)
             )
         }
+    }
+
+    @ViewBuilder
+    private var draftGeneratingLabel: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .scaleEffect(0.6)
+                .tint(DS.text)
+            Text("Generating...")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(DS.textSecondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(DS.accent.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -670,54 +747,35 @@ struct ContentContextPanel: View {
         }
     }
 
-    // MARK: - Related Content Section (Tiered)
+    // MARK: - Related Content Subsection
 
     @ViewBuilder
-    private var relatedContentSection: some View {
-        sectionHeader(title: "RELATED", icon: "link")
-
+    private var relatedContentSubsection: some View {
         if isLoadingRelated {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Searching...")
+                Text("Finding related...")
                     .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
             }
             .padding(10)
-        } else if relatedContent.isEmpty {
-            Text("No related content found")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
-                .padding(10)
-        } else {
-            VStack(spacing: 12) {
-                ForEach(RelatedContentTier.allCases, id: \.rawValue) { tier in
-                    let tierItems = relatedContent.filter { $0.tier == tier }
-                    if !tierItems.isEmpty {
-                        tierGroup(tier: tier, items: tierItems)
-                    }
+        } else if !relatedContent.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.system(size: 9))
+                        .foregroundColor(DS.textMuted)
+                    Text("RELATED")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(DS.textMuted)
                 }
-            }
-        }
-    }
 
-    @ViewBuilder
-    private func tierGroup(tier: RelatedContentTier, items: [RelatedAtomRef]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(tier.accentColor)
-                    .frame(width: 6, height: 6)
-                Text(tier.label)
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundColor(tier.accentColor)
-            }
-
-            VStack(spacing: 4) {
-                ForEach(items) { ref in
-                    relatedContentCard(ref)
+                VStack(spacing: 4) {
+                    ForEach(relatedContent.prefix(6)) { ref in
+                        relatedContentCard(ref)
+                    }
                 }
             }
         }
@@ -731,32 +789,20 @@ struct ContentContextPanel: View {
                 userInfo: ["atomUUID": ref.atomUUID]
             )
         } label: {
-            HStack(spacing: 0) {
-                // Tier accent bar
+            HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(ref.tier.accentColor)
-                    .frame(width: 2, height: 32)
-                    .padding(.trailing, 8)
+                    .frame(width: 2, height: 28)
 
                 Image(systemName: iconForAtomType(ref.type))
                     .font(.system(size: 10))
                     .foregroundColor(colorForAtomType(ref.type))
-                    .frame(width: 16)
+                    .frame(width: 14)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(ref.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
-
-                    if !ref.preview.isEmpty {
-                        Text(ref.preview)
-                            .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.leading, 6)
+                Text(ref.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
 
                 Spacer()
 
@@ -770,27 +816,17 @@ struct ContentContextPanel: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Ambient Knowledge Section
+    // MARK: - Ambient Knowledge Subsection
 
     @ViewBuilder
-    private var ambientKnowledgeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    showAmbientSection.toggle()
-                }
-            } label: {
+    private var ambientKnowledgeSubsection: some View {
+        if !ambientEngine.ambientResults.isEmpty || ambientEngine.isLoading {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: showAmbientSection ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
-                        .frame(width: 12)
-
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
                         .foregroundColor(OnyxColors.Dimension.knowledge)
-
-                    Text("AMBIENT KNOWLEDGE")
+                    Text("AMBIENT")
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.8)
                         .foregroundColor(DS.textMuted)
@@ -806,10 +842,7 @@ struct ContentContextPanel: View {
                             .background(OnyxColors.Dimension.knowledge.opacity(0.15), in: Capsule())
                     }
                 }
-            }
-            .buttonStyle(.plain)
 
-            if showAmbientSection {
                 if ambientEngine.isLoading {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -820,7 +853,7 @@ struct ContentContextPanel: View {
                             .foregroundColor(DS.textMuted)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 8)
                 } else {
                     ForEach(ambientEngine.ambientResults.prefix(5)) { result in
                         AmbientResultCard(
@@ -838,27 +871,6 @@ struct ContentContextPanel: View {
                 }
             }
         }
-    }
-
-    // MARK: - Research Button
-
-    private var researchButton: some View {
-        Button {
-            print("ContentContextPanel: Research This Topic tapped (placeholder)")
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 13))
-                Text("Research This Topic")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(accentColor)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 8)
     }
 
     // MARK: - Section Header
@@ -1014,7 +1026,6 @@ struct ContentContextPanel: View {
     }
 
     private func debounceRelatedRefresh() {
-        // Only refresh during draft step
         guard state.currentStep == .draft else { return }
 
         relatedSearchTask?.cancel()
@@ -1051,4 +1062,3 @@ struct ContentContextPanel: View {
         }
     }
 }
-

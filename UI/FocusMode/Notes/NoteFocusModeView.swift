@@ -34,6 +34,10 @@ struct NoteFocusModeView: View {
     @State private var observationCancellable: AnyCancellable?
     @State private var isInitialLoad = true
 
+    // Sidebar state
+    @State private var sidebarVisible = false
+    @State private var linkedAtoms: [Atom] = []
+
     // Animation states
     @State private var contentAppeared = false
     @State private var isTitleFocused = false
@@ -44,6 +48,9 @@ struct NoteFocusModeView: View {
 
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 1.5
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     enum SaveState: Equatable {
         case idle
@@ -117,12 +124,29 @@ struct NoteFocusModeView: View {
                 footerBar
             }
         }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Note",
+                icon: "doc.text",
+                accentColor: DS.accent,
+                isVisible: $sidebarVisible
+            ) {
+                noteSidebarContent
+            }
+            .padding(.leading, 8)
+            .padding(.top, 56)
+        }
         .focusBlockContextMenu(
             manager: floatingBlocksManager,
             ownerAtomUUID: atom.uuid
         )
         .onAppear {
             startObservingAtom()
+            loadLinkedAtoms()
             listenForAtomPicker()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(ProMotionSprings.cardEntrance) {
@@ -131,13 +155,21 @@ struct NoteFocusModeView: View {
             }
             // Register context provider for global Cosmo window
             let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.title }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
             // never fires (e.g. atom deleted between load and observation start)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if isInitialLoad {
                     isInitialLoad = false
                 }
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.title }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
         .onDisappear {
@@ -195,6 +227,18 @@ struct NoteFocusModeView: View {
             }
 
             Spacer()
+
+            // Pane close button
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -390,6 +434,55 @@ struct NoteFocusModeView: View {
         plainContent.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
+    // MARK: - Sidebar Content
+
+    private var noteSidebarContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if linkedAtoms.isEmpty {
+                Text("No linked items")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 20)
+            } else {
+                Text("LINKED ITEMS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+                    .tracking(0.8)
+
+                ForEach(linkedAtoms, id: \.uuid) { linked in
+                    HStack(spacing: 8) {
+                        Image(systemName: linked.type.iconName)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.textSecondary)
+
+                        Text(linked.title ?? "Untitled")
+                            .font(.system(size: 12))
+                            .foregroundColor(DS.text)
+                            .lineLimit(1)
+
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func loadLinkedAtoms() {
+        Task {
+            let edges = try? await GraphQueryEngine().getEdges(for: atom.uuid)
+            let uuids = (edges ?? []).map { $0.sourceUUID == atom.uuid ? $0.targetUUID : $0.sourceUUID }
+            var atoms: [Atom] = []
+            for uuid in uuids.prefix(20) {
+                if let a = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    atoms.append(a)
+                }
+            }
+            await MainActor.run { linkedAtoms = atoms }
+        }
+    }
+
     // MARK: - Floating Block Listeners
 
     /// Listen for atom picker notifications to add existing atoms as floating blocks
@@ -398,7 +491,8 @@ struct NoteFocusModeView: View {
             forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
             object: nil,
             queue: .main
-        ) { notification in
+        ) { [self] notification in
+            guard !self.isPaneContext || self.isPaneActive else { return }
             guard let userInfo = notification.userInfo,
                   let atomUUID = userInfo["atomUUID"] as? String,
                   let atomTypeRaw = userInfo["atomType"] as? String,

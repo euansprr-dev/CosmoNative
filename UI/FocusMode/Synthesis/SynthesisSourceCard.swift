@@ -9,31 +9,23 @@ struct SynthesisSourceCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Type icon with accent
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(accentColor.opacity(0.15))
-                    .frame(width: 36, height: 36)
+            // Thumbnail or type icon
+            thumbnailView
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                Image(systemName: typeIcon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(accentColor)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 // Title
                 Text(atom.title ?? "Untitled")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(DS.text)
                     .lineLimit(1)
 
-                // Content preview
-                if let body = atom.body, !body.isEmpty {
-                    Text(body.prefix(80).description)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(2)
-                }
+                // Clean content preview (summary/findings, not raw body)
+                Text(previewText)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(2)
             }
 
             Spacer()
@@ -53,6 +45,69 @@ struct SynthesisSourceCard: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.border, lineWidth: 1)
         )
+    }
+
+    // MARK: - Thumbnail
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if let urlString = atom.thumbnailUrl, let url = URL(string: urlString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                case .failure:
+                    iconFallback
+                default:
+                    iconFallback
+                }
+            }
+        } else {
+            iconFallback
+        }
+    }
+
+    private var iconFallback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(accentColor.opacity(0.15))
+
+            Image(systemName: typeIcon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(accentColor)
+        }
+    }
+
+    // MARK: - Preview Text
+
+    /// Show a clean human-readable preview — prefer summary/findings over raw body
+    private var previewText: String {
+        // For research atoms, prefer summary or findings
+        if atom.type == .research {
+            if let summary = atom.summary, !summary.isEmpty {
+                return String(summary.prefix(120))
+            }
+            if let findings = atom.findings, !findings.isEmpty {
+                return String(findings.prefix(120))
+            }
+        }
+
+        // For ideas, prefer the body but skip if it looks like JSON
+        if let body = atom.body, !body.isEmpty {
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Skip raw JSON — show a clean fallback instead
+            if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
+                if let summary = atom.summary, !summary.isEmpty {
+                    return String(summary.prefix(120))
+                }
+                return atom.type.rawValue.capitalized
+            }
+            return String(trimmed.prefix(120))
+        }
+
+        return atom.type.rawValue.capitalized
     }
 
     // MARK: - Helpers

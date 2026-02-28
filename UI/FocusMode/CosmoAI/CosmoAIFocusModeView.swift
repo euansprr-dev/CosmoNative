@@ -12,6 +12,10 @@ struct CosmoAIFocusModeView: View {
     @StateObject private var viewModel: CosmoAIFocusModeViewModel
     @FocusState private var isInputFocused: Bool
     @State private var inputText = ""
+    @State private var sidebarVisible = false
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -60,6 +64,22 @@ struct CosmoAIFocusModeView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+        }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Context",
+                icon: "brain",
+                accentColor: DS.accent,
+                isVisible: $sidebarVisible
+            ) {
+                cosmoAISidebarContent
+            }
+            .padding(.leading, 8)
+            .padding(.top, 56)
         }
     }
 
@@ -135,6 +155,41 @@ struct CosmoAIFocusModeView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 6)
+        }
+    }
+
+    // MARK: - Sidebar Content
+
+    private var cosmoAISidebarContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if viewModel.contextSources.isEmpty {
+                Text("No context sources")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 20)
+            } else {
+                Text("CONTEXT SOURCES")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+                    .tracking(0.8)
+
+                ForEach(viewModel.contextSources) { source in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(CosmoMentionColors.color(for: source.type))
+                            .frame(width: 6, height: 6)
+
+                        Text(source.title)
+                            .font(.system(size: 12))
+                            .foregroundColor(DS.text)
+                            .lineLimit(2)
+
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
         }
     }
 

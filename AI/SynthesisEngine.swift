@@ -9,7 +9,7 @@ class SynthesisEngine: ObservableObject {
     @Published var isGenerating = false
 
     private let researchService = ResearchService.shared
-    private let model = "anthropic/claude-haiku-4-5-20251001"
+    private let model = "anthropic/claude-haiku-4.5"
 
     func synthesize(atoms: [Atom]) async -> LassoSynthesisResult {
         guard !atoms.isEmpty else {

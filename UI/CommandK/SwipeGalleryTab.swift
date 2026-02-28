@@ -1054,6 +1054,16 @@ private struct SwipeGalleryCard: View {
 
             Button {
                 NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane, object: nil,
+                    userInfo: ["type": EntityType.research, "id": item.entityId]
+                )
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+
+            Button {
+                NotificationCenter.default.post(
                     name: Notification.Name("addSwipeToCanvas"),
                     object: nil,
                     userInfo: ["atomUUID": item.atomUUID]

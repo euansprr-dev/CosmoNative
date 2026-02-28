@@ -103,6 +103,11 @@ final class DragToConnectManager: ObservableObject {
                     )
                 }
 
+                // Register undo action
+                CosmoUndoManager.shared.register(
+                    CreateConnectionAction(sourceUUID: sourceBlock.entityUuid, targetUUID: targetBlock.entityUuid)
+                )
+
                 // Brief celebration then reset
                 try await Task.sleep(for: .milliseconds(500))
                 await MainActor.run {

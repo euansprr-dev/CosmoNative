@@ -81,7 +81,13 @@ struct SwipeStudyFocusModeView: View {
     // Copy transcript feedback
     @State private var copiedTranscript = false
 
+    // Sidebar state
+    @State private var sidebarVisible = false
+
     private let gold = Color(hex: "#FFD700")
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     var body: some View {
         ZStack {
@@ -120,11 +126,35 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
         }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Swipe Analysis",
+                icon: "doc.text.magnifyingglass",
+                accentColor: gold,
+                isVisible: $sidebarVisible
+            ) {
+                swipeSidebarContent
+            }
+            .padding(.leading, 8)
+            .padding(.top, 56)
+        }
         .onAppear {
             loadAtom()
             // Register context provider for global Cosmo window
             let provider = SwipeStudyContextProvider(atom: atom, analysisRef: { [self] in self.analysis }, transcriptRef: { [self] in self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText })
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = SwipeStudyContextProvider(atom: atom, analysisRef: { [self] in self.analysis }, transcriptRef: { [self] in self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText })
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
         }
         .onKeyPress(.escape) {
             onClose()
@@ -299,6 +329,18 @@ struct SwipeStudyFocusModeView: View {
                 }
             } message: {
                 Text("This will permanently remove this swipe file and all its analysis data.")
+            }
+
+            // Pane close button
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
             }
 
             Button {
@@ -2505,6 +2547,83 @@ struct SwipeStudyFocusModeView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.border, lineWidth: 1)
         )
+    }
+
+    // MARK: - Sidebar Content
+
+    private var swipeSidebarContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let analysis = analysis {
+                // Hook type
+                if let hookType = analysis.hookType {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("HOOK TYPE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .tracking(0.8)
+
+                        Text(hookType.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(gold)
+                    }
+                }
+
+                // Hook score
+                if let hookScore = analysis.hookScore {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("HOOK SCORE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .tracking(0.8)
+
+                        HStack(spacing: 4) {
+                            Text(String(format: "%.0f", hookScore * 10))
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .foregroundColor(DS.text)
+                            Text("/ 100")
+                                .font(.system(size: 12))
+                                .foregroundColor(DS.textMuted)
+                        }
+                    }
+                }
+
+                // Dominant emotion
+                if let emotion = analysis.dominantEmotion {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("DOMINANT EMOTION")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .tracking(0.8)
+
+                        Text(emotion.displayName)
+                            .font(.system(size: 13))
+                            .foregroundColor(DS.textSecondary)
+                    }
+                }
+
+                // Persuasion techniques
+                if let techniques = analysis.persuasionTechniques, !techniques.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("PERSUASION")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .tracking(0.8)
+
+                        ForEach(techniques, id: \.type) { technique in
+                            Text(technique.type.displayName)
+                                .font(.system(size: 12))
+                                .foregroundColor(DS.textSecondary)
+                        }
+                    }
+                }
+            } else {
+                Text("No analysis available")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 20)
+            }
+        }
     }
 
     // MARK: - Notes Section (Removed — replaced by per-slide inline commenting)

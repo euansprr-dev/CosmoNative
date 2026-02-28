@@ -2194,46 +2194,6 @@ struct ResearchMetadata: Codable, Sendable {
     var contentSource: String?
 }
 
-// MARK: - Progressive Distillation
-
-/// Representation layer that changes based on canvas zoom level
-enum DistillationLayer: Int, Codable, CaseIterable, Sendable {
-    case full = 0       // Full content (zoomed in)
-    case summary = 1    // 3-5 sentence summary (medium zoom)
-    case essence = 2    // Single sentence core insight (far zoom)
-    case glyph = 3      // 3-word label + icon (max zoom-out)
-}
-
-/// AI-generated content representations at different abstraction levels
-struct DistillationLayers: Codable, Sendable {
-    var summary: String?      // 3-5 sentence summary
-    var essence: String?      // Single sentence core insight
-    var glyph: String?        // 3-word label (e.g., "hooks beat structure")
-    var userOwnedFlags: Set<String> = []  // Fields user has manually edited ("summary", "essence", "glyph")
-    var lastGeneratedAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case summary, essence, glyph, userOwnedFlags, lastGeneratedAt
-    }
-
-    init(summary: String? = nil, essence: String? = nil, glyph: String? = nil, userOwnedFlags: Set<String> = [], lastGeneratedAt: String? = nil) {
-        self.summary = summary
-        self.essence = essence
-        self.glyph = glyph
-        self.userOwnedFlags = userOwnedFlags
-        self.lastGeneratedAt = lastGeneratedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        summary = try container.decodeIfPresent(String.self, forKey: .summary)
-        essence = try container.decodeIfPresent(String.self, forKey: .essence)
-        glyph = try container.decodeIfPresent(String.self, forKey: .glyph)
-        userOwnedFlags = try container.decodeIfPresent(Set<String>.self, forKey: .userOwnedFlags) ?? []
-        lastGeneratedAt = try container.decodeIfPresent(String.self, forKey: .lastGeneratedAt)
-    }
-}
-
 // MARK: - Knowledge Crystallization
 
 /// Represents how deeply a piece of knowledge has been processed/internalized

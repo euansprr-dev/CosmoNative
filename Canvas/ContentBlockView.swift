@@ -38,9 +38,6 @@ struct ContentBlockView: View {
     // Blue accent for content
     private let accentColor = CosmoMentionColors.content
 
-    // Step colors
-    private let completedColor = Color(hex: "#22C55E")
-
     var body: some View {
         CosmoBlockWrapper(
             block: block,
@@ -89,19 +86,9 @@ struct ContentBlockView: View {
 
     private var workflowCardView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Phase dots
-            stepIndicator
-                .padding(.top, 12)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-
             // Title section
             titleSection
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-
-            // Step capsule switcher
-            stepCapsuleSwitcher
+                .padding(.top, 12)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
@@ -110,8 +97,8 @@ struct ContentBlockView: View {
                 .fill(DS.border)
                 .frame(height: 1)
 
-            // Content preview based on current step
-            stepPreview
+            // Unified content preview
+            contentPreview
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
@@ -148,201 +135,12 @@ struct ContentBlockView: View {
         }
     }
 
-    // MARK: - Step Capsule Switcher
+    // MARK: - Unified Content Preview
 
-    private var stepCapsuleSwitcher: some View {
-        HStack(spacing: 6) {
-            ForEach(ContentStep.allCases, id: \.self) { step in
-                stepCapsule(step)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func stepCapsule(_ step: ContentStep) -> some View {
-        let stepColor = colorForStep(step)
-        Text(step.label)
-            .font(.system(size: 10, weight: .medium))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(currentStep == step ? stepColor.opacity(0.2) : DS.borderSubtle.opacity(0.5))
-            .foregroundColor(currentStep == step ? stepColor : DS.textMuted)
-            .clipShape(Capsule())
-            .onTapGesture { switchStep(to: step) }
-    }
-
-    private func colorForStep(_ step: ContentStep) -> Color {
-        switch step {
-        case .brainstorm: return Color(hex: "818CF8") // indigo
-        case .draft: return Color(hex: "60A5FA")      // blue
-        case .polish: return Color(hex: "34D399")      // green
-        }
-    }
-
-    // MARK: - Phase Indicator (8-Phase Pipeline)
-
-    private var stepIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(ContentPhase.allCases.enumerated()), id: \.element) { index, phase in
-                if index > 0 {
-                    // Connecting line
-                    Rectangle()
-                        .fill(phaseLineColor(beforePhase: phase))
-                        .frame(height: 1)
-                        .frame(maxWidth: .infinity)
-                }
-
-                // Phase dot (clickable only for creation phases)
-                Button {
-                    if let step = ContentFocusModeState.stepForPhase(phase) {
-                        switchStep(to: step)
-                    }
-                } label: {
-                    phaseDot(for: phase)
-                }
-                .buttonStyle(.plain)
-                .disabled(ContentFocusModeState.stepForPhase(phase) == nil)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func phaseDot(for phase: ContentPhase) -> some View {
-        let currentIdx = ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0
-        let phaseIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
-
-        if phaseIdx < currentIdx {
-            // Completed: green dot
-            Circle()
-                .fill(completedColor)
-                .frame(width: 6, height: 6)
-        } else if phase == currentContentPhase {
-            // Current: filled accent
-            Circle()
-                .fill(accentColor)
-                .frame(width: 8, height: 8)
-        } else {
-            // Future: stroke, dimmed for post-creation
-            let isCreation = ContentFocusModeState.stepForPhase(phase) != nil
-            Circle()
-                .stroke(isCreation ? DS.textMuted : DS.borderActive, lineWidth: 1)
-                .frame(width: 6, height: 6)
-        }
-    }
-
-    private func phaseLineColor(beforePhase phase: ContentPhase) -> Color {
-        let currentIdx = ContentPhase.allCases.firstIndex(of: currentContentPhase) ?? 0
-        let phaseIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
-        if phaseIdx <= currentIdx {
-            return completedColor.opacity(0.5)
-        }
-        return DS.border
-    }
-
-    // MARK: - Step Preview
-
-    @ViewBuilder
-    private var stepPreview: some View {
-        switch currentStep {
-        case .brainstorm:
-            brainstormPreview
-        case .draft:
-            draftPreview
-        case .polish:
-            polishPreview
-        }
-    }
-
-    private var brainstormPreview: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Core idea
-            if !coreIdea.isEmpty {
-                Text(String(coreIdea.prefix(80)))
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
-                    .lineLimit(2)
-            } else if !contentDescription.isEmpty {
-                Text(String(contentDescription.prefix(80)))
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
-                    .lineLimit(2)
-            }
-
-            // Hooks
-            if !hooks.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(hooks.prefix(2).enumerated()), id: \.offset) { _, hook in
-                        HStack(spacing: 4) {
-                            Image(systemName: "sparkle")
-                                .font(.system(size: 8))
-                                .foregroundColor(accentColor)
-                            Text(String(hook.prefix(40)))
-                                .font(.system(size: 10))
-                                .foregroundColor(DS.text)
-                                .lineLimit(1)
-                        }
-                    }
-                    if hooks.count > 2 {
-                        Text("+\(hooks.count - 2) more hooks")
-                            .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
-                    }
-                }
-            }
-
-            // Outline items
-            if !outlineItems.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(outlineItems.prefix(3).enumerated()), id: \.offset) { index, item in
-                        HStack(spacing: 5) {
-                            Text("\(index + 1).")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundColor(accentColor.opacity(0.7))
-                                .frame(width: 14, alignment: .trailing)
-                            Text(String(item.prefix(35)))
-                                .font(.system(size: 10))
-                                .foregroundColor(DS.textSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    if outlineItems.count > 3 {
-                        Text("+\(outlineItems.count - 3) more")
-                            .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
-                            .padding(.leading, 19)
-                    }
-                }
-            }
-
-            // Empty state — only when all brainstorm data is empty
-            if coreIdea.isEmpty && contentDescription.isEmpty && hooks.isEmpty && outlineItems.isEmpty {
-                HStack(spacing: 5) {
-                    Image(systemName: "lightbulb.max.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor.opacity(0.5))
-                    Text("Open to brainstorm...")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
-                        .italic()
-                }
-            }
-        }
-    }
-
-    private var draftPreview: some View {
+    private var contentPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if draftContent.isEmpty {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.text.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor.opacity(0.5))
-                    Text("Open to start drafting...")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
-                        .italic()
-                }
-            } else {
-                // Draft excerpt
+            if !draftContent.isEmpty {
+                // Draft excerpt — primary display
                 Text(String(draftContent.prefix(120)))
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
@@ -361,56 +159,40 @@ struct ContentBlockView: View {
                     .padding(.vertical, 2)
                     .background(accentColor.opacity(0.1), in: Capsule())
                 }
-            }
-        }
-    }
-
-    private var polishPreview: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let analysis = polishAnalysis {
-                // Readability score bar
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor)
-                    Text(analysis.readabilityLabel)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
-                }
-
-                // Stats row
-                HStack(spacing: 10) {
-                    Label("Grade \(String(format: "%.0f", analysis.fleschKincaidGrade))", systemImage: "graduationcap")
-                    Label("\(analysis.wordCount)w", systemImage: "text.word.spacing")
-                    Label("\(analysis.sentenceCount)s", systemImage: "text.alignleft")
-                }
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
-            } else if wordCount > 0 {
-                HStack(spacing: 5) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor.opacity(0.6))
-                    Text("Ready to polish")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                }
-
-                if wordCount > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "text.word.spacing")
-                            .font(.system(size: 9))
-                        Text("\(wordCount) words")
-                            .font(.system(size: 10, weight: .medium))
+            } else if !coreIdea.isEmpty {
+                // Fallback to core idea
+                Text(String(coreIdea.prefix(120)))
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(4)
+            } else if !contentDescription.isEmpty {
+                // Fallback to description
+                Text(String(contentDescription.prefix(120)))
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(4)
+            } else if !hooks.isEmpty {
+                // Fallback to hooks
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(hooks.prefix(2).enumerated()), id: \.offset) { _, hook in
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 8))
+                                .foregroundColor(accentColor)
+                            Text(String(hook.prefix(50)))
+                                .font(.system(size: 10))
+                                .foregroundColor(DS.text)
+                                .lineLimit(1)
+                        }
                     }
-                    .foregroundColor(accentColor.opacity(0.7))
                 }
             } else {
+                // Empty state
                 HStack(spacing: 5) {
-                    Image(systemName: "sparkles")
+                    Image(systemName: "doc.text.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
-                    Text("Draft first, then polish")
+                        .foregroundColor(accentColor.opacity(0.5))
+                    Text("Open to start writing...")
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
                         .italic()
@@ -452,37 +234,7 @@ struct ContentBlockView: View {
         }
     }
 
-    // MARK: - Step Switching
-
-    private func switchStep(to step: ContentStep) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            currentStep = step
-        }
-        // Write step change directly to atom metadata
-        let entityUuid = block.entityUuid
-        guard !entityUuid.isEmpty else { return }
-        Task {
-            do {
-                try await CosmoDatabase.shared.asyncWrite { db in
-                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [entityUuid]),
-                       let existing: String = row["metadata"],
-                       let data = existing.data(using: .utf8),
-                       var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        dict["currentStep"] = step.rawValue
-                        if let metadataData = try? JSONSerialization.data(withJSONObject: dict),
-                           let str = String(data: metadataData, encoding: .utf8) {
-                            try db.execute(
-                                sql: "UPDATE atoms SET metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                                arguments: [str, ISO8601DateFormatter().string(from: Date()), entityUuid]
-                            )
-                        }
-                    }
-                }
-            } catch {
-                print("ContentBlockView: Failed to update step: \(error)")
-            }
-        }
-    }
+    // MARK: - (Step switching removed — unified editor, phase navigation via pipeline bar)
 
     // MARK: - GRDB Observation
 

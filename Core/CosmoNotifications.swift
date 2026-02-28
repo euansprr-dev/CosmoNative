@@ -112,6 +112,9 @@ enum CosmoNotification {
         // Thinkspace
         static let switchToThinkspace = Notification.Name("com.cosmo.nav.switchToThinkspace")
 
+        // Panes
+        static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
+
         // UI
         static let showSettings = Notification.Name("com.cosmo.nav.showSettings")
         static let showCommandPalette = Notification.Name("com.cosmo.nav.showCommandPalette")

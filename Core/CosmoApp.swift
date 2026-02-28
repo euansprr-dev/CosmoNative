@@ -2,6 +2,7 @@
 // Main application entry point for the first Cognition OS
 
 import SwiftUI
+import AppKit
 import GRDB
 
 @main
@@ -137,8 +138,7 @@ struct CosmoApp: App {
             queue: .main
         ) { _ in
             Task { @MainActor in
-                let actionRegistry = ActionRegistry(database: CosmoDatabase.shared)
-                try? await actionRegistry.execute(.undoLastAction, parameters: [:])
+                await CosmoUndoManager.shared.undo()
             }
         }
 
@@ -148,8 +148,7 @@ struct CosmoApp: App {
             queue: .main
         ) { _ in
             Task { @MainActor in
-                let actionRegistry = ActionRegistry(database: CosmoDatabase.shared)
-                try? await actionRegistry.execute(.redoAction, parameters: [:])
+                await CosmoUndoManager.shared.redo()
             }
         }
 
@@ -474,14 +473,29 @@ struct CosmoCommands: Commands {
         }
 
         // Undo/Redo commands (⌘Z / ⌘⇧Z)
+        // When an NSTextView is first responder, route to the responder chain
+        // so the text view's built-in NSUndoManager handles character-level undo.
+        // Otherwise, route to CosmoUndoManager for canvas operations.
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
-                NotificationCenter.default.post(name: .performUndo, object: nil)
+                if let window = NSApp.keyWindow,
+                   let firstResponder = window.firstResponder,
+                   firstResponder is NSTextView {
+                    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                } else {
+                    NotificationCenter.default.post(name: .performUndo, object: nil)
+                }
             }
             .keyboardShortcut("z", modifiers: [.command])
 
             Button("Redo") {
-                NotificationCenter.default.post(name: .performRedo, object: nil)
+                if let window = NSApp.keyWindow,
+                   let firstResponder = window.firstResponder,
+                   firstResponder is NSTextView {
+                    NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
+                } else {
+                    NotificationCenter.default.post(name: .performRedo, object: nil)
+                }
             }
             .keyboardShortcut("z", modifiers: [.command, .shift])
         }

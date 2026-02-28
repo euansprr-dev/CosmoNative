@@ -179,29 +179,6 @@ struct InstantParser {
     }
 }
 
-// MARK: - ActionRegistry Stub
-
-/// Stub for deleted ActionRegistry - undo/redo now handled differently
-class ActionRegistry {
-    enum ActionType {
-        case undoLastAction
-        case redoAction
-        case createIdea
-        case createTask
-    }
-
-    private let database: CosmoDatabase
-
-    init(database: CosmoDatabase) {
-        self.database = database
-    }
-
-    func execute(_ action: ActionType, parameters: [String: Any]) async throws {
-        // Stub - no-op
-        print("⚠️ ActionRegistry.execute() is deprecated")
-    }
-}
-
 // MARK: - SafetyMonitor Stub
 
 /// Stub for deleted SafetyMonitor - safety checks now integrated into voice pipeline

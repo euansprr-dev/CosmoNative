@@ -28,9 +28,12 @@ struct ResearchFocusModeView: View {
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
     @State private var showResearchAgentSheet = false
-    @State private var showSidebar = false
+    @State private var sidebarVisible = false
     @State private var showSettings = false
     @State private var rightClickMonitor: Any?
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     // MARK: - Initialization
 
@@ -45,7 +48,7 @@ struct ResearchFocusModeView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .trailing) {
+        ZStack {
             ZStack {
                 // Infinite canvas with content
                 InfiniteCanvasView(
@@ -83,39 +86,40 @@ struct ResearchFocusModeView: View {
                     )
                 }
             }
-
-            // Research Intelligence Sidebar (overlays on top)
-            if showSidebar {
-                HStack(spacing: 0) {
-                    Divider().background(DS.border)
-
-                    ResearchSidebarView(
-                        atom: atom,
-                        state: $viewModel.state,
-                        isVisible: showSidebar
-                    )
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Research",
+                icon: "magnifyingglass",
+                accentColor: OnyxColors.Dimension.knowledge,
+                isVisible: $sidebarVisible
+            ) {
+                ResearchSidebarView(
+                    atom: atom,
+                    state: $viewModel.state,
+                    isVisible: true
+                )
             }
+            .padding(.leading, 8)
+            .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 8) {
-                // Sidebar toggle
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showSidebar.toggle()
+                // Pane close button
+                if isPaneContext {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DS.textMuted)
+                            .frame(width: 28, height: 28)
+                            .background(DS.border, in: Circle())
                     }
-                } label: {
-                    Image(systemName: "sidebar.right")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(showSidebar ? OnyxColors.Dimension.knowledge : DS.textSecondary)
-                        .padding(8)
-                        .background(
-                            showSidebar ? OnyxColors.Dimension.knowledge.opacity(0.15) : DS.border,
-                            in: Circle()
-                        )
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button(action: { showSettings = true }) {
                     Image(systemName: "gearshape")
@@ -126,18 +130,24 @@ struct ResearchFocusModeView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.trailing, showSidebar ? 340 : 16)
+            .padding(.trailing, 16)
             .padding(.top, 16)
-            .transition(.opacity)
-            .animation(ProMotionSprings.snappy, value: showSidebar)
         }
         .onAppear {
             loadState()
             listenForAtomPicker()
-            setupRightClickMonitor()
+            if !isPaneContext { setupRightClickMonitor() }
             // Register context provider for global Cosmo window
             let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
         }
         .onDisappear {
             saveState()
@@ -596,7 +606,8 @@ struct ResearchFocusModeView: View {
             forName: CosmoNotification.FocusMode.addAtomAsFloatingBlock,
             object: nil,
             queue: .main
-        ) { notification in
+        ) { [self] notification in
+            guard !self.isPaneContext || self.isPaneActive else { return }
             guard let userInfo = notification.userInfo,
                   let atomUUID = userInfo["atomUUID"] as? String,
                   let atomTypeRaw = userInfo["atomType"] as? String,

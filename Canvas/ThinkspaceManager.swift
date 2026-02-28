@@ -22,6 +22,28 @@ struct ThinkspaceMetadata: Codable, Sendable {
     var parentThinkspaceId: String? // nil = root ThinkSpace (no parent)
     var isRootThinkspace: Bool      // true for auto-created project root ThinkSpaces
 
+    // Cluster zones (user-created, persistent)
+    var clusters: [CodableCluster] = []
+
+    enum CodingKeys: String, CodingKey {
+        case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
+        case projectUuid, parentThinkspaceId, isRootThinkspace, clusters
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        lastOpened = try container.decode(Date.self, forKey: .lastOpened)
+        zoomLevel = try container.decode(Double.self, forKey: .zoomLevel)
+        panOffsetX = try container.decode(Double.self, forKey: .panOffsetX)
+        panOffsetY = try container.decode(Double.self, forKey: .panOffsetY)
+        blockIds = try container.decode([String].self, forKey: .blockIds)
+        projectUuid = try container.decodeIfPresent(String.self, forKey: .projectUuid)
+        parentThinkspaceId = try container.decodeIfPresent(String.self, forKey: .parentThinkspaceId)
+        isRootThinkspace = try container.decode(Bool.self, forKey: .isRootThinkspace)
+        clusters = try container.decodeIfPresent([CodableCluster].self, forKey: .clusters) ?? []
+    }
+
     init(
         name: String = "Untitled Thinkspace",
         lastOpened: Date = Date(),
@@ -31,7 +53,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         blockIds: [String] = [],
         projectUuid: String? = nil,
         parentThinkspaceId: String? = nil,
-        isRootThinkspace: Bool = false
+        isRootThinkspace: Bool = false,
+        clusters: [CodableCluster] = []
     ) {
         self.name = name
         self.lastOpened = lastOpened
@@ -42,6 +65,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.projectUuid = projectUuid
         self.parentThinkspaceId = parentThinkspaceId
         self.isRootThinkspace = isRootThinkspace
+        self.clusters = clusters
     }
 }
 

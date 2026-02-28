@@ -874,46 +874,6 @@ extension Atom {
     }
 }
 
-// MARK: - Distillation Extensions
-
-extension Atom {
-    /// Distillation layers stored in the `structured` JSON field under the "distillation" key
-    var distillationLayers: DistillationLayers? {
-        get {
-            guard let structuredStr = self.structured,
-                  let data = structuredStr.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let distillationJson = json["distillation"],
-                  let distillationData = try? JSONSerialization.data(withJSONObject: distillationJson) else {
-                return nil
-            }
-            return try? JSONDecoder().decode(DistillationLayers.self, from: distillationData)
-        }
-        set {
-            // Parse existing structured as raw dictionary to preserve all sibling keys
-            var dict: [String: Any] = [:]
-            if let existingStr = self.structured,
-               let data = existingStr.data(using: .utf8),
-               let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                dict = existing
-            }
-
-            if let newValue = newValue,
-               let encoded = try? JSONEncoder().encode(newValue),
-               let distillationObj = try? JSONSerialization.jsonObject(with: encoded) {
-                dict["distillation"] = distillationObj
-            } else {
-                dict.removeValue(forKey: "distillation")
-            }
-
-            if let jsonData = try? JSONSerialization.data(withJSONObject: dict),
-               let jsonStr = String(data: jsonData, encoding: .utf8) {
-                self.structured = jsonStr
-            }
-        }
-    }
-}
-
 // MARK: - Crystallization Extensions
 
 extension Atom {

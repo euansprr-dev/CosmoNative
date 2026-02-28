@@ -16,7 +16,7 @@ class TrisociativeEngine: ObservableObject {
 
     private let researchService = ResearchService.shared
     private let atomRepo = AtomRepository.shared
-    private let model = "anthropic/claude-haiku-4-5-20251001"
+    private let model = "anthropic/claude-haiku-4.5"
 
     /// Max API calls per generation cycle (cost control)
     private let dailyBudget = 3

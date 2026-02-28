@@ -92,9 +92,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
     /// Canvas size from GeometryReader
     @State private var canvasSize: CGSize = .zero
 
-    /// Show mini-map overlay
-    @State private var showMiniMap = false
-
     // MARK: - Environment
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -143,13 +140,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
                 canvasContentLayer
                     .frame(width: geometry.size.width, height: geometry.size.height)
 
-                // LAYER 3: Mini-map (optional, top-right)
-                if showMiniMap {
-                    miniMapOverlay
-                        .frame(width: 150, height: 100)
-                        .position(x: geometry.size.width - 90, y: 70)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
             }
             .onAppear {
                 canvasSize = geometry.size
@@ -185,11 +175,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
                     return .handled
                 }
                 return .ignored
-            case "m":
-                withAnimation(ProMotionSprings.snappy) {
-                    showMiniMap.toggle()
-                }
-                return .handled
             default:
                 return .ignored
             }
@@ -269,38 +254,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
         withAnimation(viewportAnimation) {
             viewportState.offset = .zero
         }
-    }
-
-    // MARK: - Mini-map Overlay
-
-    private var miniMapOverlay: some View {
-        ZStack {
-            // Background
-            RoundedRectangle(cornerRadius: 8)
-                .fill(DS.surfaceElevated.opacity(0.9))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.border, lineWidth: 1)
-                )
-
-            // Viewport indicator
-            Rectangle()
-                .stroke(DS.accent.opacity(0.8), lineWidth: 2)
-                .frame(
-                    width: max(20, 150 / effectiveZoom),
-                    height: max(15, 100 / effectiveZoom)
-                )
-                .offset(
-                    x: -effectiveOffset.x / 20,
-                    y: -effectiveOffset.y / 20
-                )
-
-            // Center dot
-            Circle()
-                .fill(DS.accent)
-                .frame(width: 4, height: 4)
-        }
-        .shadow(color: Color.black.opacity(0.3), radius: 8)
     }
 
     // MARK: - Coordinate Conversion

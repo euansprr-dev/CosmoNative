@@ -28,6 +28,10 @@ struct IdeaFocusModeView: View {
     @FocusState private var isTagFieldFocused: Bool
     @FocusState private var isDescriptionFocused: Bool
 
+    // MARK: - Sidebar State
+
+    @State private var sidebarVisible = false
+
     // MARK: - Hover States
 
     @State private var hoveredPlatform: IdeaPlatform?
@@ -39,6 +43,9 @@ struct IdeaFocusModeView: View {
     private let panelBackground = DS.surface
     private let cardBackground = DS.border
     private let ideaGold = OnyxColors.Accent.amber
+
+    @Environment(\.isPaneContext) private var isPaneContext
+    @Environment(\.isPaneActive) private var isPaneActive
 
     // MARK: - Initialization
 
@@ -58,24 +65,7 @@ struct IdeaFocusModeView: View {
             VStack(spacing: 0) {
                 headerBar
 
-                GeometryReader { geo in
-                    HStack(spacing: 0) {
-                        leftColumn
-                            .frame(width: viewModel.sessionState.intelligencePanelCollapsed
-                                   ? geo.size.width
-                                   : geo.size.width * 0.65)
-
-                        if !viewModel.sessionState.intelligencePanelCollapsed {
-                            Rectangle()
-                                .fill(DS.border)
-                                .frame(width: 1)
-
-                            rightColumn
-                                .frame(width: geo.size.width * 0.35)
-                                .transition(.move(edge: .trailing).combined(with: .opacity))
-                        }
-                    }
-                }
+                leftColumn
             }
 
             // Overlay presentations
@@ -97,10 +87,34 @@ struct IdeaFocusModeView: View {
                 .zIndex(100)
             }
         }
+        .overlay(alignment: .topLeading) {
+            FocusSidebarTrigger(isVisible: $sidebarVisible)
+                .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            UniversalFocusSidebar(
+                title: "Intelligence",
+                icon: "brain",
+                accentColor: OnyxColors.Accent.amber,
+                isVisible: $sidebarVisible
+            ) {
+                rightColumn
+            }
+            .padding(.leading, 8)
+            .padding(.top, 56)
+        }
         .onAppear {
             // Register context provider for global Cosmo window
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
-            CosmoWindowViewModel.shared.updateContext(provider: provider)
+            if !isPaneContext || isPaneActive {
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
+        }
+        .onChange(of: isPaneActive) { _, isActive in
+            if isActive {
+                let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
+                CosmoWindowViewModel.shared.updateContext(provider: provider)
+            }
         }
         .onDisappear {
             viewModel.saveOnClose()
@@ -199,18 +213,32 @@ struct IdeaFocusModeView: View {
             .disabled(viewModel.isAnalyzing)
             .opacity(viewModel.isAnalyzing ? 0.7 : 1)
 
-            // Toggle intelligence panel
+            // Pane close button
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Toggle intelligence sidebar
             Button {
                 withAnimation(ProMotionSprings.snappy) {
-                    viewModel.sessionState.intelligencePanelCollapsed.toggle()
-                    viewModel.sessionState.save()
+                    sidebarVisible.toggle()
                 }
             } label: {
-                Image(systemName: "sidebar.right")
+                Image(systemName: "sidebar.left")
                     .font(.system(size: 13))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(sidebarVisible ? OnyxColors.Accent.amber : DS.textSecondary)
                     .padding(8)
-                    .background(DS.border, in: Circle())
+                    .background(
+                        sidebarVisible ? OnyxColors.Accent.amber.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
             }
             .buttonStyle(.plain)
         }

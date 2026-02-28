@@ -18,10 +18,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Crystallization
     var crystallizationLevel: CrystallizationLevel = .raw
 
-    // Distillation
-    var distillationLayer: DistillationLayer = .full
-    var distillationLayers: DistillationLayers? = nil
-
     // Incubation heartbeat
     var isHeartbeating: Bool = false
 
@@ -33,9 +29,6 @@ struct CosmoBlockWrapper<Content: View>: View {
 
     // Environment
     @EnvironmentObject private var expansionManager: BlockExpansionManager
-    @Environment(\.distillationLayer) private var envDistillationLayer
-    @ObservedObject private var distillationEngine = DistillationEngine.shared
-
     // State
     @State private var isHovered = false
     @State private var blockSize: CGSize
@@ -124,48 +117,23 @@ struct CosmoBlockWrapper<Content: View>: View {
         )
     }
 
-    /// Resolved distillation layer: prefers environment value, falls back to direct property
-    private var resolvedDistillationLayer: DistillationLayer {
-        // Environment takes priority when set (from CanvasView zoom)
-        // Direct property acts as override
-        if distillationLayer != .full { return distillationLayer }
-        return envDistillationLayer
-    }
-
-    /// Resolved distillation layers data (from direct property or engine cache)
-    private var resolvedDistillationLayers: DistillationLayers? {
-        distillationLayers ?? distillationEngine.layersCache[block.entityUuid]
-    }
-
     // MARK: - Body
 
     var body: some View {
         ZStack(alignment: .top) {
             // Main card — tap gestures constrained to card bounds
             VStack(spacing: 0) {
-                // Content area - switches between full and distilled views
-                ZStack {
-                    // Full content (normal block view)
-                    content()
-                        .frame(
-                            width: unscaledContentSize.width,
-                            height: unscaledContentSize.height,
-                            alignment: .topLeading
-                        )
-                        .scaleEffect(contentScale, anchor: .topLeading)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .clipped()
-                        .contentShape(Rectangle())
-                        .opacity(resolvedDistillationLayer == .full ? 1 : 0)
-
-                    // Distilled content overlay
-                    if resolvedDistillationLayer != .full {
-                        distilledContentView
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.25), value: resolvedDistillationLayer)
+                // Content area
+                content()
+                    .frame(
+                        width: unscaledContentSize.width,
+                        height: unscaledContentSize.height,
+                        alignment: .topLeading
+                    )
+                    .scaleEffect(contentScale, anchor: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .clipped()
+                    .contentShape(Rectangle())
 
                 // Crystallization indicator (only shown when level > raw)
                 if crystallizationLevel > .raw {
@@ -278,89 +246,6 @@ struct CosmoBlockWrapper<Content: View>: View {
                 hoverLocation = CGPoint(x: 0.5, y: 0.5)
             }
         }
-    }
-
-    // MARK: - Distilled Content Views
-
-    @ViewBuilder
-    private var distilledContentView: some View {
-        switch resolvedDistillationLayer {
-        case .glyph:
-            glyphView
-        case .essence:
-            essenceView
-        case .summary:
-            summaryView
-        case .full:
-            EmptyView()
-        }
-    }
-
-    private var glyphView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 36, weight: .light))
-                .foregroundColor(accentColor.opacity(0.7))
-
-            if let glyph = resolvedDistillationLayers?.glyph, !glyph.isEmpty {
-                Text(glyph)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            } else {
-                // Pulsing placeholder
-                DistillationShimmerLine(width: 80, height: 12)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var essenceView: some View {
-        VStack {
-            if let essence = resolvedDistillationLayers?.essence, !essence.isEmpty {
-                Text(essence)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.text)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-                    .padding(20)
-            } else {
-                VStack(spacing: 6) {
-                    DistillationShimmerLine(width: 180)
-                    DistillationShimmerLine(width: 140)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var summaryView: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Type badge
-                Text(title.isEmpty ? "Summary" : title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(accentColor)
-                    .lineLimit(1)
-
-                if let summary = resolvedDistillationLayers?.summary, !summary.isEmpty {
-                    Text(summary)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(DS.text)
-                        .lineLimit(nil)
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        DistillationShimmerLine(width: 200)
-                        DistillationShimmerLine(width: 180)
-                        DistillationShimmerLine(width: 160)
-                        DistillationShimmerLine(width: 140)
-                    }
-                }
-            }
-            .padding(16)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Background
@@ -990,24 +875,6 @@ struct BlockResizeHandle: View {
         }
         .animation(.spring(response: 0.2), value: isResizing)
         .animation(.spring(response: 0.2), value: isHovered)
-    }
-}
-
-// MARK: - Distillation Shimmer Line
-
-/// Pulsing placeholder line for distillation layers that haven't generated yet
-struct DistillationShimmerLine: View {
-    let width: CGFloat
-    var height: CGFloat = 10
-
-    @State private var isPulsing = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 3)
-            .fill(DS.textMuted.opacity(isPulsing ? 0.3 : 0.1))
-            .frame(width: width, height: height)
-            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isPulsing)
-            .onAppear { isPulsing = true }
     }
 }
 

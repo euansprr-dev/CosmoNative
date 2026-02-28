@@ -965,6 +965,16 @@ private struct IdeaGalleryCard: View {
 
             Button {
                 NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane, object: nil,
+                    userInfo: ["type": EntityType.idea, "id": item.entityId]
+                )
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+
+            Button {
+                NotificationCenter.default.post(
                     name: Notification.Name("addIdeaToCanvas"),
                     object: nil,
                     userInfo: ["atomUUID": item.atomUUID]

@@ -32,6 +32,7 @@
 		CD04A2B3C4D5E6F708192A3B /* CanvasDrawingsLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD14A2B3C4D5E6F708192A3B /* CanvasDrawingsLayer.swift */; };
 		CD05A2B3C4D5E6F708192A3B /* CanvasDrawingGestureLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD15A2B3C4D5E6F708192A3B /* CanvasDrawingGestureLayer.swift */; };
 		CD06A2B3C4D5E6F708192A3B /* CanvasDrawingToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD16A2B3C4D5E6F708192A3B /* CanvasDrawingToolbar.swift */; };
+		F7A8B9C0D1E2F03A4B5C6D7E /* CanvasViewLayersToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7B8C9D0E1F20A3B4C5D6E7F /* CanvasViewLayersToolbar.swift */; };
 		CD07A2B3C4D5E6F708192A3B /* CanvasDrawingRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD17A2B3C4D5E6F708192A3B /* CanvasDrawingRecord.swift */; };
 		06DB8BF7D0A4C42233AA6825 /* KnowledgePulseLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F20 /* KnowledgePulseLineView.swift */; };
 		06DB9CA8E1B5D53344BB7936 /* CanvasConnectionLinesLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3D4E5F6A7B8C9D0E1F2031 /* CanvasConnectionLinesLayer.swift */; };
@@ -312,9 +313,6 @@
 		DAE4F5A6B7C839204AB5C6D7 /* ProvocationMarkerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D3E4F5A6B728193A04B5C6 /* ProvocationMarkerView.swift */; };
 		DBF5A6B7C8D940315BC6D7E8 /* ProvocationOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE4F5A6B7C839204B15C6D7 /* ProvocationOverlay.swift */; };
 		890920DAF1A4698B5A9C1ACA /* CrystallizationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521A8F94BE805C03298AE029 /* CrystallizationEngine.swift */; };
-		807A6F1B43944E4F6513A854 /* DistillationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F0F88AE044586878846FAF /* DistillationEngine.swift */; };
-		7B312E15B9A7470E582FE861 /* DistillationLayerSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C7B1CCCA06F5FA6B177C35 /* DistillationLayerSelector.swift */; };
-		B4F10710A93A304DDAE63D6A /* DistillationPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CF03B48796C96EFE1FE8CC0 /* DistillationPreviewView.swift */; };
 		E7C4A91D3F8B26E501D4C782 /* IncubationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3D1F60E7C4928B5E09A3D17 /* IncubationEngine.swift */; };
 		B8F23A4E1D6C80F7A29E5B03 /* HeartbeatAnimationModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E9D7B24A13F6850B7C2E91 /* HeartbeatAnimationModifier.swift */; };
 		BD61D81FCF54BBDC1DABBF08 /* AmbientFieldEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8406E7EEF0565682B5F2C161 /* AmbientFieldEngine.swift */; };
@@ -419,6 +417,8 @@
 		C6597AEEE6646D7312D1A490 /* APIKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2DBEFFCBDB001AAACDE65C9 /* APIKeys.swift */; };
 		C7B27B497E08163BCC9F06C5 /* ToolExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 812BBA57A3CDC842EEE2054D /* ToolExecutor.swift */; };
 		C8769DAEE2A210F561AAB639 /* FocusConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3A7E4BE7F40FDF8D76C271 /* FocusConnectManager.swift */; };
+		512FE05980789EF4C72FD74C /* FocusSidebarTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E306BF1198854A7EB479F1 /* FocusSidebarTrigger.swift */; };
+		2E97070D637A484763470C41 /* UniversalFocusSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836806488CA3EDE08746DA58 /* UniversalFocusSidebar.swift */; };
 		C8A349DFA0880133512FCF36 /* DimensionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B7B8069DB3913A3D0B9AB3 /* DimensionDetailView.swift */; };
 		C8DFDDE7EB5D689217D007D2 /* MidnightCronScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2A5B88B6195CD725AF04E8 /* MidnightCronScheduler.swift */; };
 		C92656D0F772CBBCCD6459C2 /* FocusNowCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 544DDC22CD41B912D6007C55 /* FocusNowCard.swift */; };
@@ -430,6 +430,8 @@
 		CC43742E8424BCADBCF6B6D1 /* DeepWorkSessionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138893D14EDC7E610880AF73 /* DeepWorkSessionEngine.swift */; };
 		CC714D92DE378490E8D5772C /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02AC1167F3869612EDB3A14 /* NetworkMonitor.swift */; };
 		CC7A3B1F4E9D2A8B5F1C6E0D /* ContentContextPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD8B4C2A5F0E3B9C6A2D7F1E /* ContentContextPanel.swift */; };
+		FF2B3C4D5E6F7A8B9C0D1E2F /* ContentOutlineSidebarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE1A2B3C4D5E6F7A8B9C0D1E /* ContentOutlineSidebarContent.swift */; };
+		BB4D5E6F7A8B9C0D1E2F3A4B /* ContentPolishSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3C4D5E6F7A8B9C0D1E2F3A /* ContentPolishSidebar.swift */; };
 		CCDE183BE3C30EAB1B8EF7AE /* DocumentBlocksLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E278677BB425F051C9115455 /* DocumentBlocksLayer.swift */; };
 		CCEACFE65ECA111229608E93 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 1904EEE2670CC4B442C3683A /* MLXLMCommon */; };
 		CCFB76885B57A2D96E737169 /* PhysiologicalDimensionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23F1DC4102FC49275CE4E15D /* PhysiologicalDimensionView.swift */; };
@@ -448,6 +450,11 @@
 		D3F87D40613EA528B57E479C /* KnowledgeFlowMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B96EC750C15B4D0E03020A8C /* KnowledgeFlowMetrics.swift */; };
 		D4B96265E3C833823A546516 /* NowBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE43752E03192429A6B108DA /* NowBarView.swift */; };
 		D5869C02E2D37EBA4E041837 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF6C489D8C60057A5F544D7B /* MainView.swift */; };
+		AC7464BA671F122FFB0BC7AA /* PaneManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71241AA7C903CAC8763DCEB /* PaneManager.swift */; };
+		B9E10FDA0603EB3E18C92BEF /* PaneEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FA955AEDF347E4CDB815D8 /* PaneEnvironment.swift */; };
+		03820F95854EF9C240D4994C /* PaneContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 746F9D10B9254356F129EAB5 /* PaneContentView.swift */; };
+		4B27D2FF99498D7E4FB3533D /* PaneCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA09E7E1D94CEA40AB25C449 /* PaneCanvasView.swift */; };
+		0A1A4D7B01EC34AF0108EA9F /* SplitPaneContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63DFF3AF67E1584DD589C179 /* SplitPaneContainer.swift */; };
 		D5E4B16C5FAA0CD843C6EA12 /* PredictionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AD2A05F4F9EB1E85CB7DA02 /* PredictionCard.swift */; };
 		D664FEFD717C44CDD8766D1B /* BehavioralDisciplineIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C4128A08C67098FBEC38E3B /* BehavioralDisciplineIndex.swift */; };
 		D7170FBFE0C888F66636DEDF /* VoiceStatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B605D5B1B37DA7CC7F081AD8 /* VoiceStatusBar.swift */; };
@@ -569,6 +576,22 @@
 		A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */; };
 		B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */; };
 		D1A83F4B2E9D5C67B2F53A19 /* SelectionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */; };
+		8CFF85A6A9C558362F60F208 /* UndoableAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E28407D5C8F3C38135000D /* UndoableAction.swift */; };
+		D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */; };
+		305E03B2CD4B83BD55CC347D /* MoveBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5578FEFDBF7B6973F8C6C38 /* MoveBlockAction.swift */; };
+		B049ACF0FAC288380F9F84EF /* CreateBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8C756C560FAF94367F3225 /* CreateBlockAction.swift */; };
+		368BD1EB46969AAB36E84BFE /* DeleteBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E5839D88D9C0D787919007 /* DeleteBlockAction.swift */; };
+		F07D293D1BC226CE75BB1BC7 /* ResizeBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4ABDE7BDE08C944A998C417 /* ResizeBlockAction.swift */; };
+		7629F89F83DECF856A3EB803 /* CreateConnectionAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EE37D8BA61113B6E80EAED /* CreateConnectionAction.swift */; };
+		5FC227BD77CDFF97885C1A38 /* DeleteConnectionAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8EF86CBC254A9C3489C0C26 /* DeleteConnectionAction.swift */; };
+		970776457D41AD23CF938403 /* CreateDrawingAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62AB4D12BE5804D7E9093FD0 /* CreateDrawingAction.swift */; };
+		D0CD973E6694BFD32C96B46E /* DeleteDrawingAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */; };
+		C2F473C337F83ED0CD9B7E11 /* MoveDrawingAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446DB83BA4A4F140B822FAB5 /* MoveDrawingAction.swift */; };
+		3E7A91B2D4C5F60E8A1B3C5D /* CanvasCluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */; };
+		5A9C13D4F6E7B82A0C3D5E7F /* CanvasClusterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */; };
+		7C1E35F6A8B9DA4C2E5F7091 /* CanvasClusterLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */; };
+		A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */; };
+		C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -633,6 +656,7 @@
 		CD14A2B3C4D5E6F708192A3B /* CanvasDrawingsLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingsLayer.swift; sourceTree = "<group>"; };
 		CD15A2B3C4D5E6F708192A3B /* CanvasDrawingGestureLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingGestureLayer.swift; sourceTree = "<group>"; };
 		CD16A2B3C4D5E6F708192A3B /* CanvasDrawingToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingToolbar.swift; sourceTree = "<group>"; };
+		F7B8C9D0E1F20A3B4C5D6E7F /* CanvasViewLayersToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewLayersToolbar.swift; sourceTree = "<group>"; };
 		CD17A2B3C4D5E6F708192A3B /* CanvasDrawingRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingRecord.swift; sourceTree = "<group>"; };
 		1ACBFD4B62BDFE51DA2D9B57 /* CommandPaletteModeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteModeIndicator.swift; sourceTree = "<group>"; };
 		1B55EEFBA357A938107F6A0E /* AgentProactiveScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProactiveScheduler.swift; sourceTree = "<group>"; };
@@ -950,6 +974,11 @@
 		BF318DF384EB48B497D68E2F /* FocusContextDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusContextDetector.swift; sourceTree = "<group>"; };
 		BF49F0120B396E512633A848 /* DimensionOrbView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DimensionOrbView.swift; sourceTree = "<group>"; };
 		BF6C489D8C60057A5F544D7B /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		A71241AA7C903CAC8763DCEB /* PaneManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneManager.swift; sourceTree = "<group>"; };
+		C5FA955AEDF347E4CDB815D8 /* PaneEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneEnvironment.swift; sourceTree = "<group>"; };
+		746F9D10B9254356F129EAB5 /* PaneContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneContentView.swift; sourceTree = "<group>"; };
+		FA09E7E1D94CEA40AB25C449 /* PaneCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneCanvasView.swift; sourceTree = "<group>"; };
+		63DFF3AF67E1584DD589C179 /* SplitPaneContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitPaneContainer.swift; sourceTree = "<group>"; };
 		BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = com.cosmo.voicedaemon.plist; sourceTree = "<group>"; };
 		BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmicHaptics.swift; sourceTree = "<group>"; };
 		C0E6975753D2BFF55035158A /* PhysiologicalSleepAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysiologicalSleepAnalysis.swift; sourceTree = "<group>"; };
@@ -996,9 +1025,6 @@
 		D2D6F3439C71709526DDE0D4 /* ReflectionEmotionalLandscape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionEmotionalLandscape.swift; sourceTree = "<group>"; };
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* IdeaInsightEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IdeaInsightEngine.swift; path = AI/IdeaInsightEngine.swift; sourceTree = SOURCE_ROOT; };
 		521A8F94BE805C03298AE029 /* CrystallizationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CrystallizationEngine.swift; path = AI/CrystallizationEngine.swift; sourceTree = SOURCE_ROOT; };
-		F6F0F88AE044586878846FAF /* DistillationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DistillationEngine.swift; path = AI/DistillationEngine.swift; sourceTree = SOURCE_ROOT; };
-		E5C7B1CCCA06F5FA6B177C35 /* DistillationLayerSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DistillationLayerSelector.swift; path = Canvas/DistillationLayerSelector.swift; sourceTree = SOURCE_ROOT; };
-		2CF03B48796C96EFE1FE8CC0 /* DistillationPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DistillationPreviewView.swift; path = Canvas/DistillationPreviewView.swift; sourceTree = SOURCE_ROOT; };
 		A3D1F60E7C4928B5E09A3D17 /* IncubationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IncubationEngine.swift; path = AI/IncubationEngine.swift; sourceTree = SOURCE_ROOT; };
 		C7A1E2F3D4B5069718A293B4 /* Provocation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Provocation.swift; path = AI/Provocation.swift; sourceTree = SOURCE_ROOT; };
 		C8B2F3A4D5E617082A93B4C5 /* ProvocationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProvocationEngine.swift; path = AI/ProvocationEngine.swift; sourceTree = SOURCE_ROOT; };
@@ -1032,6 +1058,8 @@
 		DB9B9F2355E9BE521DCB7A0A /* EditableConnectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditableConnectionSection.swift; sourceTree = "<group>"; };
 		DC015AD19E281A8886EA2EF9 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
 		DD8B4C2A5F0E3B9C6A2D7F1E /* ContentContextPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentContextPanel.swift; path = UI/FocusMode/Content/ContentContextPanel.swift; sourceTree = SOURCE_ROOT; };
+		EE1A2B3C4D5E6F7A8B9C0D1E /* ContentOutlineSidebarContent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentOutlineSidebarContent.swift; path = UI/FocusMode/Content/ContentOutlineSidebarContent.swift; sourceTree = SOURCE_ROOT; };
+		AA3C4D5E6F7A8B9C0D1E2F3A /* ContentPolishSidebar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentPolishSidebar.swift; path = UI/FocusMode/Content/ContentPolishSidebar.swift; sourceTree = SOURCE_ROOT; };
 		DE7181FEEB7BEFECE2AB42EB /* BlockExpansionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockExpansionManager.swift; sourceTree = "<group>"; };
 		DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PersuasionStackView.swift; path = UI/FocusMode/SwipeStudy/PersuasionStackView.swift; sourceTree = SOURCE_ROOT; };
 		DF42D197C4D4141B80DB7E24 /* ConnectionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSidebarView.swift; sourceTree = "<group>"; };
@@ -1119,6 +1147,8 @@
 		FD68C45DC95E71CB45EE73C9 /* AIWritingAssistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIWritingAssistant.swift; sourceTree = "<group>"; };
 		FDEF406E81249C567F6A7771 /* BehavioralRoutineConsistency.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehavioralRoutineConsistency.swift; sourceTree = "<group>"; };
 		FF3A7E4BE7F40FDF8D76C271 /* FocusConnectManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FocusConnectManager.swift; path = UI/FocusMode/FocusConnectManager.swift; sourceTree = SOURCE_ROOT; };
+		42E306BF1198854A7EB479F1 /* FocusSidebarTrigger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FocusSidebarTrigger.swift; path = UI/FocusMode/FocusSidebarTrigger.swift; sourceTree = SOURCE_ROOT; };
+		836806488CA3EDE08746DA58 /* UniversalFocusSidebar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UniversalFocusSidebar.swift; path = UI/FocusMode/UniversalFocusSidebar.swift; sourceTree = SOURCE_ROOT; };
 		028B33778F530C4AEA140594 /* CosmoContextProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoContextProvider.swift; sourceTree = "<group>"; };
 		0563C900EC3BBB795954CA46 /* CosmoAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAction.swift; sourceTree = "<group>"; };
 		07B2F3A49F84FE15F7E9E3F4 /* CosmoWindowMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWindowMessage.swift; sourceTree = "<group>"; };
@@ -1140,6 +1170,22 @@
 		6B4D5E6F70809AB2C304D5E6 /* TrisociativeEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrisociativeEngine.swift; sourceTree = "<group>"; };
 		6B6F708090A12BC3E304F5A6 /* CollisionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollisionCardView.swift; sourceTree = "<group>"; };
 		6B8192A0AB34CDE5F30627C8 /* CollisionTray.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollisionTray.swift; sourceTree = "<group>"; };
+		E5E28407D5C8F3C38135000D /* UndoableAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoableAction.swift; sourceTree = "<group>"; };
+		6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoUndoManager.swift; sourceTree = "<group>"; };
+		A5578FEFDBF7B6973F8C6C38 /* MoveBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBlockAction.swift; sourceTree = "<group>"; };
+		8E8C756C560FAF94367F3225 /* CreateBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateBlockAction.swift; sourceTree = "<group>"; };
+		D8E5839D88D9C0D787919007 /* DeleteBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteBlockAction.swift; sourceTree = "<group>"; };
+		D4ABDE7BDE08C944A998C417 /* ResizeBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeBlockAction.swift; sourceTree = "<group>"; };
+		B9EE37D8BA61113B6E80EAED /* CreateConnectionAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateConnectionAction.swift; sourceTree = "<group>"; };
+		B8EF86CBC254A9C3489C0C26 /* DeleteConnectionAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteConnectionAction.swift; sourceTree = "<group>"; };
+		62AB4D12BE5804D7E9093FD0 /* CreateDrawingAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateDrawingAction.swift; sourceTree = "<group>"; };
+		4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteDrawingAction.swift; sourceTree = "<group>"; };
+		446DB83BA4A4F140B822FAB5 /* MoveDrawingAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveDrawingAction.swift; sourceTree = "<group>"; };
+		4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCluster.swift; sourceTree = "<group>"; };
+		6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CanvasClusterEngine.swift; path = AI/CanvasClusterEngine.swift; sourceTree = SOURCE_ROOT; };
+		8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasClusterLayer.swift; sourceTree = "<group>"; };
+		B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterCreationPopover.swift; sourceTree = "<group>"; };
+		D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasMinimapOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1409,6 +1455,11 @@
 			children = (
 				1ACBFD4B62BDFE51DA2D9B57 /* CommandPaletteModeIndicator.swift */,
 				BF6C489D8C60057A5F544D7B /* MainView.swift */,
+				A71241AA7C903CAC8763DCEB /* PaneManager.swift */,
+				C5FA955AEDF347E4CDB815D8 /* PaneEnvironment.swift */,
+				746F9D10B9254356F129EAB5 /* PaneContentView.swift */,
+				FA09E7E1D94CEA40AB25C449 /* PaneCanvasView.swift */,
+				63DFF3AF67E1584DD589C179 /* SplitPaneContainer.swift */,
 				39E32CABBFD662C38A647107 /* ProjectCreationModal.swift */,
 				A9524281FCB62B9C1390D692 /* CommandHub */,
 			);
@@ -1950,7 +2001,6 @@
 				90191F5E0D880C2CF2D16B11 /* QuestEngine.swift */,
 				D2E3F4A5B6C7D8E9F0A1B2C3 /* IdeaInsightEngine.swift */,
 				521A8F94BE805C03298AE029 /* CrystallizationEngine.swift */,
-				F6F0F88AE044586878846FAF /* DistillationEngine.swift */,
 				A3D1F60E7C4928B5E09A3D17 /* IncubationEngine.swift */,
 				C7A1E2F3D4B5069718A293B4 /* Provocation.swift */,
 				C8B2F3A4D5E617082A93B4C5 /* ProvocationEngine.swift */,
@@ -1967,6 +2017,7 @@
 				7D11C4E43EF50CA8596CB2B5 /* WeeklyBriefEngine.swift */,
 				3D8E4F6A2B1C9E7D5A0F8B3C /* SearchReRanker.swift */,
 				5FA06B8C4D3E1A9F7C2B0D5E /* SmartOrganizer.swift */,
+				6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */,
 
 				E9F1A2B3C4D5068792A3B4C5 /* UnifiedWritingEngine.swift */,
 				D8E2F1A3B4C506879A2B3C4D /* UnifiedWritingTypes.swift */,
@@ -2051,8 +2102,35 @@
 				D6AC930FD36314607F7EC94D /* Theme.swift */,
 				895698084DB7263B37CC43C5 /* Components */,
 				39A0167847B3CEA345A981A7 /* Onyx */,
+				BE49FB6B8B77B31B779C13AD /* Undo */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		BE49FB6B8B77B31B779C13AD /* Undo */ = {
+			isa = PBXGroup;
+			children = (
+				E5E28407D5C8F3C38135000D /* UndoableAction.swift */,
+				6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */,
+				8BFD9033F5F1F60D9FE99E82 /* Actions */,
+			);
+			path = Undo;
+			sourceTree = "<group>";
+		};
+		8BFD9033F5F1F60D9FE99E82 /* Actions */ = {
+			isa = PBXGroup;
+			children = (
+				A5578FEFDBF7B6973F8C6C38 /* MoveBlockAction.swift */,
+				8E8C756C560FAF94367F3225 /* CreateBlockAction.swift */,
+				D8E5839D88D9C0D787919007 /* DeleteBlockAction.swift */,
+				D4ABDE7BDE08C944A998C417 /* ResizeBlockAction.swift */,
+				B9EE37D8BA61113B6E80EAED /* CreateConnectionAction.swift */,
+				B8EF86CBC254A9C3489C0C26 /* DeleteConnectionAction.swift */,
+				62AB4D12BE5804D7E9093FD0 /* CreateDrawingAction.swift */,
+				4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */,
+				446DB83BA4A4F140B822FAB5 /* MoveDrawingAction.swift */,
+			);
+			path = Actions;
 			sourceTree = "<group>";
 		};
 		B1216FA34116C8BF01A7911B /* Models */ = {
@@ -2087,6 +2165,8 @@
 				1D903C1A06D88926C73D346E /* ContentFocusModeState.swift */,
 				E386A5996F47829424B46AD6 /* ContentFocusModeView.swift */,
 				DD8B4C2A5F0E3B9C6A2D7F1E /* ContentContextPanel.swift */,
+				EE1A2B3C4D5E6F7A8B9C0D1E /* ContentOutlineSidebarContent.swift */,
+				AA3C4D5E6F7A8B9C0D1E2F3A /* ContentPolishSidebar.swift */,
 				E7C9A4B38D1F52E06A4B3C7D /* BrainstormContextSidebar.swift */,
 				F2B3C4D5E6F70809A1B2C3DE /* ContentProfileEditor.swift */,
 				20E26EAA2B8C812A39E2418B /* NewProfileFlowView.swift */,
@@ -2109,8 +2189,13 @@
 			children = (
 				DE7181FEEB7BEFECE2AB42EB /* BlockExpansionManager.swift */,
 				E055C0744452F1A6392E78A8 /* CanvasBlock.swift */,
+				4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */,
+				8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */,
+				D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */,
+				B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */,
 				BB3D4E5F6A7B8C9D0E1F2031 /* CanvasConnectionLinesLayer.swift */,
 				DC015AD19E281A8886EA2EF9 /* CanvasView.swift */,
+				F7B8C9D0E1F20A3B4C5D6E7F /* CanvasViewLayersToolbar.swift */,
 				347E6FDCCA9668209F5D5232 /* ConnectionBlockView.swift */,
 				BB2C3D4E5F6A7B8C9D0E1F20 /* KnowledgePulseLineView.swift */,
 				C2107CE41A783C7B48FD2E2B /* MediaBlockView.swift */,
@@ -2123,8 +2208,6 @@
 				C9D3E4F5A6B728193A04B5C6 /* ProvocationMarkerView.swift */,
 				CAE4F5A6B7C839204B15C6D7 /* ProvocationOverlay.swift */,
 				964FAB4C26027C4D0D203814 /* CrystallizationIndicator.swift */,
-				E5C7B1CCCA06F5FA6B177C35 /* DistillationLayerSelector.swift */,
-				2CF03B48796C96EFE1FE8CC0 /* DistillationPreviewView.swift */,
 				C5E9D7B24A13F6850B7C2E91 /* HeartbeatAnimationModifier.swift */,
 				6454ABDD44CF2D9A4991DBD0 /* AmbientKnowledgePanel.swift */,
 				82045966472AC541D1415323 /* AmbientResultCard.swift */,
@@ -2191,6 +2274,8 @@
 				2657F08320084D15D87CC03D /* FocusFloatingBlockView.swift */,
 				725D4D19AB69FA3F5D6BC1D8 /* FocusFloatingBlocksManager.swift */,
 				904A121C08AFF809B03EC266 /* FocusConnectionLinesLayer.swift */,
+				42E306BF1198854A7EB479F1 /* FocusSidebarTrigger.swift */,
+				836806488CA3EDE08746DA58 /* UniversalFocusSidebar.swift */,
 				760E282087E16E20E04D27CA /* CosmoAI */,
 				F9B23B0A640DC5F69CA5A90B /* SwipeStudy */,
 				E1F2A3B4C5D6E7F8A9B0C1D2 /* Ideas */,
@@ -2673,6 +2758,7 @@
 				CD03A2B3C4D5E6F708192A3B /* DrawingStateManager.swift in Sources */,
 				EE7E3E7663C5ABA9B0C28F31 /* CanvasLevelOrbView.swift in Sources */,
 				25C86241C77E36FE057B4339 /* CanvasView.swift in Sources */,
+				F7A8B9C0D1E2F03A4B5C6D7E /* CanvasViewLayersToolbar.swift in Sources */,
 				DD1A2B3C4D5E6F708192A3B4 /* DragToConnectManager.swift in Sources */,
 				DD2A3B4C5D6E7F809213A4B5 /* DragToConnectOverlay.swift in Sources */,
 				F3180EE4972465695008B242 /* CrystallizationIndicator.swift in Sources */,
@@ -2846,6 +2932,11 @@
 				DE932E5149CC9CED31A13B58 /* LinkedContactsSection.swift in Sources */,
 				6BA1D47AB556B85595BD0B16 /* LivingIntelligenceEngine.swift in Sources */,
 				D5869C02E2D37EBA4E041837 /* MainView.swift in Sources */,
+				AC7464BA671F122FFB0BC7AA /* PaneManager.swift in Sources */,
+				B9E10FDA0603EB3E18C92BEF /* PaneEnvironment.swift in Sources */,
+				03820F95854EF9C240D4994C /* PaneContentView.swift in Sources */,
+				4B27D2FF99498D7E4FB3533D /* PaneCanvasView.swift in Sources */,
+				0A1A4D7B01EC34AF0108EA9F /* SplitPaneContainer.swift in Sources */,
 				AC221405FBD77CC4F5CDA8B6 /* MentionMenu.swift in Sources */,
 				BD299DD13F11E5B6E7DE256F /* MentionShimmer.swift in Sources */,
 				1412AAB74A4698F86468D5AD /* MetalBufferPool.swift in Sources */,
@@ -2902,6 +2993,11 @@
 				E4B72C8D3FA196E507D2A4F1 /* KnowledgeContextAssembler.swift in Sources */,
 				06DB8BF7D0A4C42233AA6825 /* KnowledgePulseLineView.swift in Sources */,
 				06DB9CA8E1B5D53344BB7936 /* CanvasConnectionLinesLayer.swift in Sources */,
+				3E7A91B2D4C5F60E8A1B3C5D /* CanvasCluster.swift in Sources */,
+				5A9C13D4F6E7B82A0C3D5E7F /* CanvasClusterEngine.swift in Sources */,
+				7C1E35F6A8B9DA4C2E5F7091 /* CanvasClusterLayer.swift in Sources */,
+				A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */,
+				C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */,
 				06DC1A2B3E4F5A6B7C8D9E0F /* ResearchBlockDropdownView.swift in Sources */,
 				06DD2B3C4E5F6A7B8C9D0E1A /* AnnotationConnectionLine.swift in Sources */,
 				06DE3C4D5F6A7B8C9D0E1F2B /* SelectableTranscriptText.swift in Sources */,
@@ -3015,6 +3111,8 @@
 				1599A2DF9B887A2B59C94DA8 /* NoteFocusModeView.swift in Sources */,
 				96809111ACB06D8EE25AE186 /* ContentFocusModeState.swift in Sources */,
 				CC7A3B1F4E9D2A8B5F1C6E0D /* ContentContextPanel.swift in Sources */,
+				FF2B3C4D5E6F7A8B9C0D1E2F /* ContentOutlineSidebarContent.swift in Sources */,
+				BB4D5E6F7A8B9C0D1E2F3A4B /* ContentPolishSidebar.swift in Sources */,
 				F8DA5B4C9E2063F17B5C4D8E /* BrainstormContextSidebar.swift in Sources */,
 				E2F3A4B5C6D7E8091A2B3C4E /* ContentProfileEditor.swift in Sources */,
 				1FD68BBE455545E88FA78F23 /* NewProfileFlowView.swift in Sources */,
@@ -3031,6 +3129,8 @@
 				878EB062F56B8C7549A9B93C /* CanvasBlockFrameTracker.swift in Sources */,
 				8424D4918807F94B384469C9 /* BlockContextMenu.swift in Sources */,
 				C8769DAEE2A210F561AAB639 /* FocusConnectManager.swift in Sources */,
+				512FE05980789EF4C72FD74C /* FocusSidebarTrigger.swift in Sources */,
+				2E97070D637A484763470C41 /* UniversalFocusSidebar.swift in Sources */,
 				4C5F258F055BBD1E5BC11AD7 /* FocusBlockContextMenu.swift in Sources */,
 				0E0EA70756B8E7721B53F162 /* FocusFloatingBlockView.swift in Sources */,
 				C1E51748A7A2E27DCFDC4FD2 /* FocusFloatingBlocksManager.swift in Sources */,
@@ -3061,9 +3161,6 @@
 				DAE4F5A6B7C839204AB5C6D7 /* ProvocationMarkerView.swift in Sources */,
 				DBF5A6B7C8D940315BC6D7E8 /* ProvocationOverlay.swift in Sources */,
 				890920DAF1A4698B5A9C1ACA /* CrystallizationEngine.swift in Sources */,
-				807A6F1B43944E4F6513A854 /* DistillationEngine.swift in Sources */,
-				7B312E15B9A7470E582FE861 /* DistillationLayerSelector.swift in Sources */,
-				B4F10710A93A304DDAE63D6A /* DistillationPreviewView.swift in Sources */,
 				E7C4A91D3F8B26E501D4C782 /* IncubationEngine.swift in Sources */,
 				B8F23A4E1D6C80F7A29E5B03 /* HeartbeatAnimationModifier.swift in Sources */,
 				BD61D81FCF54BBDC1DABBF08 /* AmbientFieldEngine.swift in Sources */,
@@ -3151,6 +3248,17 @@
 				6B3C4D5E6F7090B2A304C5D6 /* TrisociativeEngine.swift in Sources */,
 				6B5E6F7080901BC2D304E5F6 /* CollisionCardView.swift in Sources */,
 				6B7081909AB23CD4F30516B7 /* CollisionTray.swift in Sources */,
+				8CFF85A6A9C558362F60F208 /* UndoableAction.swift in Sources */,
+				D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */,
+				305E03B2CD4B83BD55CC347D /* MoveBlockAction.swift in Sources */,
+				B049ACF0FAC288380F9F84EF /* CreateBlockAction.swift in Sources */,
+				368BD1EB46969AAB36E84BFE /* DeleteBlockAction.swift in Sources */,
+				F07D293D1BC226CE75BB1BC7 /* ResizeBlockAction.swift in Sources */,
+				7629F89F83DECF856A3EB803 /* CreateConnectionAction.swift in Sources */,
+				5FC227BD77CDFF97885C1A38 /* DeleteConnectionAction.swift in Sources */,
+				970776457D41AD23CF938403 /* CreateDrawingAction.swift in Sources */,
+				D0CD973E6694BFD32C96B46E /* DeleteDrawingAction.swift in Sources */,
+				C2F473C337F83ED0CD9B7E11 /* MoveDrawingAction.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

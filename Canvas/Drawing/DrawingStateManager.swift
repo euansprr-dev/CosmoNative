@@ -178,6 +178,11 @@ final class DrawingStateManager: ObservableObject {
     // MARK: - Delete
 
     func deleteDrawing(_ id: String) {
+        // Snapshot before removal for undo (CosmoUndoManager ignores during undo/redo)
+        if let drawing = drawings.first(where: { $0.id == id }) {
+            CosmoUndoManager.shared.register(DeleteDrawingAction(drawing: drawing, drawingState: self))
+        }
+
         drawings.removeAll { $0.id == id }
         selectedDrawingIds.remove(id)
         if selectedDrawingId == id {
@@ -208,6 +213,35 @@ final class DrawingStateManager: ObservableObject {
         }
     }
 
+    // MARK: - Restore (undo delete)
+
+    func restoreDrawing(_ drawing: CanvasDrawing) {
+        // Re-add to memory
+        drawings.append(drawing)
+
+        // Un-soft-delete in DB
+        let record = drawing.toRecord(thinkspaceId: currentThinkspaceId)
+        Task {
+            do {
+                try await database.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE canvas_drawings SET is_deleted = 0, updated_at = ? WHERE id = ?",
+                        arguments: [ISO8601DateFormatter().string(from: Date()), drawing.id]
+                    )
+                }
+            } catch {
+                // If the row was hard-deleted, re-insert it
+                do {
+                    try await database.asyncWrite { db in
+                        try record.save(db)
+                    }
+                } catch {
+                    print("DrawingStateManager: restoreDrawing failed: \(error)")
+                }
+            }
+        }
+    }
+
     // MARK: - Drag-to-Move
 
     func beginDragDrawing(id: String) {
@@ -234,6 +268,10 @@ final class DrawingStateManager: ObservableObject {
         let dx = drawingDragOffset.width
         let dy = drawingDragOffset.height
 
+        // Capture old state for undo
+        let oldOrigin = drawings[idx].origin
+        let oldPathPoints = drawings[idx].pathPoints
+
         // Update origin
         drawings[idx].origin.x += dx
         drawings[idx].origin.y += dy
@@ -244,6 +282,22 @@ final class DrawingStateManager: ObservableObject {
             drawings[idx].pathPoints = points.map {
                 CGPoint(x: $0.x + dx, y: $0.y + dy)
             }
+        }
+
+        // Register undo action
+        let newOrigin = drawings[idx].origin
+        let newPathPoints = drawings[idx].pathPoints
+        if oldOrigin != newOrigin {
+            CosmoUndoManager.shared.register(
+                MoveDrawingAction(
+                    drawingId: dragId,
+                    oldOrigin: oldOrigin,
+                    newOrigin: newOrigin,
+                    oldPathPoints: oldPathPoints,
+                    newPathPoints: newPathPoints,
+                    drawingState: self
+                )
+            )
         }
 
         // Persist
@@ -374,6 +428,7 @@ final class DrawingStateManager: ObservableObject {
         if s.width > 3 || s.height > 3 {
             drawing.zIndex = (drawings.map(\.zIndex).max() ?? 0) + 1
             saveDrawing(drawing)
+            CosmoUndoManager.shared.register(CreateDrawingAction(drawing: drawing, drawingState: self))
         }
         activeDrawing = nil
     }
@@ -406,6 +461,7 @@ final class DrawingStateManager: ObservableObject {
         drawing.pathPoints = simplified
         drawing.zIndex = (drawings.map(\.zIndex).max() ?? 0) + 1
         saveDrawing(drawing)
+        CosmoUndoManager.shared.register(CreateDrawingAction(drawing: drawing, drawingState: self))
         activeDrawing = nil
         activePathPoints = []
     }

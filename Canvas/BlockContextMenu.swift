@@ -7,6 +7,7 @@ struct BlockContextMenu: View {
     let blockId: String
     let block: CanvasBlock
     let position: CGPoint
+    let selectedBlockIds: [String]  // For multi-select cluster creation
     let onDismiss: () -> Void
 
     @State private var appeared = false
@@ -20,7 +21,17 @@ struct BlockContextMenu: View {
             items.append(("focus", "arrow.up.left.and.arrow.down.right", "Open Focus Mode", DS.text))
         }
 
+        // Pane (for types that support focus modes + note)
+        if [.idea, .content, .research, .connection, .cosmoAI, .note].contains(block.entityType) {
+            items.append(("pane", "rectangle.split.2x1", "Open as Pane", CosmoColors.thinkspacePurple))
+        }
+
         items.append(("connect", "link", "Connect to...", CosmoColors.thinkspacePurple))
+
+        // Create Cluster (when multiple blocks selected)
+        if selectedBlockIds.count >= 2 {
+            items.append(("createCluster", "square.3.layers.3d", "Create Cluster", CosmoColors.thinkspacePurple))
+        }
 
         // Ask Cosmo (for non-AI blocks)
         if block.entityType != .cosmoAI {
@@ -113,8 +124,16 @@ struct BlockContextMenu: View {
                 userInfo: ["type": block.entityType, "id": block.entityId]
             )
         case "connect":
-            // Will be wired to DragToConnectManager in Feature 3
             break
+        case "createCluster":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.createClusterFromSelection,
+                object: nil,
+                userInfo: [
+                    "blockIds": selectedBlockIds,
+                    "position": position
+                ]
+            )
         case "askCosmo":
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.createCosmoAIBlock,
@@ -129,6 +148,12 @@ struct BlockContextMenu: View {
                 name: CosmoNotification.Canvas.duplicateBlock,
                 object: nil,
                 userInfo: ["blockId": blockId]
+            )
+        case "pane":
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["type": block.entityType, "id": block.entityId]
             )
         case "delete":
             NotificationCenter.default.post(

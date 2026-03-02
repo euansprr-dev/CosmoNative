@@ -17,6 +17,7 @@ public struct LevelUpCelebrationView: View {
     @State private var ringRotation: Double = 0
     @State private var glowOpacity: Double = 0
     @State private var confettiActive = false
+    @State private var isVisible = true
 
     public struct LevelUpEvent {
         let dimension: String
@@ -80,13 +81,15 @@ public struct LevelUpCelebrationView: View {
                 // Details and unlocks
                 if showDetails {
                     detailsSection
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .transition(.opacity)
+                        .offset(y: showDetails ? 0 : 20)
                         .padding(.bottom, 20)
                 }
 
                 if showUnlocks && (!levelUp.unlockedFeatures.isEmpty || !levelUp.unlockedBadges.isEmpty) {
                     unlocksSection
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .transition(.opacity)
+                        .offset(y: showUnlocks ? 0 : 20)
                         .padding(.bottom, 20)
                 }
 
@@ -101,6 +104,9 @@ public struct LevelUpCelebrationView: View {
         }
         .onAppear {
             startCelebrationSequence()
+        }
+        .onDisappear {
+            isVisible = false
         }
     }
 
@@ -201,6 +207,7 @@ public struct LevelUpCelebrationView: View {
                         .font(.system(size: 80, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .shadow(color: .white.opacity(0.5), radius: 20)
+                        .drawingGroup()
                 }
             }
 
@@ -345,9 +352,11 @@ public struct LevelUpCelebrationView: View {
             glowOpacity = 1.0
         }
 
-        // Continuous ring rotation
-        withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) {
-            ringRotation = 360
+        // Continuous ring rotation (gated on visibility)
+        if isVisible {
+            withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) {
+                ringRotation = 360
+            }
         }
 
         // Show level
@@ -494,6 +503,8 @@ struct BadgeUnlockItem: View {
 
 struct ConfettiView: View {
     @State private var confetti: [ConfettiPiece] = []
+    @State private var confettiTimer: Timer?
+    @State private var particleIndex: Int = 0
 
     struct ConfettiPiece: Identifiable {
         let id = UUID()
@@ -521,6 +532,10 @@ struct ConfettiView: View {
                 generateConfetti(in: geometry.size)
                 animateConfetti()
             }
+            .onDisappear {
+                confettiTimer?.invalidate()
+                confettiTimer = nil
+            }
         }
     }
 
@@ -540,8 +555,14 @@ struct ConfettiView: View {
     }
 
     private func animateConfetti() {
-        Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { timer in
-            withAnimation(.linear(duration: 0.03)) {
+        confettiTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { timer in
+            Task { @MainActor in
+                particleIndex += 1
+                if particleIndex > 180 {
+                    timer.invalidate()
+                    confettiTimer = nil
+                    return
+                }
                 let screenSize = ConfettiScreenSize.main
                 for i in confetti.indices {
                     confetti[i].y += confetti[i].speed

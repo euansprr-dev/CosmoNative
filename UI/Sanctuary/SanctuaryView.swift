@@ -111,13 +111,13 @@ public struct SanctuaryView: View {
                         intensity: 0.12,
                         speed: 0.4
                     )
-                    .opacity(choreographer.backgroundOpacity * 0.4)
+                    .opacity(choreographer.backgroundOpacity * 0.8)
                     .ignoresSafeArea()
                 }
 
                 // Subtle radial vignette
                 RadialGradient(
-                    colors: [Color.clear, Color.black.opacity(0.05)],
+                    colors: [Color.clear, Color.black.opacity(0.08)],
                     center: .center,
                     startRadius: 200,
                     endRadius: 600
@@ -149,7 +149,7 @@ public struct SanctuaryView: View {
                         thinkspaceActive: thinkspaceHovered,
                         animationPhase: choreographer.animationPhase
                     )
-                    .opacity(choreographer.backgroundOpacity * 0.25)  // Satellite connection: 0.04 base opacity
+                    .opacity(1.0)  // Let thread's internal opacity control visibility
                 }
                 .allowsHitTesting(false)
 
@@ -377,7 +377,7 @@ public struct SanctuaryView: View {
             SanctuarySettingsView()
                 .frame(width: 720, height: 540)
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     // MARK: - Header
@@ -538,7 +538,7 @@ public struct SanctuaryView: View {
             ForEach(0..<count, id: \.self) { i in
                 let nextIndex = (i + 1) % count
                 let isAdjacentToSelected = selectedDimension == dimensions[i] || selectedDimension == dimensions[nextIndex]
-                let lineOpacity: Double = isAdjacentToSelected ? 0.25 : 0.07
+                let lineOpacity: Double = isAdjacentToSelected ? 0.40 : 0.15
 
                 connectionLineView(
                     index: i,
@@ -575,8 +575,8 @@ public struct SanctuaryView: View {
         return SanctuaryConnectionLine(
             from: CGPoint(x: x1, y: y1),
             to: CGPoint(x: x2, y: y2),
-            color1: Color.white,
-            color2: Color.white,
+            color1: DS.textMuted,
+            color2: DS.textMuted,
             glowIntensity: opacity,
             isAnimated: true
         )

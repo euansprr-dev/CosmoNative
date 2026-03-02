@@ -188,7 +188,7 @@ public struct SanctuaryInsightStream: View {
                 HStack(spacing: 4) {
                     ForEach(0..<min(insights.count, 5), id: \.self) { index in
                         Circle()
-                            .fill(index == currentIndex ? DS.text : DS.textMuted)
+                            .fill(index == currentIndex ? Color.white : Color.white.opacity(0.3))
                             .frame(width: 6, height: 6)
                     }
 

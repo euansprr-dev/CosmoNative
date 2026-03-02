@@ -78,7 +78,7 @@ struct InstagramCarouselLayout: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.surface)
             )
 
             // Dot indicators
@@ -135,7 +135,7 @@ struct InstagramCarouselLayout: View {
 
     private func dotColor(for index: Int) -> Color {
         if index == currentSlideIndex {
-            return .white
+            return DS.text
         }
         // Filled if has annotation
         let hasAnnotation = getAnnotationsForSlide(index).count > 0
@@ -144,12 +144,12 @@ struct InstagramCarouselLayout: View {
 
     private func navigationArrow(direction: NavigationDirection) -> some View {
         Circle()
-            .fill(.ultraThinMaterial)
+            .fill(.regularMaterial)
             .frame(width: 36, height: 36)
             .overlay(
                 Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.text)
             )
     }
 
@@ -204,7 +204,7 @@ struct InstagramCarouselLayout: View {
         .frame(width: 480)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.black.opacity(0.2))
+                .fill(DS.surface)
         )
     }
 
@@ -264,10 +264,9 @@ struct CarouselSlideView: View {
     var body: some View {
         ZStack {
             if item.mediaType == .video {
-                // Video slide
+                // Video slide — native macOS controls
                 if let player = player {
                     VideoPlayer(player: player)
-                        .disabled(true)
                 } else {
                     // Loading video
                     Rectangle()
@@ -279,24 +278,6 @@ struct CarouselSlideView: View {
                         .onAppear {
                             setupVideoPlayer()
                         }
-                }
-
-                // Play button overlay
-                if !isPlaying {
-                    Button {
-                        togglePlayback()
-                    } label: {
-                        Circle()
-                            .fill(.black.opacity(0.5))
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(.white)
-                                    .offset(x: 2)
-                            )
-                    }
-                    .buttonStyle(.plain)
                 }
             } else {
                 // Image slide

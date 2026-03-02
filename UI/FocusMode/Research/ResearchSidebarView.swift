@@ -26,6 +26,9 @@ struct ResearchSidebarView: View {
     @State private var connectionPickerAnnotationID: UUID?
     @State private var allConnections: [Atom] = []
     @State private var connectionRelevanceScores: [String: Double] = [:]
+    @State private var filteredConnections: [RelatedItem] = []
+    @State private var filteredResearch: [RelatedItem] = []
+    @State private var filteredContent: [RelatedItem] = []
 
     private let panelWidth: CGFloat = 320
     private let accentColor = OnyxColors.Dimension.knowledge
@@ -75,6 +78,11 @@ struct ResearchSidebarView: View {
             }
             .onChange(of: state.allAnnotations.count) { _ in
                 Task { await refreshRelatedItems() }
+            }
+            .onChange(of: relatedItems.count) { _ in
+                filteredConnections = relatedItems.filter { $0.type == .connection }
+                filteredResearch = relatedItems.filter { $0.type == .research }
+                filteredContent = relatedItems.filter { $0.type == .content }
             }
             .sheet(isPresented: $showConnectionPicker) {
                 connectionPickerSheet
@@ -160,29 +168,26 @@ struct ResearchSidebarView: View {
 
     private var relatedKnowledgeList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Connections
-            let connections = relatedItems.filter { $0.type == .connection }
-            if !connections.isEmpty {
+            // Connections (cached)
+            if !filteredConnections.isEmpty {
                 sectionLabel(title: "CONNECTIONS", icon: "link.circle.fill")
-                ForEach(connections) { item in
+                ForEach(filteredConnections) { item in
                     relatedItemCard(item)
                 }
             }
 
-            // Research
-            let research = relatedItems.filter { $0.type == .research }
-            if !research.isEmpty {
+            // Research (cached)
+            if !filteredResearch.isEmpty {
                 sectionLabel(title: "RELATED RESEARCH", icon: "magnifyingglass")
-                ForEach(research) { item in
+                ForEach(filteredResearch) { item in
                     relatedItemCard(item)
                 }
             }
 
-            // Content
-            let content = relatedItems.filter { $0.type == .content }
-            if !content.isEmpty {
+            // Content (cached)
+            if !filteredContent.isEmpty {
                 sectionLabel(title: "CONTENT", icon: "doc.text.fill")
-                ForEach(content) { item in
+                ForEach(filteredContent) { item in
                     relatedItemCard(item)
                 }
             }

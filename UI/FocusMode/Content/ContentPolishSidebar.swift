@@ -23,7 +23,7 @@ struct ContentPolishSidebar: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14))
-                    .foregroundColor(Color(hex: "#34D399"))
+                    .foregroundColor(DS.green)
 
                 Text("Polish")
                     .font(.system(size: 13, weight: .semibold))
@@ -48,7 +48,12 @@ struct ContentPolishSidebar: View {
             }
         }
         .frame(width: 320)
-        .background(DS.surface.opacity(0.5))
+        .background(DS.surface)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(DS.border)
+                .frame(width: 1)
+        }
         .onAppear {
             autoTriggerScorecard()
             autoTriggerRedTeam()
@@ -81,7 +86,7 @@ struct ContentPolishSidebar: View {
 
         return ZStack {
             Circle()
-                .stroke(DS.border, lineWidth: 5)
+                .stroke(DS.glassBorder, lineWidth: 5)
                 .frame(width: 56, height: 56)
 
             Circle()
@@ -162,7 +167,7 @@ struct ContentPolishSidebar: View {
                 qualityRow(label: "Adverbs", count: analysis.adverbRanges.count, color: .purple)
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         }
     }
 
@@ -199,7 +204,7 @@ struct ContentPolishSidebar: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         } else if let scorecard = state.contentScorecard {
             scorecardResults(scorecard)
         } else {
@@ -262,13 +267,13 @@ struct ContentPolishSidebar: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(DS.border, in: Capsule())
+                .background(DS.glassCardFill, in: Capsule())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(12)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .dsGlassSection()
     }
 
     private func scoreRow(label: String, score: Double) -> some View {
@@ -289,7 +294,7 @@ struct ContentPolishSidebar: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(DS.border)
+                        .fill(DS.glassBorder)
                         .frame(height: 3)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(scoreColor(score))
@@ -321,7 +326,7 @@ struct ContentPolishSidebar: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         } else if let result = state.redTeamResult {
             redTeamResults(result)
         } else {
@@ -385,7 +390,7 @@ struct ContentPolishSidebar: View {
                         }
                     }
                     .padding(10)
-                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    .dsGlassSection(cornerRadius: 8)
                 }
             }
 
@@ -402,7 +407,7 @@ struct ContentPolishSidebar: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(DS.border, in: Capsule())
+                .background(DS.glassCardFill, in: Capsule())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .trailing)

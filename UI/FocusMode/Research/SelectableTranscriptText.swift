@@ -15,6 +15,8 @@ struct SelectableTranscriptText: NSViewRepresentable {
     let highlights: [TextHighlight]
     let isPlaying: Bool
     let onTextSelected: (String, NSRange) -> Void
+    /// Called when user clicks (zero-length selection) within a highlight range
+    var onHighlightClicked: ((UUID) -> Void)? = nil
 
     // MARK: - NSViewRepresentable
 
@@ -93,7 +95,7 @@ struct SelectableTranscriptText: NSViewRepresentable {
         paragraphStyle.lineSpacing = 2
 
         let attributed = NSMutableAttributedString(string: text, attributes: [
-            .foregroundColor: NSColor.white.withAlphaComponent(isPlaying ? 1.0 : 0.7),
+            .foregroundColor: NSColor(DS.text).withAlphaComponent(isPlaying ? 1.0 : 0.7),
             .font: NSFont.systemFont(ofSize: 13),
             .paragraphStyle: paragraphStyle
         ])
@@ -155,7 +157,20 @@ struct SelectableTranscriptText: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let selectedRange = textView.selectedRange()
-            guard selectedRange.length > 0 else { return }
+
+            if selectedRange.length == 0 {
+                // Single click — check if within a highlight range
+                let clickIndex = selectedRange.location
+                for highlight in parent.highlights {
+                    if clickIndex >= highlight.startCharIndex && clickIndex < highlight.endCharIndex {
+                        parent.onHighlightClicked?(highlight.annotationID)
+                        return
+                    }
+                }
+                return
+            }
+
+            // Text selection (existing behavior)
             let selectedText = (textView.string as NSString).substring(with: selectedRange)
             parent.onTextSelected(selectedText, selectedRange)
         }
@@ -207,6 +222,6 @@ struct SelectableTranscriptText: NSViewRepresentable {
     }
     .padding(20)
     .frame(width: 340, height: 280)
-    .background(Color.black)
-    .preferredColorScheme(.dark)
+    .background(DS.bg)
+    .preferredColorScheme(.light)
 }

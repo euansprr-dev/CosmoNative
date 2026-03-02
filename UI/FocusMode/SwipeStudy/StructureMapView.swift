@@ -40,7 +40,7 @@ struct StructureMapView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.border, lineWidth: 1)
@@ -82,7 +82,7 @@ struct StructureMapView: View {
                 HStack(spacing: spacing) {
                     ForEach(Array(validSections.enumerated()), id: \.element.id) { index, section in
                         let relSize = section.relativeSize(totalLength: totalLength)
-                        let blockWidth = usableWidth * CGFloat(relSize)
+                        let blockWidth = max(50, usableWidth * CGFloat(relSize))
                         let blockColor = section.emotion?.color ?? defaultColor(for: index)
                         let isHovered = hoveredSection == section.id
 

@@ -30,14 +30,14 @@ public struct HeroOrbView: View {
 
     public var body: some View {
         ZStack {
-            // Faint orbital ring at 120% radius (hairline, 15% opacity)
+            // Faint orbital ring at 120% radius (hairline)
             Circle()
                 .stroke(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.15),
-                            Color.white.opacity(0.05),
-                            Color.white.opacity(0.15)
+                            DS.accent.opacity(0.15),
+                            DS.accent.opacity(0.05),
+                            DS.accent.opacity(0.15)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -61,7 +61,7 @@ public struct HeroOrbView: View {
                         lineWidth: 2
                     )
                     .frame(width: baseSize + CGFloat(ring * 30), height: baseSize + CGFloat(ring * 30))
-                    .opacity(0.3 - Double(ring) * 0.1)
+                    .opacity(0.45 - Double(ring) * 0.12)
                     .scaleEffect(breathingScale + CGFloat(ring) * 0.05)
             }
 
@@ -72,9 +72,9 @@ public struct HeroOrbView: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color.white.opacity(0.2),
-                                SanctuaryColors.HeroOrb.primary.opacity(0.8),
-                                SanctuaryColors.HeroOrb.secondary.opacity(0.9)
+                                Color.white.opacity(0.3),
+                                SanctuaryColors.HeroOrb.primary.opacity(0.7),
+                                SanctuaryColors.HeroOrb.secondary.opacity(0.85)
                             ],
                             center: .topLeading,
                             startRadius: 0,
@@ -87,7 +87,7 @@ public struct HeroOrbView: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color.white.opacity(0.4),
+                                Color.white.opacity(0.35),
                                 Color.clear
                             ],
                             center: .center,
@@ -96,9 +96,9 @@ public struct HeroOrbView: View {
                         )
                     )
 
-                // Subtle inner glow ring (white, 5% opacity)
+                // Subtle inner ring
                 Circle()
-                    .stroke(Color.white.opacity(0.05), lineWidth: 2)
+                    .stroke(DS.accent.opacity(0.12), lineWidth: 2)
                     .frame(width: baseSize * 0.7, height: baseSize * 0.7)
                     .blur(radius: 2)
 
@@ -111,7 +111,7 @@ public struct HeroOrbView: View {
                     let y = sin(angle) * radius
 
                     Circle()
-                        .fill(Color.white.opacity(0.3))
+                        .fill(SanctuaryColors.HeroOrb.primary.opacity(0.4))
                         .frame(width: 3, height: 3)
                         .blur(radius: 1)
                         .offset(x: x, y: y)
@@ -122,9 +122,9 @@ public struct HeroOrbView: View {
                     .stroke(
                         AngularGradient(
                             colors: [
-                                Color.white.opacity(0.3),
+                                SanctuaryColors.HeroOrb.primary.opacity(0.25),
                                 Color.clear,
-                                Color.white.opacity(0.2),
+                                SanctuaryColors.HeroOrb.primary.opacity(0.2),
                                 Color.clear
                             ],
                             center: .center,
@@ -137,20 +137,20 @@ public struct HeroOrbView: View {
             }
             .frame(width: baseSize, height: baseSize)
             .scaleEffect(breathingScale * (isHovered ? 1.03 : 1.0))
-            .shadow(color: SanctuaryColors.HeroOrb.glow.opacity(0.5), radius: 30, x: 0, y: 0)
+            .shadow(color: SanctuaryColors.HeroOrb.glow.opacity(0.6), radius: 40, x: 0, y: 0)
             .animation(SanctuarySprings.hover, value: isHovered)
 
             // Level display
             VStack(spacing: SanctuaryLayout.Spacing.xs) {
                 Text("CI")
                     .font(SanctuaryTypography.label)
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .foregroundColor(DS.textOnAccent.opacity(0.8))
 
                 if let state = state {
                     Text("\(state.level)")
                         .font(SanctuaryTypography.display)
-                        .foregroundColor(SanctuaryColors.Text.primary)
-                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 2)
+                        .foregroundColor(DS.textOnAccent)
+                        .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 2)
 
                     // XP progress ring
                     Circle()
@@ -238,7 +238,7 @@ public struct HeroOrbView: View {
 
 #Preview {
     ZStack {
-        Color.black.ignoresSafeArea()
+        DS.bg.ignoresSafeArea()
 
         HeroOrbView(
             state: CosmoIndexState(

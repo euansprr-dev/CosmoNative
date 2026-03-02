@@ -42,7 +42,7 @@ struct SimilarSwipesSection: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.border, lineWidth: 1)
@@ -124,7 +124,7 @@ struct SimilarSwipesSection: View {
         }
         .padding(8)
         .frame(width: 156, height: 110)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DS.border, lineWidth: 1)
@@ -133,7 +133,7 @@ struct SimilarSwipesSection: View {
 
     private var cardPlaceholder: some View {
         Rectangle()
-            .fill(DS.borderSubtle)
+            .fill(DS.surface)
             .overlay(
                 Image(systemName: "doc.fill")
                     .font(.system(size: 14))
@@ -208,7 +208,7 @@ struct SimilarSwipesSection: View {
             HStack(spacing: 4) {
                 Text("Found in \(formula.matchCount) swipes")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundColor(DS.textSecondary)
 
                 if formula.avgScore > 0 {
                     Text("·")
@@ -216,7 +216,7 @@ struct SimilarSwipesSection: View {
                         .foregroundColor(DS.textMuted)
                     Text("Avg score \(String(format: "%.1f", formula.avgScore))")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundColor(DS.textSecondary)
                 }
             }
         }

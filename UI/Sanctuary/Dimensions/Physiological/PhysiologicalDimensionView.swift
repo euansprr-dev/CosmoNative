@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Physiological/PhysiologicalDimensionView.swift
 // Physiological Dimension View - "The Body Interface" complete dimension experience
-// Onyx Design System — premium cognitive atelier aesthetic
+// Phase 5: Following SANCTUARY_UI_SPEC_V2.md section 3.3
 
 import SwiftUI
 
@@ -65,7 +65,7 @@ public struct PhysiologicalDimensionView: View {
                 } else {
                     // Main content
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                        VStack(spacing: SanctuaryLayout.Spacing.lg) {
                             // Header with back button
                             headerSection
 
@@ -92,8 +92,8 @@ public struct PhysiologicalDimensionView: View {
                         }
                         .frame(maxWidth: Layout.maxContentWidth)
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 24)
+                        .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                        .padding(.top, SanctuaryLayout.Spacing.lg)
                     }
                 }
 
@@ -120,14 +120,14 @@ public struct PhysiologicalDimensionView: View {
     }
 
     private enum Layout {
-        static let maxContentWidth: CGFloat = 1400
-        static let twoColumnBreakpoint: CGFloat = 900
+        static let maxContentWidth: CGFloat = 1460
+        static let twoColumnBreakpoint: CGFloat = 1320
     }
 
     @ViewBuilder
     private func bodyScannerAndVitalsSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalBodyScanner(
                     muscleMap: viewModel.data.muscleRecoveryMap,
                     stressLevel: viewModel.data.stressLevel,
@@ -139,13 +139,11 @@ public struct PhysiologicalDimensionView: View {
                         showMuscleDetail = true
                     }
                 )
-                .frame(maxWidth: .infinity)
 
                 PhysiologicalVitalSigns(data: viewModel.data)
-                    .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalBodyScanner(
                     muscleMap: viewModel.data.muscleRecoveryMap,
                     stressLevel: viewModel.data.stressLevel,
@@ -157,7 +155,7 @@ public struct PhysiologicalDimensionView: View {
                         showMuscleDetail = true
                     }
                 )
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 500)
 
                 PhysiologicalVitalSigns(data: viewModel.data)
                     .frame(maxWidth: .infinity)
@@ -168,21 +166,19 @@ public struct PhysiologicalDimensionView: View {
     @ViewBuilder
     private func sleepAndHRVSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalSleepAnalysis(
                     sleep: viewModel.data.lastNightSleep,
                     sleepDebt: viewModel.data.sleepDebt,
                     sleepTrend: viewModel.data.sleepTrend
                 )
-                .frame(maxWidth: .infinity)
                 HRVTrendChart(
                     trend: viewModel.data.hrvTrend,
                     currentHRV: viewModel.data.currentHRV
                 )
-                .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalSleepAnalysis(
                     sleep: viewModel.data.lastNightSleep,
                     sleepDebt: viewModel.data.sleepDebt,
@@ -194,7 +190,7 @@ public struct PhysiologicalDimensionView: View {
                     trend: viewModel.data.hrvTrend,
                     currentHRV: viewModel.data.currentHRV
                 )
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 380)
             }
         }
     }
@@ -202,26 +198,24 @@ public struct PhysiologicalDimensionView: View {
     @ViewBuilder
     private func activityAndWorkoutSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalActivityRings(
                     rings: viewModel.data.dailyRings,
                     stepCount: viewModel.data.stepCount
                 )
-                .frame(maxWidth: .infinity)
                 PhysiologicalWorkoutLog(
                     workouts: viewModel.data.workouts,
                     weeklyVolumeLoad: viewModel.data.weeklyVolumeLoad,
                     recoveryDebt: viewModel.data.recoveryDebt
                 )
-                .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.lg) {
                 PhysiologicalActivityRings(
                     rings: viewModel.data.dailyRings,
                     stepCount: viewModel.data.stepCount
                 )
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 450)
 
                 PhysiologicalWorkoutLog(
                     workouts: viewModel.data.workouts,
@@ -245,19 +239,18 @@ public struct PhysiologicalDimensionView: View {
     // MARK: - Health Connect Banner
 
     private var healthConnectBanner: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: SanctuaryLayout.Spacing.md) {
             Image(systemName: "heart.text.square")
-                .font(.system(size: 24))
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 32))
+                .foregroundColor(SanctuaryColors.Dimensions.physiological.opacity(0.6))
 
             Text("Connect Apple Health")
-                .font(OnyxTypography.cardTitle)
-                .tracking(OnyxTypography.cardTitleTracking)
-                .foregroundColor(OnyxColors.Text.primary)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(SanctuaryColors.Text.primary)
 
             Text("Unlock real-time body data from your iPhone and Apple Watch. HRV, sleep analysis, activity rings, and recovery scores will replace preview data.")
                 .font(.system(size: 12))
-                .foregroundColor(OnyxColors.Text.secondary)
+                .foregroundColor(SanctuaryColors.Text.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
 
@@ -270,37 +263,40 @@ public struct PhysiologicalDimensionView: View {
                     Text("Connect Health")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(DS.text)
+                .foregroundColor(.white)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .fill(OnyxColors.DimensionVivid.physiological)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(SanctuaryColors.Dimensions.physiological)
                 )
             }
             .buttonStyle(PlainButtonStyle())
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.xl)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(SanctuaryColors.Dimensions.physiological.opacity(0.3), lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     // MARK: - Background Layer
 
     private var backgroundLayer: some View {
         ZStack {
-            // Onyx base surface
-            OnyxColors.Elevation.base
+            // Base void
+            SanctuaryColors.Background.void
                 .ignoresSafeArea()
 
-            // Subtle physiological dimension tint
+            // Physiological dimension tint
             RadialGradient(
                 colors: [
-                    OnyxColors.DimensionVivid.physiological.opacity(0.08),
-                    OnyxColors.DimensionVivid.physiological.opacity(0.03),
+                    SanctuaryColors.Dimensions.physiological.opacity(0.15),
+                    SanctuaryColors.Dimensions.physiological.opacity(0.05),
                     Color.clear
                 ],
                 center: .center,
@@ -309,9 +305,9 @@ public struct PhysiologicalDimensionView: View {
             )
             .ignoresSafeArea()
 
-            // Subtle edge vignette
+            // Edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.3)],
+                colors: [Color.clear, Color.black.opacity(0.4)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 800
@@ -326,44 +322,44 @@ public struct PhysiologicalDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 14, weight: .semibold))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(OnyxColors.Text.secondary)
+                .foregroundColor(SanctuaryColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title — sentence case, Onyx typography
+            // Title
             VStack(spacing: 2) {
-                Text("Physiological")
-                    .font(OnyxTypography.viewTitle)
-                    .tracking(OnyxTypography.viewTitleTracking)
-                    .foregroundColor(OnyxColors.Text.primary)
+                Text("PHYSIOLOGICAL")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .tracking(4)
 
-                HStack(spacing: 8) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Text("The Body Interface")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Tier \(viewModel.dimensionLevel)")
+                    Text("Level \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.physiological)
+                        .foregroundColor(SanctuaryColors.Dimensions.physiological)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Primal")
+                    Text("Rank: PRIMAL")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.physiological)
+                        .foregroundColor(SanctuaryColors.Dimensions.physiological)
                 }
             }
 
@@ -378,36 +374,39 @@ public struct PhysiologicalDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(OnyxColors.Accent.sage)
+                    .fill(Color.green)
                     .frame(width: 6, height: 6)
-                    .modifier(OnyxPulseModifier())
+                    .modifier(PulseModifier())
 
-                Text("Live")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                Text("LIVE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
-            Text("Recovery: \(Int(viewModel.data.recoveryScore))")
+            Text("Recovery: \(Int(viewModel.data.recoveryScore))%")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(recoveryColor)
 
             Text(viewModel.data.recoveryStatus)
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
-        .padding(12)
+        .padding(SanctuaryLayout.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     private var recoveryColor: Color {
-        if viewModel.data.recoveryScore >= 80 { return OnyxColors.Accent.sage }
-        if viewModel.data.recoveryScore >= 60 { return OnyxColors.DimensionVivid.physiological }
-        if viewModel.data.recoveryScore >= 40 { return OnyxColors.Accent.amber }
-        return OnyxColors.Accent.rose
+        if viewModel.data.recoveryScore >= 80 { return SanctuaryColors.Semantic.success }
+        if viewModel.data.recoveryScore >= 60 { return SanctuaryColors.Semantic.info }
+        if viewModel.data.recoveryScore >= 40 { return SanctuaryColors.Semantic.warning }
+        return SanctuaryColors.Semantic.error
     }
 
     // MARK: - Detail Overlays
@@ -452,18 +451,18 @@ public struct PhysiologicalDimensionView: View {
     }
 }
 
-// MARK: - Onyx Pulse Modifier
+// MARK: - Pulse Modifier
 
 @MainActor
-private struct OnyxPulseModifier: ViewModifier {
+private struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.2 : 1.0)
-            .opacity(isPulsing ? 0.5 : 1.0)
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
             .animation(
-                .easeInOut(duration: 1.5)
+                .easeInOut(duration: 1)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -520,18 +519,18 @@ public struct PhysiologicalDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "heart.text.square")
                         .font(.system(size: 16))
-                        .foregroundColor(OnyxColors.Dimension.physiological)
+                        .foregroundColor(SanctuaryColors.Dimensions.physiological)
 
-                    Text("Physiological")
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                    Text("PHYSIOLOGICAL")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .tracking(2)
                 }
 
                 Spacer()
@@ -544,7 +543,7 @@ public struct PhysiologicalDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(OnyxColors.Dimension.physiological)
+                    .foregroundColor(SanctuaryColors.Dimensions.physiological)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -566,13 +565,20 @@ public struct PhysiologicalDimensionCompact: View {
             // Sleep summary
             SleepCardCompact(sleep: data.lastNightSleep)
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(
+                            isHovered ? SanctuaryColors.Dimensions.physiological.opacity(0.5) : SanctuaryColors.Glass.border,
+                            lineWidth: 1
+                        )
+                )
         )
-        .onyxShadow(isHovered ? .hovered : .resting)
-        .animation(OnyxSpring.hover, value: isHovered)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(SanctuarySprings.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

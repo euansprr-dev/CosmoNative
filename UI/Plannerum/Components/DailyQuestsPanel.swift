@@ -139,7 +139,7 @@ public struct DailyQuestsPanel: View {
             .foregroundColor(allDone ? DailyQuestsTokens.completeCheck : PlannerumColors.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(DS.border)
+            .background(DS.surfaceHover)
             .clipShape(Capsule())
     }
 
@@ -196,7 +196,7 @@ public struct DailyQuestsPanel: View {
         VStack(spacing: 12) {
             ForEach(0..<3, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(DS.border)
+                    .fill(DS.surfaceHover)
                     .frame(height: DailyQuestsTokens.questRowHeight)
             }
         }
@@ -353,8 +353,9 @@ struct LiveQuestRow: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(8)
-                .background(DS.border)
+                .background(DS.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(DS.borderSubtle, lineWidth: 1))
 
             HStack {
                 Text("XP Reward")
@@ -742,7 +743,7 @@ struct QuestRow: View {
 struct DailyQuestsPanel_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            PlannerumColors.voidPrimary.ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             DailyQuestsPanel(
                 questEngine: QuestEngine(),

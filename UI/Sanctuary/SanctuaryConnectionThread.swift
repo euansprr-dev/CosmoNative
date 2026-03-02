@@ -51,7 +51,7 @@ public struct SanctuaryConnectionThread: View {
 
     /// Opacity based on state — reduced per Onyx spec (0.04 dormant, 0.25 active)
     private var threadOpacity: Double {
-        isActive ? 0.25 : 0.04
+        isActive ? 0.4 : 0.15
     }
 
     /// Control point for bezier curve
@@ -82,7 +82,7 @@ public struct SanctuaryConnectionThread: View {
         return [
             .init(color: color.opacity(threadOpacity * 0.3), location: 0),
             .init(color: color.opacity(threadOpacity), location: stop1),
-            .init(color: Color.white.opacity(threadOpacity * 1.5), location: stop2),
+            .init(color: color.opacity(threadOpacity * 1.8), location: stop2),
             .init(color: color.opacity(threadOpacity), location: stop3),
             .init(color: color.opacity(threadOpacity * 0.3), location: 1)
         ]
@@ -95,7 +95,7 @@ public struct SanctuaryConnectionThread: View {
             // Glow layer (blurred version of the path)
             connectionPath
                 .stroke(
-                    color.opacity(0.15),
+                    color.opacity(0.25),
                     style: StrokeStyle(
                         lineWidth: lineWidth * 3,
                         lineCap: .round
@@ -167,7 +167,7 @@ public struct SanctuaryConnectionThread: View {
 
     /// Waypoint opacity based on animation phase (pulsing)
     private func waypointOpacity(at index: Int) -> Double {
-        let base: Double = isActive ? 0.6 : 0.3
+        let base: Double = isActive ? 0.7 : 0.4
         let phase = animationPhase + Double(index) * 0.3
         let pulse = sin(phase * 2) * 0.2
         return base + pulse
@@ -217,11 +217,11 @@ public struct SatelliteConnectionsView: View {
 
     public var body: some View {
         ZStack {
-            // White-only connections at low opacity per Onyx spec
+            // Subtle connections — dark text on light bg
             SanctuaryConnectionThread(
                 from: plannerumPosition,
                 to: heroCenter,
-                color: Color.white,
+                color: SanctuaryColors.plannerumPrimary,
                 isActive: plannerumActive,
                 animationPhase: animationPhase
             )
@@ -229,7 +229,7 @@ public struct SatelliteConnectionsView: View {
             SanctuaryConnectionThread(
                 from: thinkspacePosition,
                 to: heroCenter,
-                color: Color.white,
+                color: SanctuaryColors.thinkspacePrimary,
                 isActive: thinkspaceActive,
                 animationPhase: animationPhase
             )
@@ -244,7 +244,7 @@ public struct SatelliteConnectionsView: View {
 struct SanctuaryConnectionThread_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            SanctuaryColors.voidPrimary
+            DS.bg
                 .ignoresSafeArea()
 
             GeometryReader { geometry in
@@ -279,7 +279,7 @@ struct SanctuaryConnectionThread_Previews: PreviewProvider {
                     .position(rightPos)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }
 #endif

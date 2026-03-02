@@ -67,8 +67,8 @@ public struct PlannerumView: View {
     public var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // LAYER 1: Base void background (always visible)
-                PlannerumColors.voidPrimary
+                // LAYER 1: Base background (always visible)
+                DS.bg
                     .ignoresSafeArea()
 
                 // LAYER 2: Green/teal mist atmosphere (like Sanctuary but subtle green tint)
@@ -186,7 +186,7 @@ public struct PlannerumView: View {
             animationTimerCancellable = nil
             plannerumViewModel.stopLiveUpdates()
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         // MARK: - Keyboard Shortcuts
         .background {
             // N = New task
@@ -1457,7 +1457,7 @@ struct QuickTaskSheet: View {
         }
         .padding(24)
         .frame(width: 420)
-        .background(PlannerumColors.voidPrimary)
+        .background(DS.bg)
         .onAppear { isFocused = true }
     }
 
@@ -1511,7 +1511,7 @@ struct QuickTaskSheet: View {
             Button(action: { submitTask() }) {
                 Text("Add Task")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
                     .background(PlannerumColors.primary)
@@ -1594,5 +1594,5 @@ class PlannerumContextProvider: CosmoContextProvider {
 #Preview("Plannerum View") {
     PlannerumView(onDismiss: {})
         .frame(width: 1200, height: 800)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
 }

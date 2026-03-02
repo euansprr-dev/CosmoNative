@@ -237,7 +237,7 @@ public struct PhysiologicalBodyScanner: View {
             // Percentage label
             Text("\(Int(muscle.recoveryPercent))%")
                 .font(.system(size: isSelected ? 9 : 7, weight: .bold, design: .monospaced))
-                .foregroundColor(DS.text)
+                .foregroundColor(.white)
         }
         .position(x: x, y: y)
         .animation(SanctuarySprings.hover, value: isSelected)

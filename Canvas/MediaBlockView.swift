@@ -124,7 +124,7 @@ struct MediaBlockView: View {
     }
 
     private var accentColor: Color {
-        isSwipeFile ? Color(hex: "FFD700") : CosmoColors.blockResearch
+        isSwipeFile ? Color(hex: "FFD700") : DS.entityResearch
     }
 
     private var transcriptText: String {
@@ -249,7 +249,7 @@ struct MediaBlockView: View {
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .fill(DS.surface)
+                    .fill(DS.surfaceElevated)
                 if block.isSelected {
                     RoundedRectangle(cornerRadius: DS.radiusMedium)
                         .fill(accentColor.opacity(0.03))
@@ -267,10 +267,10 @@ struct MediaBlockView: View {
         )
         .shadow(
             color: block.isSelected
-                ? accentColor.opacity(0.3)
-                : (isHovered ? Color.black.opacity(0.4) : Color.black.opacity(0.2)),
-            radius: block.isSelected ? 12 : (isHovered ? 16 : 8),
-            y: block.isSelected ? 0 : (isHovered ? 6 : 3)
+                ? accentColor.opacity(0.2)
+                : (isHovered ? Color.black.opacity(0.12) : Color.black.opacity(0.08)),
+            radius: block.isSelected ? 12 : (isHovered ? 12 : 6),
+            y: block.isSelected ? 0 : (isHovered ? 4 : 2)
         )
         // Resize overlay (same as CosmoBlockWrapper)
         .overlay {
@@ -380,31 +380,9 @@ struct MediaBlockView: View {
     // MARK: - Instagram Video Player (AVPlayer — same as focus mode)
 
     private func igVideoPlayer(player: AVPlayer) -> some View {
-        ZStack {
-            VideoPlayer(player: player)
-                .disabled(true)
-
-            if !igIsPlaying {
-                Button {
-                    player.play()
-                    igIsPlaying = true
-                } label: {
-                    playButtonOverlay
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: mediaAreaHeight)
-        .onTapGesture {
-            if igIsPlaying {
-                player.pause()
-                igIsPlaying = false
-            } else {
-                player.play()
-                igIsPlaying = true
-            }
-        }
+        VideoPlayer(player: player)
+            .frame(maxWidth: .infinity)
+            .frame(height: mediaAreaHeight)
     }
 
     // MARK: - Carousel Image View (same approach as focus mode)
@@ -879,7 +857,7 @@ struct MediaBlockView: View {
 struct MediaBlockView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.canvas
                 .ignoresSafeArea()
 
             HStack(spacing: 24) {

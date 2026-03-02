@@ -287,30 +287,30 @@ public struct KnowledgeConstellation: View {
 
     private var controlBar: some View {
         HStack(spacing: SanctuaryLayout.Spacing.md) {
-            controlButton(icon: "arrow.counterclockwise", label: "Rotate") {
+            controlButton(icon: "arrow.counterclockwise", label: "ROTATE") {
                 withAnimation(.easeOut(duration: 0.5)) {
                     rotationAngle -= 45
                 }
             }
 
-            controlButton(icon: isAutoRotating ? "pause.fill" : "play.fill", label: isAutoRotating ? "Pause" : "Auto") {
+            controlButton(icon: isAutoRotating ? "pause.fill" : "play.fill", label: isAutoRotating ? "PAUSE" : "AUTO") {
                 isAutoRotating.toggle()
                 if isAutoRotating { startAutoRotation() }
             }
 
-            controlButton(icon: "plus.magnifyingglass", label: "Zoom") {
+            controlButton(icon: "plus.magnifyingglass", label: "ZOOM") {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scale = min(2.0, scale + 0.2)
                 }
             }
 
-            controlButton(icon: "minus.magnifyingglass", label: "Zoom") {
+            controlButton(icon: "minus.magnifyingglass", label: "ZOOM") {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scale = max(0.5, scale - 0.2)
                 }
             }
 
-            controlButton(icon: "arrow.down.backward.and.arrow.up.forward", label: "Reset") {
+            controlButton(icon: "arrow.down.backward.and.arrow.up.forward", label: "RESET") {
                 withAnimation(.easeOut(duration: 0.5)) {
                     rotationAngle = 0
                     scale = 1.0
@@ -420,9 +420,9 @@ public struct NodeDetailPanel: View {
 
             // Metadata
             VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
-                metadataRow(label: "Created", value: formattedDate(node.createdDate))
-                metadataRow(label: "Last Accessed", value: formattedDate(node.lastAccessedDate))
-                metadataRow(label: "Access Count", value: "\(node.accessCount)")
+                metadataRow(label: "CREATED", value: formattedDate(node.createdDate))
+                metadataRow(label: "LAST ACCESSED", value: formattedDate(node.lastAccessedDate))
+                metadataRow(label: "ACCESS COUNT", value: "\(node.accessCount)")
             }
 
             // Tags

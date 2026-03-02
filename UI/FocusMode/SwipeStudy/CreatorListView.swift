@@ -53,13 +53,13 @@ struct CreatorListView: View {
 
             VStack(spacing: 0) {
                 headerBar
-                Divider().background(DS.borderActive)
+                Divider().background(DS.borderSubtle)
                 filterRow
-                Divider().background(DS.borderActive)
+                Divider().background(DS.borderSubtle)
 
                 if isLoading {
                     Spacer()
-                    ProgressView().tint(.white)
+                    ProgressView().tint(DS.textSecondary)
                     Spacer()
                 } else if filteredCreators.isEmpty {
                     emptyState
@@ -90,7 +90,7 @@ struct CreatorListView: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .background(DS.surfaceHover, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -134,10 +134,10 @@ struct CreatorListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(width: 240)
-            .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(DS.borderActive, lineWidth: 1)
+                    .strokeBorder(DS.borderSubtle, lineWidth: 1)
             )
 
             // Compare button
@@ -171,7 +171,7 @@ struct CreatorListView: View {
                 sortMenuView
 
                 Rectangle()
-                    .fill(DS.borderActive)
+                    .fill(DS.border)
                     .frame(width: 1, height: 24)
 
                 // Platform filters
@@ -190,7 +190,7 @@ struct CreatorListView: View {
 
                 if !allNiches.isEmpty {
                     Rectangle()
-                        .fill(DS.borderActive)
+                        .fill(DS.border)
                         .frame(width: 1, height: 24)
 
                     // Niche filters
@@ -231,10 +231,10 @@ struct CreatorListView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(DS.border)
+                .fill(DS.surfaceHover)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(DS.borderActive, lineWidth: 1)
+                        .strokeBorder(DS.border, lineWidth: 1)
                 )
         )
     }
@@ -269,11 +269,11 @@ struct CreatorListView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(nicheFilter != nil ? gold.opacity(0.25) : DS.border)
+                .fill(nicheFilter != nil ? gold.opacity(0.15) : DS.surfaceHover)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            nicheFilter != nil ? gold.opacity(0.6) : DS.borderActive,
+                            nicheFilter != nil ? gold.opacity(0.5) : DS.border,
                             lineWidth: 1
                         )
                 )
@@ -295,11 +295,11 @@ struct CreatorListView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? gold.opacity(0.25) : DS.border)
+                    .fill(isSelected ? gold.opacity(0.15) : DS.surfaceHover)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(
-                                isSelected ? gold.opacity(0.6) : DS.borderActive,
+                                isSelected ? gold.opacity(0.5) : DS.border,
                                 lineWidth: 1
                             )
                     )
@@ -487,7 +487,7 @@ private struct CreatorCard: View {
                 Spacer()
             }
 
-            Divider().background(DS.border)
+            Divider().background(DS.borderSubtle)
 
             // Stats row
             HStack(spacing: 12) {
@@ -511,7 +511,7 @@ private struct CreatorCard: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(DS.surfaceCard)
+                .fill(DS.surfaceElevated)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -570,10 +570,10 @@ private struct CreatorCard: View {
         .foregroundColor(DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(DS.border, in: Capsule())
+        .background(DS.surfaceHover, in: Capsule())
     }
 
-    private func statItem(value: String, label: String, valueColor: Color = .white) -> some View {
+    private func statItem(value: String, label: String, valueColor: Color = DS.text) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(.system(size: 14, weight: .bold).monospacedDigit())
@@ -645,15 +645,4 @@ private struct CreatorCard: View {
         default: return raw.capitalized
         }
     }
-}
-
-// MARK: - Preview
-
-#Preview("Creator List View") {
-    CreatorListView(
-        onSelectCreator: { _ in },
-        onCompare: { _ in },
-        onClose: {}
-    )
-    .frame(width: 1000, height: 700)
 }

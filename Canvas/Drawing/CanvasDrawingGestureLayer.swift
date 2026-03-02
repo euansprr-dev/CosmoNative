@@ -138,7 +138,16 @@ struct CanvasDrawingGestureLayer: View {
             return
         }
 
-        // Check which block centers fall inside the lasso polygon (screen space)
+        // Force-refresh block frames to capture any blocks dragged since last pan/zoom change
+        blockFrameTracker.updateFrames(
+            blocks: blockFrameTracker.trackedBlocks,
+            canvasOffset: canvasOffset,
+            scaledPanOffset: scaledPanOffset,
+            effectiveScale: effectiveScale,
+            screenCenter: screenCenter
+        )
+
+        // Check which blocks have any point inside the lasso polygon (screen space)
         let enclosed = LassoGestureDetector.enclosedBlocks(
             lassoPath: lassoPoints,
             blockFrames: blockFrameTracker.blockFrames

@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Behavioral/BehavioralDimensionView.swift
 // Behavioral Dimension View - "The Operator's Dashboard" complete dimension experience
-// Onyx Design System — premium cognitive atelier aesthetic
+// Phase 6: Following SANCTUARY_UI_SPEC_V2.md section 3.4
 
 import SwiftUI
 
@@ -40,7 +40,7 @@ public struct BehavioralDimensionView: View {
 
                 // Main content
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                    VStack(spacing: SanctuaryLayout.Spacing.xxl) {
                         // Header with back button
                         headerSection
 
@@ -72,8 +72,8 @@ public struct BehavioralDimensionView: View {
                     }
                     .frame(maxWidth: Layout.maxContentWidth)
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 24)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                    .padding(.top, SanctuaryLayout.Spacing.lg)
                 }
                 // Detail overlays
                 detailOverlays
@@ -88,14 +88,14 @@ public struct BehavioralDimensionView: View {
     }
 
     private enum Layout {
-        static let maxContentWidth: CGFloat = 1400
-        static let twoColumnBreakpoint: CGFloat = 900
+        static let maxContentWidth: CGFloat = 1420
+        static let twoColumnBreakpoint: CGFloat = 1260
     }
 
     @ViewBuilder
     private func routineAndStreakSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.xl) {
                 BehavioralRoutineConsistency(
                     routines: [
                         viewModel.data.morningRoutine,
@@ -103,15 +103,13 @@ public struct BehavioralDimensionView: View {
                         viewModel.data.wakeSchedule
                     ]
                 )
-                .frame(maxWidth: .infinity)
                 BehavioralStreakTracker(
                     activeStreaks: viewModel.data.activeStreaks,
                     endangeredStreaks: viewModel.data.endangeredStreaks
                 )
-                .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
                 BehavioralRoutineConsistency(
                     routines: [
                         viewModel.data.morningRoutine,
@@ -133,39 +131,34 @@ public struct BehavioralDimensionView: View {
     @ViewBuilder
     private func timelineAndLevelSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.xl) {
                 BehavioralTimeline(
                     events: viewModel.data.todayEvents,
                     violations: viewModel.data.violations
                 )
-                .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     LevelUpPathCard(levelUpPath: viewModel.data.levelUpPath)
-                        .frame(maxWidth: .infinity)
                     if let prediction = viewModel.data.predictions.first {
                         BehavioralPredictionCard(prediction: prediction)
-                            .frame(maxWidth: .infinity)
                     }
                 }
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
                 BehavioralTimeline(
                     events: viewModel.data.todayEvents,
                     violations: viewModel.data.violations
                 )
                 .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     LevelUpPathCard(levelUpPath: viewModel.data.levelUpPath)
-                        .frame(maxWidth: .infinity)
                     if let prediction = viewModel.data.predictions.first {
                         BehavioralPredictionCard(prediction: prediction)
-                            .frame(maxWidth: .infinity)
                     }
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 400)
             }
         }
     }
@@ -174,15 +167,15 @@ public struct BehavioralDimensionView: View {
 
     private var backgroundLayer: some View {
         ZStack {
-            // Onyx base surface
-            OnyxColors.Elevation.base
+            // Base void
+            SanctuaryColors.Background.void
                 .ignoresSafeArea()
 
-            // Subtle behavioral dimension tint (reduced from 0.15 to 0.08)
+            // Behavioral dimension tint
             RadialGradient(
                 colors: [
-                    OnyxColors.DimensionVivid.behavioral.opacity(0.08),
-                    OnyxColors.DimensionVivid.behavioral.opacity(0.03),
+                    SanctuaryColors.Dimensions.behavioral.opacity(0.15),
+                    SanctuaryColors.Dimensions.behavioral.opacity(0.05),
                     Color.clear
                 ],
                 center: .center,
@@ -191,9 +184,9 @@ public struct BehavioralDimensionView: View {
             )
             .ignoresSafeArea()
 
-            // Subtle edge vignette
+            // Edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.3)],
+                colors: [Color.clear, Color.black.opacity(0.4)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 800
@@ -208,44 +201,44 @@ public struct BehavioralDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 14, weight: .semibold))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(OnyxColors.Text.secondary)
+                .foregroundColor(SanctuaryColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title — sentence case, Onyx typography
+            // Title
             VStack(spacing: 2) {
-                Text("Behavioral")
-                    .font(OnyxTypography.viewTitle)
-                    .tracking(OnyxTypography.viewTitleTracking)
-                    .foregroundColor(OnyxColors.Text.primary)
+                Text("BEHAVIORAL")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .tracking(4)
 
-                HStack(spacing: 8) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Text("The Operator's Dashboard")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Tier \(viewModel.dimensionLevel)")
+                    Text("Level \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.behavioral)
+                        .foregroundColor(SanctuaryColors.Dimensions.behavioral)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Disciplined")
+                    Text("Rank: DISCIPLINED")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.behavioral)
+                        .foregroundColor(SanctuaryColors.Dimensions.behavioral)
                 }
             }
 
@@ -262,41 +255,44 @@ public struct BehavioralDimensionView: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 6, height: 6)
-                    .modifier(OnyxPulseModifier())
+                    .modifier(PulseModifier())
 
-                Text("Live")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                Text("LIVE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
-            Text("Discipline: \(Int(viewModel.data.disciplineIndex))")
+            Text("Discipline: \(Int(viewModel.data.disciplineIndex))%")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(disciplineColor)
 
             Text(disciplineStatus)
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
-        .padding(12)
+        .padding(SanctuaryLayout.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     private var statusColor: Color {
         if viewModel.data.violations.isEmpty {
-            return OnyxColors.Accent.sage
+            return SanctuaryColors.Semantic.success
         }
-        return OnyxColors.Accent.rose
+        return SanctuaryColors.Semantic.warning
     }
 
     private var disciplineColor: Color {
-        if viewModel.data.disciplineIndex >= 80 { return OnyxColors.Accent.sage }
-        if viewModel.data.disciplineIndex >= 60 { return OnyxColors.DimensionVivid.behavioral }
-        if viewModel.data.disciplineIndex >= 40 { return OnyxColors.Accent.amber }
-        return OnyxColors.Accent.rose
+        if viewModel.data.disciplineIndex >= 80 { return SanctuaryColors.Semantic.success }
+        if viewModel.data.disciplineIndex >= 60 { return SanctuaryColors.Semantic.info }
+        if viewModel.data.disciplineIndex >= 40 { return SanctuaryColors.Semantic.warning }
+        return SanctuaryColors.Semantic.error
     }
 
     private var disciplineStatus: String {
@@ -333,18 +329,18 @@ public struct BehavioralDimensionView: View {
     }
 }
 
-// MARK: - Onyx Pulse Modifier
+// MARK: - Pulse Modifier
 
 @MainActor
-private struct OnyxPulseModifier: ViewModifier {
+private struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.2 : 1.0)
-            .opacity(isPulsing ? 0.5 : 1.0)
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
             .animation(
-                .easeInOut(duration: 1.5)
+                .easeInOut(duration: 1)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -354,14 +350,14 @@ private struct OnyxPulseModifier: ViewModifier {
 
 // MARK: - Streak Detail Panel
 
-/// Detail panel for a selected streak — Onyx design
+/// Detail panel for a selected streak
 public struct StreakDetailPanel: View {
 
     let streak: Streak
     let onDismiss: () -> Void
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
                 Image(systemName: streak.category.iconName)
@@ -370,13 +366,12 @@ public struct StreakDetailPanel: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(streak.name)
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
 
                     Text(streak.category.displayName)
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
                 }
 
                 Spacer()
@@ -384,96 +379,112 @@ public struct StreakDetailPanel: View {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 14))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
 
             Rectangle()
-                .fill(OnyxColors.Text.muted.opacity(0.3))
+                .fill(SanctuaryColors.Glass.border)
                 .frame(height: 1)
 
             // Stats
-            HStack(spacing: 32) {
+            HStack(spacing: SanctuaryLayout.Spacing.xl) {
                 VStack(spacing: 4) {
                     Text("\(streak.currentDays)")
-                        .font(OnyxTypography.largeMetric)
-                        .foregroundColor(OnyxColors.Text.primary)
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .foregroundColor(SanctuaryColors.Text.primary)
 
                     Text("Current")
-                        .font(OnyxTypography.micro)
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .font(.system(size: 10))
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
 
                 VStack(spacing: 4) {
                     Text("\(streak.personalBest)")
-                        .font(OnyxTypography.largeMetric)
-                        .foregroundColor(OnyxColors.Accent.amber)
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .foregroundColor(SanctuaryColors.XP.primary)
 
                     Text("Best")
-                        .font(OnyxTypography.micro)
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .font(.system(size: 10))
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
 
                 VStack(spacing: 4) {
-                    Text("+\(streak.xpPerDay)/day")
-                        .font(OnyxTypography.compactMetric)
-                        .foregroundColor(OnyxColors.Accent.amber)
+                    Text("+\(streak.xpPerDay)")
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("Progress")
-                        .font(OnyxTypography.micro)
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("XP/day")
+                        .font(.system(size: 10))
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
             }
 
             // Milestone progress
-            VStack(alignment: .leading, spacing: 8) {
-                OnyxSectionHeader("Next Milestone")
+            VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+                Text("NEXT MILESTONE")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .tracking(1)
 
-                OnyxProgressLine(
-                    progress: streak.progress,
-                    color: categoryColor
-                )
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(SanctuaryColors.Glass.border)
+                            .frame(height: 8)
+
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(categoryColor)
+                            .frame(
+                                width: geometry.size.width * CGFloat(streak.progress),
+                                height: 8
+                            )
+                    }
+                }
+                .frame(height: 8)
 
                 HStack {
                     Text("\(streak.daysToNextMilestone) days remaining")
-                        .font(OnyxTypography.micro)
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .font(.system(size: 10))
+                        .foregroundColor(SanctuaryColors.Text.secondary)
 
                     Spacer()
 
-                    Text("+\(streak.milestoneXP)")
-                        .font(OnyxTypography.label)
-                        .tracking(OnyxTypography.labelTracking)
-                        .foregroundColor(OnyxColors.Accent.amber)
+                    Text("+\(streak.milestoneXP) XP")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(SanctuaryColors.XP.primary)
                 }
             }
 
             // Status
             if streak.isPersonalBest {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "star.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Accent.amber)
+                        .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("Personal best")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Accent.amber)
+                    Text("Personal Best!")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.XP.primary)
                 }
-                .padding(8)
+                .padding(SanctuaryLayout.Spacing.sm)
                 .frame(maxWidth: .infinity)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(OnyxColors.Accent.amber.opacity(0.1))
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        .fill(SanctuaryColors.XP.primary.opacity(0.1))
                 )
             }
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.xl)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(categoryColor.opacity(0.3), lineWidth: 1)
+                )
         )
-        .onyxShadow(.floating)
     }
 
     private var categoryColor: Color {
@@ -516,7 +527,7 @@ public final class BehavioralDimensionViewModel: ObservableObject {
 
 // MARK: - Compact Behavioral View
 
-/// Compact version for embedding in other views — Onyx design
+/// Compact version for embedding in other views
 public struct BehavioralDimensionCompact: View {
 
     let data: BehavioralDimensionData
@@ -530,18 +541,18 @@ public struct BehavioralDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "bolt.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(OnyxColors.Dimension.behavioral)
+                        .foregroundColor(SanctuaryColors.Dimensions.behavioral)
 
-                    Text("Behavioral")
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                    Text("BEHAVIORAL")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .tracking(2)
                 }
 
                 Spacer()
@@ -554,7 +565,7 @@ public struct BehavioralDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(OnyxColors.Dimension.behavioral)
+                    .foregroundColor(SanctuaryColors.Dimensions.behavioral)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -581,13 +592,20 @@ public struct BehavioralDimensionCompact: View {
                 onExpand: onExpand
             )
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(
+                            isHovered ? SanctuaryColors.Dimensions.behavioral.opacity(0.5) : SanctuaryColors.Glass.border,
+                            lineWidth: 1
+                        )
+                )
         )
-        .onyxShadow(isHovered ? .hovered : .resting)
-        .animation(OnyxSpring.hover, value: isHovered)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(SanctuarySprings.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

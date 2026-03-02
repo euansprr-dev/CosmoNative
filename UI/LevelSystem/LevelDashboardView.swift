@@ -741,7 +741,7 @@ struct BadgeDetailCard: View {
 
                 Image(systemName: badge.iconName)
                     .font(.system(size: 28))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
             }
 
             Text(badge.name)

@@ -41,7 +41,7 @@ public struct CompletionAnimationView: View {
     public var body: some View {
         ZStack {
             // Background dim
-            Color.black.opacity(isAnimating ? 0.3 : 0)
+            Color.black.opacity(isAnimating ? 0.12 : 0)
                 .ignoresSafeArea()
                 .animation(.easeOut(duration: 0.2), value: isAnimating)
 
@@ -91,7 +91,7 @@ public struct CompletionAnimationView: View {
 
                 Image(systemName: "checkmark")
                     .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .scaleEffect(checkmarkScale)
                     .opacity(checkmarkOpacity)
             }
@@ -106,7 +106,7 @@ public struct CompletionAnimationView: View {
 
                 Image(systemName: "flag.checkered.2.crossed")
                     .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .scaleEffect(checkmarkScale)
                     .opacity(checkmarkOpacity)
             }
@@ -121,7 +121,7 @@ public struct CompletionAnimationView: View {
 
                 Image(systemName: "star.fill")
                     .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .scaleEffect(checkmarkScale)
                     .opacity(checkmarkOpacity)
             }
@@ -142,7 +142,7 @@ public struct CompletionAnimationView: View {
 
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 36, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .scaleEffect(checkmarkScale)
                     .opacity(checkmarkOpacity)
             }
@@ -157,7 +157,7 @@ public struct CompletionAnimationView: View {
 
                 Image(systemName: "flame.fill")
                     .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .scaleEffect(checkmarkScale)
                     .opacity(checkmarkOpacity)
             }
@@ -443,7 +443,7 @@ public struct XPAwardFloater: View {
 struct CompletionAnimation_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            PlannerumColors.voidPrimary.ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             VStack(spacing: 40) {
                 // Checkmark

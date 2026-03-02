@@ -18,7 +18,7 @@ final class DrawingStateManager: ObservableObject {
 
     @Published var toolMode: CanvasToolMode = .select
     @Published var currentShapeKind: ShapeKind = .rectangle
-    @Published var currentStrokeColor: String = "#FFFFFF"
+    @Published var currentStrokeColor: String = "#1A1A1A"
     @Published var currentFillColor: String? = nil
     @Published var currentStrokeWidth: CGFloat = 2.0
     @Published var currentTextWeight: DrawingTextWeight = .M

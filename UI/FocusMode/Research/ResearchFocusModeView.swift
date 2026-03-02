@@ -29,8 +29,10 @@ struct ResearchFocusModeView: View {
     @State private var showCommandK = false
     @State private var showResearchAgentSheet = false
     @State private var sidebarVisible = false
+    @State private var sidebarLocked = false
     @State private var showSettings = false
     @State private var rightClickMonitor: Any?
+    @State private var canvasFrameSize: CGSize = CGSize(width: 1440, height: 900)
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -59,6 +61,13 @@ struct ResearchFocusModeView: View {
                     },
                     floatingContent: {
                         floatingPanelsLayer
+                    }
+                )
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { canvasFrameSize = geo.size }
+                            .onChange(of: geo.size) { _, newSize in canvasFrameSize = newSize }
                     }
                 )
 
@@ -95,8 +104,9 @@ struct ResearchFocusModeView: View {
             UniversalFocusSidebar(
                 title: "Research",
                 icon: "magnifyingglass",
-                accentColor: OnyxColors.Dimension.knowledge,
-                isVisible: $sidebarVisible
+                accentColor: DS.entityResearch,
+                isVisible: $sidebarVisible,
+                isLocked: $sidebarLocked
             ) {
                 ResearchSidebarView(
                     atom: atom,
@@ -116,7 +126,7 @@ struct ResearchFocusModeView: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(DS.textMuted)
                             .frame(width: 28, height: 28)
-                            .background(DS.border, in: Circle())
+                            .background(DS.glassCardFill, in: Circle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -348,20 +358,38 @@ struct ResearchFocusModeView: View {
                             content: ""
                         )
                     },
-                    onAnnotationTap: { annotation in
-                        viewModel.selectAnnotation(annotation.id)
-                    },
                     onAnnotationEdit: { annotation, newContent in
                         viewModel.editAnnotation(annotation, newContent: newContent)
                     },
                     onAnnotationDelete: { annotation in
                         viewModel.deleteAnnotation(annotation.id)
                     },
-                    onAnnotationPositionChange: { annotation, offset in
-                        viewModel.updateAnnotationPosition(annotation, offset: offset)
-                    },
                     onCreateHighlightAnnotation: { sectionID, type, selectedText, range in
                         viewModel.createHighlightAnnotation(sectionID: sectionID, type: type, selectedText: selectedText, range: range)
+                    },
+                    onPromoteToBlock: { annotation in
+                        Task {
+                            let title = annotation.highlightedText?.prefix(60).description
+                                ?? annotation.type.label
+                            let body = annotation.content
+
+                            // Always create as note — annotations are working notes, not ideas
+                            let newAtom = Atom.new(type: .note, title: String(title), body: body)
+                            guard let created = try? await AtomRepository.shared.create(newAtom) else { return }
+
+                            // Position to the right of the transcript
+                            // Anchored HStack is 1160px wide (560+40+560), centered in canvas
+                            let rightOfTranscript = canvasFrameSize.width / 2 + 640
+                            let existingCount = CGFloat(floatingBlocksManager.blocks.count)
+                            let yOffset = 150 + existingCount * 200
+
+                            floatingBlocksManager.addBlock(
+                                linkedAtomUUID: created.uuid,
+                                linkedAtomType: .note,
+                                title: String(title),
+                                position: CGPoint(x: rightOfTranscript, y: yOffset)
+                            )
+                        }
                     }
                 )
                 .frame(width: 560)
@@ -419,7 +447,7 @@ struct ResearchFocusModeView: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .background(DS.glassCardFill, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -437,10 +465,10 @@ struct ResearchFocusModeView: View {
                     .font(.system(size: 10, weight: .medium))
                     .tracking(OnyxTypography.labelTracking)
             }
-            .foregroundColor(OnyxColors.Dimension.knowledge)
+            .foregroundColor(DS.entityResearch)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(OnyxColors.Dimension.knowledge.opacity(0.12), in: Capsule())
+            .background(DS.entityResearch.opacity(0.12), in: Capsule())
 
             Spacer()
 
@@ -465,7 +493,8 @@ struct ResearchFocusModeView: View {
             }
 
         }
-        .padding(.horizontal, 20)
+        .padding(.leading, 20)
+        .padding(.trailing, 56) // Leave room for gearshape overlay at .topTrailing
         .padding(.vertical, 12)
         .background(
             LinearGradient(
@@ -487,14 +516,14 @@ struct ResearchFocusModeView: View {
 
     /// 8-item radial menu for focus modes (Note/Idea/Task/Content/Research/Connection/Agent/Database)
     private static let focusModeActions: [RadialAction] = [
-        RadialAction(icon: "note.text", label: "Note", color: Color(hex: "#F97316"), type: .createNote),
-        RadialAction(icon: "lightbulb.fill", label: "Idea", color: Color(hex: "#818CF8"), type: .createIdea),
-        RadialAction(icon: "checkmark.circle.fill", label: "Task", color: Color(hex: "#22C55E"), type: .createTask),
-        RadialAction(icon: "doc.text.fill", label: "Content", color: Color(hex: "#3B82F6"), type: .createContent),
-        RadialAction(icon: "magnifyingglass", label: "Research", color: Color(hex: "#10B981"), type: .createResearch),
-        RadialAction(icon: "link.circle.fill", label: "Connection", color: Color(hex: "#8B5CF6"), type: .createConnection),
-        RadialAction(icon: "brain.head.profile", label: "Agent", color: Color(hex: "#06B6D4"), type: .researchAgent),
-        RadialAction(icon: "tray.full.fill", label: "Database", color: Color(hex: "#64748B"), type: .fromDatabase),
+        RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
+        RadialAction(icon: "lightbulb.fill", label: "Idea", color: DS.entityIdea, type: .createIdea),
+        RadialAction(icon: "checkmark.circle.fill", label: "Task", color: DS.entityTask, type: .createTask),
+        RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
+        RadialAction(icon: "magnifyingglass", label: "Research", color: DS.entityResearch, type: .createResearch),
+        RadialAction(icon: "link.circle.fill", label: "Connection", color: DS.entityConnection, type: .createConnection),
+        RadialAction(icon: "brain.head.profile", label: "Agent", color: DS.accent, type: .researchAgent),
+        RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textMuted, type: .fromDatabase),
     ]
 
     // MARK: - Right-Click Monitor
@@ -1238,7 +1267,7 @@ struct ResearchAgentInputSheet: View {
                 .font(.system(size: 15))
                 .foregroundColor(DS.text)
                 .padding(12)
-                .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+                .dsGlassInput(isFocused: isFocused, cornerRadius: 8)
                 .focused($isFocused)
                 .lineLimit(3...6)
 
@@ -1263,8 +1292,8 @@ struct ResearchAgentInputSheet: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Color(hex: "#06B6D4"), in: RoundedRectangle(cornerRadius: 8))
-                    .foregroundColor(.white)
+                    .background(DS.accent, in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundColor(DS.textOnAccent)
                 }
                 .buttonStyle(.plain)
                 .disabled(query.isEmpty)
@@ -1273,7 +1302,12 @@ struct ResearchAgentInputSheet: View {
         }
         .padding(24)
         .frame(width: 450)
-        .background(DS.surfaceCard)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsFloatingShadow()
         .onAppear {
             isFocused = true
         }
@@ -1303,7 +1337,7 @@ struct ResearchAgentPanelView: View {
                     .foregroundColor(agentColor)
 
                 Text("RESEARCH AGENT")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(agentColor)
                     .tracking(0.8)
 
@@ -1344,16 +1378,12 @@ struct ResearchAgentPanelView: View {
         }
         .padding(14)
         .frame(width: 320)
-        .background(panelBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(borderColor, lineWidth: 1.5)
+                .stroke(borderColor, lineWidth: 0.5)
         )
-        .shadow(
-            color: result.status == .complete ? agentColor.opacity(0.2) : Color.black.opacity(0.3),
-            radius: isHovered ? 16 : 10
-        )
+        .dsFloatingShadow()
         .position(position)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) {
@@ -1373,7 +1403,7 @@ struct ResearchAgentPanelView: View {
                     .scaleEffect(0.6)
                     .tint(agentColor)
                 Text("Searching...")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(agentColor)
             }
 
@@ -1383,7 +1413,7 @@ struct ResearchAgentPanelView: View {
                     .font(.system(size: 10))
                     .foregroundColor(Color(hex: "#22C55E"))
                 Text("Complete")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(Color(hex: "#22C55E"))
             }
 
@@ -1393,13 +1423,13 @@ struct ResearchAgentPanelView: View {
                     .font(.system(size: 10))
                     .foregroundColor(DS.red)
                 Text("Failed")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(DS.red)
             }
 
         case .pending:
             Text("Pending")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(DS.textSecondary)
         }
     }
@@ -1460,10 +1490,10 @@ struct ResearchAgentPanelView: View {
                         Text("Save as Atom")
                             .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(agentColor.opacity(0.3), in: Capsule())
+                    .background(DS.accent.opacity(0.1), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -1510,17 +1540,6 @@ struct ResearchAgentPanelView: View {
     }
 
     // MARK: - Styling
-
-    private var panelBackground: some View {
-        ZStack {
-            DS.surfaceCard
-            LinearGradient(
-                colors: [agentColor.opacity(0.03), Color.clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
 
     private var borderColor: Color {
         switch result.status {

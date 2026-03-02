@@ -81,10 +81,7 @@ struct SwipeStudyFocusModeView: View {
     // Copy transcript feedback
     @State private var copiedTranscript = false
 
-    // Sidebar state
-    @State private var sidebarVisible = false
-
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -117,7 +114,7 @@ struct SwipeStudyFocusModeView: View {
                 }
             } else {
                 VStack(spacing: 12) {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(DS.textMuted)
                     if isAnalyzing {
                         Text("Analyzing swipe file...")
                             .font(.system(size: 13))
@@ -125,22 +122,6 @@ struct SwipeStudyFocusModeView: View {
                     }
                 }
             }
-        }
-        .overlay(alignment: .topLeading) {
-            FocusSidebarTrigger(isVisible: $sidebarVisible)
-                .frame(maxHeight: .infinity)
-        }
-        .overlay(alignment: .topLeading) {
-            UniversalFocusSidebar(
-                title: "Swipe Analysis",
-                icon: "doc.text.magnifyingglass",
-                accentColor: gold,
-                isVisible: $sidebarVisible
-            ) {
-                swipeSidebarContent
-            }
-            .padding(.leading, 8)
-            .padding(.top, 56)
         }
         .onAppear {
             loadAtom()
@@ -482,13 +463,13 @@ struct SwipeStudyFocusModeView: View {
                     if igIsExtractingVideo {
                         VStack(spacing: 8) {
                             ProgressView()
-                                .tint(.white)
+                                .tint(DS.accent)
                             Text("Loading carousel...")
                                 .font(.system(size: 11))
                                 .foregroundColor(DS.textSecondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.black.opacity(0.4))
+                        .background(DS.bg.opacity(0.7))
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "photo.on.rectangle.angled")
@@ -516,7 +497,7 @@ struct SwipeStudyFocusModeView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.black.opacity(0.5))
+                        .background(DS.bg.opacity(0.7))
                     }
                 }
                 .frame(width: 350, height: 350)
@@ -542,37 +523,18 @@ struct SwipeStudyFocusModeView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                         )
                 } else if let player = igPlayer {
-                    // Success state — native AVPlayer
+                    // Success state — native AVPlayer with macOS controls
                     ZStack {
                         VideoPlayer(player: player)
-                            .disabled(true)
-
-                        // Play/pause overlay
-                        if !igIsPlaying {
-                            Button {
-                                toggleIGPlayback()
-                            } label: {
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                                    .frame(width: 60, height: 60)
-                                    .overlay(
-                                        Image(systemName: "play.fill")
-                                            .font(.system(size: 24))
-                                            .foregroundColor(.white)
-                                            .offset(x: 2)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
 
                         // Refreshing overlay
                         if igIsExtractingVideo {
                             Rectangle()
-                                .fill(.black.opacity(0.5))
+                                .fill(DS.bg.opacity(0.7))
                                 .overlay(
                                     VStack(spacing: 8) {
                                         ProgressView()
-                                            .tint(.white)
+                                            .tint(DS.accent)
                                         Text("Refreshing video link...")
                                             .font(.system(size: 11))
                                             .foregroundColor(DS.textSecondary)
@@ -586,9 +548,6 @@ struct SwipeStudyFocusModeView: View {
                         RoundedRectangle(cornerRadius: 16)
                             .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
-                    .onTapGesture {
-                        toggleIGPlayback()
-                    }
                 } else if igVideoFailed {
                     // Failed state — thumbnail + open in browser
                     igThumbnailView(atom: atom)
@@ -632,10 +591,7 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
 
-            // Playback controls (only when player is active)
-            if !isCarouselContent, igPlayer != nil {
-                igPlaybackControls
-            }
+            // Native AVPlayerView controls handle playback — no custom scrubber needed
             } // end else (video player branch)
 
             // Metadata footer
@@ -676,7 +632,7 @@ struct SwipeStudyFocusModeView: View {
                     .aspectRatio(contentMode: .fill)
             } placeholder: {
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
             }
         } else if let thumbnailUrl = extractThumbnailUrl(from: atom),
                   let url = URL(string: thumbnailUrl) {
@@ -686,7 +642,7 @@ struct SwipeStudyFocusModeView: View {
                     .aspectRatio(contentMode: .fill)
             } placeholder: {
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
             }
         } else {
             Rectangle()
@@ -739,7 +695,7 @@ struct SwipeStudyFocusModeView: View {
                 .padding(.horizontal, 8)
             }
             .frame(width: 350, height: 350)
-            .background(Color.black)
+            .background(DS.surface)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
@@ -773,7 +729,7 @@ struct SwipeStudyFocusModeView: View {
                     .aspectRatio(contentMode: .fit)
             case .failure:
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
                     .overlay(
                         VStack(spacing: 8) {
                             Image(systemName: "photo")
@@ -786,14 +742,14 @@ struct SwipeStudyFocusModeView: View {
                     )
             case .empty:
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
                     .overlay(
                         ProgressView()
                             .tint(.white)
                     )
             @unknown default:
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
             }
         }
         .frame(maxWidth: 350, maxHeight: 350)
@@ -802,11 +758,11 @@ struct SwipeStudyFocusModeView: View {
     private func carouselNavArrow(systemName: String) -> some View {
         Image(systemName: systemName)
             .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundColor(DS.text)
             .frame(width: 36, height: 36)
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(Circle())
-            .shadow(color: .black.opacity(0.3), radius: 4)
+            .shadow(color: .black.opacity(0.1), radius: 4)
     }
 
     // MARK: - IG Playback Controls
@@ -828,7 +784,7 @@ struct SwipeStudyFocusModeView: View {
 
                     // Scrubber dot
                     Circle()
-                        .fill(.white)
+                        .fill(DS.surfaceElevated)
                         .frame(width: 12, height: 12)
                         .offset(x: igProgressWidth(in: geometry.size.width) - 6)
                         .gesture(
@@ -1451,7 +1407,7 @@ struct SwipeStudyFocusModeView: View {
                         if !slideComments.isEmpty {
                             Text("\(slideComments.count)")
                                 .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.black)
+                                .foregroundColor(DS.textOnAccent)
                                 .frame(width: 16, height: 16)
                                 .background(gold, in: Circle())
                         }
@@ -1523,7 +1479,7 @@ struct SwipeStudyFocusModeView: View {
                     }
                 }
                 .padding(10)
-                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(activeCommentSlideIndex == index ? gold.opacity(0.3) : DS.border, lineWidth: 1)
@@ -1580,7 +1536,7 @@ struct SwipeStudyFocusModeView: View {
                         Text(analysis == nil ? "Analyze" : "Re-analyze")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(gold, in: Capsule())
@@ -2071,7 +2027,7 @@ struct SwipeStudyFocusModeView: View {
                     Text("Analyze with Claude")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(.black)
+                .foregroundColor(DS.textOnAccent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(gold, in: Capsule())
@@ -2422,10 +2378,7 @@ struct SwipeStudyFocusModeView: View {
         }
         .padding(16)
         .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .dsGradientBorder(cornerRadius: 12)
     }
 
     // MARK: - Instagram Source Check
@@ -2463,11 +2416,8 @@ struct SwipeStudyFocusModeView: View {
             .padding(.vertical, 20)
         }
         .padding(16)
-        .background(DS.border, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .dsGradientBorder(cornerRadius: 12)
     }
 
     // MARK: - Analysis Shimmer Skeleton
@@ -2491,10 +2441,7 @@ struct SwipeStudyFocusModeView: View {
             }
             .padding(16)
             .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(DS.border, lineWidth: 1)
-            )
+            .dsGradientBorder(cornerRadius: 12)
 
             // Structure map skeleton
             VStack(alignment: .leading, spacing: 12) {
@@ -2508,10 +2455,7 @@ struct SwipeStudyFocusModeView: View {
             }
             .padding(16)
             .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(DS.border, lineWidth: 1)
-            )
+            .dsGradientBorder(cornerRadius: 12)
 
             // Emotional arc skeleton
             VStack(alignment: .leading, spacing: 12) {
@@ -2520,10 +2464,7 @@ struct SwipeStudyFocusModeView: View {
             }
             .padding(16)
             .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(DS.border, lineWidth: 1)
-            )
+            .dsGradientBorder(cornerRadius: 12)
         }
     }
 
@@ -2543,87 +2484,7 @@ struct SwipeStudyFocusModeView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
         .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
-        )
-    }
-
-    // MARK: - Sidebar Content
-
-    private var swipeSidebarContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let analysis = analysis {
-                // Hook type
-                if let hookType = analysis.hookType {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("HOOK TYPE")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .tracking(0.8)
-
-                        Text(hookType.displayName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(gold)
-                    }
-                }
-
-                // Hook score
-                if let hookScore = analysis.hookScore {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("HOOK SCORE")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .tracking(0.8)
-
-                        HStack(spacing: 4) {
-                            Text(String(format: "%.0f", hookScore * 10))
-                                .font(.system(size: 20, weight: .bold, design: .rounded))
-                                .foregroundColor(DS.text)
-                            Text("/ 100")
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.textMuted)
-                        }
-                    }
-                }
-
-                // Dominant emotion
-                if let emotion = analysis.dominantEmotion {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("DOMINANT EMOTION")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .tracking(0.8)
-
-                        Text(emotion.displayName)
-                            .font(.system(size: 13))
-                            .foregroundColor(DS.textSecondary)
-                    }
-                }
-
-                // Persuasion techniques
-                if let techniques = analysis.persuasionTechniques, !techniques.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("PERSUASION")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .tracking(0.8)
-
-                        ForEach(techniques, id: \.type) { technique in
-                            Text(technique.type.displayName)
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.textSecondary)
-                        }
-                    }
-                }
-            } else {
-                Text("No analysis available")
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 20)
-            }
-        }
+        .dsGradientBorder(cornerRadius: 12)
     }
 
     // MARK: - Notes Section (Removed — replaced by per-slide inline commenting)
@@ -2994,7 +2855,7 @@ struct SwipeStudyFocusModeView: View {
                         Text("Save & Re-analyze")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(gold, in: Capsule())
@@ -3248,7 +3109,7 @@ private struct TaxonomySection: View {
     @State private var showCreatorSearch = false
     @State private var linkedCreatorName: String?
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -3282,10 +3143,7 @@ private struct TaxonomySection: View {
         }
         .padding(16)
         .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .dsGradientBorder(cornerRadius: 12)
     }
 
     // MARK: - Classification Source Badge
@@ -3377,7 +3235,7 @@ private struct TaxonomySection: View {
                         Text("Accept")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(gold, in: Capsule())
@@ -3738,7 +3596,7 @@ private struct TaxonomySection: View {
                         creatorCreateNewRow
                     }
                 }
-                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 6))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(DS.borderActive, lineWidth: 1)
@@ -3748,7 +3606,7 @@ private struct TaxonomySection: View {
                 VStack(spacing: 0) {
                     creatorCreateNewRow
                 }
-                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 6))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(DS.borderActive, lineWidth: 1)
@@ -3957,9 +3815,9 @@ private struct SlideTextEditor: NSViewRepresentable {
 
         textView.isRichText = false
         textView.font = .systemFont(ofSize: 13)
-        textView.textColor = .white.withAlphaComponent(0.85)
+        textView.textColor = NSColor(DS.text)
         textView.backgroundColor = .clear
-        textView.insertionPointColor = .white
+        textView.insertionPointColor = NSColor(DS.text)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.textContainerInset = NSSize(width: 4, height: 4)

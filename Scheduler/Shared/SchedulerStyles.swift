@@ -210,14 +210,14 @@ public enum SchedulerColors {
     /// Current time indicator
     public static let nowIndicator = CosmoColors.coral
 
-    /// Selected block border
-    public static let selectionBorder = CosmoColors.lavender
+    /// Selected block border — green accent
+    public static let selectionBorder = Color(hex: "2D6A4F")
 
-    /// Lavender (passthrough to CosmoColors)
+    /// Primary accent (passthrough to CosmoColors)
     public static let lavender = CosmoColors.lavender
 
     /// Drag preview overlay
-    public static let dragPreview = CosmoColors.lavender.opacity(0.3)
+    public static let dragPreview = Color(hex: "2D6A4F").opacity(0.2)
 
     // ═══════════════════════════════════════════════════════════════
     // SURFACE COLORS - Backgrounds and cards
@@ -495,7 +495,7 @@ struct TodayRowStyle: ViewModifier {
             .frame(height: SchedulerDimensions.todayRowHeight)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovered ? CosmoColors.glassGrey.opacity(0.08) : Color.clear)
+                    .fill(isHovered ? DS.surfaceHover : Color.clear)
             )
             .opacity(isCompleted ? 0.6 : 1.0)
             .animation(SchedulerSprings.instant, value: isHovered)

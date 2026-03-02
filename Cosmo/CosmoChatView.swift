@@ -369,6 +369,7 @@ struct ActionButton: View {
 // MARK: - Processing Indicator
 struct ProcessingIndicator: View {
     @State private var dots = 1
+    @State private var animationTimer: Timer?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -390,9 +391,15 @@ struct ProcessingIndicator: View {
             Spacer()
         }
         .onAppear {
-            Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
-                dots = (dots % 3) + 1
+            animationTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+                Task { @MainActor in
+                    dots = (dots % 3) + 1
+                }
             }
+        }
+        .onDisappear {
+            animationTimer?.invalidate()
+            animationTimer = nil
         }
     }
 }

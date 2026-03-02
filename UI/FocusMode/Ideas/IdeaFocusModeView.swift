@@ -31,6 +31,7 @@ struct IdeaFocusModeView: View {
     // MARK: - Sidebar State
 
     @State private var sidebarVisible = false
+    @State private var sidebarLocked = false
 
     // MARK: - Hover States
 
@@ -40,9 +41,9 @@ struct IdeaFocusModeView: View {
     // MARK: - Constants
 
     private let accentIndigo = DS.accent
-    private let panelBackground = DS.surface
-    private let cardBackground = DS.border
-    private let ideaGold = OnyxColors.Accent.amber
+    private let panelBackground = Color.clear
+    private let cardBackground = DS.glassCardFill
+    private let ideaGold = DS.entityIdea
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -95,8 +96,9 @@ struct IdeaFocusModeView: View {
             UniversalFocusSidebar(
                 title: "Intelligence",
                 icon: "brain",
-                accentColor: OnyxColors.Accent.amber,
-                isVisible: $sidebarVisible
+                accentColor: DS.entityIdea,
+                isVisible: $sidebarVisible,
+                isLocked: $sidebarLocked
             ) {
                 rightColumn
             }
@@ -154,7 +156,7 @@ struct IdeaFocusModeView: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .background(DS.glassCardFill, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -164,7 +166,7 @@ struct IdeaFocusModeView: View {
                     .font(.system(size: 10))
                 Text("Idea")
                     .font(.system(size: 10, weight: .medium))
-                    .tracking(OnyxTypography.labelTracking)
+                    .tracking(0.88)
             }
             .foregroundColor(ideaGold)
             .padding(.horizontal, 8)
@@ -175,7 +177,7 @@ struct IdeaFocusModeView: View {
             if viewModel.selectedStatus != .spark {
                 HStack(spacing: 4) {
                     Image(systemName: viewModel.selectedStatus.iconName)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                     Text(viewModel.selectedStatus.displayName.uppercased())
                         .font(.system(size: 8, weight: .bold))
                         .tracking(0.6)
@@ -204,7 +206,7 @@ struct IdeaFocusModeView: View {
                     Text("Analyze")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.textOnAccent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(accentIndigo, in: Capsule())
@@ -220,7 +222,7 @@ struct IdeaFocusModeView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.textMuted)
                         .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
+                        .background(DS.glassCardFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -233,10 +235,10 @@ struct IdeaFocusModeView: View {
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 13))
-                    .foregroundColor(sidebarVisible ? OnyxColors.Accent.amber : DS.textSecondary)
+                    .foregroundColor(sidebarVisible ? DS.entityIdea : DS.textSecondary)
                     .padding(8)
                     .background(
-                        sidebarVisible ? OnyxColors.Accent.amber.opacity(0.15) : DS.border,
+                        sidebarVisible ? DS.entityIdea.opacity(0.15) : DS.border,
                         in: Circle()
                     )
             }
@@ -392,14 +394,7 @@ struct IdeaFocusModeView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(DS.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    )
-            )
+            .dsGlassCard(cornerRadius: 8)
         }
     }
 
@@ -446,11 +441,7 @@ struct IdeaFocusModeView: View {
                         .padding(.bottom, 12)
                 }
             }
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(DS.border, lineWidth: 1)
-            )
+            .dsGlassInput(isFocused: isDescriptionFocused, cornerRadius: 12)
             .overlay(alignment: .topLeading) {
                 if viewModel.editableBody.isEmpty {
                     Text("What's the core idea? Include the hook angle, key points, and why this matters...")
@@ -496,9 +487,9 @@ struct IdeaFocusModeView: View {
         let isSelected = status == viewModel.selectedStatus
         let isHovered = hoveredStatus == status
         let bgColor: Color = isSelected
-            ? status.color.opacity(0.3)
-            : (isHovered ? DS.borderActive : DS.border)
-        let strokeColor: Color = isSelected ? status.color.opacity(0.5) : Color.clear
+            ? status.color.opacity(0.15)
+            : (isHovered ? DS.surfaceHover : DS.surfaceElevated)
+        let strokeColor: Color = isSelected ? status.color.opacity(0.5) : DS.borderSubtle
 
         HStack(spacing: 5) {
             Image(systemName: status.iconName)
@@ -506,7 +497,7 @@ struct IdeaFocusModeView: View {
             Text(status.displayName)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
         }
-        .foregroundColor(isSelected ? .white : status.color.opacity(0.8))
+        .foregroundColor(isSelected ? status.color : DS.text)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(bgColor, in: Capsule())
@@ -544,7 +535,7 @@ struct IdeaFocusModeView: View {
     private func formatGroupRow(label: String, formats: [ContentFormat]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textMuted)
 
             FlowLayout(spacing: 6) {
@@ -569,7 +560,7 @@ struct IdeaFocusModeView: View {
 
         HStack(spacing: 4) {
             Image(systemName: format.icon)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text(format.displayName)
                 .font(.system(size: 11, weight: .medium))
         }
@@ -649,7 +640,7 @@ struct IdeaFocusModeView: View {
             }
 
             Text(platform.displayName)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(isSelected ? platform.color : DS.textMuted)
         }
         .frame(width: 48)
@@ -692,11 +683,7 @@ struct IdeaFocusModeView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(DS.border, lineWidth: 1)
-                    )
+                    .dsGlassCard(cornerRadius: 10)
                 } else {
                     Menu {
                         ForEach(viewModel.clientProfiles, id: \.uuid) { client in
@@ -767,13 +754,13 @@ struct IdeaFocusModeView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(DS.border, in: Capsule())
+                    .background(DS.glassCardFill, in: Capsule())
                 }
 
                 // Add tag field
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DS.textMuted)
 
                     TextField("Add tag", text: $newTagText)
@@ -789,7 +776,7 @@ struct IdeaFocusModeView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(DS.border, in: Capsule())
+                .background(DS.glassCardFill, in: Capsule())
             }
         }
     }
@@ -899,7 +886,7 @@ struct IdeaFocusModeView: View {
                     .foregroundColor(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
             } else {
                 ForEach(viewModel.linkedSwipes, id: \.uuid) { swipe in
                     linkedSwipeCard(swipe)
@@ -912,7 +899,7 @@ struct IdeaFocusModeView: View {
     private var linkedSwipesLinkButtonLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "plus")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
             Text("Link")
                 .font(.system(size: 10, weight: .medium))
         }
@@ -964,7 +951,7 @@ struct IdeaFocusModeView: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(DS.textMuted)
                         .padding(5)
-                        .background(DS.border, in: Circle())
+                        .background(DS.glassCardFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -976,20 +963,16 @@ struct IdeaFocusModeView: View {
                 }
                 if let platform = swipe.researchMetadata?.contentSource {
                     Text(platform)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(DS.border, in: Capsule())
+                        .background(DS.glassCardFill, in: Capsule())
                 }
             }
         }
         .padding(10)
-        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .dsGlassCard(cornerRadius: 10)
     }
 
     @ViewBuilder
@@ -1076,7 +1059,7 @@ struct IdeaFocusModeView: View {
                     .foregroundColor(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
             } else {
                 // Linked connections
                 ForEach(viewModel.linkedConnections, id: \.uuid) { conn in
@@ -1095,7 +1078,7 @@ struct IdeaFocusModeView: View {
     private var relatedConnectionsLinkButtonLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "plus")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
             Text("Link")
                 .font(.system(size: 10, weight: .medium))
         }
@@ -1123,7 +1106,7 @@ struct IdeaFocusModeView: View {
                         connectionMaturityBadge(maturity)
 
                         Text("\(filledCount)/8 sections")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)
                     }
                 }
@@ -1137,7 +1120,7 @@ struct IdeaFocusModeView: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(DS.textMuted)
                         .padding(5)
-                        .background(DS.border, in: Circle())
+                        .background(DS.glassCardFill, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -1153,17 +1136,13 @@ struct IdeaFocusModeView: View {
             // Filled section names
             if !filledNames.isEmpty {
                 Text(filledNames.joined(separator: " \u{2022} "))
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             }
         }
         .padding(10)
-        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .dsGlassCard(cornerRadius: 10)
     }
 
     @ViewBuilder
@@ -1174,7 +1153,7 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(accentIndigo.opacity(0.6))
 
                 Text(conn.title ?? "Untitled")
@@ -1188,7 +1167,7 @@ struct IdeaFocusModeView: View {
             }
 
             Text("\(filledCount)/8 sections")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(DS.textMuted)
 
             HStack(spacing: 8) {
@@ -1210,7 +1189,7 @@ struct IdeaFocusModeView: View {
             }
         }
         .padding(10)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
@@ -1224,7 +1203,7 @@ struct IdeaFocusModeView: View {
     private var suggestedConnectionLinkLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "link.badge.plus")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text("Link")
                 .font(.system(size: 10, weight: .medium))
         }
@@ -1241,7 +1220,7 @@ struct IdeaFocusModeView: View {
             .foregroundColor(DS.textMuted)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 5))
     }
 
     @ViewBuilder
@@ -1252,7 +1231,7 @@ struct IdeaFocusModeView: View {
                 .fill(color)
                 .frame(width: 5, height: 5)
             Text(level.displayName)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .tracking(0.3)
                 .foregroundColor(color)
         }
@@ -1360,7 +1339,7 @@ struct IdeaFocusModeView: View {
                     .foregroundColor(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
             } else {
                 ForEach(viewModel.generatedHooks) { hook in
                     generatedHookCard(hook)
@@ -1401,7 +1380,7 @@ struct IdeaFocusModeView: View {
             // Source swipe attribution
             if let source = hook.sourceSwipeTitle, !source.isEmpty {
                 Text("Based on pattern from \(source)")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
                     .italic()
             }
@@ -1416,11 +1395,7 @@ struct IdeaFocusModeView: View {
             .buttonStyle(.plain)
         }
         .padding(10)
-        .background(DS.border, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.border, lineWidth: 1)
-        )
+        .dsGlassCard(cornerRadius: 10)
     }
 
     @ViewBuilder
@@ -1433,7 +1408,7 @@ struct IdeaFocusModeView: View {
                 .fill(color)
                 .frame(width: 6, height: 6)
             Text(String(format: "%.1f", score))
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(color)
         }
         .padding(.horizontal, 6)
@@ -1445,7 +1420,7 @@ struct IdeaFocusModeView: View {
     private var generatedHookUseLabel: some View {
         HStack(spacing: 4) {
             Image(systemName: "text.insert")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text("Use This")
                 .font(.system(size: 10, weight: .medium))
         }
@@ -1472,7 +1447,7 @@ struct IdeaFocusModeView: View {
 
                 if let lastAnalyzed = viewModel.sessionState.lastAnalyzedAt {
                     Text("Last analyzed: \(formatRelativeDate(lastAnalyzed))")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                 }
             }
@@ -1493,15 +1468,11 @@ struct IdeaFocusModeView: View {
                     Text(viewModel.insight == nil ? "Analyze Idea" : "Re-analyze")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(
-                    LinearGradient(
-                        colors: [accentIndigo, accentIndigo.opacity(0.8)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
+                    DS.accent,
                     in: RoundedRectangle(cornerRadius: 8)
                 )
             }
@@ -1550,7 +1521,7 @@ struct IdeaFocusModeView: View {
             Image(systemName: hookType.iconName)
                 .font(.system(size: 8))
             Text(hookType.displayName)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
         }
         .foregroundColor(hookType.color)
         .padding(.horizontal, 6)
@@ -1594,11 +1565,11 @@ struct IdeaFocusModeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Confidence")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                     Spacer()
                     Text("\(Int(rec.confidence * 100))%")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(accentIndigo)
                 }
 
@@ -1626,7 +1597,7 @@ struct IdeaFocusModeView: View {
             if let reasoning = rec.reasoning {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "lightbulb.min")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(accentIndigo.opacity(0.6))
                         .padding(.top, 1)
 
@@ -1748,7 +1719,7 @@ struct IdeaFocusModeView: View {
 
                 if let wordCount = section.targetWordCount {
                     Text("~\(wordCount)w")
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(DS.textMuted)
                 }
             }
@@ -1763,7 +1734,7 @@ struct IdeaFocusModeView: View {
                     .foregroundColor(DS.textSecondary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 6))
+                    .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(10)
@@ -1784,7 +1755,7 @@ struct IdeaFocusModeView: View {
 
                     if let source = dataSources?[key] {
                         Text(source)
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)
                             .padding(.leading, 88)
                     }
@@ -1818,7 +1789,7 @@ struct IdeaFocusModeView: View {
             .frame(height: OnyxLayout.progressLineHeight)
 
             Text("\(Int(score * 100))%")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(formatColor)
                 .frame(width: 32, alignment: .trailing)
         }
@@ -1843,10 +1814,10 @@ struct IdeaFocusModeView: View {
             Text("Activate This Idea")
         }
         .font(.system(size: 14, weight: .semibold))
-        .foregroundColor(.white)
+        .foregroundColor(DS.textOnAccent)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(accentIndigo, in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.accent, in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Empty Intelligence State
@@ -2023,14 +1994,7 @@ private struct IdeaHookRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(DS.borderSubtle)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.border, lineWidth: 1)
-                )
-        )
+        .dsGlassCard(cornerRadius: 8)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }

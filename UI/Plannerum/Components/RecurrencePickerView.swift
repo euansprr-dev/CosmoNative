@@ -97,10 +97,10 @@ public struct RecurrencePickerView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(isEnabled ? PlannerumColors.primary : PlannerumColors.textMuted)
 
-            Text("Repeat")
-                .font(OnyxTypography.label)
-                .foregroundColor(isEnabled ? OnyxColors.Text.secondary : OnyxColors.Text.muted)
-                .tracking(OnyxTypography.labelTracking)
+            Text("REPEAT")
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundColor(isEnabled ? PlannerumColors.textSecondary : PlannerumColors.textMuted)
+                .tracking(PlannerumTypography.trackingWide)
 
             Spacer()
 
@@ -115,10 +115,10 @@ public struct RecurrencePickerView: View {
 
     private var frequencyRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Frequency")
-                .font(OnyxTypography.label)
-                .foregroundColor(OnyxColors.Text.muted)
-                .tracking(OnyxTypography.labelTracking)
+            Text("FREQUENCY")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundColor(PlannerumColors.textMuted)
+                .tracking(1.5)
 
             HStack(spacing: 6) {
                 ForEach(frequencyOptions, id: \.self) { freq in
@@ -160,8 +160,8 @@ public struct RecurrencePickerView: View {
             isSelected
                 ? PlannerumColors.primary.opacity(0.15)
                 : isHovered
-                    ? DS.border
-                    : DS.borderSubtle
+                    ? Color.white.opacity(0.06)
+                    : Color.white.opacity(0.03)
         )
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
@@ -177,7 +177,7 @@ public struct RecurrencePickerView: View {
 
     private var daySelector: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("On Days")
+            Text("ON DAYS")
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(1.5)
@@ -204,7 +204,7 @@ public struct RecurrencePickerView: View {
             .background(
                 isSelected
                     ? PlannerumColors.primary
-                    : DS.border
+                    : Color.white.opacity(0.05)
             )
             .clipShape(Circle())
     }
@@ -221,7 +221,7 @@ public struct RecurrencePickerView: View {
 
     private var dayOfMonthSelector: some View {
         HStack(spacing: 8) {
-            Text("On The")
+            Text("ON THE")
                 .font(.system(size: 9, weight: .heavy))
                 .foregroundColor(PlannerumColors.textMuted)
                 .tracking(1.5)
@@ -240,10 +240,10 @@ public struct RecurrencePickerView: View {
 
     private var endConditionRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Ends")
-                .font(OnyxTypography.label)
-                .foregroundColor(OnyxColors.Text.muted)
-                .tracking(OnyxTypography.labelTracking)
+            Text("ENDS")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundColor(PlannerumColors.textMuted)
+                .tracking(1.5)
 
             HStack(spacing: 8) {
                 // End type picker
@@ -266,7 +266,7 @@ public struct RecurrencePickerView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 4)
-                            .background(DS.border)
+                            .background(Color.white.opacity(0.05))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
 
                         Text("times")
@@ -303,7 +303,7 @@ public struct RecurrencePickerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(DS.borderSubtle)
+        .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 

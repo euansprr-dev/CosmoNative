@@ -248,7 +248,7 @@ public struct ContentPerformanceView: View {
                             Text(platform.rawValue)
                                 .font(.system(size: 13, weight: .semibold))
                         }
-                        .foregroundColor(selectedPlatform == platform ? .white : .secondary)
+                        .foregroundColor(selectedPlatform == platform ? DS.textOnAccent : .secondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(
@@ -627,7 +627,7 @@ struct ViralContentCard: View {
             HStack {
                 Image(systemName: platform.icon)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(6)
                     .background(platform.color)
                     .cornerRadius(6)
@@ -707,7 +707,7 @@ struct TopContentRow: View {
             // Platform icon
             Image(systemName: platform.icon)
                 .font(.system(size: 14))
-                .foregroundColor(.white)
+                .foregroundColor(DS.textOnAccent)
                 .frame(width: 28, height: 28)
                 .background(platform.color)
                 .cornerRadius(6)
@@ -772,7 +772,7 @@ struct ClientPerformanceRow: View {
                 .overlay(
                     Text(clientName.prefix(1))
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.textOnAccent)
                 )
 
             VStack(alignment: .leading, spacing: 4) {
@@ -1026,4 +1026,3 @@ final class ContentPerformanceViewModel: ObservableObject {
         return "\(number)"
     }
 }
-

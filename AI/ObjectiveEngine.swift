@@ -75,7 +75,7 @@ class ObjectiveEngine: ObservableObject {
     func startTracking() {
         stopTracking()
         Task { await recalculate() }
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.recalculate()
             }

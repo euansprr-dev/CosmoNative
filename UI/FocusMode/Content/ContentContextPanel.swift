@@ -81,7 +81,12 @@ struct ContentContextPanel: View {
                 }
             }
             .frame(width: panelWidth)
-            .background(DS.surface.opacity(0.5))
+            .background(DS.surface)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(DS.border)
+                    .frame(width: 1)
+            }
             .onAppear {
                 Task {
                     await loadInheritedContext()
@@ -206,7 +211,7 @@ struct ContentContextPanel: View {
                     .foregroundColor(DS.textMuted)
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         }
         .buttonStyle(.plain)
     }
@@ -250,7 +255,7 @@ struct ContentContextPanel: View {
                 }
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         }
     }
 
@@ -277,7 +282,7 @@ struct ContentContextPanel: View {
         } label: {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(Color(hex: "#FFD700"))
+                    .fill(DS.entitySwipe)
                     .frame(width: 5, height: 5)
 
                 Text(swipe.title ?? "Untitled Swipe")
@@ -292,10 +297,10 @@ struct ContentContextPanel: View {
                    let hookType = swipeAnalysis.hookType {
                     Text(hookType.displayName)
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Color(hex: "#FFD700"))
+                        .foregroundColor(DS.entitySwipe)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color(hex: "#FFD700").opacity(0.12), in: Capsule())
+                        .background(DS.entitySwipe.opacity(0.12), in: Capsule())
                 }
             }
             .padding(.vertical, 4)
@@ -316,7 +321,7 @@ struct ContentContextPanel: View {
                 }
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         }
     }
 
@@ -394,7 +399,7 @@ struct ContentContextPanel: View {
                 }
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
         }
     }
 
@@ -420,7 +425,7 @@ struct ContentContextPanel: View {
                     .font(.system(size: 9))
                     .foregroundColor(DS.textMuted)
                     .frame(width: 24, height: 24)
-                    .background(DS.border, in: Circle())
+                    .background(DS.glassCardFill, in: Circle())
             }
             .buttonStyle(.plain)
         }
@@ -540,7 +545,7 @@ struct ContentContextPanel: View {
                 HStack(spacing: 8) {
                     Image(systemName: "text.quote")
                         .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "#818CF8"))
+                        .foregroundColor(DS.entityIdea)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(topHook.hookType)
@@ -588,7 +593,7 @@ struct ContentContextPanel: View {
             }
         }
         .padding(12)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .dsGlassSection()
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color(hex: "#34D399").opacity(0.2), lineWidth: 1)
@@ -617,7 +622,7 @@ struct ContentContextPanel: View {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.on.doc.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(Color(hex: "#FFD700"))
+                        .foregroundColor(DS.entitySwipe)
                     Text("\(swipeUUIDs.count) matched swipe\(swipeUUIDs.count == 1 ? "" : "s")")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.textSecondary)
@@ -649,7 +654,7 @@ struct ContentContextPanel: View {
                 }
             }
             .padding(12)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+            .dsGlassSection()
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(DS.accent.opacity(0.2), lineWidth: 1)
@@ -811,7 +816,7 @@ struct ContentContextPanel: View {
                     .foregroundColor(DS.textMuted)
             }
             .padding(8)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .dsGlassSection(cornerRadius: 8)
         }
         .buttonStyle(.plain)
     }
@@ -825,7 +830,7 @@ struct ContentContextPanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
-                        .foregroundColor(OnyxColors.Dimension.knowledge)
+                        .foregroundColor(DS.accent)
                     Text("AMBIENT")
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.8)
@@ -836,10 +841,10 @@ struct ContentContextPanel: View {
                     if !ambientEngine.ambientResults.isEmpty {
                         Text("\(ambientEngine.ambientResults.count)")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(OnyxColors.Dimension.knowledge)
+                            .foregroundColor(DS.accent)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(OnyxColors.Dimension.knowledge.opacity(0.15), in: Capsule())
+                            .background(DS.accent.opacity(0.15), in: Capsule())
                     }
                 }
 
@@ -847,7 +852,7 @@ struct ContentContextPanel: View {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                            .tint(OnyxColors.Dimension.knowledge)
+                            .tint(DS.accent)
                         Text("Searching...")
                             .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)

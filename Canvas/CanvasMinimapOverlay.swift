@@ -7,27 +7,27 @@ struct CanvasMinimapOverlay: View {
     let blocks: [CanvasBlock]
     let clusters: [CanvasCluster]
     let currentViewport: CGRect  // Current viewport in canvas coordinates
-    let onNavigate: (CGPoint) -> Void
+    let onNavigate: (CGPoint, Bool) -> Void
     let onDismiss: () -> Void
 
     @State private var appeared = false
     @State private var hoveredCluster: UUID?
 
-    // Entity type colors for block dots
+    // Entity type colors for block dots — Greenhouse bespoke palette
     private static let typeColors: [EntityType: Color] = [
-        .idea: Color(hex: "#818CF8"),       // Indigo
-        .content: Color(hex: "#34D399"),    // Emerald
-        .research: Color(hex: "#60A5FA"),   // Blue
-        .connection: Color(hex: "#F472B6"), // Pink
-        .note: Color(hex: "#A78BFA"),       // Violet
-        .task: Color(hex: "#FBBF24"),       // Amber
-        .cosmoAI: Color(hex: "#C084FC"),    // Purple
+        .idea: DS.entityIdea,           // Muted indigo
+        .content: DS.entityContent,     // Slate blue
+        .research: DS.entityResearch,   // Forest teal
+        .connection: DS.entityConnection, // Soft purple
+        .note: DS.entityNote,           // Warm umber
+        .task: DS.entityTask,           // Dusty rose
+        .cosmoAI: DS.accent,            // Forest green
     ]
 
     var body: some View {
         ZStack {
             // Semi-transparent backdrop
-            Color.black.opacity(0.6)
+            Color.black.opacity(0.3)
                 .ignoresSafeArea()
                 .onTapGesture {
                     dismiss()
@@ -47,9 +47,9 @@ struct CanvasMinimapOverlay: View {
 
                     // Minimap canvas
                     ZStack {
-                        // Background
+                        // Background — warm parchment canvas
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(hex: "#0A0A0F"))
+                            .fill(DS.canvas)
 
                         // Cluster zones
                         ForEach(clusters) { cluster in
@@ -65,25 +65,31 @@ struct CanvasMinimapOverlay: View {
                         viewportRect(layout: layout)
                     }
                     .frame(width: overlaySize.width - 32, height: overlaySize.height - 80)
+                    .clipped()
                     .padding(16)
                     .contentShape(Rectangle())
                     .onTapGesture { location in
                         let canvasPoint = screenToCanvas(location, layout: layout)
-                        onNavigate(canvasPoint)
-                        dismiss()
+                        onNavigate(canvasPoint, true)
                     }
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                let canvasPoint = screenToCanvas(value.location, layout: layout)
+                                onNavigate(canvasPoint, false)
+                            }
+                    )
                 }
                 .frame(width: overlaySize.width, height: overlaySize.height)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(.ultraThinMaterial)
-                        .environment(\.colorScheme, .dark)
+                        .fill(DS.surfaceElevated)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(DS.borderActive.opacity(0.5), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
-                .shadow(color: CosmoColors.thinkspacePurple.opacity(0.15), radius: 40, y: 10)
+                .dsFloatingShadow()
                 .position(x: geo.size.width / 2, y: geo.size.height / 2)
             }
         }
@@ -103,7 +109,7 @@ struct CanvasMinimapOverlay: View {
             HStack(spacing: 8) {
                 Image(systemName: "map")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(CosmoColors.thinkspacePurple)
+                    .foregroundColor(DS.accent)
                 Text("Minimap")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(DS.text)
@@ -113,10 +119,10 @@ struct CanvasMinimapOverlay: View {
 
             // Legend
             HStack(spacing: 12) {
-                legendItem(color: .white.opacity(0.5), label: "Viewport")
-                legendItem(color: Color(hex: "#818CF8"), label: "Ideas")
-                legendItem(color: Color(hex: "#60A5FA"), label: "Research")
-                legendItem(color: Color(hex: "#34D399"), label: "Content")
+                legendItem(color: DS.accent.opacity(0.5), label: "Viewport")
+                legendItem(color: DS.entityIdea, label: "Ideas")
+                legendItem(color: DS.entityResearch, label: "Research")
+                legendItem(color: DS.entityContent, label: "Content")
             }
 
             Spacer()
@@ -124,12 +130,12 @@ struct CanvasMinimapOverlay: View {
             // Dismiss hint
             Text("TAB / ESC")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.textMuted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.08))
+                        .fill(DS.borderSubtle)
                 )
         }
         .padding(.horizontal, 20)
@@ -144,7 +150,7 @@ struct CanvasMinimapOverlay: View {
                 .frame(width: 6, height: 6)
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundColor(DS.textMuted)
         }
     }
 
@@ -171,7 +177,8 @@ struct CanvasMinimapOverlay: View {
                 .padding(.vertical, 2)
                 .background(
                     Capsule()
-                        .fill(Color.black.opacity(0.6))
+                        .fill(DS.surfaceElevated)
+                        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
                 )
                 .padding(.top, 4)
         }
@@ -180,8 +187,7 @@ struct CanvasMinimapOverlay: View {
         .onHover { h in hoveredCluster = h ? cluster.id : nil }
         .onTapGesture {
             let center = CGPoint(x: cluster.boundingRect.midX, y: cluster.boundingRect.midY)
-            onNavigate(center)
-            dismiss()
+            onNavigate(center, true)
         }
     }
 
@@ -190,7 +196,7 @@ struct CanvasMinimapOverlay: View {
     @ViewBuilder
     private func blockDot(block: CanvasBlock, layout: MinimapLayout) -> some View {
         let pos = canvasPointToMinimap(block.position, layout: layout)
-        let color = Self.typeColors[block.entityType] ?? Color.white.opacity(0.4)
+        let color = Self.typeColors[block.entityType] ?? DS.textMuted
         let isInCluster = clusters.contains { $0.blockUUIDs.contains(block.entityUuid) }
 
         Circle()
@@ -199,8 +205,7 @@ struct CanvasMinimapOverlay: View {
             .opacity(isInCluster ? 0.9 : 0.4)
             .position(x: pos.x, y: pos.y)
             .onTapGesture {
-                onNavigate(block.position)
-                dismiss()
+                onNavigate(block.position, true)
             }
     }
 
@@ -211,7 +216,7 @@ struct CanvasMinimapOverlay: View {
         let rect = canvasRectToMinimap(currentViewport, layout: layout)
 
         RoundedRectangle(cornerRadius: 3)
-            .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
+            .stroke(DS.accent.opacity(0.6), lineWidth: 1.5)
             .frame(width: max(rect.width, 20), height: max(rect.height, 14))
             .position(x: rect.midX, y: rect.midY)
     }
@@ -257,12 +262,16 @@ struct CanvasMinimapOverlay: View {
     }
 
     private func computeCanvasBounds() -> CGRect {
-        guard !blocks.isEmpty else { return .zero }
+        // Always include the current viewport so the minimap shows where you are
+        guard !blocks.isEmpty else {
+            return currentViewport.insetBy(dx: -100, dy: -100)
+        }
 
-        var minX = CGFloat.greatestFiniteMagnitude
-        var minY = CGFloat.greatestFiniteMagnitude
-        var maxX = -CGFloat.greatestFiniteMagnitude
-        var maxY = -CGFloat.greatestFiniteMagnitude
+        // Start from viewport bounds
+        var minX = currentViewport.minX
+        var minY = currentViewport.minY
+        var maxX = currentViewport.maxX
+        var maxY = currentViewport.maxY
 
         for block in blocks {
             let halfW = block.size.width / 2

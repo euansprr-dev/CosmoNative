@@ -101,7 +101,7 @@ public struct ActiveFocusBar: View {
             // Top border (Spec: 1px rgba(255,255,255,0.08))
             VStack {
                 Rectangle()
-                    .fill(DS.border)
+                    .fill(Color.white.opacity(0.08))
                     .frame(height: Layout.topBorder)
                 Spacer()
             }
@@ -168,7 +168,7 @@ public struct ActiveFocusBar: View {
     private func activeBlockLabel(_ block: ScheduleBlockViewModel) -> some View {
         HStack(spacing: 8) {
             // ACTIVE badge
-            Text("Active")
+            Text("ACTIVE")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(PlannerumColors.nowMarker)
 
@@ -193,9 +193,9 @@ public struct ActiveFocusBar: View {
 
     private func nextBlockLabel(_ block: ScheduleBlockViewModel) -> some View {
         HStack(spacing: 8) {
-            Text("Next")
+            Text("NEXT")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(OnyxColors.Text.muted)
+                .foregroundColor(PlannerumColors.textMuted)
 
             Text("at \(PlannerumFormatters.time.string(from: block.startTime))")
                 .font(.system(size: 12, weight: .medium))
@@ -216,7 +216,7 @@ public struct ActiveFocusBar: View {
 
     private var noBlockLabel: some View {
         HStack(spacing: 8) {
-            Text("No Active Block")
+            Text("NO ACTIVE BLOCK")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(PlannerumColors.textMuted)
 
@@ -342,16 +342,6 @@ public struct ActiveFocusBar: View {
                 pulsePhase += 0.1
             }
     }
-}
-
-// MARK: - Preview
-
-#Preview("Active Focus Bar") {
-    ActiveFocusBar()
-        .frame(height: 80)
-        .frame(maxWidth: .infinity)
-        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
-        .preferredColorScheme(.dark)
 }
 
 // MARK: - Active Focus Bar View Model
@@ -645,3 +635,4 @@ struct ActiveFocusBar_Previews: PreviewProvider {
     }
 }
 #endif
+

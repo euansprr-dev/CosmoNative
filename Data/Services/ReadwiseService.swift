@@ -46,6 +46,44 @@ struct ReadwisePaginatedResponse<T: Codable & Sendable>: Codable, Sendable {
     let results: [T]
 }
 
+// MARK: - Export API Models (books with nested highlights)
+
+struct ReadwiseExportResponse: Codable, Sendable {
+    let count: Int
+    let nextPageCursor: String?
+    let results: [ReadwiseExportBook]
+}
+
+struct ReadwiseExportBook: Codable, Sendable {
+    let userBookId: Int
+    let title: String
+    let author: String?
+    let readableTitle: String?
+    let source: String?
+    let coverImageUrl: String?
+    let uniqueUrl: String?
+    let bookTags: [ReadwiseTag]?
+    let category: String?
+    let sourceUrl: String?
+    let asin: String?
+    let highlights: [ReadwiseExportHighlight]
+}
+
+struct ReadwiseExportHighlight: Codable, Sendable {
+    let id: Int
+    let text: String
+    let note: String?
+    let location: Int?
+    let locationType: String?
+    let url: String?
+    let color: String?
+    let updated: String?
+    let bookId: Int?
+    let tags: [ReadwiseTag]?
+    let highlightedAt: String?
+    let isDiscard: Bool?
+}
+
 // MARK: - ReadwiseService
 
 @MainActor
@@ -366,6 +404,106 @@ class ReadwiseService: ObservableObject {
         } catch {
             print("Failed to fetch Readwise daily review: \(error)")
             return []
+        }
+    }
+
+    // MARK: - Export API (Books with Highlights)
+
+    /// Fetch all books with nested highlights via the Export API
+    /// Returns ReadwiseLibraryBook models ready for the Library tab UI
+    func fetchBooksWithHighlights(updatedAfter: Date? = nil) async throws -> [ReadwiseLibraryBook] {
+        guard let token = apiToken, !token.isEmpty else {
+            throw ReadwiseError.noToken
+        }
+
+        var allExportBooks: [ReadwiseExportBook] = []
+        var cursor: String? = nil
+        var isFirstPage = true
+
+        while isFirstPage || cursor != nil {
+            isFirstPage = false
+
+            var urlString = "\(baseURL)export/"
+            var queryParams: [String] = []
+
+            if let cursor {
+                queryParams.append("pageCursor=\(cursor)")
+            }
+            if let updatedAfter {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime]
+                queryParams.append("updatedAfter=\(formatter.string(from: updatedAfter))")
+            }
+            if !queryParams.isEmpty {
+                urlString += "?" + queryParams.joined(separator: "&")
+            }
+
+            guard let url = URL(string: urlString) else {
+                throw ReadwiseError.invalidURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = 30
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ReadwiseError.invalidResponse
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                if httpResponse.statusCode == 401 {
+                    isConnected = false
+                    isTokenValid = false
+                    throw ReadwiseError.unauthorized
+                }
+                if httpResponse.statusCode == 429 {
+                    throw ReadwiseError.rateLimited
+                }
+                throw ReadwiseError.httpError(httpResponse.statusCode)
+            }
+
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let page = try decoder.decode(ReadwiseExportResponse.self, from: data)
+
+            allExportBooks.append(contentsOf: page.results)
+            cursor = page.nextPageCursor
+        }
+
+        // Convert to UI-ready models
+        return allExportBooks.compactMap { exportBook -> ReadwiseLibraryBook? in
+            let category = ReadwiseCategory(rawValue: exportBook.category ?? "books") ?? .books
+            let activeHighlights = exportBook.highlights.filter { !($0.isDiscard ?? false) }
+
+            let highlights = activeHighlights.map { h in
+                ReadwiseLibraryHighlight(
+                    id: h.id,
+                    text: h.text,
+                    note: h.note,
+                    location: h.location,
+                    color: h.color,
+                    tags: h.tags?.map(\.name) ?? [],
+                    bookId: h.bookId ?? exportBook.userBookId,
+                    highlightedAt: h.highlightedAt
+                )
+            }
+
+            guard !highlights.isEmpty else { return nil }
+
+            return ReadwiseLibraryBook(
+                id: exportBook.userBookId,
+                title: exportBook.title,
+                author: exportBook.author,
+                category: category,
+                coverImageUrl: exportBook.coverImageUrl,
+                sourceUrl: exportBook.sourceUrl,
+                numHighlights: highlights.count,
+                highlights: highlights,
+                bookTags: exportBook.bookTags?.map(\.name) ?? []
+            )
         }
     }
 

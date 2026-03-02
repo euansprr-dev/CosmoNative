@@ -1,84 +1,42 @@
 // CosmoOS/UI/FocusMode/Research/TranscriptSpineView.swift
-// Vertical transcript backbone with branching annotations
-// Notes branch right, Questions branch left, Insights branch right
-// December 2025 - Research Focus Mode transcript visualization
+// Vertical transcript backbone with inline annotation indicators
+// Notion-style comments: highlights + popover detail, no floating cards
+// March 2026 — Redesigned for performance and usability
 
 import SwiftUI
-
-// MARK: - Annotation Geometry Preference Keys
-
-/// Reports anchor points in transcript space for each annotation.
-private struct AnnotationAnchorPointKey: PreferenceKey {
-    static var defaultValue: [UUID: CGPoint] = [:]
-    static func reduce(value: inout [UUID: CGPoint], nextValue: () -> [UUID: CGPoint]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-/// Reports annotation card centers in transcript-space coordinates.
-private struct AnnotationCardCenterPointKey: PreferenceKey {
-    static var defaultValue: [UUID: CGPoint] = [:]
-    static func reduce(value: inout [UUID: CGPoint], nextValue: () -> [UUID: CGPoint]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
 
 // MARK: - Transcript Spine View
 
 /// The vertical transcript backbone for Research Focus Mode.
-/// Displays transcript sections with annotations branching off left and right.
+/// Annotations appear inline as indicator badges below highlighted text.
+/// Clicking a badge or highlighted text opens a detail popover.
 struct TranscriptSpineView: View {
     // MARK: - Properties
 
-    /// All transcript sections
     let sections: [TranscriptSection]
-
-    /// Currently playing timestamp (for highlighting)
     let currentTimestamp: TimeInterval
 
-    /// Callback when section is tapped (seek to timestamp)
     let onSectionTap: (TranscriptSection) -> Void
-
-    /// Callback to add annotation
     let onAddAnnotation: (TranscriptSection, AnnotationType) -> Void
-
-    /// Callback when annotation is tapped
-    let onAnnotationTap: (ResearchAnnotation) -> Void
-
-    /// Callback when annotation is edited (annotation, newContent)
     let onAnnotationEdit: (ResearchAnnotation, String) -> Void
-
-    /// Callback when annotation is deleted
     let onAnnotationDelete: (ResearchAnnotation) -> Void
-
-    /// Callback when annotation is dragged to a new position
-    let onAnnotationPositionChange: (ResearchAnnotation, CGPoint) -> Void
-
-    /// Callback to create a highlight annotation from selected text
     let onCreateHighlightAnnotation: (UUID, AnnotationType, String, NSRange) -> Void
+    let onPromoteToBlock: (ResearchAnnotation) -> Void
 
     // MARK: - State
 
     @State private var hoveredSectionID: UUID?
-    @State private var expandedAnnotationID: UUID?
-    @State private var annotationAnchorPoints: [UUID: CGPoint] = [:]
-    @State private var annotationCardCenters: [UUID: CGPoint] = [:]
-
-    private var allAnnotations: [ResearchAnnotation] {
-        sections.flatMap(\.annotations)
-    }
+    @State private var lastScrolledSectionID: UUID?
 
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header bar
             transcriptHeader
 
-            // Scrollable transcript content
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
                         ForEach(sections) { section in
                             TranscriptSectionRow(
                                 section: section,
@@ -86,7 +44,14 @@ struct TranscriptSpineView: View {
                                 isHovered: hoveredSectionID == section.id,
                                 onTap: { onSectionTap(section) },
                                 onAddAnnotation: { type in onAddAnnotation(section, type) },
-                                onCreateHighlightAnnotation: onCreateHighlightAnnotation
+                                onAnnotationEdit: { annotation, newContent in
+                                    onAnnotationEdit(annotation, newContent)
+                                },
+                                onAnnotationDelete: { annotation in
+                                    onAnnotationDelete(annotation)
+                                },
+                                onCreateHighlightAnnotation: onCreateHighlightAnnotation,
+                                onPromoteToBlock: onPromoteToBlock
                             )
                             .id(section.id)
                             .onHover { hovering in
@@ -98,10 +63,11 @@ struct TranscriptSpineView: View {
                     .padding(.horizontal, 16)
                 }
                 .onChange(of: currentTimestamp) { _, newTime in
-                    // Auto-scroll to current section
+                    // Only auto-scroll when the active section actually changes
                     if let currentSection = sections.first(where: {
                         newTime >= $0.startTime && newTime < $0.endTime
-                    }) {
+                    }), currentSection.id != lastScrolledSectionID {
+                        lastScrolledSectionID = currentSection.id
                         withAnimation(ProMotionSprings.gentle) {
                             proxy.scrollTo(currentSection.id, anchor: .center)
                         }
@@ -109,28 +75,14 @@ struct TranscriptSpineView: View {
                 }
             }
         }
-        .coordinateSpace(name: "transcriptSpineRoot")
-        .overlay {
-            if !allAnnotations.isEmpty {
-                annotationCanvasLayer
-            }
-        }
-        .onPreferenceChange(AnnotationAnchorPointKey.self) { points in
-            annotationAnchorPoints = points
-        }
-        .onPreferenceChange(AnnotationCardCenterPointKey.self) { points in
-            annotationCardCenters = points
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(DS.surfaceCard)
-        )
+        .background(DS.surfaceCard)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(DS.borderActive.opacity(0.8), lineWidth: 1)
         )
         .shadow(
-            color: Color.black.opacity(0.3),
+            color: Color.black.opacity(0.06),
             radius: 12,
             y: 4
         )
@@ -168,81 +120,11 @@ struct TranscriptSpineView: View {
     private func isPlaying(_ section: TranscriptSection) -> Bool {
         currentTimestamp >= section.startTime && currentTimestamp < section.endTime
     }
-
-    private var annotationCanvasLayer: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(allAnnotations) { annotation in
-                if annotation.hasCustomPosition {
-                    AnnotationConnectionLine(
-                        from: anchorPoint(for: annotation),
-                        to: cardCenter(for: annotation),
-                        color: annotation.type.color
-                    )
-                }
-            }
-            .allowsHitTesting(false)
-
-            ForEach(allAnnotations) { annotation in
-                let anchor = anchorPoint(for: annotation)
-                let defaultCenter = CGPoint(x: anchor.x + 180, y: anchor.y)
-
-                AnnotationCardView(
-                    annotation: annotation,
-                    isExpanded: expandedAnnotationID == annotation.id,
-                    onTap: {
-                        withAnimation(ProMotionSprings.snappy) {
-                            expandedAnnotationID = expandedAnnotationID == annotation.id ? nil : annotation.id
-                        }
-                        onAnnotationTap(annotation)
-                    },
-                    onEdit: { newContent in
-                        onAnnotationEdit(annotation, newContent)
-                    },
-                    onDelete: {
-                        onAnnotationDelete(annotation)
-                    },
-                    onPositionChange: { newOffset in
-                        onAnnotationPositionChange(annotation, newOffset)
-                    }
-                )
-                .position(defaultCenter)
-                .background(
-                    GeometryReader { geo in
-                        let frame = geo.frame(in: .named("transcriptSpineRoot"))
-                        Color.clear.preference(
-                            key: AnnotationCardCenterPointKey.self,
-                            value: [annotation.id: CGPoint(x: frame.midX, y: frame.midY)]
-                        )
-                    }
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func anchorPoint(for annotation: ResearchAnnotation) -> CGPoint {
-        if let anchor = annotationAnchorPoints[annotation.id] {
-            return anchor
-        }
-
-        let index = allAnnotations.firstIndex(where: { $0.id == annotation.id }) ?? 0
-        return CGPoint(x: 420, y: 100 + CGFloat(index * 72))
-    }
-
-    private func cardCenter(for annotation: ResearchAnnotation) -> CGPoint {
-        if let cardCenter = annotationCardCenters[annotation.id] {
-            return cardCenter
-        }
-
-        let anchor = anchorPoint(for: annotation)
-        let offset = annotation.customOffset ?? .zero
-        return CGPoint(x: anchor.x + 180 + offset.x, y: anchor.y + offset.y)
-    }
 }
 
 // MARK: - Transcript Section Row
 
-/// A single section in the transcript spine with annotations
+/// A single section in the transcript spine with inline annotation indicators
 struct TranscriptSectionRow: View {
     let section: TranscriptSection
     let isPlaying: Bool
@@ -250,14 +132,17 @@ struct TranscriptSectionRow: View {
 
     let onTap: () -> Void
     let onAddAnnotation: (AnnotationType) -> Void
+    let onAnnotationEdit: (ResearchAnnotation, String) -> Void
+    let onAnnotationDelete: (ResearchAnnotation) -> Void
     let onCreateHighlightAnnotation: (UUID, AnnotationType, String, NSRange) -> Void
+    let onPromoteToBlock: (ResearchAnnotation) -> Void
 
     @State private var selectedTextInfo: (String, NSRange)? = nil
-    @State private var showAnnotationPopover = false
-
-    private var allAnnotations: [ResearchAnnotation] {
-        section.annotations
-    }
+    @State private var showTypePickerPopover = false
+    @State private var showAnnotationDetail = false
+    @State private var showHighlightPopover = false
+    @State private var activeAnnotationType: AnnotationType? = nil
+    @State private var activeAnnotationID: UUID? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -323,18 +208,38 @@ struct TranscriptSectionRow: View {
                 isPlaying: isPlaying,
                 onTextSelected: { selectedText, range in
                     selectedTextInfo = (selectedText, range)
-                    showAnnotationPopover = true
+                    showTypePickerPopover = true
+                },
+                onHighlightClicked: { annotationID in
+                    activeAnnotationID = annotationID
+                    activeAnnotationType = nil
+                    showHighlightPopover = true
                 }
             )
             .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
-            .background(
-                GeometryReader { textGeo in
-                    Color.clear.preference(
-                        key: AnnotationAnchorPointKey.self,
-                        value: annotationAnchorPoints(in: textGeo.frame(in: .named("transcriptSpineRoot")))
-                    )
-                }
-            )
+            .popover(isPresented: $showHighlightPopover) {
+                AnnotationDetailPopover(
+                    annotations: filteredAnnotationsForPopover,
+                    sectionText: section.text,
+                    onEdit: { annotation, newContent in
+                        onAnnotationEdit(annotation, newContent)
+                    },
+                    onDelete: { annotation in
+                        onAnnotationDelete(annotation)
+                        if section.annotations.count <= 1 {
+                            showHighlightPopover = false
+                        }
+                    },
+                    onPromoteToBlock: { annotation in
+                        onPromoteToBlock(annotation)
+                    }
+                )
+            }
+
+            // Inline annotation indicators
+            if !section.annotations.isEmpty {
+                annotationIndicators
+            }
 
             // Add annotation button (on hover)
             if isHovered {
@@ -351,19 +256,71 @@ struct TranscriptSectionRow: View {
         )
         .animation(ProMotionSprings.hover, value: isPlaying)
         .animation(ProMotionSprings.hover, value: isHovered)
-        .popover(isPresented: $showAnnotationPopover) {
+        // Type picker popover (for creating new annotations from text selection)
+        .popover(isPresented: $showTypePickerPopover) {
             AnnotationTypePickerPopover(
                 selectedText: selectedTextInfo?.0 ?? "",
                 onSelect: { type in
                     if let info = selectedTextInfo {
                         onCreateHighlightAnnotation(section.id, type, info.0, info.1)
                     }
-                    showAnnotationPopover = false
+                    showTypePickerPopover = false
                     selectedTextInfo = nil
                 },
                 onCancel: {
-                    showAnnotationPopover = false
+                    showTypePickerPopover = false
                     selectedTextInfo = nil
+                }
+            )
+        }
+    }
+
+    // MARK: - Annotation Indicators
+
+    private var annotationIndicators: some View {
+        HStack(spacing: 6) {
+            ForEach(groupedAnnotationCounts, id: \.type) { group in
+                Button {
+                    activeAnnotationType = group.type
+                    activeAnnotationID = nil
+                    showAnnotationDetail = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(group.type.color)
+                            .frame(width: 6, height: 6)
+                        Image(systemName: group.type.icon)
+                            .font(.system(size: 9))
+                        if group.count > 1 {
+                            Text("\(group.count)")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                    }
+                    .foregroundColor(group.type.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(group.type.color.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 4)
+        .popover(isPresented: $showAnnotationDetail) {
+            AnnotationDetailPopover(
+                annotations: filteredAnnotationsForPopover,
+                sectionText: section.text,
+                onEdit: { annotation, newContent in
+                    onAnnotationEdit(annotation, newContent)
+                },
+                onDelete: { annotation in
+                    onAnnotationDelete(annotation)
+                    // Close popover if no annotations left
+                    if section.annotations.count <= 1 {
+                        showAnnotationDetail = false
+                    }
+                },
+                onPromoteToBlock: { annotation in
+                    onPromoteToBlock(annotation)
                 }
             )
         }
@@ -396,24 +353,30 @@ struct TranscriptSectionRow: View {
 
     // MARK: - Helpers
 
-    private func annotationAnchorPoints(in textFrame: CGRect) -> [UUID: CGPoint] {
-        var points: [UUID: CGPoint] = [:]
-        for annotation in allAnnotations {
-            points[annotation.id] = anchorPoint(for: annotation, in: textFrame)
-        }
-        return points
+    private struct AnnotationGroup: Hashable {
+        let type: AnnotationType
+        let count: Int
     }
 
-    private func anchorPoint(for annotation: ResearchAnnotation, in textFrame: CGRect) -> CGPoint {
-        let anchorX = textFrame.maxX - 8
-        guard let highlight = section.highlights.first(where: { $0.annotationID == annotation.id }) else {
-            return CGPoint(x: anchorX, y: textFrame.midY)
+    private var groupedAnnotationCounts: [AnnotationGroup] {
+        var counts: [AnnotationType: Int] = [:]
+        for annotation in section.annotations {
+            counts[annotation.type, default: 0] += 1
         }
+        return counts.map { AnnotationGroup(type: $0.key, count: $0.value) }
+            .sorted { $0.type.rawValue < $1.type.rawValue }
+    }
 
-        let textLength = max(1, (section.text as NSString).length)
-        let progress = min(1, max(0, CGFloat(highlight.startCharIndex) / CGFloat(textLength)))
-        let anchorY = textFrame.minY + (progress * max(textFrame.height, 1))
-        return CGPoint(x: anchorX, y: anchorY)
+    private var filteredAnnotationsForPopover: [ResearchAnnotation] {
+        if let id = activeAnnotationID {
+            // Clicked a specific highlight — show that annotation
+            return section.annotations.filter { $0.id == id }
+        }
+        if let type = activeAnnotationType {
+            // Clicked a type badge — show all annotations of that type
+            return section.annotations.filter { $0.type == type }
+        }
+        return section.annotations
     }
 
     private var spineColor: Color {
@@ -421,199 +384,218 @@ struct TranscriptSectionRow: View {
     }
 }
 
-// MARK: - Annotation Card View
+// MARK: - Annotation Detail Popover
 
-/// Compact annotation card (all annotations on right side, differentiated by color)
-/// Supports double-click to edit inline, click outside to save
-struct AnnotationCardView: View {
-    let annotation: ResearchAnnotation
-    let isExpanded: Bool
-    let onTap: () -> Void
-    let onEdit: (String) -> Void
-    let onDelete: () -> Void
-    let onPositionChange: (CGPoint) -> Void
+/// Notion-style annotation detail popover. Shows annotation content,
+/// highlighted text excerpt, and actions (edit, delete, add to canvas).
+struct AnnotationDetailPopover: View {
+    let annotations: [ResearchAnnotation]
+    let sectionText: String
+    let onEdit: (ResearchAnnotation, String) -> Void
+    let onDelete: (ResearchAnnotation) -> Void
+    let onPromoteToBlock: (ResearchAnnotation) -> Void
 
-    @State private var isHovered = false
-    @State private var isEditing = false
+    @State private var editingID: UUID? = nil
     @State private var editContent: String = ""
-    @State private var dragOffset: CGSize = .zero
-    @State private var isDragging = false
-    @FocusState private var isTextFieldFocused: Bool
-
-    private var accentColor: Color {
-        annotation.type.color
-    }
+    @FocusState private var isEditing: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Color indicator bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(accentColor)
-                .frame(width: 3)
-
-            VStack(alignment: .leading, spacing: 4) {
-                // Type badge
-                HStack(spacing: 4) {
-                    Image(systemName: annotation.type.icon)
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(annotation.type.label.uppercased())
-                        .font(.system(size: 8, weight: .bold))
-                        .tracking(0.5)
-                }
-                .foregroundColor(accentColor)
-
-                // Content — editable or static
-                if isEditing {
-                    ZStack(alignment: .topLeading) {
-                        if editContent.isEmpty {
-                            Text("Add a note...")
-                                .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
-                                .padding(.top, 4)
-                                .padding(.leading, 2)
-                                .allowsHitTesting(false)
-                        }
-                        TextEditor(text: $editContent)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.text)
-                            .scrollContentBackground(.hidden)
-                            .focused($isTextFieldFocused)
-                            .frame(minHeight: 40, maxHeight: 120)
-                    }
-                    .padding(4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(DS.border)
-                    )
-                } else {
-                    if !annotation.content.isEmpty {
-                        Text(annotation.content)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.text)
-                            .lineLimit(isExpanded ? nil : 2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("Double-click to edit")
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
-                            .italic()
-                    }
-                }
-
-                // Actions (expanded, not editing)
-                if isExpanded && !isEditing {
-                    HStack(spacing: 10) {
-                        Button {
-                            enterEditMode()
-                        } label: {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 9))
-                                .foregroundColor(DS.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-
-                        Button(action: onDelete) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 9))
-                                .foregroundColor(DS.red.opacity(0.6))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.top, 2)
+        VStack(alignment: .leading, spacing: 0) {
+            // Group annotations by type
+            ForEach(AnnotationType.allCases, id: \.rawValue) { type in
+                let ofType = annotations.filter { $0.type == type }
+                if !ofType.isEmpty {
+                    typeSection(type: type, annotations: ofType)
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(minWidth: 120, maxWidth: 180, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 280)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isEditing ? DS.borderActive : (isHovered ? DS.border : DS.borderSubtle))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(DS.surfaceElevated)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(accentColor.opacity(isEditing ? 0.6 : (isHovered ? 0.4 : 0.2)), lineWidth: isEditing ? 1.5 : 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(DS.borderActive, lineWidth: 1)
                 )
         )
-        .scaleEffect(isHovered && !isEditing ? 1.01 : 1.0)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            enterEditMode()
-        }
-        .onTapGesture(count: 1) {
-            if !isEditing {
-                onTap()
+    }
+
+    // MARK: - Type Section
+
+    @ViewBuilder
+    private func typeSection(type: AnnotationType, annotations: [ResearchAnnotation]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Type header
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(type.color)
+                    .frame(width: 3, height: 14)
+                Image(systemName: type.icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text("\(type.label.uppercased()) (\(annotations.count))")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.5)
+            }
+            .foregroundColor(type.color)
+
+            ForEach(annotations) { annotation in
+                annotationRow(annotation)
+
+                if annotation.id != annotations.last?.id {
+                    Divider().opacity(0.3)
+                }
             }
         }
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) {
-                isHovered = hovering
+        .padding(12)
+    }
+
+    // MARK: - Annotation Row
+
+    @ViewBuilder
+    private func annotationRow(_ annotation: ResearchAnnotation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Highlighted text excerpt
+            if let highlighted = annotation.highlightedText, !highlighted.isEmpty {
+                Text("\"\(highlighted.prefix(80))\(highlighted.count > 80 ? "..." : "")\"")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .italic()
+                    .lineLimit(2)
             }
+
+            // Content (editable)
+            if editingID == annotation.id {
+                editableContent(annotation)
+            } else {
+                staticContent(annotation)
+            }
+
+            // Action buttons
+            actionButtons(annotation)
         }
-        .offset(
-            x: (annotation.customOffset?.x ?? 0) + dragOffset.width,
-            y: (annotation.customOffset?.y ?? 0) + dragOffset.height
-        )
-        .zIndex(isDragging || annotation.hasCustomPosition ? 1 : 0)
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 5)
-                .onChanged { value in
-                    isDragging = true
-                    dragOffset = value.translation
+    }
+
+    @ViewBuilder
+    private func staticContent(_ annotation: ResearchAnnotation) -> some View {
+        if !annotation.content.isEmpty {
+            Text(annotation.content)
+                .font(.system(size: 12))
+                .foregroundColor(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .onTapGesture {
+                    enterEditMode(annotation)
                 }
-                .onEnded { value in
-                    isDragging = false
-                    let newOffset = CGPoint(
-                        x: (annotation.customOffset?.x ?? 0) + value.translation.width,
-                        y: (annotation.customOffset?.y ?? 0) + value.translation.height
-                    )
-                    dragOffset = .zero
-                    onPositionChange(newOffset)
+        } else {
+            Text("Click to add a note...")
+                .font(.system(size: 12))
+                .foregroundColor(DS.textMuted)
+                .italic()
+                .onTapGesture {
+                    enterEditMode(annotation)
                 }
+        }
+    }
+
+    @ViewBuilder
+    private func editableContent(_ annotation: ResearchAnnotation) -> some View {
+        ZStack(alignment: .topLeading) {
+            if editContent.isEmpty {
+                Text("Add a note...")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textMuted)
+                    .padding(.top, 4)
+                    .padding(.leading, 4)
+                    .allowsHitTesting(false)
+            }
+            TextEditor(text: $editContent)
+                .font(.system(size: 12))
+                .foregroundColor(DS.text)
+                .scrollContentBackground(.hidden)
+                .focused($isEditing)
+                .frame(minHeight: 36, maxHeight: 100)
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(DS.border)
         )
-        .animation(isDragging ? nil : ProMotionSprings.snappy, value: dragOffset)
-        .onChange(of: isTextFieldFocused) { _, isFocused in
-            if !isFocused && isEditing {
-                commitEdit()
+        .onChange(of: isEditing) { _, focused in
+            if !focused && editingID == annotation.id {
+                commitEdit(annotation)
             }
         }
         .onKeyPress(.escape) {
-            if isEditing {
-                cancelEdit()
-                return .handled
+            cancelEdit()
+            return .handled
+        }
+    }
+
+    @ViewBuilder
+    private func actionButtons(_ annotation: ResearchAnnotation) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                if editingID == annotation.id {
+                    commitEdit(annotation)
+                } else {
+                    enterEditMode(annotation)
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: editingID == annotation.id ? "checkmark" : "pencil")
+                        .font(.system(size: 9))
+                    Text(editingID == annotation.id ? "Save" : "Edit")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(DS.textSecondary)
             }
-            return .ignored
+            .buttonStyle(.plain)
+
+            Button {
+                onPromoteToBlock(annotation)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 9))
+                    Text("Add to Canvas")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(DS.accent)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Button {
+                onDelete(annotation)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.red.opacity(0.6))
+            }
+            .buttonStyle(.plain)
         }
     }
 
     // MARK: - Edit Actions
 
-    private func enterEditMode() {
+    private func enterEditMode(_ annotation: ResearchAnnotation) {
         editContent = annotation.content
-        withAnimation(ProMotionSprings.snappy) {
-            isEditing = true
-        }
-        // Delay focus to next run loop so TextEditor is mounted
+        editingID = annotation.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            isTextFieldFocused = true
+            isEditing = true
         }
     }
 
-    private func commitEdit() {
+    private func commitEdit(_ annotation: ResearchAnnotation) {
         let newContent = editContent
-        withAnimation(ProMotionSprings.snappy) {
-            isEditing = false
-        }
+        editingID = nil
         if newContent != annotation.content {
-            onEdit(newContent)
+            onEdit(annotation, newContent)
         }
     }
 
     private func cancelEdit() {
-        withAnimation(ProMotionSprings.snappy) {
-            isEditing = false
-        }
-        editContent = annotation.content
+        editingID = nil
     }
 }
 
@@ -670,11 +652,10 @@ struct TranscriptSpineView_Previews: PreviewProvider {
                 currentTimestamp: 40,
                 onSectionTap: { section in print("Tap: \(section.startTimeString)") },
                 onAddAnnotation: { section, type in print("Add \(type) to \(section.startTimeString)") },
-                onAnnotationTap: { annotation in print("Annotation: \(annotation.content)") },
                 onAnnotationEdit: { annotation, newContent in print("Edit: \(annotation.content) -> \(newContent)") },
                 onAnnotationDelete: { annotation in print("Delete: \(annotation.content)") },
-                onAnnotationPositionChange: { annotation, offset in print("Move: \(annotation.content) to \(offset)") },
-                onCreateHighlightAnnotation: { sectionID, type, text, range in print("Highlight: \(type.label) on '\(text)' in section \(sectionID)") }
+                onCreateHighlightAnnotation: { sectionID, type, text, range in print("Highlight: \(type.label) on '\(text)' in section \(sectionID)") },
+                onPromoteToBlock: { annotation in print("Promote: \(annotation.content)") }
             )
             .frame(width: 700, height: 600)
         }

@@ -58,7 +58,7 @@ public struct DimensionDetailView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .background(DS.borderSubtle)
+            .background(DS.surface)
 
             // Scrollable content
             ScrollView {
@@ -87,7 +87,6 @@ public struct DimensionDetailView: View {
             }
         }
         .background(DS.bg)
-        .preferredColorScheme(.dark)
     }
 
     // MARK: - Header Section
@@ -201,7 +200,7 @@ public struct DimensionDetailView: View {
                         ZStack(alignment: .leading) {
                             // Background
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(DS.borderActive)
+                                .fill(DS.borderSubtle)
 
                             // Progress
                             RoundedRectangle(cornerRadius: 6)
@@ -232,8 +231,10 @@ public struct DimensionDetailView: View {
             }
         }
         .padding()
-        .background(DS.border)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .dsRestingShadow()
     }
 
     // MARK: - Trend Chart Section
@@ -305,8 +306,10 @@ public struct DimensionDetailView: View {
             .frame(height: 150)
         }
         .padding()
-        .background(DS.border)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .dsRestingShadow()
     }
 
     // MARK: - Insights Section
@@ -322,8 +325,10 @@ public struct DimensionDetailView: View {
             }
         }
         .padding()
-        .background(DS.border)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .dsRestingShadow()
     }
 
     // MARK: - Recent Activity Section
@@ -355,8 +360,10 @@ public struct DimensionDetailView: View {
             }
         }
         .padding()
-        .background(DS.border)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .dsRestingShadow()
     }
 
     // MARK: - Helpers
@@ -438,8 +445,10 @@ struct StatCard: View {
                 .foregroundColor(DS.textMuted)
         }
         .padding()
-        .background(DS.border)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .dsRestingShadow()
     }
 }
 
@@ -475,7 +484,8 @@ struct InsightRowView: View {
                 .foregroundColor(insight.coefficient > 0 ? .green : .red)
         }
         .padding()
-        .background(DS.borderSubtle)
+        .background(DS.surfaceElevated)
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderSubtle, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
     }
 }

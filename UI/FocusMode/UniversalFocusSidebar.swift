@@ -9,10 +9,8 @@ struct UniversalFocusSidebar<Content: View>: View {
     let icon: String
     let accentColor: Color
     @Binding var isVisible: Bool
+    @Binding var isLocked: Bool
     @ViewBuilder let content: () -> Content
-
-    // Lock state - persisted across sessions
-    @AppStorage("focusSidebarLocked") private var isLocked: Bool = false
 
     // Internal hover tracking for close behavior
     @State private var isHovering: Bool = false
@@ -27,30 +25,34 @@ struct UniversalFocusSidebar<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        // Conditional rendering — sidebar is completely removed from the view tree when hidden.
+        // This eliminates ghost hit areas from .offset() (which only moves visuals, not hit testing).
+        if shouldShow {
+            VStack(spacing: 0) {
+                header
 
-            Divider()
-                .background(DS.borderActive)
+                Divider()
+                    .background(DS.borderActive)
 
-            ScrollView {
-                content()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
+                ScrollView {
+                    content()
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                }
             }
-        }
-        .frame(width: sidebarWidth)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.3), radius: 20, x: 5)
-        .offset(x: shouldShow ? 0 : -300)
-        .animation(ProMotionSprings.snappy, value: shouldShow)
-        .onHover { hovering in
-            handleHover(hovering)
+            .frame(width: sidebarWidth)
+            .background(DS.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .dsFloatingShadow()
+            .padding(.bottom, 16)
+            .transition(.move(edge: .leading).combined(with: .opacity))
+            .onHover { hovering in
+                handleHover(hovering)
+            }
         }
     }
 

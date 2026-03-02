@@ -247,7 +247,7 @@ struct SanctuaryCardSystem_Previews: PreviewProvider {
                     ForEach(0..<3) { i in
                         SanctuaryCard(size: .third, title: "THIRD \(i + 1)") {
                             Text("Content")
-                                .foregroundColor(DS.text)
+                                .foregroundColor(.white)
                         }
                     }
                 }
@@ -262,7 +262,7 @@ struct SanctuaryCardSystem_Previews: PreviewProvider {
             }
             .padding(24)
         }
-        .background(DS.bg)
+        .background(Color(hex: "141422"))
         .preferredColorScheme(.dark)
     }
 }

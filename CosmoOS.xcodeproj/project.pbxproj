@@ -37,7 +37,6 @@
 		06DB8BF7D0A4C42233AA6825 /* KnowledgePulseLineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F20 /* KnowledgePulseLineView.swift */; };
 		06DB9CA8E1B5D53344BB7936 /* CanvasConnectionLinesLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3D4E5F6A7B8C9D0E1F2031 /* CanvasConnectionLinesLayer.swift */; };
 		06DC1A2B3E4F5A6B7C8D9E0F /* ResearchBlockDropdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F6A7B8C9D0E1F /* ResearchBlockDropdownView.swift */; };
-		06DD2B3C4E5F6A7B8C9D0E1A /* AnnotationConnectionLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC3D4E5F6A7B8C9D0E1F2A3B /* AnnotationConnectionLine.swift */; };
 		06DE3C4D5F6A7B8C9D0E1F2B /* SelectableTranscriptText.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE5F6A7B8C9D0E1F2A3B4C5D /* SelectableTranscriptText.swift */; };
 		06DF4D5E6A7B8C9D0E1F2A3C /* AnnotationTypePickerPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7B8C9D0E1F2A3B4C5D6E7F /* AnnotationTypePickerPopover.swift */; };
 		075BE8BA7E1E397AA6B1E759 /* AtomExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4C77E9B327B0945155C95E /* AtomExtensions.swift */; };
@@ -142,6 +141,10 @@
 		4BC607BCE7BC490BA65902C4 /* LevelDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B16BDCFB225C1F283C268C2 /* LevelDashboardView.swift */; };
 		4BE9D89FECEA3492E95891EB /* AgentContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF52109613B99EA112BAB54 /* AgentContextAssembler.swift */; };
 		4C237E054338555C76765F07 /* CreatorListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F60797E73A20FDE2D2D93C6 /* CreatorListView.swift */; };
+		00802BE20C1735C2F0F6AAAF /* ReadwiseBookCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34C7206C12F213CDB4482121 /* ReadwiseBookCard.swift */; };
+		898197C3EBBD7D00277B9FAC /* ReadwiseBookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44B5D2F2B24BEC3ECB6FB427 /* ReadwiseBookStore.swift */; };
+		67A2530F111B012EB70957A4 /* ReadwiseLibraryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3B43B7542328EC408EE911 /* ReadwiseLibraryModels.swift */; };
+		A279F76803C3BBD9F520A24B /* ReadwiseLibraryTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 937BA1B849A1DB1A13D6ECC0 /* ReadwiseLibraryTab.swift */; };
 		4C2D8E53B6F9A7081E3B4C5D /* ReadwiseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B3FA042C5D9E6F721A38B4C /* ReadwiseService.swift */; };
 		4C5F258F055BBD1E5BC11AD7 /* FocusBlockContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE542FA9B58FC675EAC51AF6 /* FocusBlockContextMenu.swift */; };
 		4C7B19C1151BCC3384648548 /* ClaudeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB44193A09EC4158BFE3948C /* ClaudeAPIClient.swift */; };
@@ -170,6 +173,7 @@
 		5E10FC4D07F8F7A09B5FEE59 /* GeminiThinkingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5507B377E3F520DAC0C37E98 /* GeminiThinkingOverlay.swift */; };
 		5E7FE42B0F5E66ED0A26A6A2 /* TimeBlockCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C11661B36B9A9F6F75F8947 /* TimeBlockCard.swift */; };
 		5F1E0CE682F279E4BC77C429 /* CosmoAgentSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668E4A8992C31806DFB958D1 /* CosmoAgentSettingsTab.swift */; };
+		A3B7C2D4E5F60918273B4C5D /* CosmoAISettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E8F1A2B3C40756A8E9D2F4 /* CosmoAISettingsTab.swift */; };
 		A7F3B8C9D0E1F26384A5B6C8 /* WritingEngineSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F3B8C9D0E1F26384A5B6C7 /* WritingEngineSettingsTab.swift */; };
 		C3D9E7F1A2B40568394E6B02 /* SkillsAndPromptsSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */; };
 		606A87324C6E2D9723F9E65A /* com.cosmo.voicedaemon.plist in Resources */ = {isa = PBXBuildFile; fileRef = BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */; };
@@ -374,6 +378,7 @@
 		B2EB611C3E10A2F1ECC8D8FC /* CosmoLevelSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5406C993C198CBB69E17D0 /* CosmoLevelSystem.swift */; };
 		B32BFA989CDDEFB008047F3C /* InboxViewBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = E313F96541049E1FC4EC7FDC /* InboxViewBlock.swift */; };
 		B3F2A71E4D8C92A5F1E06B37 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4C8D21F3A5B67E9C0D24F81 /* DesignSystem.swift */; };
+		D2A8F63C4E1B57D9B3C40E95 /* FilmGrainOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F7E82A3B9D45F6A0E12D73 /* FilmGrainOverlay.swift */; };
 		B41EAF3008EC344E25779DF4 /* AgentProactiveScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B55EEFBA357A938107F6A0E /* AgentProactiveScheduler.swift */; };
 		B4C3A05B4D8F9BC632B5D901 /* SanctuaryChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC1F94E3E8DA0D74BA6C9F1 /* SanctuaryChartView.swift */; };
 		B52D7ED77BDA498FAE7C2C07 /* KnowledgeLinker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FBC92278CB9969768AEFA12 /* KnowledgeLinker.swift */; };
@@ -786,6 +791,7 @@
 		64DB3E094F95443E13CBE4BE /* ReflectionJournalingRhythm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionJournalingRhythm.swift; sourceTree = "<group>"; };
 		6663C84983DBE576AF0885F2 /* HealthKitConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitConfiguration.swift; sourceTree = "<group>"; };
 		668E4A8992C31806DFB958D1 /* CosmoAgentSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAgentSettingsTab.swift; sourceTree = "<group>"; };
+		D6E8F1A2B3C40756A8E9D2F4 /* CosmoAISettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAISettingsTab.swift; sourceTree = "<group>"; };
 		A7F3B8C9D0E1F26384A5B6C7 /* WritingEngineSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingEngineSettingsTab.swift; sourceTree = "<group>"; };
 		C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsAndPromptsSettingsTab.swift; sourceTree = "<group>"; };
 		670B69E7A7AEFB3237E8DFCB /* InsightProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightProcessor.swift; sourceTree = "<group>"; };
@@ -854,6 +860,10 @@
 		8A95B53231B529DFC27DAE73 /* BlockContextMenu.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BlockContextMenu.swift; path = Canvas/BlockContextMenu.swift; sourceTree = SOURCE_ROOT; };
 		8AD2A05F4F9EB1E85CB7DA02 /* PredictionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionCard.swift; sourceTree = "<group>"; };
 		8AF8F0915921BEC4AE59CA7D /* ContentVoiceCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentVoiceCommands.swift; sourceTree = "<group>"; };
+		34C7206C12F213CDB4482121 /* ReadwiseBookCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseBookCard.swift; sourceTree = "<group>"; };
+		44B5D2F2B24BEC3ECB6FB427 /* ReadwiseBookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseBookStore.swift; sourceTree = "<group>"; };
+		7E3B43B7542328EC408EE911 /* ReadwiseLibraryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseLibraryModels.swift; sourceTree = "<group>"; };
+		937BA1B849A1DB1A13D6ECC0 /* ReadwiseLibraryTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseLibraryTab.swift; sourceTree = "<group>"; };
 		8B3FA042C5D9E6F721A38B4C /* ReadwiseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseService.swift; sourceTree = "<group>"; };
 		8B7A79239EDF6A7F60CF99DD /* HybridSearchEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSearchEngine.swift; sourceTree = "<group>"; };
 		8B7D2D8DA1B377F619C689B6 /* GuidedStoryCreatorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuidedStoryCreatorView.swift; path = UI/FocusMode/Content/GuidedStoryCreatorView.swift; sourceTree = SOURCE_ROOT; };
@@ -1006,7 +1016,6 @@
 		C2107CE41A783C7B48FD2E2B /* MediaBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaBlockView.swift; sourceTree = "<group>"; };
 		CBF0CED3D105511AB6C99AB4 /* ResearchBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchBlockView.swift; sourceTree = "<group>"; };
 		CC3A26A717A911273DA405C4 /* NodeGraphEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeGraphEngine.swift; sourceTree = "<group>"; };
-		CC3D4E5F6A7B8C9D0E1F2A3B /* AnnotationConnectionLine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationConnectionLine.swift; sourceTree = "<group>"; };
 		CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerplexityService.swift; sourceTree = "<group>"; };
 		CD4BC57E225DF3B9E0A67D78 /* KnowledgeResearchTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeResearchTimeline.swift; sourceTree = "<group>"; };
 		CDD5EC6633BA8802F3965EC8 /* InstagramTranscriptView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InstagramTranscriptView.swift; path = UI/FocusMode/SwipeStudy/InstagramTranscriptView.swift; sourceTree = SOURCE_ROOT; };
@@ -1078,6 +1087,7 @@
 		E313F96541049E1FC4EC7FDC /* InboxViewBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxViewBlock.swift; sourceTree = "<group>"; };
 		E373AEBDAE3902EDE1B33740 /* ParsedAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParsedAction.swift; sourceTree = "<group>"; };
 		E386A5996F47829424B46AD6 /* ContentFocusModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentFocusModeView.swift; path = UI/FocusMode/Content/ContentFocusModeView.swift; sourceTree = SOURCE_ROOT; };
+		C1F7E82A3B9D45F6A0E12D73 /* FilmGrainOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmGrainOverlay.swift; sourceTree = "<group>"; };
 		E4C8D21F3A5B67E9C0D24F81 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		E4FDD04AE45F22506C1976C3 /* 0000300_adapters.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0000300_adapters.safetensors; sourceTree = "<group>"; };
 		E52669FC2AAD02BCFF1AAF32 /* ResearchComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchComponents.swift; sourceTree = "<group>"; };
@@ -1822,6 +1832,7 @@
 			isa = PBXGroup;
 			children = (
 				668E4A8992C31806DFB958D1 /* CosmoAgentSettingsTab.swift */,
+				D6E8F1A2B3C40756A8E9D2F4 /* CosmoAISettingsTab.swift */,
 				7EF07FFCDE38EA4ED7FEF0B9 /* CosmoWindowSettingsSection.swift */,
 				A7F3B8C9D0E1F26384A5B6C7 /* WritingEngineSettingsTab.swift */,
 				C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */,
@@ -2065,8 +2076,9 @@
 		A8D19C73F64E2B07913C5D84 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				C7E42F1DA93B850612D4A7E3 /* SocialSyncService.swift */,
+				44B5D2F2B24BEC3ECB6FB427 /* ReadwiseBookStore.swift */,
 				8B3FA042C5D9E6F721A38B4C /* ReadwiseService.swift */,
+				C7E42F1DA93B850612D4A7E3 /* SocialSyncService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -2099,6 +2111,7 @@
 				6EBE234C9C1B2A9E25D0EB8D /* CosmoNotifications.swift */,
 				2592701606783E9FDCA1CC31 /* DateFormatters.swift */,
 				E4C8D21F3A5B67E9C0D24F81 /* DesignSystem.swift */,
+				C1F7E82A3B9D45F6A0E12D73 /* FilmGrainOverlay.swift */,
 				D6AC930FD36314607F7EC94D /* Theme.swift */,
 				895698084DB7263B37CC43C5 /* Components */,
 				39A0167847B3CEA345A981A7 /* Onyx */,
@@ -2142,6 +2155,7 @@
 				CD17A2B3C4D5E6F708192A3B /* CanvasDrawingRecord.swift */,
 				E313F96541049E1FC4EC7FDC /* InboxViewBlock.swift */,
 				F255870EB2A86BB42CC9EB95 /* LegacyTypeStubs.swift */,
+				7E3B43B7542328EC408EE911 /* ReadwiseLibraryModels.swift */,
 				1C2B63D6A8EB493606C1DA31 /* LevelSystem */,
 				42390F5451E5ECBAC2F1CC6F /* Sanctuary */,
 			);
@@ -2329,6 +2343,8 @@
 				3CFC7FDEB605D173EFA4C751 /* SwipeGalleryTab.swift */,
 				D3E4F5A6B7C8D9E0F1A2B3C4 /* IdeasTab.swift */,
 				E7A2B3C4D5E6F708A1B20002 /* LibraryTab.swift */,
+				34C7206C12F213CDB4482121 /* ReadwiseBookCard.swift */,
+				937BA1B849A1DB1A13D6ECC0 /* ReadwiseLibraryTab.swift */,
 				C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */,
 				E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */,
 			);
@@ -2491,7 +2507,6 @@
 		F4C4AFB1124920E48376A5D3 /* Research */ = {
 			isa = PBXGroup;
 			children = (
-				CC3D4E5F6A7B8C9D0E1F2A3B /* AnnotationConnectionLine.swift */,
 				AA7B8C9D0E1F2A3B4C5D6E7F /* AnnotationTypePickerPopover.swift */,
 				B844C77F70331200F5A9A131 /* InstagramCarouselLayout.swift */,
 				25EBAF625905B5EBE5DCAF70 /* InstagramReelLayout.swift */,
@@ -2721,6 +2736,7 @@
 				9E9D85BBCD6BEC1ECCDB4D49 /* PreferenceLearningEngine.swift in Sources */,
 				CBCE4582312A38B8A8A5351E /* BrainstormToThinkspacePipeline.swift in Sources */,
 				5F1E0CE682F279E4BC77C429 /* CosmoAgentSettingsTab.swift in Sources */,
+				A3B7C2D4E5F60918273B4C5D /* CosmoAISettingsTab.swift in Sources */,
 				A7F3B8C9D0E1F26384A5B6C8 /* WritingEngineSettingsTab.swift in Sources */,
 				C3D9E7F1A2B40568394E6B02 /* SkillsAndPromptsSettingsTab.swift in Sources */,
 				36B64C67F735E4A0855E41CA /* AIWritingAssistant.swift in Sources */,
@@ -2911,6 +2927,10 @@
 				4EF135E538BF5675B6819E01 /* KnowledgeConstellation.swift in Sources */,
 				9F77F9CDE65AB234B02F5A10 /* KnowledgeDimensionData.swift in Sources */,
 				3B1C7D42A5E8F6970D2A3B4C /* KnowledgeDataProvider.swift in Sources */,
+				00802BE20C1735C2F0F6AAAF /* ReadwiseBookCard.swift in Sources */,
+				898197C3EBBD7D00277B9FAC /* ReadwiseBookStore.swift in Sources */,
+				67A2530F111B012EB70957A4 /* ReadwiseLibraryModels.swift in Sources */,
+				A279F76803C3BBD9F520A24B /* ReadwiseLibraryTab.swift in Sources */,
 				4C2D8E53B6F9A7081E3B4C5D /* ReadwiseService.swift in Sources */,
 				AEB98AF5E8DB3F0D3E3825DB /* KnowledgeDimensionView.swift in Sources */,
 				D3F87D40613EA528B57E479C /* KnowledgeFlowMetrics.swift in Sources */,
@@ -2999,7 +3019,6 @@
 				A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */,
 				C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */,
 				06DC1A2B3E4F5A6B7C8D9E0F /* ResearchBlockDropdownView.swift in Sources */,
-				06DD2B3C4E5F6A7B8C9D0E1A /* AnnotationConnectionLine.swift in Sources */,
 				06DE3C4D5F6A7B8C9D0E1F2B /* SelectableTranscriptText.swift in Sources */,
 				06DF4D5E6A7B8C9D0E1F2A3C /* AnnotationTypePickerPopover.swift in Sources */,
 				A2DECE4CF4B20B0D73800E9F /* ResearchCapturePreviewCard.swift in Sources */,
@@ -3058,6 +3077,7 @@
 				3AD1461D4DA2AE3A4AE61753 /* TelepathyEngine.swift in Sources */,
 				C2A499778471F44F849AD3EC /* TextKitCoordinator.swift in Sources */,
 				B3F2A71E4D8C92A5F1E06B37 /* DesignSystem.swift in Sources */,
+				D2A8F63C4E1B57D9B3C40E95 /* FilmGrainOverlay.swift in Sources */,
 				ADC78D106F41736BFE0DA8A7 /* Theme.swift in Sources */,
 				0417B60B9903924A694BEAEF /* ThinkspaceManager.swift in Sources */,
 				FBE2A9F8DE85C9BE01B0C295 /* ThinkspaceSidebar.swift in Sources */,

@@ -94,13 +94,13 @@ struct MainView: View {
                     HStack(spacing: 5) {
                         Text("esc")
                             .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.35))
+                            .foregroundColor(DS.textMuted)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 3))
+                            .background(DS.border, in: RoundedRectangle(cornerRadius: 3))
                         Text("to go back")
                             .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.white.opacity(0.25))
+                            .foregroundColor(DS.textMuted)
                     }
                     .padding(.leading, thinkspaceManager.isSidebarVisible ? 300 : 16)
                     .padding(.top, 14)
@@ -146,7 +146,7 @@ struct MainView: View {
             // Command-K - The Cognition Hub
             // Revolutionary spatial command center that replaces Finder and sidebars
             if showCommandK {
-                CommandKView(initialTab: commandKReturnTab ?? .library)
+                CommandKView(initialTab: commandKReturnTab ?? .database)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(200)
             }
@@ -405,6 +405,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = true
+                appState.isCommandKVisible = true
             }
         }
         // NodeGraph Command-K atom opening handler
@@ -416,6 +417,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                appState.isCommandKVisible = false
                 commandKViewModel.clear()
             }
         }
@@ -440,7 +442,7 @@ struct MainView: View {
                     switch tabString {
                     case "swipeGallery": commandKReturnTab = .swipeGallery
                     case "ideas": commandKReturnTab = .ideas
-                    case "library": commandKReturnTab = .library
+                    case "library": commandKReturnTab = .database
                     default: commandKReturnTab = nil
                     }
                 } else {

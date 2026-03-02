@@ -33,8 +33,10 @@ struct IdeasTab: View {
     @State private var ideaSortMode: IdeaSortMode = .recent
     @State private var ideaStatusFilter: IdeaStatus? = nil
     @State private var ideaFormatFilter: ContentFormat? = nil
+    @State private var ideaClientFilter: String? = nil
+    @State private var clientProfiles: [Atom] = []
 
-    private let indigo = Color(hex: "#818CF8")
+    private let indigo = DS.entityIdea
 
     var body: some View {
         ZStack {
@@ -80,6 +82,11 @@ struct IdeasTab: View {
                 Task { await viewModel.loadIdeaGallery() }
             }
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+        }
+        .task {
+            if let profiles = try? await AtomRepository.shared.fetchAll(type: .clientProfile) {
+                clientProfiles = profiles
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ideaDeleted"))) { notification in
             if let uuid = notification.userInfo?["uuid"] as? String {
@@ -144,6 +151,10 @@ struct IdeasTab: View {
             items = items.filter { $0.contentFormat == formatFilter }
         }
 
+        if let clientFilter = ideaClientFilter {
+            items = items.filter { $0.clientUUID == clientFilter }
+        }
+
         switch ideaSortMode {
         case .recent:
             items.sort { $0.updatedAt > $1.updatedAt }
@@ -171,6 +182,9 @@ struct IdeasTab: View {
             // Filter dropdowns
             statusMenu
             formatMenu
+            if !clientProfiles.isEmpty {
+                clientMenu
+            }
 
             filterSeparator
 
@@ -236,12 +250,12 @@ struct IdeasTab: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 10))
         }
-        .foregroundColor(isActive ? DS.text : DS.textSecondary)
+        .foregroundColor(DS.text)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? indigo.opacity(0.15) : DS.border)
+                .fill(isActive ? indigo.opacity(0.15) : DS.surfaceElevated)
         )
     }
 
@@ -279,6 +293,7 @@ struct IdeasTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Format Menu
@@ -315,6 +330,51 @@ struct IdeasTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
+    }
+
+    // MARK: - Client Menu
+
+    private var clientMenu: some View {
+        Menu {
+            Button {
+                ideaClientFilter = nil
+            } label: {
+                HStack {
+                    Text("All Clients")
+                    if ideaClientFilter == nil { Image(systemName: "checkmark") }
+                }
+            }
+            Divider()
+            ForEach(clientProfiles, id: \.uuid) { client in
+                Button {
+                    ideaClientFilter = ideaClientFilter == client.uuid ? nil : client.uuid
+                } label: {
+                    HStack {
+                        Text(client.title ?? "Client")
+                        if ideaClientFilter == client.uuid {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            filterDropdownLabel(
+                clientFilterLabel,
+                isActive: ideaClientFilter != nil
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .tint(DS.text)
+    }
+
+    private var clientFilterLabel: String {
+        if let uuid = ideaClientFilter,
+           let client = clientProfiles.first(where: { $0.uuid == uuid }) {
+            return client.title ?? "Client"
+        }
+        return "Client"
     }
 
     // MARK: - Sort Menu
@@ -341,27 +401,29 @@ struct IdeasTab: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
             }
-            .foregroundColor(DS.textSecondary)
+            .foregroundColor(DS.text)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.border)
+                    .fill(DS.surfaceElevated)
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Active Filters
 
     private var hasActiveFilters: Bool {
-        ideaStatusFilter != nil || ideaFormatFilter != nil
+        ideaStatusFilter != nil || ideaFormatFilter != nil || ideaClientFilter != nil
     }
 
     private var clearButton: some View {
         Button {
             ideaStatusFilter = nil
             ideaFormatFilter = nil
+            ideaClientFilter = nil
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "xmark.circle.fill")
@@ -465,7 +527,7 @@ private struct IdeaGalleryCard: View {
     @State private var isPressed = false
     @State private var showDeleteAlert = false
 
-    private let indigo = Color(hex: "#818CF8")
+    private let indigo = DS.entityIdea
 
     private var isSelected: Bool {
         viewModel?.selectedUUIDs.contains(item.atomUUID) ?? false
@@ -569,7 +631,7 @@ private struct IdeaGalleryCard: View {
         .frame(width: cardWidth)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(DS.border)
+                .fill(DS.surfaceElevated)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -584,7 +646,7 @@ private struct IdeaGalleryCard: View {
             radius: isHovered ? 12 : 0,
             y: isHovered ? 4 : 0
         )
-        .scaleEffect(isPressed ? 0.95 : (isHovered ? 1.03 : 1.0))
+        .scaleEffect(isPressed ? 0.97 : 1.0)
         .opacity(hasAppeared ? 1.0 : 0.0)
         .offset(y: hasAppeared ? 0 : 20)
         .animation(
@@ -800,12 +862,12 @@ private struct IdeaGalleryCard: View {
             Text("\(count)")
                 .font(.system(size: 9, weight: .medium).monospacedDigit())
         }
-        .foregroundColor(Color(hex: "#FFD700").opacity(0.8))
+        .foregroundColor(DS.entitySwipe.opacity(0.8))
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
         .background(
             Capsule()
-                .fill(Color(hex: "#FFD700").opacity(0.12))
+                .fill(DS.entitySwipe.opacity(0.12))
         )
     }
 
@@ -847,9 +909,9 @@ private struct IdeaGalleryCard: View {
 
     private var analysisDotColor: Color {
         if item.contentCount > 0 {
-            return Color(hex: "#818CF8")
+            return DS.entityIdea
         } else if item.insightScore != nil {
-            return Color(hex: "#22C55E")
+            return DS.green
         } else {
             return DS.textMuted
         }

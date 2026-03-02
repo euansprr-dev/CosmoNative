@@ -109,10 +109,10 @@ public struct TaskIntentPicker: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: PlannerumLayout.spacingSM) {
             // Section label
-            Text("Intent")
-                .font(OnyxTypography.label)
-                .foregroundColor(OnyxColors.Text.tertiary)
-                .tracking(OnyxTypography.labelTracking)
+            Text("INTENT")
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundColor(PlannerumColors.textMuted)
+                .tracking(PlannerumTypography.trackingWide)
 
             // 4x2 intent grid
             intentGrid
@@ -178,14 +178,14 @@ public struct TaskIntentPicker: View {
                     isSelected
                         ? item.color.opacity(0.15)
                         : isHovered
-                            ? DS.border
-                            : DS.borderSubtle
+                            ? Color.white.opacity(0.06)
+                            : Color.white.opacity(0.03)
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
                 .strokeBorder(
-                    isSelected ? item.color.opacity(0.4) : DS.border,
+                    isSelected ? item.color.opacity(0.4) : Color.white.opacity(0.08),
                     lineWidth: 1
                 )
         )
@@ -200,10 +200,10 @@ public struct TaskIntentPicker: View {
             linkedIdeaSection
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Research":
-            linkedAtomSection(label: "Link Research", atomType: .research, icon: "magnifyingglass")
+            linkedAtomSection(label: "LINK RESEARCH", atomType: .research, icon: "magnifyingglass")
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Think":
-            linkedAtomSection(label: "Link Connection", atomType: .connection, icon: "link")
+            linkedAtomSection(label: "LINK CONNECTION", atomType: .connection, icon: "link")
                 .transition(.opacity.combined(with: .move(edge: .top)))
         case "Review":
             linkedContentSection
@@ -265,7 +265,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(DS.borderSubtle)
+        .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -307,7 +307,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(DS.surface.opacity(0.95))
+        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -340,7 +340,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(DS.borderSubtle)
+            .background(Color.white.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -396,7 +396,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(DS.borderSubtle)
+        .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -438,7 +438,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(DS.surface.opacity(0.95))
+        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -469,7 +469,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(DS.borderSubtle)
+            .background(Color.white.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -525,7 +525,7 @@ public struct TaskIntentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(DS.borderSubtle)
+        .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -567,7 +567,7 @@ public struct TaskIntentPicker: View {
             }
         }
         .padding(4)
-        .background(DS.surface.opacity(0.95))
+        .background(Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PlannerumLayout.cornerRadiusSM, style: .continuous)
@@ -598,7 +598,7 @@ public struct TaskIntentPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(DS.borderSubtle)
+            .background(Color.white.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)

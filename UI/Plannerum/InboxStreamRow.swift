@@ -321,7 +321,7 @@ public struct InboxStreamRow: View {
             .fill(
                 isHovered
                     ? PlannerumColors.glassPrimary
-                    : PlannerumColors.glassSecondary.opacity(0.3)
+                    : DS.surfaceElevated
             )
     }
 
@@ -330,7 +330,7 @@ public struct InboxStreamRow: View {
             .strokeBorder(
                 isHovered
                     ? stream.type.color.opacity(0.3)
-                    : PlannerumColors.glassBorder,
+                    : DS.borderSubtle,
                 lineWidth: 1
             )
     }
@@ -461,7 +461,7 @@ public struct InboxItemDragPreview: View {
                         .strokeBorder(color.opacity(0.4), lineWidth: 1)
                 )
         )
-        .shadow(color: Color.black.opacity(0.3), radius: 10, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 3)
     }
 }
 
@@ -506,7 +506,7 @@ public struct PlannerumInboxItemCard: View {
                         .strokeBorder(item.displayColor.opacity(0.3), lineWidth: 1)
                 )
         )
-        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
     }
 }
 
@@ -663,8 +663,8 @@ struct InboxStreamRow_Previews: PreviewProvider {
         }
         .padding(20)
         .frame(width: PlannerumLayout.inboxRailWidth)
-        .background(PlannerumColors.voidPrimary)
-        .preferredColorScheme(.dark)
+        .background(DS.bg)
+        .preferredColorScheme(.light)
     }
 }
 #endif

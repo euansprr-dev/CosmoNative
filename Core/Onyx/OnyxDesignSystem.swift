@@ -1,44 +1,43 @@
 // CosmoOS/Core/Onyx/OnyxDesignSystem.swift
-// Onyx Design System — The Cognitive Atelier
+// Onyx Design System — Greenhouse Light Mode
 // Premium design tokens: elevation, color, typography, shadow, animation
-// PRD Section 4: "Every screen should feel like opening a $300 leather notebook
-// that happens to be alive with intelligence."
+// March 2026 — Light-mode rebrand
 
 import SwiftUI
 
 // MARK: - Onyx Colors
 
-/// The Onyx color architecture.
+/// The Onyx color architecture — adapted for light mode.
 /// 5-layer elevation system + tonal accent palette + fixed text hierarchy.
 struct OnyxColors {
 
-    // MARK: Elevation Stack (The "Onyx Stack")
-    // Each step is a deliberate 7-8 lightness increase with subtle blue-violet undertone.
+    // MARK: Elevation Stack (Light Mode)
+    // Each step uses warm whites with subtle shadow-based elevation.
 
     struct Elevation {
         /// L0 — True background, infinite canvas, behind everything
-        static let void = Color(hex: "08080C")
+        static let void = Color(hex: "F2F1ED")
         /// L1 — Primary surface, the "floor" of each view
-        static let base = Color(hex: "0F0F14")
+        static let base = Color(hex: "F8F7F4")
         /// L2 — Card backgrounds, primary containers
-        static let raised = Color(hex: "16161E")
+        static let raised = Color(hex: "FFFFFF")
         /// L3 — Hover states, active cards, modal backgrounds
-        static let elevated = Color(hex: "1E1E28")
+        static let elevated = Color(hex: "FFFFFF")
         /// L4 — Popovers, tooltips, dropdown menus, toolbar
-        static let floating = Color(hex: "262632")
+        static let floating = Color(hex: "FFFFFF")
     }
 
     // MARK: Accent Palette (Tonal — 3 primary + 1 alert)
 
     struct Accent {
-        /// Primary actions, AI elements, links — desaturated indigo
-        static let iris = Color(hex: "8B8FE8")
-        /// XP, achievements, progress — muted gold (replaces #FFD700)
+        /// Primary actions, AI elements, links — forest green
+        static let iris = Color(hex: "2D6A4F")
+        /// XP, achievements, progress — muted gold
         static let amber = Color(hex: "C4A87A")
-        /// Success, health, positive trends — muted green
-        static let sage = Color(hex: "7BAF8E")
-        /// Warnings, attention, declining trends — muted rose
-        static let rose = Color(hex: "C48B8B")
+        /// Success, health, positive trends — green
+        static let sage = Color(hex: "38B764")
+        /// Warnings, attention, declining trends — rose
+        static let rose = Color(hex: "DC3545")
     }
 
     // MARK: Dimension Colors — Desaturated (~40% saturation)
@@ -67,7 +66,6 @@ struct OnyxColors {
 
     // MARK: Dimension Colors — Full Saturation
     // Used ONLY inside that dimension's detail view for the primary metric and active data.
-    // Creates a "lights come on" effect when entering a dimension.
 
     struct DimensionVivid {
         static let cognitive = Color(hex: "6366F1")
@@ -90,17 +88,17 @@ struct OnyxColors {
         }
     }
 
-    // MARK: Text Hierarchy (Fixed colors, not opacity-based)
+    // MARK: Text Hierarchy (Fixed colors for light mode)
 
     struct Text {
-        /// Primary — slightly warm, not pure white, reduces glare
-        static let primary = Color(hex: "E8E8EC")
-        /// Secondary — reduced emphasis, fixed color
-        static let secondary = Color(hex: "9898A8")
+        /// Primary — near-black, crisp on white
+        static let primary = Color(hex: "1A1A1F")
+        /// Secondary — medium gray, reduced emphasis
+        static let secondary = Color(hex: "6B6B78")
         /// Tertiary — hints, captions, deliberate muting
-        static let tertiary = Color(hex: "5C5C6E")
-        /// Muted — timestamps, fine print, barely there
-        static let muted = Color(hex: "3E3E4E")
+        static let tertiary = Color(hex: "767685")
+        /// Muted — timestamps, fine print, lightest readable
+        static let muted = Color(hex: "C8C8D0")
     }
 }
 
@@ -125,7 +123,7 @@ struct OnyxTypography {
     /// 28pt Light — medium metrics
     static let mediumMetric = Font.system(size: 28, weight: .light, design: .default)
 
-    // MARK: Section Titles — New York serif for "leather notebook" feel
+    // MARK: Section Titles — New York serif
 
     /// 15pt New York Regular — section titles in dimension views
     static let sectionTitle = Font.system(size: 15, weight: .regular, design: .serif)
@@ -172,8 +170,8 @@ struct OnyxTypography {
 
 // MARK: - Onyx Shadows
 
-/// Neutral-only shadow system. Color glow reserved for the primary interactive element.
-/// No more purple-tinted shadows. Shadows use pure black at calibrated opacities.
+/// Light-mode shadow system. Soft, natural shadows at reduced opacity.
+/// No colored shadows. Shadows use pure black at calibrated opacities.
 
 enum OnyxElevation: CaseIterable {
     /// L2 on L1 — card at rest
@@ -196,18 +194,18 @@ struct OnyxShadowValues {
         switch elevation {
         case .resting:
             return OnyxShadowValues(
-                contactOpacity: 0.08, contactBlur: 1, contactY: 1,
-                ambientOpacity: 0.20, ambientBlur: 6, ambientY: 2
+                contactOpacity: 0.04, contactBlur: 2, contactY: 1,
+                ambientOpacity: 0.02, ambientBlur: 8, ambientY: 2
             )
         case .hovered:
             return OnyxShadowValues(
-                contactOpacity: 0.10, contactBlur: 2, contactY: 1,
-                ambientOpacity: 0.28, ambientBlur: 10, ambientY: 4
+                contactOpacity: 0.05, contactBlur: 3, contactY: 1,
+                ambientOpacity: 0.04, ambientBlur: 12, ambientY: 4
             )
         case .floating:
             return OnyxShadowValues(
-                contactOpacity: 0.12, contactBlur: 3, contactY: 2,
-                ambientOpacity: 0.35, ambientBlur: 16, ambientY: 6
+                contactOpacity: 0.06, contactBlur: 4, contactY: 2,
+                ambientOpacity: 0.05, ambientBlur: 20, ambientY: 6
             )
         }
     }
@@ -232,8 +230,8 @@ struct OnyxShadowModifier: ViewModifier {
                 x: 0, y: v.ambientY
             )
             .shadow(
-                color: (accentGlow ?? Color.clear).opacity(accentGlow != nil ? 0.12 : 0),
-                radius: 20,
+                color: (accentGlow ?? Color.clear).opacity(accentGlow != nil ? 0.08 : 0),
+                radius: 16,
                 x: 0, y: 0
             )
     }
@@ -284,7 +282,7 @@ struct OnyxSpring {
 // MARK: - Onyx Layout Constants
 
 struct OnyxLayout {
-    /// Card corner radius (tighter than current 16pt for precision)
+    /// Card corner radius
     static let cardCornerRadius: CGFloat = 14
 
     /// Card internal padding
@@ -297,7 +295,7 @@ struct OnyxLayout {
     static let weekSquareSize: CGFloat = 6
 
     /// Section divider opacity
-    static let dividerOpacity: CGFloat = 0.04
+    static let dividerOpacity: CGFloat = 0.08
 
     /// Metric group spacing
     static let metricGroupSpacing: CGFloat = 32

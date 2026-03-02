@@ -680,6 +680,7 @@ struct BadgeUnlockCard: View {
 
 struct ParticleEffectView: View {
     @State private var particles: [Particle] = []
+    @State private var particleTimer: Timer?
 
     struct Particle: Identifiable {
         let id = UUID()
@@ -694,13 +695,7 @@ struct ParticleEffectView: View {
         GeometryReader { geometry in
             ForEach(particles) { particle in
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.yellow, .orange],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .fill(Color.yellow)
                     .frame(width: particle.size, height: particle.size)
                     .position(x: particle.x, y: particle.y)
                     .opacity(particle.opacity)
@@ -708,6 +703,10 @@ struct ParticleEffectView: View {
         }
         .onAppear {
             generateParticles()
+        }
+        .onDisappear {
+            particleTimer?.invalidate()
+            particleTimer = nil
         }
     }
 
@@ -731,8 +730,8 @@ struct ParticleEffectView: View {
     }
 
     private func animateParticles() {
-        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
-            withAnimation(.linear(duration: 0.05)) {
+        particleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            Task { @MainActor in
                 for i in particles.indices {
                     particles[i].y -= CGFloat(particles[i].speed)
                     particles[i].opacity -= 0.01

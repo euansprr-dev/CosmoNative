@@ -500,13 +500,10 @@ struct ContentDraftView: View {
                         .font(.system(size: 14))
                         .foregroundColor(DS.textMuted)
                         .padding(8)
-                        .background(
+                        .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(DS.surfaceElevated)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(DS.border, lineWidth: 1)
-                                )
+                                .stroke(DS.glassBorder, lineWidth: 0.5)
                         )
                 }
                 .buttonStyle(.plain)
@@ -548,15 +545,12 @@ struct ContentDraftView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
+                .stroke(DS.border, lineWidth: 1)
         )
+        .dsFloatingShadow()
         .overlay(alignment: .bottom) {
             if showCustomPrompt {
                 customPromptField
@@ -627,15 +621,12 @@ struct ContentDraftView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: 260)
-        .background(
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(DS.accent.opacity(0.3), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+                .stroke(DS.border, lineWidth: 1)
         )
+        .dsFloatingShadow()
     }
 
     // MARK: - Inline Result Popover
@@ -660,15 +651,12 @@ struct ContentDraftView: View {
             }
         }
         .frame(width: 320)
-        .background(
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusMedium)
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
+                .stroke(DS.border, lineWidth: 1)
         )
+        .dsFloatingShadow()
     }
 
     @ViewBuilder
@@ -757,7 +745,7 @@ struct ContentDraftView: View {
             Text("Accept")
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(.white)
+        .foregroundColor(DS.textOnAccent)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(
@@ -1187,8 +1175,8 @@ struct DraftEditorTextView: NSViewRepresentable {
 
         // Typography
         textView.font = NSFont.systemFont(ofSize: 17, weight: .regular)
-        textView.textColor = NSColor.white.withAlphaComponent(0.9)
-        textView.insertionPointColor = NSColor.white
+        textView.textColor = NSColor(DS.text)
+        textView.insertionPointColor = NSColor(DS.text)
 
         // Paragraph style matching CosmoTypography.bodyLineSpacing
         let paragraphStyle = NSMutableParagraphStyle()

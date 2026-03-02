@@ -29,8 +29,8 @@ public struct BehavioralStreakTracker: View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                Text("Active Streaks")
-                    .font(OnyxTypography.label)
+                Text("ACTIVE STREAKS")
+                    .font(SanctuaryTypography.label)
                     .foregroundColor(SanctuaryColors.Text.tertiary)
                     .tracking(2)
 
@@ -95,7 +95,7 @@ public struct BehavioralStreakTracker: View {
                     .font(.system(size: 12))
                     .foregroundColor(SanctuaryColors.Semantic.warning)
 
-                Text("At Risk")
+                Text("AT RISK")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(SanctuaryColors.Semantic.warning)
                     .tracking(1)
@@ -404,7 +404,7 @@ public struct StreakLeaderboard: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
-            Text("Top Streaks")
+            Text("TOP STREAKS")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(1)
@@ -492,7 +492,7 @@ public struct StreakSummaryCompact: View {
                         .font(.system(size: 14))
                         .foregroundColor(SanctuaryColors.Dimensions.behavioral)
 
-                    Text("Streaks")
+                    Text("STREAKS")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(SanctuaryColors.Text.primary)
                         .tracking(1)

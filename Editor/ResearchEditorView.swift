@@ -823,4 +823,3 @@ struct CompactResearchCard: View {
     ResearchEditorView(researchId: 1, presentation: .focus)
         .frame(width: 1000, height: 800)
 }
-

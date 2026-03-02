@@ -144,6 +144,7 @@ class QuestEngine: ObservableObject {
     private let atomRepository: AtomRepository
     private var evaluationTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private var evaluationTask: Task<Void, Never>?
 
     /// User-customized quest definitions (empty = use defaults)
     private var customDefinitions: [QuestDefinition] = []
@@ -160,20 +161,20 @@ class QuestEngine: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Start periodic evaluation (every 60 seconds)
+    /// Start periodic evaluation (every 300 seconds, with event-driven debounced triggers)
     func startEvaluation() {
         // Evaluate immediately
         Task { await evaluate() }
 
-        // Then every 60 seconds
+        // Then every 300 seconds (5 minutes) — event-driven triggers handle real-time updates
         evaluationTimer?.invalidate()
-        evaluationTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        evaluationTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.evaluate()
+                self?.scheduleEvaluation()
             }
         }
 
-        // Immediate re-eval on specific quest-relevant events
+        // Debounced re-eval on specific quest-relevant events
         let triggerNotifications: [Notification.Name] = [
             .deepWorkSessionEnded,
             .taskCompleted,
@@ -183,7 +184,7 @@ class QuestEngine: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     Task { @MainActor [weak self] in
-                        await self?.evaluate()
+                        self?.scheduleEvaluation()
                     }
                 }
                 .store(in: &cancellables)
@@ -194,15 +195,27 @@ class QuestEngine: ObservableObject {
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    await self?.evaluate()
+                    self?.scheduleEvaluation()
                 }
             }
             .store(in: &cancellables)
     }
 
+    /// Debounce multiple evaluation triggers — only one evaluation runs within a 2-second window
+    private func scheduleEvaluation() {
+        evaluationTask?.cancel()
+        evaluationTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 second debounce
+            guard !Task.isCancelled else { return }
+            await evaluate()
+        }
+    }
+
     func stopEvaluation() {
         evaluationTimer?.invalidate()
         evaluationTimer = nil
+        evaluationTask?.cancel()
+        evaluationTask = nil
         cancellables.removeAll()
     }
 

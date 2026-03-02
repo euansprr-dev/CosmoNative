@@ -73,26 +73,26 @@ public struct SanctuaryColors {
     // ═══════════════════════════════════════════════════════════════
 
     /// Dormant connection thread (idle state)
-    public static let threadDormant = Color.white.opacity(0.15)
+    public static let threadDormant = Color.black.opacity(0.10)
 
     /// Active connection thread (hover/selected)
-    public static let threadActive = Color.white.opacity(0.4)
+    public static let threadActive = Color.black.opacity(0.25)
 
     /// Pulsing connection thread (data flow)
-    public static let threadPulse = Color.white.opacity(0.6)
+    public static let threadPulse = Color.black.opacity(0.40)
 
     // ═══════════════════════════════════════════════════════════════
     // HERO ORB - The central Cosmo Index visualization
     // ═══════════════════════════════════════════════════════════════
 
-    /// Hero orb primary gradient colors
-    public static let heroPrimary = Color(hex: "6366F1")
-    public static let heroSecondary = Color(hex: "8B5CF6")
-    public static let heroTertiary = Color(hex: "A855F7")
+    /// Hero orb primary gradient colors — forest green tones
+    public static let heroPrimary = Color(hex: "2D6A4F")
+    public static let heroSecondary = Color(hex: "38B764")
+    public static let heroTertiary = Color(hex: "4A8B72")
 
     /// Hero orb glow colors
-    public static let heroGlow = Color(hex: "818CF8")
-    public static let heroInnerGlow = Color.white.opacity(0.35)
+    public static let heroGlow = Color(hex: "2D6A4F").opacity(0.30)
+    public static let heroInnerGlow = Color.white.opacity(0.50)
 
     // ═══════════════════════════════════════════════════════════════
     // BACKGROUND SYSTEM - Aurora and void (referencing DS base tokens)
@@ -103,29 +103,29 @@ public struct SanctuaryColors {
     public static let voidSecondary = DS.surface       // Color(hex: "111118")
     public static let voidTertiary = DS.surfaceCard    // Color(hex: "1A1A24")
 
-    /// Aurora accent colors for background animation
-    public static let auroraBlue = Color(hex: "3B82F6").opacity(0.15)
-    public static let auroraPurple = Color(hex: "8B5CF6").opacity(0.12)
-    public static let auroraPink = Color(hex: "EC4899").opacity(0.08)
+    /// Aurora accent colors — subtle green-to-white gradient for light mode
+    public static let auroraBlue = Color(hex: "2D6A4F").opacity(0.06)
+    public static let auroraPurple = Color(hex: "38B764").opacity(0.04)
+    public static let auroraPink = Color(hex: "4A8B72").opacity(0.03)
 
     // ═══════════════════════════════════════════════════════════════
     // GLASS MATERIALS - Translucent surfaces (referencing DS base tokens)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Primary glass (cards, panels) - visible but subtle
-    public static let glassPrimary = DS.border          // Color.white.opacity(0.06)
+    /// Primary glass (cards, panels) — solid border for light mode
+    public static let glassPrimary = DS.surface
 
-    /// Secondary glass (nested elements) - more subtle
-    public static let glassSecondary = DS.borderSubtle  // Color.white.opacity(0.04)
+    /// Secondary glass (nested elements) — subtle border
+    public static let glassSecondary = DS.borderSubtle
 
-    /// Accent glass (highlighted states) - more visible
-    public static let glassAccent = DS.borderActive     // Color.white.opacity(0.12)
+    /// Accent glass (highlighted states) — active border
+    public static let glassAccent = DS.borderActive
 
     /// Glass border highlight
-    public static let glassBorder = Color.white.opacity(0.15)
+    public static let glassBorder = DS.border
 
     /// Glass border subtle
-    public static let glassBorderSubtle = DS.border     // Color.white.opacity(0.06)
+    public static let glassBorderSubtle = DS.borderSubtle
 
     // ═══════════════════════════════════════════════════════════════
     // TEXT HIERARCHY - On dark backgrounds (referencing DS base tokens)
@@ -164,13 +164,13 @@ public struct SanctuaryColors {
     // ═══════════════════════════════════════════════════════════════
 
     /// Strong correlation (r > 0.7)
-    public static let correlationStrong = Color.white.opacity(0.4)
+    public static let correlationStrong = Color.black.opacity(0.30)
 
     /// Medium correlation (r > 0.4)
-    public static let correlationMedium = Color.white.opacity(0.25)
+    public static let correlationMedium = Color.black.opacity(0.18)
 
     /// Weak correlation (r > 0.2)
-    public static let correlationWeak = Color.white.opacity(0.12)
+    public static let correlationWeak = Color.black.opacity(0.08)
 
     // ═══════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
@@ -1159,8 +1159,8 @@ struct SanctuaryTokens_Previews: PreviewProvider {
             }
             .padding(32)
         }
-        .background(SanctuaryColors.voidPrimary)
-        .preferredColorScheme(.dark)
+        .background(DS.bg)
+        .preferredColorScheme(.light)
     }
 }
 #endif

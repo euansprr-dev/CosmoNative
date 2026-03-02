@@ -643,11 +643,11 @@ private struct ContextCardStyleModifier: ViewModifier {
             .padding(PlannerumLayout.spacingLG)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(DS.border)
+                    .fill(DS.surfaceElevated)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(DS.border, lineWidth: 1)
+                    .strokeBorder(DS.borderSubtle, lineWidth: 1)
             )
     }
 }
@@ -794,6 +794,6 @@ final class NowViewContextViewModel: ObservableObject {
     NowViewContextPanel(task: mockTask)
         .frame(width: 400, height: 300)
         .padding(20)
-        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
-        .preferredColorScheme(.dark)
+        .background(DS.bg)
+        .preferredColorScheme(.light)
 }

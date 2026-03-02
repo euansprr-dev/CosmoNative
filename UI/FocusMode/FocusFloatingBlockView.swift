@@ -44,7 +44,7 @@ struct FocusFloatingBlockView: View {
                 .stroke(borderColor, lineWidth: isHovered ? 1.5 : 1)
         )
         .shadow(
-            color: isHovered ? typeConfig.accentColor.opacity(0.2) : Color.black.opacity(0.3),
+            color: isHovered ? typeConfig.accentColor.opacity(0.15) : Color.black.opacity(0.06),
             radius: isHovered ? 16 : 10,
             y: 4
         )
@@ -120,7 +120,7 @@ struct FocusFloatingBlockView: View {
             // Title
             Text(content.title == "Loading..." ? block.title : content.title)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(DS.text)
                 .lineLimit(2)
 
             // Preview text
@@ -225,8 +225,8 @@ struct FocusCanvasBlockView: View {
                 Button(action: onRemove) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .shadow(color: .black.opacity(0.5), radius: 4)
+                        .foregroundStyle(DS.textMuted)
+                        .shadow(color: .black.opacity(0.1), radius: 4)
                 }
                 .buttonStyle(.plain)
                 .padding(8)

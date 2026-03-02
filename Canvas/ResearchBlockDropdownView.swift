@@ -1,7 +1,7 @@
 // CosmoOS/Canvas/ResearchBlockDropdownView.swift
 // Collapsible dropdown content for Research block canvas cards
 // Shows transcript text and annotations in a compact, tabbed layout
-// Dark glass design matching Sanctuary aesthetic
+// Greenhouse light mode design matching Sanctuary aesthetic
 
 import SwiftUI
 
@@ -47,7 +47,7 @@ struct ResearchBlockDropdownView: View {
     }
 
     // Accent color matching research blocks
-    private let accentColor = CosmoColors.blockResearch
+    private let accentColor = DS.entityResearch
 
     // MARK: - Body
 
@@ -64,7 +64,7 @@ struct ResearchBlockDropdownView: View {
             // Content
             tabContent
         }
-        .background(DS.borderSubtle)
+        .background(DS.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -331,7 +331,7 @@ struct ResearchBlockDropdownView: View {
 struct ResearchBlockDropdownView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.canvas
                 .ignoresSafeArea()
 
             VStack(spacing: 20) {

@@ -1,6 +1,6 @@
 // CosmoOS/Canvas/ResearchBlockView.swift
 // Green-accented Research block for Thinkspace canvas
-// Dark glass design matching Sanctuary aesthetic
+// Clean light design matching Greenhouse aesthetic
 // Features: Playable video preview, collapsible transcript & annotations dropdown
 
 import SwiftUI
@@ -17,7 +17,7 @@ struct ResearchBlockView: View {
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Green accent for research
-    private let accentColor = CosmoColors.blockResearch
+    private let accentColor = DS.entityResearch
 
     // MARK: - Parsed Metadata
 
@@ -330,7 +330,7 @@ struct ResearchBlockView: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(
                     LinearGradient(
-                        colors: [accentColor.opacity(0.12), DS.borderSubtle],
+                        colors: [accentColor.opacity(0.12), DS.surfaceElevated],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -541,7 +541,7 @@ struct ResearchBlockView: View {
 struct ResearchBlockView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.canvas
                 .ignoresSafeArea()
 
             ResearchBlockView(

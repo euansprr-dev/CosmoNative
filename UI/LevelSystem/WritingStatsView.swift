@@ -177,7 +177,7 @@ public struct WritingStatsView: View {
                 } label: {
                     Text(frame.rawValue)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(selectedTimeframe == frame ? .white : .secondary)
+                        .foregroundColor(selectedTimeframe == frame ? DS.textOnAccent : .secondary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(
@@ -669,7 +669,7 @@ struct MilestoneRowView: View {
 
                     Image(systemName: "checkmark")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.textOnAccent)
                 } else {
                     Circle()
                         .trim(from: 0, to: progress)

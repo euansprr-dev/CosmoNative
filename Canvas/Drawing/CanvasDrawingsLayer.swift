@@ -555,7 +555,7 @@ struct CanvasDrawingsLayer: View {
                 let rect = drawing.boundingRect
                 let screenSize = scaleSize(rect.size)
                 Rectangle()
-                    .stroke(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .stroke(DS.accent.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .frame(width: screenSize.width + 8, height: screenSize.height + 8)
                     .position(x: screenPos.x, y: screenPos.y)
             }
@@ -600,7 +600,7 @@ struct CanvasDrawingsLayer: View {
                 let padded = screenRect.insetBy(dx: -Constants.selectionPadding, dy: -Constants.selectionPadding)
 
                 Rectangle()
-                    .stroke(Color.blue.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .stroke(DS.accent.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .frame(width: max(padded.width, 1), height: max(padded.height, 1))
                     .position(x: padded.midX, y: padded.midY)
                     .allowsHitTesting(false)
@@ -632,11 +632,11 @@ struct CanvasDrawingsLayer: View {
         let point = resizeHandlePoint(for: corner, in: rect)
 
         Circle()
-            .fill(Color.white)
+            .fill(DS.surfaceElevated)
             .frame(width: Constants.resizeHandleSize, height: Constants.resizeHandleSize)
             .overlay(
                 Circle()
-                    .stroke(Color.blue.opacity(0.9), lineWidth: 1.5)
+                    .stroke(DS.accent.opacity(0.9), lineWidth: 1.5)
             )
             .frame(width: Constants.resizeHandleHitSize, height: Constants.resizeHandleHitSize)
             .contentShape(Circle())
@@ -794,8 +794,8 @@ struct CanvasDrawingsLayer: View {
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(Color.red.opacity(0.8))
-                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .fill(DS.red)
+                    .shadow(color: .black.opacity(0.15), radius: 6)
             )
         }
         .buttonStyle(.plain)

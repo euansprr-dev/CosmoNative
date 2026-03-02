@@ -94,7 +94,7 @@ public struct SanctuaryHeroOrb: View {
             .frame(width: Layout.haloSize, height: Layout.haloSize)
             .blur(radius: 60)
             .drawingGroup()  // Rasterize blur to GPU texture
-            .opacity(0.3)
+            .opacity(0.4)
             .scaleEffect(haloScale * breathingScale)
     }
 
@@ -151,7 +151,7 @@ public struct SanctuaryHeroOrb: View {
             )
             .frame(width: radius * 2, height: radius * 2)
             .rotationEffect(.degrees(rotation))
-            .shadow(color: color.opacity(0.4), radius: 8, x: 0, y: 0)
+            .shadow(color: color.opacity(0.5), radius: 12, x: 0, y: 0)
             .drawingGroup()  // Rasterize ring + shadow to GPU texture
     }
 
@@ -183,9 +183,9 @@ public struct SanctuaryHeroOrb: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color.white.opacity(0.3),
-                            SanctuaryColors.HeroOrb.primary.opacity(0.8),
-                            SanctuaryColors.HeroOrb.secondary.opacity(0.9)
+                            Color.white.opacity(0.5),
+                            SanctuaryColors.HeroOrb.primary.opacity(0.7),
+                            SanctuaryColors.HeroOrb.secondary.opacity(0.85)
                         ],
                         center: .topLeading,
                         startRadius: 0,
@@ -198,7 +198,7 @@ public struct SanctuaryHeroOrb: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color.white.opacity(0.5),
+                            Color.white.opacity(0.6),
                             Color.clear
                         ],
                         center: .center,
@@ -214,7 +214,7 @@ public struct SanctuaryHeroOrb: View {
             Circle()
                 .trim(from: 0, to: 0.3)
                 .stroke(
-                    Color.white.opacity(0.2),
+                    Color.white.opacity(0.3),
                     style: StrokeStyle(lineWidth: 3, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-45))
@@ -223,8 +223,8 @@ public struct SanctuaryHeroOrb: View {
         .frame(width: Layout.coreSize - 40, height: Layout.coreSize - 40) // 120pt
         .clipShape(Circle())
         .scaleEffect(breathingScale)
-        .shadow(color: Color.black.opacity(0.4), radius: 30, x: 0, y: 20)
-        .shadow(color: SanctuaryColors.HeroOrb.glow.opacity(0.5), radius: 30, x: 0, y: 0)
+        .shadow(color: Color.black.opacity(0.1), radius: 20, x: 0, y: 10)
+        .shadow(color: SanctuaryColors.HeroOrb.glow.opacity(0.3), radius: 30, x: 0, y: 0)
     }
 
     private var surfaceNoiseOverlay: some View {
@@ -253,8 +253,8 @@ public struct SanctuaryHeroOrb: View {
             if let state = state {
                 Text("\(state.level)")
                     .font(.system(size: 32, weight: .ultraLight))
-                    .foregroundColor(OnyxColors.Text.primary)
-                    .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+                    .foregroundColor(DS.textOnAccent)
+                    .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
             }
         }
         .help("Cosmo Index")
@@ -396,7 +396,7 @@ extension SanctuaryHeroOrb {
 struct SanctuaryHeroOrb_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             SanctuaryHeroOrb(
                 state: CosmoIndexState(

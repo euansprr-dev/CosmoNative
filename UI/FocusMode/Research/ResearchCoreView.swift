@@ -81,7 +81,7 @@ struct ResearchCoreView: View {
                 .stroke(isHovered ? DS.borderActive : DS.borderActive.opacity(0.8), lineWidth: 1)
         )
         .shadow(
-            color: Color.black.opacity(0.3),
+            color: Color.black.opacity(0.06),
             radius: isHovered ? 20 : 12,
             y: isHovered ? 8 : 4
         )
@@ -497,7 +497,7 @@ struct ResearchCoreView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.black.opacity(0.2))
+        .background(DS.borderSubtle)
     }
 
     // MARK: - Helpers

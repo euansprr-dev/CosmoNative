@@ -21,6 +21,9 @@ class CanvasClusterEngine: ObservableObject {
         userClusters + clusters
     }
 
+    /// Currently selected cluster (for drag/selection)
+    @Published var selectedClusterId: UUID?
+
     @AppStorage("canvasAutoClusters") var isEnabled: Bool = false
 
     // MARK: - Private
@@ -237,11 +240,13 @@ class CanvasClusterEngine: ObservableObject {
             maxY = max(maxY, bottom)
         }
 
+        let topPadding = boundingPadding + CanvasCluster.titleTopPadding
+
         return CGRect(
             x: minX - boundingPadding,
-            y: minY - boundingPadding,
+            y: minY - topPadding,
             width: (maxX - minX) + boundingPadding * 2,
-            height: (maxY - minY) + boundingPadding * 2
+            height: (maxY - minY) + boundingPadding + topPadding
         )
     }
 
@@ -307,6 +312,16 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
+    /// Select a cluster (deselects any previous selection)
+    func selectCluster(_ id: UUID?) {
+        selectedClusterId = id
+    }
+
+    /// Get the entity UUIDs of all blocks in a user cluster
+    func memberBlockUUIDs(for clusterId: UUID) -> [String] {
+        userClusters.first(where: { $0.id == clusterId })?.blockUUIDs ?? []
+    }
+
     /// Update bounding rects for all user clusters (call after block positions change)
     func updateUserClusterBounds(blocks: [CanvasBlock]) {
         for index in userClusters.indices {
@@ -314,9 +329,38 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    /// Find which user cluster a canvas position falls within
+    /// Persist clusters after a move (public wrapper for persistUserClusters)
+    func persistAfterMove() {
+        guard let tsId = userClusters.first?.thinkspaceId else { return }
+        persistUserClusters(thinkspaceId: tsId)
+    }
+
+    /// ID of the cluster a block is currently being dragged over (for visual feedback)
+    @Published var dropTargetClusterId: UUID?
+
+    /// Find which user cluster a canvas position falls within (exact bounds)
     func userCluster(containing point: CGPoint) -> CanvasCluster? {
         userClusters.first { $0.boundingRect.contains(point) }
+    }
+
+    /// Find the nearest user cluster within drop proximity of a point.
+    /// Uses an expanded hit zone (80pt outset) so blocks dropped near a cluster get absorbed.
+    func nearestDropTargetCluster(for point: CGPoint) -> CanvasCluster? {
+        let dropInset: CGFloat = -80  // negative = outset
+        return userClusters.first { $0.boundingRect.insetBy(dx: dropInset, dy: dropInset).contains(point) }
+    }
+
+    /// Update the drop target highlight during a drag. Call on every drag move.
+    func updateDropTarget(for point: CGPoint) {
+        let target = nearestDropTargetCluster(for: point)
+        if dropTargetClusterId != target?.id {
+            dropTargetClusterId = target?.id
+        }
+    }
+
+    /// Clear the drop target (call on drag end / cancel)
+    func clearDropTarget() {
+        dropTargetClusterId = nil
     }
 
     /// Load user clusters from ThinkspaceMetadata

@@ -55,30 +55,30 @@ public struct SanctuaryBackgroundView: View {
     }
 
     private let baseColors: [Color] = [
-        Color(hex: "#6366F1"),  // Indigo
-        Color(hex: "#8B5CF6"),  // Purple
-        Color(hex: "#EC4899"),  // Pink
-        Color(hex: "#22C55E"),  // Green
+        Color(hex: "2D6A4F").opacity(0.45),  // Forest green
+        Color(hex: "4A8B72").opacity(0.40), // Teal green
+        Color(hex: "9B8A6E").opacity(0.35),  // Warm umber
+        Color(hex: "6B6EA8").opacity(0.35),  // Muted indigo
     ]
 
     public var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Base gradient
+                // Base gradient — warm parchment to soft white
                 LinearGradient(
                     colors: [
                         DS.bg,
-                        Color(hex: "#0F0A1A"),
-                        Color(hex: "#0A0F1A")
+                        DS.surface,
+                        DS.bg
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
 
-                // Radial glow from center
+                // Radial glow from center — subtle green tint
                 RadialGradient(
                     colors: [
-                        SanctuaryColors.cognitive.opacity(0.15),
+                        DS.accent.opacity(0.08),
                         Color.clear
                     ],
                     center: .center,

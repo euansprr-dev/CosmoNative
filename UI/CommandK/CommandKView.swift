@@ -11,18 +11,19 @@ public struct CommandKView: View {
 
     // MARK: - Tab Enum
     enum CommandKTab: CaseIterable {
-        case library
+        case database
         case swipeGallery
         case ideas
+        case readwise
     }
 
     // MARK: - State
-    var initialTab: CommandKTab = .library
+    var initialTab: CommandKTab = .database
     @StateObject private var viewModel = CommandKViewModel()
     @FocusState private var isSearchFocused: Bool
     @State private var activeTab: CommandKTab
 
-    init(initialTab: CommandKTab = .library) {
+    init(initialTab: CommandKTab = .database) {
         self.initialTab = initialTab
         _activeTab = State(initialValue: initialTab)
     }
@@ -72,9 +73,10 @@ public struct CommandKView: View {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.clearSelection()
                 switch activeTab {
-                case .library: activeTab = .swipeGallery
+                case .database: activeTab = .swipeGallery
                 case .swipeGallery: activeTab = .ideas
-                case .ideas: activeTab = .library
+                case .ideas: activeTab = .readwise
+                case .readwise: activeTab = .database
                 }
             }
             return .handled
@@ -83,27 +85,10 @@ public struct CommandKView: View {
 
     // MARK: - Background Layer
     private var backgroundLayer: some View {
-        ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .blur(radius: 20)
-
-            DS.bg
-                .opacity(0.7)
-
-            RadialGradient(
-                colors: [
-                    Color(hex: "#6366F1").opacity(0.02),
-                    .clear
-                ],
-                center: .center,
-                startRadius: 100,
-                endRadius: 600
-            )
-        }
-        .onTapGesture {
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-        }
+        DS.bg.opacity(0.7)
+            .onTapGesture {
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            }
     }
 
     // MARK: - Overlay Container
@@ -123,8 +108,11 @@ public struct CommandKView: View {
                 .background(DS.borderActive)
 
             switch activeTab {
-            case .library:
+            case .database:
                 LibraryTab(viewModel: viewModel, searchQuery: viewModel.query)
+
+            case .readwise:
+                ReadwiseLibraryTab(viewModel: viewModel, searchQuery: viewModel.query)
 
             case .swipeGallery:
                 SwipeGalleryTab(viewModel: viewModel, searchQuery: viewModel.query)
@@ -134,40 +122,23 @@ public struct CommandKView: View {
             }
         }
         .frame(width: width, height: height)
-        .background(glassBackground)
+        .background(DS.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .shadow(color: .black.opacity(0.3), radius: 40, y: 20)
-    }
-
-    // MARK: - Glass Background
-    private var glassBackground: some View {
-        ZStack {
-            Color(hex: "#12121A")
-                .opacity(0.95)
-
-            DS.border
-
+        .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            DS.border,
-                            DS.borderSubtle
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsFloatingShadow()
     }
+
+    // Glass background removed — using solid DS.surfaceElevated + DS.border overlay inline
 
     // MARK: - Search Bar Section
     private var searchBarSection: some View {
         HStack(spacing: 16) {
             Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(viewModel.isTaskCreationMode ? OnyxColors.Accent.iris : DS.textSecondary)
+                .foregroundColor(viewModel.isTaskCreationMode ? DS.accent : DS.textSecondary)
 
             TextField(searchPlaceholder, text: $viewModel.query)
                 .textFieldStyle(.plain)
@@ -189,10 +160,10 @@ public struct CommandKView: View {
             if viewModel.isTaskCreationMode {
                 Text("Enter to create task")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(OnyxColors.Accent.iris)
+                    .foregroundColor(DS.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(OnyxColors.Accent.iris.opacity(0.15))
+                    .background(DS.accentSoft)
                     .clipShape(Capsule())
             }
 
@@ -201,7 +172,7 @@ public struct CommandKView: View {
             } label: {
                 Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
                     .font(.system(size: 15))
-                    .foregroundColor(viewModel.isVoiceActive ? OnyxColors.Accent.iris : DS.textSecondary)
+                    .foregroundColor(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
             }
             .buttonStyle(.plain)
 
@@ -217,9 +188,10 @@ public struct CommandKView: View {
 
     private var searchPlaceholder: String {
         switch activeTab {
+        case .database: return "Search your database..."
+        case .readwise: return "Search your reading..."
         case .swipeGallery: return "Search your swipes..."
         case .ideas: return "Search your ideas..."
-        case .library: return "Search your library..."
         }
     }
 
@@ -242,12 +214,12 @@ public struct CommandKView: View {
     private var tabBar: some View {
         HStack(spacing: 0) {
             CommandKTabButton(
-                title: "Library",
-                icon: "books.vertical.fill",
-                isActive: activeTab == .library
+                title: "Database",
+                icon: "tray.full.fill",
+                isActive: activeTab == .database
             ) {
                 withAnimation(ProMotionSprings.snappy) {
-                    activeTab = .library
+                    activeTab = .database
                 }
             }
 
@@ -255,7 +227,7 @@ public struct CommandKView: View {
                 title: "Swipe Gallery",
                 icon: "bolt.fill",
                 isActive: activeTab == .swipeGallery,
-                accentColor: OnyxColors.Accent.amber
+                accentColor: DS.entitySwipe
             ) {
                 withAnimation(ProMotionSprings.snappy) {
                     activeTab = .swipeGallery
@@ -266,10 +238,21 @@ public struct CommandKView: View {
                 title: "Ideas",
                 icon: "lightbulb.fill",
                 isActive: activeTab == .ideas,
-                accentColor: Color(hex: "#818CF8")
+                accentColor: DS.entityIdea
             ) {
                 withAnimation(ProMotionSprings.snappy) {
                     activeTab = .ideas
+                }
+            }
+
+            CommandKTabButton(
+                title: "Readwise",
+                icon: "books.vertical.fill",
+                isActive: activeTab == .readwise,
+                accentColor: DS.entityReadwise
+            ) {
+                withAnimation(ProMotionSprings.snappy) {
+                    activeTab = .readwise
                 }
             }
 
@@ -288,13 +271,13 @@ public struct CommandKView: View {
 
     private func entityColor(_ type: AtomType) -> Color {
         switch type {
-        case .idea: return Color(hex: "#CAB8E8")        // lavender
-        case .task: return Color(hex: "#F4AFA0")         // coral
-        case .content: return Color(hex: "#A8CCE8")      // skyBlue
-        case .research: return Color(hex: "#8FC7A2")     // emerald
-        case .connection: return Color(hex: "#8B5CF6")   // purple
-        case .project: return Color(hex: "#6366F1")      // indigo
-        default: return Color(hex: "#6366F1")
+        case .idea: return DS.entityIdea
+        case .task: return DS.entityTask
+        case .content: return DS.entityContent
+        case .research: return DS.entityResearch
+        case .connection: return DS.entityConnection
+        case .project: return DS.entityIdea
+        default: return DS.textSecondary
         }
     }
 
@@ -317,7 +300,7 @@ private struct CommandKTabButton: View {
     let title: String
     let icon: String
     let isActive: Bool
-    var accentColor: Color = OnyxColors.Accent.iris
+    var accentColor: Color = DS.accent
     let action: () -> Void
 
     var body: some View {
@@ -329,7 +312,7 @@ private struct CommandKTabButton: View {
                     Text(title)
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(isActive ? OnyxColors.Text.primary : OnyxColors.Text.muted)
+                .foregroundColor(isActive ? DS.text : DS.textMuted)
 
                 RoundedRectangle(cornerRadius: 1)
                     .fill(isActive ? accentColor : Color.clear)

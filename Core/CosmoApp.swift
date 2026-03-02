@@ -214,6 +214,7 @@ class AppState: ObservableObject {
     }
     @Published var isLoading = false
     @Published var error: String? = nil
+    @Published var isCommandKVisible = false
 
     init() {
         // Initialize app state
@@ -411,19 +412,19 @@ public enum EntityType: String, Codable, Sendable {
 
     public var color: Color {
         switch self {
-        case .idea: return .purple
-        case .content: return .blue
-        case .connection: return .orange
-        case .research: return .green
-        case .task: return .pink
-        case .project: return .indigo
-        case .note: return .cyan
-        case .thinkspace: return CosmoColors.thinkspacePurple
-        case .cosmo: return .purple
-        case .cosmoAI: return Color(red: 0.55, green: 0.35, blue: 0.95)  // Vibrant purple for AI
-        case .calendar: return .red
-        case .journal: return .brown
-        case .swipeFile: return CosmoColors.coral
+        case .idea: return DS.entityIdea
+        case .content: return DS.entityContent
+        case .connection: return DS.entityConnection
+        case .research: return DS.entityResearch
+        case .task: return DS.entityTask
+        case .project: return DS.entityContent  // Projects share content blue
+        case .note: return DS.entityNote
+        case .thinkspace: return DS.accent
+        case .cosmo: return DS.accent
+        case .cosmoAI: return DS.accent
+        case .calendar: return DS.entityTask
+        case .journal: return DS.entityNote
+        case .swipeFile: return DS.entitySwipe
         }
     }
 }

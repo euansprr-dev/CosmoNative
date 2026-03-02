@@ -9,13 +9,13 @@ import SwiftUI
 private enum ViewLayerItem: String, CaseIterable {
     case heatmap
     case provocation
-    case clusters
+    case cluster
 
     var icon: String {
         switch self {
         case .heatmap: return "flame"
         case .provocation: return "diamond"
-        case .clusters: return "rectangle.3.group"
+        case .cluster: return "circle.hexagongrid"
         }
     }
 
@@ -23,7 +23,7 @@ private enum ViewLayerItem: String, CaseIterable {
         switch self {
         case .heatmap: return "Crystallization Heatmap"
         case .provocation: return "AI Provocation Scan"
-        case .clusters: return "Auto Clusters"
+        case .cluster: return "AI Clusters"
         }
     }
 
@@ -31,7 +31,7 @@ private enum ViewLayerItem: String, CaseIterable {
         switch self {
         case .heatmap: return Color(red: 1.0, green: 0.75, blue: 0.0) // amber
         case .provocation: return Color(red: 0.9, green: 0.25, blue: 0.25) // red
-        case .clusters: return Color(hex: "#06B6D4") // cyan/teal
+        case .cluster: return DS.accent
         }
     }
 }
@@ -157,7 +157,7 @@ struct CanvasViewLayersToolbar: View {
             return showCrystallizationHeatmap
         case .provocation:
             return provocationEngine.isScanning || !provocationEngine.activeProvocations.isEmpty
-        case .clusters:
+        case .cluster:
             return clusterEngine.isEnabled
         }
     }
@@ -173,7 +173,7 @@ struct CanvasViewLayersToolbar: View {
             Task {
                 await provocationEngine.scanBlocks(atomUUIDs: uuids)
             }
-        case .clusters:
+        case .cluster:
             withAnimation(ProMotionSprings.snappy) {
                 clusterEngine.isEnabled.toggle()
             }

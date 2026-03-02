@@ -125,12 +125,14 @@ public struct InboxRailView: View {
 
         do {
             switch streamType {
+            case .ideas:
+                _ = try await AtomRepository.shared.createIdea(title: title, content: "")
             case .tasks:
                 _ = try await AtomRepository.shared.createTask(title: title)
             case .project(let uuid, _):
                 _ = try await AtomRepository.shared.createTask(title: title, projectUuid: uuid)
             default:
-                _ = try await AtomRepository.shared.createTask(title: title)
+                _ = try await AtomRepository.shared.createIdea(title: title, content: "")
             }
 
             // Reload data
@@ -144,10 +146,10 @@ public struct InboxRailView: View {
 
     private var floatingTitle: some View {
         HStack {
-            Text("Inboxes")
-                .font(OnyxTypography.label)
-                .foregroundColor(OnyxColors.Text.tertiary)
-                .tracking(OnyxTypography.labelTracking)
+            Text("INBOXES")
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundColor(PlannerumColors.textMuted)
+                .tracking(2)
 
             Spacer()
 
@@ -165,10 +167,10 @@ public struct InboxRailView: View {
     // MARK: - Projects Title (floating)
 
     private var projectsTitle: some View {
-        Text("Projects")
-            .font(OnyxTypography.label)
-            .foregroundColor(OnyxColors.Text.muted)
-            .tracking(OnyxTypography.labelTracking)
+        Text("PROJECTS")
+            .font(.system(size: 9, weight: .heavy))
+            .foregroundColor(PlannerumColors.textMuted.opacity(0.6))
+            .tracking(1.5)
             .padding(.top, 8)
             .padding(.horizontal, 4)
     }
@@ -190,10 +192,10 @@ public struct InboxRailView: View {
         .background(
             // Each card gets its own glass background
             RoundedRectangle(cornerRadius: 14)
-                .fill(DS.border)
+                .fill(Color.white.opacity(0.05))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(DS.border, lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
         .onHover { hovering in
@@ -211,6 +213,8 @@ public struct InboxRailView: View {
             return viewModel.coreStreams
         case .tasks:
             return viewModel.coreStreams.filter { $0.type == .tasks }
+        case .ideas:
+            return viewModel.coreStreams.filter { $0.type == .ideas }
         }
     }
 
@@ -219,7 +223,7 @@ public struct InboxRailView: View {
     private var sectionHeader: some View {
         HStack {
             // Title with subtle tracking
-            Text("Inboxes")
+            Text("I N B O X E S")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(PlannerumColors.textSecondary)
                 .tracking(3)
@@ -442,10 +446,10 @@ public struct InboxRailView: View {
             )
             .frame(height: 1)
 
-            Text("Projects")
-                .font(OnyxTypography.label)
-                .foregroundColor(OnyxColors.Text.muted)
-                .tracking(OnyxTypography.labelTracking)
+            Text("PROJECTS")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundColor(PlannerumColors.textMuted.opacity(0.8))
+                .tracking(1)
 
             LinearGradient(
                 colors: [Color.clear, PlannerumColors.glassBorder.opacity(0.5), Color.clear],
@@ -497,10 +501,11 @@ public struct InboxRailView: View {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Filter options for inbox streams
-/// Note: Ideas removed from Plannerum sidebar (accessible via Cmd+K)
+/// Note: Content removed - Ideas encompasses content ideas
 public enum InboxFilter: String, CaseIterable {
     case all = "All"
     case tasks = "Tasks"
+    case ideas = "Ideas"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -662,20 +667,24 @@ public class InboxRailViewModel: ObservableObject {
                 .filter { $0.isOverdue }
                 .sorted { ($0.dueDate ?? Date()) < ($1.dueDate ?? Date()) }
 
-            // Build core streams (Tasks only — Ideas accessible via Cmd+K IdeasTab)
+            // Build core streams (Ideas and Tasks only - Content merged into Ideas)
+            var ideas: [UncommittedItemViewModel] = []
             var tasks: [UncommittedItemViewModel] = []
 
             for item in viewModels where !item.isOverdue {
                 switch item.inferredType {
+                case "idea", "content": ideas.append(item) // Content merged into Ideas
                 case "task": tasks.append(item)
-                default: break // Ideas/content handled via Cmd+K
+                default: ideas.append(item)
                 }
             }
 
             // Sort by creation date (newest first)
+            ideas.sort { $0.createdAt > $1.createdAt }
             tasks.sort { $0.createdAt > $1.createdAt }
 
             coreStreams = [
+                InboxStream(type: .ideas, items: ideas),
                 InboxStream(type: .tasks, items: tasks)
             ]
 

@@ -38,6 +38,9 @@ class TaskRecurrenceEngine {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
 
+        // Batch-fetch all tasks once to check existing instances for all templates
+        let existingTemplateUUIDs = try await batchExistingInstanceTemplateUUIDs(for: today)
+
         for template in templates {
             guard let metadata = template.metadataValue(as: TaskMetadata.self),
                   let recurrenceJSON = metadata.recurrence,
@@ -55,13 +58,35 @@ class TaskRecurrenceEngine {
                 continue
             }
 
-            // Check if instance already exists for today
-            let exists = try await instanceExists(templateUUID: template.uuid, date: today)
-            if exists { continue }
+            // Check if instance already exists for today (from batch result)
+            if existingTemplateUUIDs.contains(template.uuid) { continue }
 
             // Create today's instance
             try await createInstance(from: template, metadata: metadata, for: today)
         }
+    }
+
+    /// Batch-check which templates already have instances for a given date.
+    /// Returns a Set of template UUIDs that already have instances on the date.
+    private func batchExistingInstanceTemplateUUIDs(for date: Date) async throws -> Set<String> {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+
+        let allTasks = try await atomRepository.fetchAll(type: .task)
+
+        var result = Set<String>()
+        for atom in allTasks {
+            guard let meta = atom.metadataValue(as: TaskMetadata.self),
+                  let parentUUID = meta.recurrenceParentUUID,
+                  let focusDateStr = meta.focusDate,
+                  let focusDate = ISO8601DateFormatter().date(from: focusDateStr),
+                  focusDate >= dayStart && focusDate < dayEnd else {
+                continue
+            }
+            result.insert(parentUUID)
+        }
+        return result
     }
 
     /// Check if an instance already exists for a template on a given date

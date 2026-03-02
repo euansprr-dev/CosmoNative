@@ -14,6 +14,9 @@ struct LibraryTab: View {
     @State private var viewMode: LibraryViewMode = .grid
     @State private var sortMode: LibrarySortMode = .dateAdded
     @State private var typeFilter: AtomType? = nil
+    @State private var clientFilter: String? = nil
+    @State private var clientProfiles: [Atom] = []
+    @State private var clientLinkedUUIDs: Set<String> = []
     @State private var showResearchURLInput = false
     @State private var researchURLText = ""
     @StateObject private var incubationEngine = IncubationEngine.shared
@@ -36,6 +39,9 @@ struct LibraryTab: View {
         if let typeFilter {
             items = items.filter { $0.atomType == typeFilter }
         }
+        if clientFilter != nil {
+            items = items.filter { clientLinkedUUIDs.contains($0.uuid) }
+        }
         return items
     }
 
@@ -54,13 +60,6 @@ struct LibraryTab: View {
                     breadcrumbBar
                 }
 
-                // Smart collections (at top of home level, only when not searching)
-                if !libraryViewModel.showingRecentlyDeleted
-                    && searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
-                    && libraryViewModel.isAtHome
-                    && !libraryViewModel.smartCollections.isEmpty {
-                    smartCollectionsRow
-                }
 
                 // Due for Review (incubation queue)
                 if !incubationEngine.dueAtoms.isEmpty
@@ -121,9 +120,30 @@ struct LibraryTab: View {
         .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         .task {
             await libraryViewModel.loadLibrary()
+            // Load client profiles for filter
+            if let profiles = try? await AtomRepository.shared.fetchAll(type: .clientProfile) {
+                clientProfiles = profiles
+            }
         }
         .onChange(of: sortMode) { newSort in
             libraryViewModel.applySortMode(newSort)
+        }
+        .onChange(of: clientFilter) { _, newClient in
+            Task {
+                if let clientUUID = newClient {
+                    var linked: Set<String> = []
+                    for item in libraryViewModel.allItems {
+                        if let atom = try? await AtomRepository.shared.fetch(uuid: item.uuid) {
+                            if atom.linksList.contains(where: { $0.uuid == clientUUID }) {
+                                linked.insert(item.uuid)
+                            }
+                        }
+                    }
+                    clientLinkedUUIDs = linked
+                } else {
+                    clientLinkedUUIDs = []
+                }
+            }
         }
         .overlay {
             if showResearchURLInput {
@@ -147,7 +167,7 @@ struct LibraryTab: View {
             .padding(2)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(DS.border)
+                    .fill(DS.surfaceElevated)
             )
 
             // Recently Deleted button
@@ -158,6 +178,11 @@ struct LibraryTab: View {
 
             // Type filter dropdown
             typeFilterMenu
+
+            // Client profile filter
+            if !clientProfiles.isEmpty {
+                clientProfileFilterMenu
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 8)
@@ -176,7 +201,7 @@ struct LibraryTab: View {
                 .frame(width: 30, height: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(viewMode == mode ? DS.borderActive : Color.clear)
+                        .fill(viewMode == mode ? DS.surfaceHover : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -199,12 +224,12 @@ struct LibraryTab: View {
                 Text("Recently Deleted")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444") : DS.textSecondary)
+            .foregroundColor(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444") : DS.text)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444").opacity(0.15) : DS.border)
+                    .fill(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444").opacity(0.15) : DS.surfaceElevated)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(
@@ -238,12 +263,16 @@ struct LibraryTab: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
             }
-            .foregroundColor(DS.textSecondary)
+            .foregroundColor(DS.text)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.border)
+                    .fill(DS.surfaceHover)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(DS.borderSubtle, lineWidth: 1)
+                    )
             )
         }
     }
@@ -304,21 +333,22 @@ struct LibraryTab: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
             }
-            .foregroundColor(typeFilter != nil ? DS.accent : DS.textSecondary)
+            .foregroundColor(typeFilter != nil ? DS.accent : DS.text)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(typeFilter != nil ? DS.accent.opacity(0.12) : DS.border)
+                    .fill(typeFilter != nil ? DS.accent.opacity(0.12) : DS.surfaceHover)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(
-                                typeFilter != nil ? DS.accent.opacity(0.3) : Color.clear,
+                                typeFilter != nil ? DS.accent.opacity(0.3) : DS.borderSubtle,
                                 lineWidth: 1
                             )
                     )
             )
         }
+        .tint(DS.text)
     }
 
     // MARK: - Background Context Menu
@@ -478,57 +508,71 @@ struct LibraryTab: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 8)
-        .background(DS.borderSubtle)
+        .background(DS.surfaceElevated)
     }
 
-    // MARK: - Smart Collections
+    // MARK: - Client Profile Filter
 
-    private var smartCollectionsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(libraryViewModel.smartCollections) { collection in
-                    smartCollectionCard(collection)
+    private var clientProfileFilterMenu: some View {
+        Menu {
+            Button {
+                clientFilter = nil
+            } label: {
+                HStack {
+                    Text("All Clients")
+                    if clientFilter == nil {
+                        Image(systemName: "checkmark")
+                    }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-        }
-    }
 
-    @ViewBuilder
-    private func smartCollectionCard(_ collection: SmartCollection) -> some View {
-        Button {
-            libraryViewModel.openSmartCollection(collection)
+            Divider()
+
+            ForEach(clientProfiles, id: \.uuid) { client in
+                Button {
+                    clientFilter = client.uuid
+                } label: {
+                    HStack {
+                        Text(client.title ?? "Client")
+                        if clientFilter == client.uuid {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: collection.icon)
-                    .font(.system(size: 14))
-                    .foregroundColor(collection.color)
-                    .frame(width: 32, height: 32)
-                    .background(collection.color.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(collection.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.text)
-                    Text("\(collection.count) items")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 11))
+                Text(clientFilterLabel)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .foregroundColor(clientFilter != nil ? DS.accent : DS.text)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(DS.borderSubtle)
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(clientFilter != nil ? DS.accent.opacity(0.12) : DS.surfaceHover)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(DS.border, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(
+                                clientFilter != nil ? DS.accent.opacity(0.3) : DS.borderSubtle,
+                                lineWidth: 1
+                            )
                     )
             )
         }
-        .buttonStyle(.plain)
+        .tint(DS.text)
+    }
+
+    private var clientFilterLabel: String {
+        if let uuid = clientFilter,
+           let client = clientProfiles.first(where: { $0.uuid == uuid }) {
+            return client.title ?? "Client"
+        }
+        return "Client"
     }
 
     // MARK: - List View

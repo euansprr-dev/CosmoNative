@@ -23,23 +23,23 @@ struct BlockContextMenu: View {
 
         // Pane (for types that support focus modes + note)
         if [.idea, .content, .research, .connection, .cosmoAI, .note].contains(block.entityType) {
-            items.append(("pane", "rectangle.split.2x1", "Open as Pane", CosmoColors.thinkspacePurple))
+            items.append(("pane", "rectangle.split.2x1", "Open as Pane", DS.accent))
         }
 
-        items.append(("connect", "link", "Connect to...", CosmoColors.thinkspacePurple))
+        items.append(("connect", "link", "Connect to...", DS.accent))
 
         // Create Cluster (when multiple blocks selected)
         if selectedBlockIds.count >= 2 {
-            items.append(("createCluster", "square.3.layers.3d", "Create Cluster", CosmoColors.thinkspacePurple))
+            items.append(("createCluster", "square.3.layers.3d", "Create Cluster", DS.accent))
         }
 
         // Ask Cosmo (for non-AI blocks)
         if block.entityType != .cosmoAI {
-            items.append(("askCosmo", "sparkle", "Ask Cosmo", CosmoColors.lavender))
+            items.append(("askCosmo", "sparkle", "Ask Cosmo", DS.accent))
         }
 
         items.append(("duplicate", "plus.square.on.square", "Duplicate", DS.text))
-        items.append(("delete", "trash", "Delete", CosmoColors.softRed))
+        items.append(("delete", "trash", "Delete", DS.red))
 
         return items
     }
@@ -53,7 +53,7 @@ struct BlockContextMenu: View {
                     .frame(width: 6, height: 6)
                 Text(block.title.isEmpty ? block.entityType.rawValue.capitalized : block.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             }
             .padding(.horizontal, 12)
@@ -97,14 +97,13 @@ struct BlockContextMenu: View {
         .frame(width: 200)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
+                .fill(DS.surfaceElevated)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.borderActive, lineWidth: 1)
+                .stroke(DS.border, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
+        .dsFloatingShadow()
         .scaleEffect(appeared ? 1.0 : 0.8)
         .opacity(appeared ? 1.0 : 0)
         .position(x: position.x + 100, y: position.y)  // Offset right so menu doesn't cover click point

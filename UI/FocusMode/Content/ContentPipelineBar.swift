@@ -43,7 +43,7 @@ struct ContentPipelineBar: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 32)
         .background(DS.bg)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -163,17 +163,4 @@ struct ContentPipelineBar: View {
         if interval < 86400 { return "\(Int(interval / 3600))h" }
         return "\(Int(interval / 86400))d"
     }
-}
-
-// MARK: - Preview
-
-#Preview("Content Pipeline Bar") {
-    ContentPipelineBar(
-        currentPhase: .draft,
-        reachedPhase: .draft,
-        phaseEnteredAt: Date().addingTimeInterval(-1800),
-        onPhaseSelected: { _ in }
-    )
-    .frame(width: 700, height: 80)
-    .background(DS.bg)
 }

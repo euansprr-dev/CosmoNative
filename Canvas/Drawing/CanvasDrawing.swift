@@ -71,7 +71,7 @@ struct CanvasDrawing: Identifiable, Codable {
         pathPoints: [CGPoint]? = nil,
         textContent: String? = nil,
         textWeight: DrawingTextWeight? = nil,
-        strokeColor: String = "#FFFFFF",
+        strokeColor: String = "#1A1A1A",
         fillColor: String? = nil,
         strokeWidth: CGFloat = 2.0,
         opacity: Double = 1.0,
@@ -204,7 +204,7 @@ struct CanvasDrawing: Identifiable, Codable {
         let cleaned = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard cleaned.count == 6,
               let val = UInt64(cleaned, radix: 16) else {
-            return .white
+            return Color(red: 0.1, green: 0.1, blue: 0.1)
         }
         let r = Double((val >> 16) & 0xFF) / 255.0
         let g = Double((val >> 8) & 0xFF) / 255.0

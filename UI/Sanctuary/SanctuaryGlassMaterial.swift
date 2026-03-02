@@ -84,9 +84,9 @@ public struct SanctuaryGlassSurface: ViewModifier {
     }
 
     private var shadowOpacity: Double {
-        if isPressed { return 0.1 }
-        if isHovered { return 0.25 }
-        return 0.15
+        if isPressed { return 0.08 }
+        if isHovered { return 0.20 }
+        return 0.12
     }
 
     private var scale: CGFloat {
@@ -108,8 +108,8 @@ public struct SanctuaryGlassSurface: ViewModifier {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    (isHovered ? DS.borderActive : DS.border),
-                                    Color.white.opacity(0.02),
+                                    DS.accent.opacity(isHovered ? 0.06 : 0.03),
+                                    DS.accent.opacity(isHovered ? 0.03 : 0.01),
                                     Color.clear
                                 ],
                                 startPoint: .topLeading,
@@ -672,7 +672,7 @@ extension View {
 struct SanctuaryGlassMaterial_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            SanctuaryColors.voidPrimary.ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             VStack(spacing: 24) {
                 // Glass types
@@ -722,7 +722,7 @@ struct SanctuaryGlassMaterial_Previews: PreviewProvider {
             }
             .padding(32)
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }
 #endif

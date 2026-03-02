@@ -120,7 +120,7 @@ struct HookAnalysisCard: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.border, lineWidth: 1)

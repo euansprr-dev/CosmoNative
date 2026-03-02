@@ -185,13 +185,13 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
 
     private var canvasContentLayer: some View {
         ZStack {
-            // Floating content (moves with pan/zoom)
-            floatingContent()
+            // Anchored content (stays visually centered, but scales)
+            anchoredContent()
                 .scaleEffect(effectiveZoom)
                 .offset(x: effectiveOffset.x, y: effectiveOffset.y)
 
-            // Anchored content (stays visually centered, but scales)
-            anchoredContent()
+            // Floating content (on top of anchored, moves with pan/zoom)
+            floatingContent()
                 .scaleEffect(effectiveZoom)
                 .offset(x: effectiveOffset.x, y: effectiveOffset.y)
         }
@@ -344,7 +344,7 @@ private struct FocusModeRecenterButton: View {
                     Text("Recenter")
                         .font(CosmoTypography.labelSmall)
                 }
-                .foregroundColor(isHovered ? .white : CosmoColors.textSecondary)
+                .foregroundColor(isHovered ? DS.accent : DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
@@ -359,8 +359,9 @@ private struct FocusModeRecenterButton: View {
                         )
                 )
                 .shadow(
-                    color: isHovered ? DS.accent.opacity(0.3) : Color.black.opacity(0.2),
-                    radius: isHovered ? 8 : 4
+                    color: .black.opacity(isHovered ? 0.08 : 0.04),
+                    radius: isHovered ? 8 : 4,
+                    y: isHovered ? 3 : 1
                 )
             }
             .buttonStyle(.plain)
@@ -369,7 +370,6 @@ private struct FocusModeRecenterButton: View {
                     isHovered = hovering
                 }
             }
-            .scaleEffect(isHovered ? 1.05 : 1.0)
             .animation(ProMotionSprings.hover, value: isHovered)
             .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
@@ -432,7 +432,7 @@ struct InfiniteCanvasView_Previews: PreviewProvider {
                         .frame(width: 400, height: 300)
                         .overlay(
                             Text("Anchored Content")
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
                         )
                 },
                 floatingContent: {
@@ -443,7 +443,7 @@ struct InfiniteCanvasView_Previews: PreviewProvider {
                         .position(x: 150, y: 150)
                         .overlay(
                             Text("Floating Panel")
-                                .foregroundColor(.white)
+                                .foregroundColor(DS.text)
                         )
                 }
             )

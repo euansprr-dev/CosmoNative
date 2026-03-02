@@ -362,10 +362,10 @@ final class SanctuaryMetalRenderer {
             // Add subtle vignette
             float vignette = 1.0 - pow(dist * 1.2, 2.0);
 
-            // Deep void base color
-            float4 voidColor = float4(0.04, 0.04, 0.06, 1.0);
-
-            return mix(voidColor, voidColor + aurora, vignette);
+            // Transparent overlay — aurora color with alpha based on brightness
+            float3 auroraRGB = aurora.rgb * vignette;
+            float auroraAlpha = length(auroraRGB) * vignette;
+            return float4(auroraRGB, auroraAlpha);
         }
 
         // ═══════════════════════════════════════════════════════════════════════════════
@@ -796,6 +796,7 @@ class SanctuaryAuroraNSView: NSView {
         metalLayer.device = renderer.device
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
+        metalLayer.isOpaque = false
         metalLayer.maximumDrawableCount = 3
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
 
@@ -854,7 +855,7 @@ class SanctuaryAuroraNSView: NSView {
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.04, green: 0.04, blue: 0.06, alpha: 1.0)
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)  // Transparent — SwiftUI background shows through
         renderPassDescriptor.colorAttachments[0].storeAction = .store
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
@@ -983,6 +984,7 @@ class SanctuaryHeroOrbNSView: NSView {
         metalLayer.device = renderer.device
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
+        metalLayer.isOpaque = false
         metalLayer.maximumDrawableCount = 3
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
 
@@ -1161,6 +1163,7 @@ class SanctuaryProgressRingNSView: NSView {
         metalLayer.device = renderer.device
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
+        metalLayer.isOpaque = false
         metalLayer.maximumDrawableCount = 3
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
 

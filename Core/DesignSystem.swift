@@ -1,70 +1,162 @@
 // CosmoOS/Core/DesignSystem.swift
-// Unified Design System — Sanctuary-Level Visual Coherence
+// Unified Design System — Greenhouse Light Mode
 // Every screen MUST use these tokens. No inline color/font definitions.
-// February 2026
+// March 2026 — Full light-mode rebrand
 
 import SwiftUI
 
-// MARK: - Design System (Sanctuary Tokens)
+// MARK: - Design System (Greenhouse Tokens)
 
 /// Single source of truth for all visual tokens in CosmoOS.
-/// Extracted from the Sanctuary hub — every screen must match.
+/// Greenhouse: warm parchment surfaces, forest green accent, quiet depth via shadows.
 enum DS {
 
     // ═══════════════════════════════════════════════════════════════
-    // COLORS — Sanctuary Dark Theme
+    // SURFACES — Warm parchment base, white elevation
     // ═══════════════════════════════════════════════════════════════
 
-    /// Page background — match Sanctuary's exact background
-    static let bg = Color(hex: "0A0A0F")
+    /// Page background — warm parchment
+    static let bg = Color(hex: "F8F7F4")
 
-    /// Sidebar, panels, rails
-    static let surface = Color(hex: "111118")
+    /// Sidebar, panels, secondary surfaces
+    static let surface = Color(hex: "F5F4F0")
 
-    /// Cards, editor areas, modals
-    static let surfaceElevated = Color(hex: "16161F")
+    /// Cards, editor areas, modals — clean white
+    static let surfaceElevated = Color(hex: "FFFFFF")
 
-    /// Thinkspace canvas cards, library cards
-    static let surfaceCard = Color(hex: "1A1A24")
+    /// Thinkspace canvas cards, library cards — clean white
+    static let surfaceCard = Color(hex: "FFFFFF")
 
-    /// Standard borders everywhere
-    static let border = Color.white.opacity(0.06)
+    /// Canvas background — slightly warmer than bg
+    static let canvas = Color(hex: "F2F1ED")
 
-    /// Section dividers, faint separations
-    static let borderSubtle = Color.white.opacity(0.04)
+    /// Hover state tint for interactive surfaces
+    static let surfaceHover = Color(hex: "F0EFEB")
 
-    /// Focus states, active inputs
-    static let borderActive = Color.white.opacity(0.12)
+    // ═══════════════════════════════════════════════════════════════
+    // TEXT — Dark on light, WCAG AA compliant
+    // ═══════════════════════════════════════════════════════════════
 
-    /// Primary text, headings, editor content
-    static let text = Color(hex: "E8E8ED")
+    /// Primary text, headings, editor content — near-black
+    static let text = Color(hex: "1A1A1F")
 
     /// Descriptions, subtitles, helper text
-    static let textSecondary = Color(hex: "8888A0")
+    static let textSecondary = Color(hex: "6B6B78")
 
-    /// Placeholders, disabled, metadata timestamps
-    static let textMuted = Color(hex: "555566")
+    /// Placeholders, disabled, metadata timestamps (WCAG AA 4.5:1 on white)
+    static let textMuted = Color(hex: "767685")
 
-    /// Sanctuary purple — active phases, primary buttons
-    static let accent = Color(hex: "7C6AFF")
+    /// Text on accent-colored backgrounds (green buttons, accent pills)
+    static let textOnAccent = Color.white
 
-    /// Glow shadows behind accent elements
-    static let accentGlow = Color(hex: "7C6AFF").opacity(0.15)
+    // ═══════════════════════════════════════════════════════════════
+    // ACCENT — Forest green, organic and alive
+    // ═══════════════════════════════════════════════════════════════
 
-    /// Subtle button backgrounds, hover states
-    static let accentSoft = Color(hex: "7C6AFF").opacity(0.08)
+    /// Primary accent — forest green
+    static let accent = Color(hex: "2D6A4F")
 
-    /// Plannerum green, completed states, Sanctuary green orbs
+    /// Accent hover/pressed state — darker green
+    static let accentHover = Color(hex: "245943")
+
+    /// Subtle accent glow for shadows
+    static let accentGlow = Color(hex: "2D6A4F").opacity(0.10)
+
+    /// Soft accent background for pills, tags, tinted areas
+    static let accentSoft = Color(hex: "E8F5EC")
+
+    // ═══════════════════════════════════════════════════════════════
+    // STATUS — Clear, accessible status colors
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Success, completed states
     static let green = Color(hex: "38B764")
 
     /// Glow behind green elements
     static let greenGlow = Color(hex: "38B764").opacity(0.12)
 
     /// Warning, in-progress states
-    static let orange = Color(hex: "E8A838")
+    static let orange = Color(hex: "D97706")
 
     /// Errors, high priority
-    static let red = Color(hex: "E85454")
+    static let red = Color(hex: "DC3545")
+
+    /// Info, links
+    static let info = Color(hex: "3B82F6")
+
+    /// Soft status backgrounds
+    static let greenSoft = Color(hex: "DCFCE7")
+    static let orangeSoft = Color(hex: "FEF3C7")
+    static let redSoft = Color(hex: "FEE2E2")
+    static let infoSoft = Color(hex: "DBEAFE")
+
+    // ═══════════════════════════════════════════════════════════════
+    // BORDERS — Neutral gray, not warm or cold
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Standard borders everywhere
+    static let border = Color(hex: "DCDCE0")
+
+    /// Section dividers, faint separations
+    static let borderSubtle = Color(hex: "E8E8EC")
+
+    /// Focus states, active inputs
+    static let borderActive = Color(hex: "C8C8CC")
+
+    /// Focus ring for keyboard navigation
+    static let focusRing = Color(hex: "2D6A4F").opacity(0.40)
+
+    // ═══════════════════════════════════════════════════════════════
+    // ENTITY COLORS — Bespoke muted palette for light backgrounds
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Ideas — muted indigo
+    static let entityIdea = Color(hex: "6B6EA8")
+
+    /// Research — forest teal
+    static let entityResearch = Color(hex: "4A8B72")
+
+    /// Content — slate blue
+    static let entityContent = Color(hex: "5B84B0")
+
+    /// Notes — warm umber
+    static let entityNote = Color(hex: "9B8A6E")
+
+    /// Connections — soft purple
+    static let entityConnection = Color(hex: "8B6BAB")
+
+    /// Swipe files — warm bronze
+    static let entitySwipe = Color(hex: "B08C5A")
+
+    /// Tasks — dusty rose
+    static let entityTask = Color(hex: "B06B6B")
+
+    /// Readwise Library — warm cognac (bookish, leather-bound)
+    static let entityReadwise = Color(hex: "A0785A")
+    static let entityReadwiseSoft = Color(hex: "F2EBE0")
+
+    // ═══════════════════════════════════════════════════════════════
+    // GLASS — For elements on .regularMaterial overlays
+    // Light mode: higher opacity values for visibility
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Inner card fill on material panels
+    static let glassCardFill = Color.white.opacity(0.70)
+
+    /// Input field fill on material panels
+    static let glassInputFill = Color.white.opacity(0.80)
+
+    /// Focused input field fill on material panels
+    static let glassInputFillFocused = Color.white.opacity(0.90)
+
+    /// Section container fill on material panels
+    static let glassSectionFill = Color.white.opacity(0.50)
+
+    /// Border for elements on material
+    static let glassBorder = Color.black.opacity(0.08)
+
+    /// Focused border on material
+    static let glassBorderFocused = Color(hex: "2D6A4F").opacity(0.40)
 
     // ═══════════════════════════════════════════════════════════════
     // TYPOGRAPHY — System font (SF Pro) everywhere
@@ -79,7 +171,7 @@ enum DS {
     /// Section description — 13px, weight 400, textSecondary
     static let sectionDesc = Font.system(size: 13, weight: .regular)
 
-    /// Body / editor text — 15px, weight 400, text color, line-height 1.7
+    /// Body / editor text — 15px, weight 400, text color, line-height 1.55
     static let body = Font.system(size: 15, weight: .regular)
 
     /// Card title — 15–16px, weight 500, text color
@@ -140,7 +232,7 @@ extension View {
             .textCase(.uppercase)
     }
 
-    /// Standard card chrome — surfaceElevated bg, 1px border, 12px radius
+    /// Standard card chrome — white bg, 1px neutral border, resting shadow
     func dsCard() -> some View {
         self
             .background(DS.surfaceElevated)
@@ -149,9 +241,10 @@ extension View {
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .stroke(DS.border, lineWidth: 1)
             )
+            .dsRestingShadow()
     }
 
-    /// Editor card — surfaceElevated bg, 12px radius, accent left bar
+    /// Editor card — white bg, 12px radius, accent left bar, resting shadow
     func dsEditorCard() -> some View {
         self
             .background(DS.surfaceElevated)
@@ -167,18 +260,18 @@ extension View {
                     .padding(.vertical, 8)
                     .padding(.leading, 1)
             }
+            .dsRestingShadow()
     }
 
-    /// Primary action button — accent solid bg, white text, 8px radius, accentGlow shadow
+    /// Primary action button — accent green bg, white text, 8px radius
     func dsPrimaryButton() -> some View {
         self
             .font(DS.buttonText)
-            .foregroundColor(.white)
+            .foregroundColor(DS.textOnAccent)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(DS.accent)
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
-            .shadow(color: DS.accentGlow, radius: 8)
     }
 
     /// Ghost button — transparent bg, 1px border, textSecondary
@@ -211,15 +304,124 @@ extension View {
             )
     }
 
-    /// Modal overlay — surfaceElevated bg, borderActive, 16px radius, shadow
+    /// Modal overlay — white bg, active border, 16px radius, floating shadow
     func dsModal() -> some View {
         self
             .background(DS.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusLarge)
-                    .stroke(DS.borderActive, lineWidth: 1)
+                    .stroke(DS.border, lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.5), radius: 32, y: 8)
+            .dsFloatingShadow()
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SHADOW MODIFIERS — Three tiers of depth
+    // Soft, natural shadows for light backgrounds
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Resting shadow — cards at rest, subtle depth
+    func dsRestingShadow() -> some View {
+        self
+            .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.02), radius: 2, x: 0, y: 1)
+    }
+
+    /// Hover shadow — lifted state, more presence
+    func dsHoverShadow() -> some View {
+        self
+            .shadow(color: .black.opacity(0.06), radius: 16, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+    }
+
+    /// Floating shadow — modals, popovers, dropdowns
+    func dsFloatingShadow() -> some View {
+        self
+            .shadow(color: .black.opacity(0.08), radius: 24, x: 0, y: 8)
+            .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // GLASS MODIFIERS — For elements ON TOP of .regularMaterial
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Translucent card for material panels — white fill + fine border
+    func dsGlassCard(cornerRadius: CGFloat = DS.radiusSmall) -> some View {
+        self
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
+            )
+    }
+
+    /// Input field on material — white fill, focus-aware border
+    func dsGlassInput(isFocused: Bool = false, cornerRadius: CGFloat = DS.radiusSmall) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(isFocused ? DS.glassInputFillFocused : DS.glassInputFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(
+                        isFocused ? DS.glassBorderFocused : DS.glassBorder,
+                        lineWidth: isFocused ? 1 : 0.5
+                    )
+            )
+    }
+
+    /// Subtle section container on material — groups content without visual weight
+    func dsGlassSection(cornerRadius: CGFloat = 10) -> some View {
+        self
+            .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LEGACY COMPATIBILITY — Redirect removed dark-mode modifiers
+    // These no-op or redirect to light-mode equivalents so callers
+    // don't break before they're migrated.
+    // ═══════════════════════════════════════════════════════════════
+
+    /// REMOVED (dark mode trick) — now applies dsCard()
+    func dsPremiumCard(cornerRadius: CGFloat = DS.radiusMedium) -> some View {
+        self
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .dsRestingShadow()
+    }
+
+    /// REMOVED (dark mode trick) — now applies dsCard()
+    func dsPremiumSection(cornerRadius: CGFloat = DS.radiusMedium) -> some View {
+        self
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .dsRestingShadow()
+    }
+
+    /// REMOVED (dark mode trick) — now applies dsRestingShadow()
+    func dsPremiumShadow() -> some View {
+        self.dsRestingShadow()
+    }
+
+    /// REMOVED (dark mode trick) — no-op
+    func dsGradientBorder(cornerRadius: CGFloat = DS.radiusMedium) -> some View {
+        self
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+    }
+
+    /// REMOVED (dark mode trick) — no-op
+    func dsTopHighlight(cornerRadius: CGFloat = DS.radiusLarge, height: CGFloat = 60) -> some View {
+        self
     }
 }

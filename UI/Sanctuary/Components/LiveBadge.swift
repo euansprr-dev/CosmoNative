@@ -42,12 +42,12 @@ struct LiveBadge: View {
                 .tracking(0.8)
 
             Rectangle()
-                .fill(DS.borderActive)
+                .fill(Color.white.opacity(0.15))
                 .frame(width: 1, height: 12)
 
             Text(metricName)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundColor(SanctuaryColors.textSecondary)
 
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -74,26 +74,26 @@ struct LiveBadge: View {
     private var offlineBadge: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(DS.textMuted)
+                .fill(SanctuaryColors.textMuted)
                 .frame(width: 6, height: 6)
 
             Text("OFFLINE")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .foregroundColor(SanctuaryColors.textMuted)
                 .tracking(0.8)
 
             Text("Connect data in Settings")
                 .font(.system(size: 11, weight: .regular))
-                .foregroundColor(DS.textMuted)
+                .foregroundColor(SanctuaryColors.textMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(DS.borderSubtle)
+                .fill(Color.white.opacity(0.03))
                 .overlay(
                     Capsule()
-                        .strokeBorder(DS.border, lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
                 )
         )
     }

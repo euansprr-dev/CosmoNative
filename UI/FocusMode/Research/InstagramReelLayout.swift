@@ -62,8 +62,7 @@ struct InstagramReelLayout: View {
                 connectionDots
             }
 
-            // Playback controls
-            playbackControls
+            // Native AVPlayerView controls handle playback
 
             // Metadata footer
             metadataFooter
@@ -74,7 +73,6 @@ struct InstagramReelLayout: View {
         ZStack {
             if let player = player {
                 VideoPlayer(player: player)
-                    .disabled(true)  // Disable built-in controls
             } else if let thumbnailURL = instagramData.extractedMediaURL {
                 // Show thumbnail while loading
                 AsyncImage(url: thumbnailURL) { image in
@@ -83,7 +81,7 @@ struct InstagramReelLayout: View {
                         .aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Rectangle()
-                        .fill(Color.black.opacity(0.3))
+                        .fill(DS.surface.opacity(0.6))
                         .overlay(
                             ProgressView()
                                 .tint(.white)
@@ -92,7 +90,7 @@ struct InstagramReelLayout: View {
             } else {
                 // Placeholder for failed extraction
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.surface.opacity(0.6))
                     .overlay(
                         VStack(spacing: 12) {
                             Image(systemName: "video.slash")
@@ -103,24 +101,6 @@ struct InstagramReelLayout: View {
                                 .foregroundColor(DS.textSecondary)
                         }
                     )
-            }
-
-            // Play button overlay (when paused)
-            if !isPlaying && player != nil {
-                Button {
-                    togglePlayback()
-                } label: {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 60, height: 60)
-                        .overlay(
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white)
-                                .offset(x: 2)
-                        )
-                }
-                .buttonStyle(.plain)
             }
 
             // Refreshing indicator
@@ -137,9 +117,6 @@ struct InstagramReelLayout: View {
                         }
                     )
             }
-        }
-        .onTapGesture {
-            togglePlayback()
         }
     }
 
@@ -311,7 +288,7 @@ struct InstagramReelLayout: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.black.opacity(0.2))
+                .fill(DS.surface.opacity(0.5))
         )
     }
 

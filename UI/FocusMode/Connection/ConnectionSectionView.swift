@@ -86,11 +86,13 @@ struct ConnectionSectionView: View {
         }
         .background(sectionBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .dsGradientBorder(cornerRadius: 12)
+        .dsTopHighlight(cornerRadius: 12, height: 40)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(
-                    isHovered ? section.type.accentColor.opacity(0.3) : DS.borderActive,
-                    lineWidth: 1
+                    isHovered ? section.type.accentColor.opacity(0.3) : Color.clear,
+                    lineWidth: 0.5
                 )
         )
         .onHover { hovering in
@@ -223,14 +225,16 @@ struct ConnectionSectionView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+        .dsGlassInput(isFocused: isNewItemFocused, cornerRadius: 8)
     }
 
     // MARK: - Helpers
 
     private var sectionBackground: some View {
         ZStack {
-            DS.surfaceCard
+            // Solid dark surface — material blur looks plastic on dark void
+            RoundedRectangle(cornerRadius: 12)
+                .fill(DS.surfaceElevated)
 
             // Subtle accent gradient when expanded
             if section.isExpanded {

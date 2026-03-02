@@ -45,7 +45,7 @@ public struct UpcomingSection: View {
                 }
             }
         }
-        .background(DS.borderSubtle)
+        .background(DS.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: UpcomingSectionTokens.cornerRadius, style: .continuous)
@@ -158,7 +158,7 @@ struct DayColumn: View {
                     Text("Today")
                         .font(.system(size: 8, weight: .heavy))
                         .tracking(0.5)
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.textOnAccent)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(UpcomingSectionTokens.todayBadge)
@@ -170,7 +170,7 @@ struct DayColumn: View {
                         .foregroundColor(OnyxColors.Text.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(DS.border)
+                        .background(DS.accentSoft)
                         .clipShape(Capsule())
                 }
             }
@@ -205,7 +205,7 @@ struct DayColumn: View {
         }
         .padding(UpcomingSectionTokens.padding)
         .frame(height: UpcomingSectionTokens.dayHeaderHeight)
-        .background(DS.borderSubtle)
+        .background(DS.surfaceElevated)
     }
 
     // MARK: - More Tasks Indicator
@@ -224,7 +224,7 @@ struct DayColumn: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(DS.borderSubtle)
+        .background(DS.surfaceHover)
         .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.miniCardRadius, style: .continuous))
     }
 
@@ -305,7 +305,7 @@ struct MiniTaskCard: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
             .frame(height: UpcomingSectionTokens.miniCardHeight)
-            .background(isHovering ? DS.border : DS.borderSubtle)
+            .background(isHovering ? DS.surfaceHover : DS.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: UpcomingSectionTokens.miniCardRadius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -364,7 +364,7 @@ struct UpcomingSection_Previews: PreviewProvider {
 
     static var previews: some View {
         ZStack {
-            PlannerumColors.voidPrimary.ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
 
             UpcomingSection(
                 upcomingDays: sampleDays,

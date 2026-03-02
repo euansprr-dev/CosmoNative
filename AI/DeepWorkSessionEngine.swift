@@ -296,7 +296,10 @@ class DeepWorkSessionEngine: ObservableObject {
     private func timerTick() {
         guard let session = activeSession, session.state == .running else { return }
 
-        elapsedSeconds = Int(session.elapsedActiveSeconds)
+        // Only update Published property when integer seconds actually change
+        let newSeconds = Int(session.elapsedActiveSeconds)
+        guard newSeconds != elapsedSeconds else { return }
+        elapsedSeconds = newSeconds
 
         // Check if target reached
         if session.remainingSeconds <= 0 && !showExtensionPrompt {

@@ -133,7 +133,8 @@ struct NoteFocusModeView: View {
                 title: "Note",
                 icon: "doc.text",
                 accentColor: DS.accent,
-                isVisible: $sidebarVisible
+                isVisible: $sidebarVisible,
+                isLocked: .constant(false)
             ) {
                 noteSidebarContent
             }

@@ -51,7 +51,7 @@ struct EmotionalArcView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.border, lineWidth: 1)
@@ -132,7 +132,7 @@ struct EmotionalArcView: View {
     }
 
     private var lineColor: Color {
-        dominantEmotion?.color ?? .white
+        dominantEmotion?.color ?? DS.text
     }
 
     private func buildLinePath(width: CGFloat, height: CGFloat) -> Path {
@@ -280,7 +280,7 @@ private struct EmotionalArcDot: View {
 
 // MARK: - Tooltip View
 
-/// Dark-themed tooltip shown when hovering over an emotional arc data point.
+/// Tooltip shown when hovering over an emotional arc data point.
 private struct EmotionalArcTooltip: View {
     let point: EmotionDataPoint
     var transcriptExcerpt: String? = nil
@@ -338,7 +338,7 @@ private struct EmotionalArcTooltip: View {
         }
         .padding(10)
         .frame(width: 190)
-        .background(DS.surfaceCard)
+        .background(DS.surfaceElevated)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DS.border, lineWidth: 1)
@@ -373,3 +373,4 @@ struct EmotionalArcView_Previews: PreviewProvider {
     }
 }
 #endif
+

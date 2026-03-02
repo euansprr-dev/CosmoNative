@@ -140,7 +140,7 @@ struct PaneDivider: View {
                 }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true
@@ -164,11 +164,11 @@ struct PaneDivider: View {
 
     private var fillColor: Color {
         if isDragging {
-            return CosmoColors.thinkspacePurple.opacity(0.5)
+            return DS.accent.opacity(0.5)
         } else if isHovered {
-            return CosmoColors.thinkspacePurple.opacity(0.3)
+            return DS.accent.opacity(0.3)
         } else {
-            return Color.white.opacity(0.06)
+            return DS.borderSubtle
         }
     }
 

@@ -19,7 +19,7 @@ struct PredictionCard: View {
                 // Prediction text
                 Text(prediction)
                     .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(DS.text)
+                    .foregroundColor(.white.opacity(0.85))
                     .lineSpacing(3)
 
                 HStack {
@@ -61,7 +61,7 @@ struct PredictionCard: View {
         case 0.8...1.0: return SanctuaryColors.live
         case 0.6..<0.8: return accentColor
         case 0.4..<0.6: return SanctuaryColors.warning
-        default: return DS.textMuted
+        default: return SanctuaryColors.textMuted
         }
     }
 
@@ -111,7 +111,7 @@ struct CorrelationInsightCard: View {
                 // Correlation description
                 Text(description)
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(DS.text)
+                    .foregroundColor(.white.opacity(0.8))
                     .lineSpacing(2)
 
                 HStack(spacing: 12) {
@@ -121,7 +121,7 @@ struct CorrelationInsightCard: View {
                     // Arrow
                     Image(systemName: "arrow.right")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundColor(SanctuaryColors.textMuted)
 
                     // Target metric pill
                     metricPill(targetMetric, icon: "target")
@@ -143,10 +143,10 @@ struct CorrelationInsightCard: View {
             Text(metric)
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundColor(SanctuaryColors.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(DS.border)
+        .background(Color.white.opacity(0.06))
         .clipShape(Capsule())
     }
 
@@ -189,7 +189,7 @@ struct PredictionCard_Previews: PreviewProvider {
             )
         }
         .padding(24)
-        .background(DS.bg)
+        .background(Color(hex: "141422"))
         .preferredColorScheme(.dark)
     }
 }

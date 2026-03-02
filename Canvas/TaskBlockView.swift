@@ -193,15 +193,10 @@ struct TaskBlockView: View {
     }
 
     private func openFocusMode() {
-        let entityId = task?.id ?? block.entityId
-        guard entityId > 0 else {
-            print("⚠️ TaskBlockView.openFocusMode: no backing atom (entityId=\(entityId)), skipping")
-            return
-        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
-            userInfo: ["type": EntityType.task, "id": entityId]
+            userInfo: ["type": EntityType.task, "id": task?.id ?? block.entityId]
         )
     }
 

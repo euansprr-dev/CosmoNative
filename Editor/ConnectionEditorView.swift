@@ -472,8 +472,6 @@ private struct ConnectionModelBindings {
     }
 }
 
-
-
 // MARK: - Reference Card
 struct ReferenceCard: View {
     let reference: ConnectionReference

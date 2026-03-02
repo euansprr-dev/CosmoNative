@@ -28,21 +28,21 @@ struct KnowledgePulseLineView: View {
     // MARK: - Layout Constants
 
     private enum Layout {
-        static let baseWidth: CGFloat = 1.5
-        static let maxWidth: CGFloat = 3.5
-        static let glowBlur: CGFloat = 4         // Reduced 50% from 8
-        static let glowWidthMultiplier: CGFloat = 3.0
+        static let baseWidth: CGFloat = 1.0
+        static let maxWidth: CGFloat = 2.0
+        static let glowBlur: CGFloat = 3
+        static let glowWidthMultiplier: CGFloat = 2.5
         static let curveOffsetFactor: CGFloat = 0.15
         static let pulseSpeed: Double = 0.192     // 30% slower (0.25 / 1.3)
         static let widthModulationSpeed: Double = 0.308 // 30% slower (0.4 / 1.3)
-        static let widthModulationAmount: CGFloat = 0.15
+        static let widthModulationAmount: CGFloat = 0.1
     }
 
     // MARK: - Computed Properties
 
-    /// Unified Onyx iris color for all connection types
+    /// Soft neutral tone for light theme — avoids heavy green accent
     private var lineColor: Color {
-        OnyxColors.Accent.iris
+        DS.textMuted
     }
 
     /// Line width scaled by weight
@@ -52,9 +52,9 @@ struct KnowledgePulseLineView: View {
         return base + modulation
     }
 
-    /// Base opacity scaled by weight — reduced for Onyx subtlety (0.20 - 0.45)
+    /// Base opacity scaled by weight — subtle on warm white canvas (0.15 - 0.35)
     private var baseOpacity: Double {
-        0.20 + weight * 0.25
+        0.15 + weight * 0.20
     }
 
     /// Control point for quadratic bezier — perpendicular offset from midpoint
@@ -95,11 +95,11 @@ struct KnowledgePulseLineView: View {
         let stop3 = max(stop2 + 0.001, min(p + 0.16, 0.99))
 
         return [
-            .init(color: lineColor.opacity(baseOpacity * 0.3), location: 0),
+            .init(color: lineColor.opacity(baseOpacity * 0.4), location: 0),
             .init(color: lineColor.opacity(baseOpacity), location: stop1),
-            .init(color: Color.white.opacity(baseOpacity * 1.2), location: stop2),
+            .init(color: lineColor.opacity(baseOpacity * 0.7), location: stop2),
             .init(color: lineColor.opacity(baseOpacity), location: stop3),
-            .init(color: lineColor.opacity(baseOpacity * 0.3), location: 1)
+            .init(color: lineColor.opacity(baseOpacity * 0.4), location: 1)
         ]
     }
 
@@ -110,7 +110,7 @@ struct KnowledgePulseLineView: View {
             // Glow layer (blurred, wider stroke)
             connectionPath
                 .stroke(
-                    lineColor.opacity(baseOpacity * 0.5),
+                    lineColor.opacity(baseOpacity * 0.3),
                     style: StrokeStyle(
                         lineWidth: lineWidth * Layout.glowWidthMultiplier,
                         lineCap: .round

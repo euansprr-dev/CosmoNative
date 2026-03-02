@@ -29,6 +29,7 @@ struct ConnectionFocusModeView: View {
     @State private var viewportState = CanvasViewportState()
     @State private var showCommandK = false
     @State private var sidebarVisible = false
+    @State private var sidebarLocked = false
     @State private var showSettings = false
     @State private var activeRelationArea: RelationAreaState?
     @State private var editableTitle: String
@@ -108,7 +109,8 @@ struct ConnectionFocusModeView: View {
                 title: "Connection",
                 icon: "link",
                 accentColor: CosmoColors.blockConnection,
-                isVisible: $sidebarVisible
+                isVisible: $sidebarVisible,
+                isLocked: $sidebarLocked
             ) {
                 ConnectionSidebarView(
                     atom: atom,
@@ -291,23 +293,18 @@ struct ConnectionFocusModeView: View {
     /// Floating title with stats - no container background
     private var connectionTitleHeader: some View {
         VStack(spacing: 8) {
-            // Icon and title
-            HStack(spacing: 8) {
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(CosmoColors.blockConnection)
+            // Title (centered)
+            TextField("New Connection", text: $editableTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(DS.text)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .onChange(of: editableTitle) { _, newTitle in
+                    viewModel.updateTitle(newTitle)
+                }
 
-                TextField("New Connection", text: $editableTitle)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .multilineTextAlignment(.center)
-                    .onChange(of: editableTitle) { _, newTitle in
-                        viewModel.updateTitle(newTitle)
-                    }
-            }
-
-            // Stats
+            // Stats (centered)
             HStack(spacing: 12) {
                 HStack(spacing: 4) {
                     Text("\(viewModel.state.totalItemCount)")
@@ -357,7 +354,7 @@ struct ConnectionFocusModeView: View {
     // MARK: - Top Bar
 
     private var topBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 10) {
             // Back button
             Button(action: onClose) {
                 HStack(spacing: 6) {
@@ -369,26 +366,16 @@ struct ConnectionFocusModeView: View {
                 .foregroundColor(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .background(DS.surfaceElevated, in: Capsule())
             }
             .buttonStyle(.plain)
 
-            // Title
-            TextField("Connection", text: $editableTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.text)
-                .frame(maxWidth: 300)
-                .onChange(of: editableTitle) { _, newTitle in
-                    viewModel.updateTitle(newTitle)
-                }
-
-            // Type badge
+            // Type badge (right next to back button)
             HStack(spacing: 4) {
                 Image(systemName: "link.circle.fill")
                     .font(.system(size: 10))
                 Text("CONNECTION")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .tracking(0.8)
             }
             .foregroundColor(CosmoColors.blockConnection)
@@ -667,15 +654,12 @@ struct ConnectionFocusModeView: View {
         }
         .padding(16)
         .frame(width: 400)
-        .background(
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .fill(DS.surfaceCard.opacity(0.95))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(CosmoColors.blockConnection.opacity(0.3), lineWidth: 1)
-                )
+                .stroke(DS.border, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
+        .dsFloatingShadow()
         .position(x: state.position.x, y: state.position.y + 220)
     }
 
@@ -693,7 +677,7 @@ struct ConnectionFocusModeView: View {
                     .lineLimit(1)
 
                 Text(sourceTypeLabel(state.sourceAtom.type))
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .tracking(0.4)
                     .foregroundColor(sourceColor(state.sourceAtom.type))
             }
@@ -710,7 +694,7 @@ struct ConnectionFocusModeView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(DS.textMuted)
                     .padding(6)
-                    .background(DS.border, in: Circle())
+                    .background(DS.glassCardFill, in: Circle())
             }
             .buttonStyle(.plain)
         }
@@ -729,7 +713,7 @@ struct ConnectionFocusModeView: View {
             .foregroundColor(DS.text)
             .lineLimit(1...3)
             .padding(10)
-            .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+            .dsGlassInput(cornerRadius: 8)
     }
 
     @ViewBuilder
@@ -769,12 +753,12 @@ struct ConnectionFocusModeView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.borderSubtle)
+                    .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.glassCardFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(
-                                isHighlighted ? sectionType.accentColor.opacity(0.4) : Color.clear,
-                                lineWidth: 1
+                                isHighlighted ? sectionType.accentColor.opacity(0.4) : DS.glassBorder,
+                                lineWidth: 0.5
                             )
                     )
             )
@@ -1144,13 +1128,13 @@ struct ConnectedSourceChip: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? DS.borderActive : DS.border)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isHovered ? colorForType(source.atomType).opacity(0.5) : DS.borderActive,
-                                lineWidth: 1
-                            )
+                    .fill(isHovered ? DS.glassInputFillFocused : DS.glassCardFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isHovered ? colorForType(source.atomType).opacity(0.5) : DS.glassBorder,
+                        lineWidth: 0.5
                     )
             )
         }

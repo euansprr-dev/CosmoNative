@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Creative/CreativeDimensionView.swift
 // Creative Dimension View - "The Creator's Console" complete dimension experience
-// Onyx Design System — premium cognitive atelier aesthetic
+// Phase 4: Following SANCTUARY_UI_SPEC_V2.md section 3.2
 
 import SwiftUI
 
@@ -67,7 +67,7 @@ public struct CreativeDimensionView: View {
                 } else {
                     // Main content
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                        VStack(spacing: SanctuaryLayout.Spacing.xxl) {
                             // Header with back button
                             headerSection
 
@@ -109,8 +109,8 @@ public struct CreativeDimensionView: View {
                         }
                         .frame(maxWidth: Layout.maxContentWidth)
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 24)
+                        .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                        .padding(.top, SanctuaryLayout.Spacing.lg)
                     }
                 }
 
@@ -141,14 +141,14 @@ public struct CreativeDimensionView: View {
     }
 
     private enum Layout {
-        static let maxContentWidth: CGFloat = 1400
-        static let twoColumnBreakpoint: CGFloat = 900
+        static let maxContentWidth: CGFloat = 1460
+        static let twoColumnBreakpoint: CGFloat = 1320
     }
 
     @ViewBuilder
     private func calendarAndStreakSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.xl) {
                 CreativePostingCalendar(
                     postingDays: Array(viewModel.data.postingHistory.values),
                     currentStreak: viewModel.data.currentStreak,
@@ -161,23 +161,19 @@ public struct CreativeDimensionView: View {
                         }
                     }
                 )
-                .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     CreativeStreakIndicator(
                         currentStreak: viewModel.data.currentStreak,
                         longestStreak: viewModel.data.longestStreak,
                         isActive: true
                     )
-                    .frame(maxWidth: .infinity)
                     scheduledPostsCard
-                        .frame(maxWidth: .infinity)
                     optimalWindowsCard
-                        .frame(maxWidth: .infinity)
                 }
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
                 CreativePostingCalendar(
                     postingDays: Array(viewModel.data.postingHistory.values),
                     currentStreak: viewModel.data.currentStreak,
@@ -192,19 +188,16 @@ public struct CreativeDimensionView: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     CreativeStreakIndicator(
                         currentStreak: viewModel.data.currentStreak,
                         longestStreak: viewModel.data.longestStreak,
                         isActive: true
                     )
-                    .frame(maxWidth: .infinity)
                     scheduledPostsCard
-                        .frame(maxWidth: .infinity)
                     optimalWindowsCard
-                        .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 320)
             }
         }
     }
@@ -212,7 +205,7 @@ public struct CreativeDimensionView: View {
     @ViewBuilder
     private func platformAndTopPostsSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.xl) {
                 CreativePlatformBreakdown(
                     platforms: viewModel.data.platformMetrics,
                     onPlatformTap: { platform in
@@ -220,9 +213,8 @@ public struct CreativeDimensionView: View {
                         showPlatformDetail = true
                     }
                 )
-                .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     CreativeTopPostsGrid(
                         posts: viewModel.data.topPerformers,
                         onPostTap: { post in
@@ -230,20 +222,21 @@ public struct CreativeDimensionView: View {
                             showPostDetail = true
                         }
                     )
-                    .padding(OnyxLayout.cardPadding)
+                    .padding(SanctuaryLayout.Spacing.lg)
                     .background(
-                        RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                            .fill(OnyxColors.Elevation.raised)
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                            .fill(SanctuaryColors.Glass.background)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                                    .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                            )
                     )
-                    .onyxShadow(.resting)
-                    .frame(maxWidth: .infinity)
 
                     PlatformGrowthTimeline(platforms: viewModel.data.platformMetrics)
-                        .frame(maxWidth: .infinity)
                 }
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
                 CreativePlatformBreakdown(
                     platforms: viewModel.data.platformMetrics,
                     onPlatformTap: { platform in
@@ -253,7 +246,7 @@ public struct CreativeDimensionView: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.lg) {
                     CreativeTopPostsGrid(
                         posts: viewModel.data.topPerformers,
                         onPostTap: { post in
@@ -261,18 +254,19 @@ public struct CreativeDimensionView: View {
                             showPostDetail = true
                         }
                     )
-                    .padding(OnyxLayout.cardPadding)
+                    .padding(SanctuaryLayout.Spacing.lg)
                     .background(
-                        RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                            .fill(OnyxColors.Elevation.raised)
+                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                            .fill(SanctuaryColors.Glass.background)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                                    .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                            )
                     )
-                    .onyxShadow(.resting)
-                    .frame(maxWidth: .infinity)
 
                     PlatformGrowthTimeline(platforms: viewModel.data.platformMetrics)
-                        .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 400)
             }
         }
     }
@@ -281,15 +275,15 @@ public struct CreativeDimensionView: View {
 
     private var backgroundLayer: some View {
         ZStack {
-            // Onyx base surface
-            OnyxColors.Elevation.base
+            // Base void
+            SanctuaryColors.Background.void
                 .ignoresSafeArea()
 
-            // Subtle creative dimension tint
+            // Creative dimension tint
             RadialGradient(
                 colors: [
-                    OnyxColors.DimensionVivid.creative.opacity(0.08),
-                    OnyxColors.DimensionVivid.creative.opacity(0.03),
+                    SanctuaryColors.Dimensions.creative.opacity(0.15),
+                    SanctuaryColors.Dimensions.creative.opacity(0.05),
                     Color.clear
                 ],
                 center: .center,
@@ -298,9 +292,9 @@ public struct CreativeDimensionView: View {
             )
             .ignoresSafeArea()
 
-            // Subtle edge vignette
+            // Edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.3)],
+                colors: [Color.clear, Color.black.opacity(0.4)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 800
@@ -315,37 +309,37 @@ public struct CreativeDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 14, weight: .semibold))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(OnyxColors.Text.secondary)
+                .foregroundColor(SanctuaryColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title — sentence case, Onyx typography
+            // Title
             VStack(spacing: 2) {
-                Text("Creative")
-                    .font(OnyxTypography.viewTitle)
-                    .tracking(OnyxTypography.viewTitleTracking)
-                    .foregroundColor(OnyxColors.Text.primary)
+                Text("CREATIVE")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .tracking(4)
 
-                HStack(spacing: 8) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Text("Creator's Console")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Tier \(viewModel.dimensionLevel)")
+                    Text("Level \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.creative)
+                        .foregroundColor(SanctuaryColors.Dimensions.creative)
                 }
             }
 
@@ -360,13 +354,13 @@ public struct CreativeDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(OnyxColors.Accent.sage)
+                    .fill(Color.green)
                     .frame(width: 6, height: 6)
-                    .modifier(OnyxPulseModifier())
+                    .modifier(PulseModifier())
 
-                Text("Live")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                Text("LIVE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
             Text("Growth: \(String(format: "%.1f%%", viewModel.data.growthRate))/wk")
@@ -374,24 +368,27 @@ public struct CreativeDimensionView: View {
                 .foregroundColor(Color(hex: viewModel.data.growthStatus.color))
 
             Text(viewModel.data.growthStatus.displayName)
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
-        .padding(12)
+        .padding(SanctuaryLayout.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     // MARK: - Profile Selector
 
     private var profileSelector: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 14))
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
 
             Menu {
                 Button(action: { dataProvider.selectedProfileUUID = nil }) {
@@ -417,17 +414,21 @@ public struct CreativeDimensionView: View {
         HStack(spacing: 6) {
             Text(selectedProfileName)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(OnyxColors.Text.primary)
+                .foregroundColor(SanctuaryColors.Text.primary)
 
             Image(systemName: "chevron.down")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
     }
 
@@ -442,36 +443,42 @@ public struct CreativeDimensionView: View {
     // MARK: - Scheduled Posts Card
 
     private var scheduledPostsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            OnyxSectionHeader("Scheduled")
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            Text("SCHEDULED")
+                .font(SanctuaryTypography.label)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .tracking(2)
 
             if viewModel.data.scheduledPosts.isEmpty {
                 HStack {
                     Image(systemName: "calendar.badge.plus")
                         .font(.system(size: 16))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
                     Text("No posts scheduled")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
-                .padding(12)
+                .padding(SanctuaryLayout.Spacing.md)
             } else {
                 ForEach(viewModel.data.scheduledPosts.prefix(3)) { post in
                     scheduledPostRow(post)
                 }
             }
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     private func scheduledPostRow(_ post: ScheduledPost) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
             // Platform icon
             Image(systemName: post.platform.iconName)
                 .font(.system(size: 12))
@@ -482,12 +489,12 @@ public struct CreativeDimensionView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(post.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(OnyxColors.Text.primary)
+                    .foregroundColor(SanctuaryColors.Text.primary)
                     .lineLimit(1)
 
                 Text(post.formattedScheduledTime)
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                    .font(.system(size: 10))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
             Spacer()
@@ -495,37 +502,43 @@ public struct CreativeDimensionView: View {
             // Predicted performance
             if let prediction = post.predictedReach {
                 Text("~\(formatNumber(prediction))")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Accent.iris)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Semantic.info)
             }
         }
-        .padding(8)
+        .padding(SanctuaryLayout.Spacing.sm)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.highlight)
         )
     }
 
     // MARK: - Optimal Windows Card
 
     private var optimalWindowsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            OnyxSectionHeader("Optimal Windows")
+        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+            Text("OPTIMAL WINDOWS")
+                .font(SanctuaryTypography.label)
+                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .tracking(2)
 
             ForEach(viewModel.data.optimalWindows.prefix(3)) { window in
                 optimalWindowRow(window)
             }
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     private func optimalWindowRow(_ window: ContentWindow) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
             // Platform icon
             Image(systemName: window.platform.iconName)
                 .font(.system(size: 12))
@@ -535,7 +548,7 @@ public struct CreativeDimensionView: View {
             // Time range
             Text(window.formattedTimeRange)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(OnyxColors.Text.primary)
+                .foregroundColor(SanctuaryColors.Text.primary)
 
             Spacer()
 
@@ -547,17 +560,17 @@ public struct CreativeDimensionView: View {
                 Text("+\(Int(window.predictedBoost))%")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
             }
-            .foregroundColor(OnyxColors.Accent.sage)
+            .foregroundColor(SanctuaryColors.Semantic.success)
 
             // Confidence
             Text("(\(Int(window.confidence))%)")
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
-        .padding(8)
+        .padding(SanctuaryLayout.Spacing.sm)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.highlight)
         )
     }
 
@@ -633,18 +646,18 @@ public struct CreativeDimensionView: View {
     }
 }
 
-// MARK: - Onyx Pulse Modifier
+// MARK: - Pulse Modifier
 
 @MainActor
-private struct OnyxPulseModifier: ViewModifier {
+private struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.2 : 1.0)
-            .opacity(isPulsing ? 0.5 : 1.0)
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
             .animation(
-                .easeInOut(duration: 1.5)
+                .easeInOut(duration: 1)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -690,7 +703,7 @@ public final class CreativeDimensionViewModel: ObservableObject {
 
 // MARK: - Posting Day Detail View
 
-/// Detail view for a specific posting day — Onyx design
+/// Detail view for a specific posting day
 public struct PostingDayDetailView: View {
 
     let day: PostingDay
@@ -705,9 +718,8 @@ public struct PostingDayDetailView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formattedDate)
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
 
                     Text(statusText)
                         .font(.system(size: 12))
@@ -717,53 +729,57 @@ public struct PostingDayDetailView: View {
                 Spacer()
 
                 Button(action: {
-                    withAnimation(OnyxSpring.standard) {
+                    withAnimation(SanctuarySprings.snappy) {
                         onDismiss()
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(OnyxLayout.cardPadding)
-            .background(OnyxColors.Elevation.elevated)
+            .padding(SanctuaryLayout.Spacing.lg)
+            .background(SanctuaryColors.Glass.highlight)
 
             // Content
             if posts.isEmpty {
-                VStack(spacing: 12) {
+                VStack(spacing: SanctuaryLayout.Spacing.md) {
                     Image(systemName: "doc.text")
-                        .font(.system(size: 24))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .font(.system(size: 32))
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
                     Text("No posts on this day")
-                        .font(OnyxTypography.body)
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .font(.system(size: 14))
+                        .foregroundColor(SanctuaryColors.Text.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(24)
+                .padding(SanctuaryLayout.Spacing.xl)
             } else {
                 ScrollView {
-                    VStack(spacing: 12) {
+                    VStack(spacing: SanctuaryLayout.Spacing.md) {
                         ForEach(posts) { post in
                             postSummaryRow(post)
                         }
                     }
-                    .padding(OnyxLayout.cardPadding)
+                    .padding(SanctuaryLayout.Spacing.lg)
                 }
             }
         }
         .frame(minHeight: 200)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xl)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xl)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.floating)
+        .shadow(color: Color.black.opacity(0.3), radius: 30)
         .scaleEffect(isVisible ? 1 : 0.9)
         .opacity(isVisible ? 1 : 0)
         .onAppear {
-            withAnimation(OnyxSpring.cardEntrance) {
+            withAnimation(SanctuarySprings.gentle) {
                 isVisible = true
             }
         }
@@ -788,17 +804,17 @@ public struct PostingDayDetailView: View {
 
     private var statusColor: Color {
         switch day.status {
-        case .posted: return OnyxColors.DimensionVivid.creative
-        case .viral: return OnyxColors.Accent.amber
-        case .skipped: return OnyxColors.Accent.rose
-        case .scheduled: return OnyxColors.Accent.iris
-        case .rest: return OnyxColors.Text.tertiary
-        case .future: return OnyxColors.Text.secondary
+        case .posted: return SanctuaryColors.Dimensions.creative
+        case .viral: return SanctuaryColors.XP.primary
+        case .skipped: return SanctuaryColors.Semantic.error
+        case .scheduled: return SanctuaryColors.Semantic.info
+        case .rest: return SanctuaryColors.Text.tertiary
+        case .future: return SanctuaryColors.Text.secondary
         }
     }
 
     private func postSummaryRow(_ post: ContentPost) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
             Image(systemName: post.platform.iconName)
                 .font(.system(size: 14))
                 .foregroundColor(post.platform.color)
@@ -807,31 +823,31 @@ public struct PostingDayDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(post.title ?? "Untitled")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(OnyxColors.Text.primary)
+                    .foregroundColor(SanctuaryColors.Text.primary)
                     .lineLimit(1)
 
                 Text(post.formattedReach + " reach")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                    .font(.system(size: 10))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
             Spacer()
 
             Text(String(format: "%.1f%%", post.engagement))
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(OnyxColors.Accent.sage)
+                .foregroundColor(SanctuaryColors.Semantic.success)
         }
-        .padding(8)
+        .padding(SanctuaryLayout.Spacing.sm)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.highlight)
         )
     }
 }
 
 // MARK: - Platform Detail View
 
-/// Detail view for platform-specific metrics — Onyx design
+/// Detail view for platform-specific metrics
 public struct PlatformDetailView: View {
 
     let metrics: PlatformMetrics
@@ -844,42 +860,44 @@ public struct PlatformDetailView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                HStack(spacing: 8) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: metrics.platform.iconName)
                         .font(.system(size: 18))
                         .foregroundColor(metrics.platform.color)
 
                     Text(metrics.platform.displayName)
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
                 }
 
                 Spacer()
 
                 Button(action: {
-                    withAnimation(OnyxSpring.standard) {
+                    withAnimation(SanctuarySprings.snappy) {
                         onDismiss()
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(OnyxLayout.cardPadding)
-            .background(OnyxColors.Elevation.elevated)
+            .padding(SanctuaryLayout.Spacing.lg)
+            .background(SanctuaryColors.Glass.highlight)
 
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: SanctuaryLayout.Spacing.xl) {
                     // Metrics grid
                     metricsGrid
 
                     // Recent posts on this platform
                     if !posts.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            OnyxSectionHeader("Recent Posts")
+                        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+                            Text("RECENT POSTS")
+                                .font(SanctuaryTypography.label)
+                                .foregroundColor(SanctuaryColors.Text.tertiary)
+                                .tracking(2)
 
                             ForEach(posts.prefix(5)) { post in
                                 platformPostRow(post)
@@ -887,18 +905,22 @@ public struct PlatformDetailView: View {
                         }
                     }
                 }
-                .padding(OnyxLayout.cardPadding)
+                .padding(SanctuaryLayout.Spacing.lg)
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xl)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.xl)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.floating)
+        .shadow(color: Color.black.opacity(0.3), radius: 30)
         .scaleEffect(isVisible ? 1 : 0.9)
         .opacity(isVisible ? 1 : 0)
         .onAppear {
-            withAnimation(OnyxSpring.cardEntrance) {
+            withAnimation(SanctuarySprings.gentle) {
                 isVisible = true
             }
         }
@@ -911,7 +933,7 @@ public struct PlatformDetailView: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ],
-            spacing: 12
+            spacing: SanctuaryLayout.Spacing.md
         ) {
             metricCell(label: "Followers", value: formatNumber(metrics.followers))
             metricCell(label: "Avg Reach", value: formatNumber(metrics.averageReach))
@@ -925,32 +947,32 @@ public struct PlatformDetailView: View {
     private func metricCell(label: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.system(size: 18, weight: .light))
-                .foregroundColor(OnyxColors.Text.primary)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(SanctuaryColors.Text.primary)
 
             Text(label)
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
         .frame(maxWidth: .infinity)
-        .padding(12)
+        .padding(SanctuaryLayout.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.highlight)
         )
     }
 
     private func platformPostRow(_ post: ContentPost) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: SanctuaryLayout.Spacing.md) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(post.title ?? "Untitled")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(OnyxColors.Text.primary)
+                    .foregroundColor(SanctuaryColors.Text.primary)
                     .lineLimit(1)
 
                 Text(post.formattedDate)
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                    .font(.system(size: 10))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
             Spacer()
@@ -958,17 +980,17 @@ public struct PlatformDetailView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(post.formattedReach)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(OnyxColors.Text.primary)
+                    .foregroundColor(SanctuaryColors.Text.primary)
 
                 Text(String(format: "%.1f%%", post.engagement))
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Accent.sage)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(SanctuaryColors.Semantic.success)
             }
         }
-        .padding(8)
+        .padding(SanctuaryLayout.Spacing.sm)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(OnyxColors.Elevation.elevated)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                .fill(SanctuaryColors.Glass.highlight)
         )
     }
 
@@ -984,7 +1006,7 @@ public struct PlatformDetailView: View {
 
 // MARK: - Compact Creative View
 
-/// Compact version for embedding in other views — Onyx design
+/// Compact version for embedding in other views
 public struct CreativeDimensionCompact: View {
 
     let data: CreativeDimensionData
@@ -998,18 +1020,18 @@ public struct CreativeDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 16))
-                        .foregroundColor(OnyxColors.Dimension.creative)
+                        .foregroundColor(SanctuaryColors.Dimensions.creative)
 
-                    Text("Creative")
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                    Text("CREATIVE")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .tracking(2)
                 }
 
                 Spacer()
@@ -1022,13 +1044,13 @@ public struct CreativeDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(OnyxColors.Dimension.creative)
+                    .foregroundColor(SanctuaryColors.Dimensions.creative)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
 
             // Key metrics row
-            HStack(spacing: 24) {
+            HStack(spacing: SanctuaryLayout.Spacing.xl) {
                 compactMetric(
                     label: "Reach",
                     value: data.formattedReach,
@@ -1060,13 +1082,20 @@ public struct CreativeDimensionCompact: View {
                 weeksToShow: 4
             )
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(
+                            isHovered ? SanctuaryColors.Dimensions.creative.opacity(0.5) : SanctuaryColors.Glass.border,
+                            lineWidth: 1
+                        )
+                )
         )
-        .onyxShadow(isHovered ? .hovered : .resting)
-        .animation(OnyxSpring.hover, value: isHovered)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(SanctuarySprings.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -1075,18 +1104,18 @@ public struct CreativeDimensionCompact: View {
     private func compactMetric(label: String, value: String, trend: Double?) -> some View {
         VStack(spacing: 2) {
             Text(label)
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 9))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
 
             HStack(spacing: 2) {
                 Text(value)
-                    .font(.system(size: 16, weight: .light))
-                    .foregroundColor(OnyxColors.Text.primary)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundColor(SanctuaryColors.Text.primary)
 
                 if let trend = trend, trend != 0 {
                     Image(systemName: trend > 0 ? "arrow.up.right" : "arrow.down.right")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(trend > 0 ? OnyxColors.Accent.sage : OnyxColors.Accent.rose)
+                        .foregroundColor(trend > 0 ? SanctuaryColors.Semantic.success : SanctuaryColors.Semantic.error)
                 }
             }
         }

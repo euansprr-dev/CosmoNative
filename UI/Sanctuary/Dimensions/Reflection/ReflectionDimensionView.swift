@@ -1,6 +1,6 @@
 // CosmoOS/UI/Sanctuary/Dimensions/Reflection/ReflectionDimensionView.swift
 // Reflection Dimension View - "The Inner Sanctum" complete dimension experience
-// Onyx Design System — premium cognitive atelier aesthetic
+// Phase 8: Following SANCTUARY_UI_SPEC_V2.md section 3.6
 
 import SwiftUI
 
@@ -44,7 +44,7 @@ public struct ReflectionDimensionView: View {
 
                 // Main content
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: OnyxLayout.metricGroupSpacing) {
+                    VStack(spacing: SanctuaryLayout.Spacing.xxl) {
                         // Header with back button
                         headerSection
 
@@ -88,8 +88,8 @@ public struct ReflectionDimensionView: View {
                     }
                     .frame(maxWidth: Layout.maxContentWidth)
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 24)
+                    .padding(.horizontal, SanctuaryLayout.Spacing.xl)
+                    .padding(.top, SanctuaryLayout.Spacing.lg)
                 }
                 // Detail overlays
                 detailOverlays
@@ -135,14 +135,14 @@ public struct ReflectionDimensionView: View {
     }
 
     private enum Layout {
-        static let maxContentWidth: CGFloat = 1400
-        static let twoColumnBreakpoint: CGFloat = 900
+        static let maxContentWidth: CGFloat = 1420
+        static let twoColumnBreakpoint: CGFloat = 1240
     }
 
     @ViewBuilder
     private func journalingAndMeditationSection(useSingleColumn: Bool) -> some View {
         if useSingleColumn {
-            VStack(spacing: 16) {
+            VStack(spacing: SanctuaryLayout.Spacing.xl) {
                 JournalingRhythmPanel(
                     currentStreak: viewModel.data.journalingStreak,
                     longestStreak: viewModel.data.longestJournalingStreak,
@@ -152,7 +152,6 @@ public struct ReflectionDimensionView: View {
                     weeklyDepthData: viewModel.weeklyDepthData,
                     consistency: viewModel.data.journalingConsistency
                 )
-                .frame(maxWidth: .infinity)
 
                 MeditationPanel(
                     todayMinutes: viewModel.data.todayMeditationMinutes,
@@ -163,10 +162,9 @@ public struct ReflectionDimensionView: View {
                     weeklyData: viewModel.data.weeklyMeditationData,
                     preferredTime: viewModel.data.preferredMeditationTime
                 )
-                .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.xl) {
                 JournalingRhythmPanel(
                     currentStreak: viewModel.data.journalingStreak,
                     longestStreak: viewModel.data.longestJournalingStreak,
@@ -187,7 +185,7 @@ public struct ReflectionDimensionView: View {
                     weeklyData: viewModel.data.weeklyMeditationData,
                     preferredTime: viewModel.data.preferredMeditationTime
                 )
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: 400)
             }
         }
     }
@@ -196,15 +194,15 @@ public struct ReflectionDimensionView: View {
 
     private var backgroundLayer: some View {
         ZStack {
-            // Onyx base surface
-            OnyxColors.Elevation.base
+            // Base void
+            SanctuaryColors.Background.void
                 .ignoresSafeArea()
 
-            // Subtle reflection dimension tint — soft, meditative
+            // Reflection dimension tint - soft, meditative
             RadialGradient(
                 colors: [
-                    OnyxColors.DimensionVivid.reflection.opacity(0.06),
-                    OnyxColors.DimensionVivid.reflection.opacity(0.02),
+                    SanctuaryColors.Dimensions.reflection.opacity(0.12),
+                    SanctuaryColors.Dimensions.reflection.opacity(0.04),
                     Color.clear
                 ],
                 center: .center,
@@ -218,10 +216,10 @@ public struct ReflectionDimensionView: View {
                 petalShape(index: i)
             }
 
-            // Floating light particles (more subtle)
+            // Floating light particles
             ForEach(0..<15, id: \.self) { _ in
                 Circle()
-                    .fill(OnyxColors.Dimension.reflection.opacity(Double.random(in: 0.02...0.05)))
+                    .fill(SanctuaryColors.Dimensions.reflection.opacity(Double.random(in: 0.03...0.08)))
                     .frame(width: CGFloat.random(in: 3...8))
                     .position(
                         x: CGFloat.random(in: 0...1200),
@@ -230,9 +228,9 @@ public struct ReflectionDimensionView: View {
                     .blur(radius: 2)
             }
 
-            // Subtle edge vignette
+            // Edge vignette
             RadialGradient(
-                colors: [Color.clear, Color.black.opacity(0.3)],
+                colors: [Color.clear, Color.black.opacity(0.5)],
                 center: .center,
                 startRadius: 300,
                 endRadius: 900
@@ -246,7 +244,7 @@ public struct ReflectionDimensionView: View {
         let radius: CGFloat = 250
 
         return Ellipse()
-            .fill(OnyxColors.Dimension.reflection.opacity(0.02))
+            .fill(SanctuaryColors.Dimensions.reflection.opacity(0.03))
             .frame(width: 100, height: 200)
             .rotationEffect(.degrees(angle))
             .offset(
@@ -262,44 +260,44 @@ public struct ReflectionDimensionView: View {
         HStack(alignment: .center) {
             // Back button
             Button(action: onBack) {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 14, weight: .semibold))
 
                     Text("Sanctuary")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundColor(OnyxColors.Text.secondary)
+                .foregroundColor(SanctuaryColors.Text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
 
             Spacer()
 
-            // Title — sentence case, Onyx typography
+            // Title
             VStack(spacing: 2) {
-                Text("Reflection")
-                    .font(OnyxTypography.viewTitle)
-                    .tracking(OnyxTypography.viewTitleTracking)
-                    .foregroundColor(OnyxColors.Text.primary)
+                Text("REFLECTION")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .tracking(4)
 
-                HStack(spacing: 8) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Text("The Inner Sanctum")
                         .font(.system(size: 12))
-                        .foregroundColor(OnyxColors.Text.secondary)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Tier \(viewModel.dimensionLevel)")
+                    Text("Level \(viewModel.dimensionLevel)")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.reflection)
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
 
-                    Text("·")
-                        .foregroundColor(OnyxColors.Text.tertiary)
+                    Text("•")
+                        .foregroundColor(SanctuaryColors.Text.tertiary)
 
-                    Text("Sage")
+                    Text("Rank: SAGE")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(OnyxColors.Dimension.reflection)
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
                 }
             }
 
@@ -325,12 +323,16 @@ public struct ReflectionDimensionView: View {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(OnyxColors.Dimension.reflection)
+            .foregroundColor(SanctuaryColors.Dimensions.reflection)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(OnyxColors.Dimension.reflection.opacity(0.1))
+                    .fill(SanctuaryColors.Dimensions.reflection.opacity(0.1))
+                    .overlay(
+                        Capsule()
+                            .stroke(SanctuaryColors.Dimensions.reflection.opacity(0.3), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -340,29 +342,32 @@ public struct ReflectionDimensionView: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(OnyxColors.Accent.sage)
+                    .fill(SanctuaryColors.Semantic.success)
                     .frame(width: 6, height: 6)
-                    .modifier(OnyxPulseModifier())
+                    .modifier(PulseModifier())
 
-                Text("Mindful")
-                    .font(OnyxTypography.micro)
-                    .foregroundColor(OnyxColors.Text.tertiary)
+                Text("MINDFUL")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(SanctuaryColors.Text.tertiary)
             }
 
             Text(viewModel.data.currentEmotionalState.label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(OnyxColors.DimensionVivid.reflection)
+                .foregroundColor(SanctuaryColors.Dimensions.reflection)
 
             Text("\(viewModel.data.journalingStreak) day streak")
-                .font(OnyxTypography.micro)
-                .foregroundColor(OnyxColors.Text.tertiary)
+                .font(.system(size: 10))
+                .foregroundColor(SanctuaryColors.Text.tertiary)
         }
-        .padding(12)
+        .padding(SanctuaryLayout.Spacing.md)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.md)
+                        .stroke(SanctuaryColors.Glass.border, lineWidth: 1)
+                )
         )
-        .onyxShadow(.resting)
     }
 
     // MARK: - Detail Overlays
@@ -409,18 +414,18 @@ public struct ReflectionDimensionView: View {
     }
 }
 
-// MARK: - Onyx Pulse Modifier
+// MARK: - Pulse Modifier
 
 @MainActor
-private struct OnyxPulseModifier: ViewModifier {
+private struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.2 : 1.0)
-            .opacity(isPulsing ? 0.5 : 1.0)
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.6 : 1.0)
             .animation(
-                .easeInOut(duration: 1.5)
+                .easeInOut(duration: 1.2)
                 .repeatForever(autoreverses: true),
                 value: isPulsing
             )
@@ -516,7 +521,7 @@ public final class ReflectionDimensionViewModel: ObservableObject {
 
 // MARK: - Compact Reflection View
 
-/// Compact version for embedding in other views — Onyx design
+/// Compact version for embedding in other views
 public struct ReflectionDimensionCompact: View {
 
     let data: ReflectionDimensionData
@@ -530,18 +535,18 @@ public struct ReflectionDimensionCompact: View {
     }
 
     public var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: SanctuaryLayout.Spacing.lg) {
             // Header
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: SanctuaryLayout.Spacing.sm) {
                     Image(systemName: "leaf.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(OnyxColors.Dimension.reflection)
+                        .foregroundColor(SanctuaryColors.Dimensions.reflection)
 
-                    Text("Reflection")
-                        .font(OnyxTypography.cardTitle)
-                        .tracking(OnyxTypography.cardTitleTracking)
-                        .foregroundColor(OnyxColors.Text.primary)
+                    Text("REFLECTION")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .tracking(2)
                 }
 
                 Spacer()
@@ -554,7 +559,7 @@ public struct ReflectionDimensionCompact: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(OnyxColors.Dimension.reflection)
+                    .foregroundColor(SanctuaryColors.Dimensions.reflection)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -582,13 +587,20 @@ public struct ReflectionDimensionCompact: View {
                 onExpand: {}
             )
         }
-        .padding(OnyxLayout.cardPadding)
+        .padding(SanctuaryLayout.Spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
-                .fill(OnyxColors.Elevation.raised)
+            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                .fill(SanctuaryColors.Glass.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.lg)
+                        .stroke(
+                            isHovered ? SanctuaryColors.Dimensions.reflection.opacity(0.5) : SanctuaryColors.Glass.border,
+                            lineWidth: 1
+                        )
+                )
         )
-        .onyxShadow(isHovered ? .hovered : .resting)
-        .animation(OnyxSpring.hover, value: isHovered)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
+        .animation(SanctuarySprings.hover, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

@@ -82,18 +82,9 @@ struct ContentFocusModeView: View {
 
     var body: some View {
         ZStack {
-            // Background — zen dark with subtle radial glow
-            Color(red: 0.031, green: 0.031, blue: 0.051)
+            // Background
+            DS.bg
                 .ignoresSafeArea()
-                .overlay(
-                    RadialGradient(
-                        colors: [DS.accent.opacity(0.03), .clear],
-                        center: .center,
-                        startRadius: 100,
-                        endRadius: 600
-                    )
-                    .ignoresSafeArea()
-                )
 
             // Main content
             VStack(spacing: 0) {
@@ -402,7 +393,8 @@ struct ContentFocusModeView: View {
                     title: "Outline",
                     icon: "list.bullet.indent",
                     accentColor: CosmoMentionColors.content,
-                    isVisible: $sidebarVisible
+                    isVisible: $sidebarVisible,
+                    isLocked: .constant(false)
                 ) {
                     ContentOutlineSidebarContent(
                         state: $viewModel.state,

@@ -67,11 +67,11 @@ struct NoteBlockView: View {
     private var displayTitle: String {
         // Use title field, or fall back to first line of content
         if !noteTitle.isEmpty {
-            return noteTitle
+            return String(noteTitle.prefix(40))
         }
         if let firstLine = noteText.components(separatedBy: .newlines).first,
            !firstLine.isEmpty {
-            return firstLine
+            return String(firstLine.prefix(40))
         }
         return "Untitled Note"
     }

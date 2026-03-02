@@ -19,7 +19,7 @@ struct ConnectionBlockView: View {
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Purple accent for connections
-    private let accentColor = CosmoColors.blockConnection
+    private let accentColor = DS.entityConnection
 
     private var totalItemCount: Int {
         sections.reduce(0) { $0 + $1.items.count }
@@ -479,7 +479,7 @@ private struct CompactSectionRow: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(section.isExpanded ? DS.borderSubtle : Color.clear)
+                .fill(section.isExpanded ? DS.surfaceElevated : Color.clear)
         )
     }
 
@@ -605,7 +605,7 @@ private struct CompactItemRow: View {
 struct ConnectionBlockView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.canvas
                 .ignoresSafeArea()
 
             ConnectionBlockView(

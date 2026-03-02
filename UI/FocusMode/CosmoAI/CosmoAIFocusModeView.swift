@@ -74,7 +74,8 @@ struct CosmoAIFocusModeView: View {
                 title: "Context",
                 icon: "brain",
                 accentColor: DS.accent,
-                isVisible: $sidebarVisible
+                isVisible: $sidebarVisible,
+                isLocked: .constant(false)
             ) {
                 cosmoAISidebarContent
             }

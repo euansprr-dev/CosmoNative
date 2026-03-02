@@ -711,7 +711,7 @@ struct CalendarDayView: View {
         if isFuture {
             return .secondary.opacity(0.5)
         }
-        return hasStreak ? .white : .secondary
+        return hasStreak ? DS.textOnAccent : .secondary
     }
 }
 
@@ -734,7 +734,7 @@ struct MultiplierRow: View {
                 if isUnlocked {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(DS.textOnAccent)
                 } else {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10))

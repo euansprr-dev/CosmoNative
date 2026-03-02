@@ -23,6 +23,7 @@ struct PostCreationPhaseView: View {
     @State private var sharesText: String = ""
     @State private var savesText: String = ""
     @State private var isSavingPerformance: Bool = false
+    @State private var showArchivedContent: Bool = false
 
     private let accentColor = CosmoMentionColors.content
 
@@ -79,9 +80,9 @@ struct PostCreationPhaseView: View {
                 displayedComponents: [.date, .hourAndMinute]
             )
             .datePickerStyle(.graphical)
-            .colorScheme(.dark)
+            .colorScheme(.light)
             .padding(16)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
         }
 
         // Predicted reach
@@ -159,7 +160,7 @@ struct PostCreationPhaseView: View {
             }
         }
         .padding(16)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Published View
@@ -192,7 +193,7 @@ struct PostCreationPhaseView: View {
                         .foregroundColor(DS.text)
                 }
                 .padding(12)
-                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(DS.border, lineWidth: 1)
@@ -217,7 +218,7 @@ struct PostCreationPhaseView: View {
             .buttonStyle(.plain)
         }
         .padding(20)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -363,7 +364,7 @@ struct PostCreationPhaseView: View {
             .disabled(isSavingPerformance)
         }
         .padding(20)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -383,7 +384,7 @@ struct PostCreationPhaseView: View {
                 .font(.system(size: 16, weight: .semibold, design: .monospaced))
                 .foregroundColor(DS.text)
                 .padding(10)
-                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(DS.border, lineWidth: 1)
@@ -467,7 +468,7 @@ struct PostCreationPhaseView: View {
             }
         }
         .padding(20)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16))
 
         // Performance summary (if available)
         if let perf = atom.metadataValue(as: ContentPerformanceMetadata.self) {
@@ -488,7 +489,28 @@ struct PostCreationPhaseView: View {
                 }
             }
             .padding(20)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 16))
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16))
+        }
+
+        // View Post button
+        Button {
+            showArchivedContent = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 14))
+                Text("View Post")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundColor(accentColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(accentColor.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showArchivedContent) {
+            archivedContentSheet
         }
 
         // Repurpose button
@@ -527,7 +549,50 @@ struct PostCreationPhaseView: View {
             Spacer()
         }
         .padding(14)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - Archived Content Sheet
+
+    private var archivedContentSheet: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text(atom.title ?? "Archived Post")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(DS.text)
+
+                Spacer()
+
+                Button {
+                    showArchivedContent = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 28, height: 28)
+                        .background(DS.surfaceHover, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+
+            Divider().background(DS.border)
+
+            // Content body
+            ScrollView {
+                Text(state.draftContent.isEmpty ? (atom.body ?? "No content available.") : state.draftContent)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(DS.text)
+                    .lineSpacing(6)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
+            }
+        }
+        .frame(minWidth: 500, idealWidth: 600, minHeight: 400, idealHeight: 600)
+        .background(DS.surface)
     }
 
     private var archivedCreationDate: Date {
@@ -612,7 +677,7 @@ struct PostCreationPhaseView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Actions

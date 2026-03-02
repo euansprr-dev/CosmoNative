@@ -204,19 +204,20 @@ struct PaneCanvasView: View {
     @ViewBuilder
     private func placeholderBlock(for block: CanvasBlock) -> some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(CosmoColors.glassGrey.opacity(0.15))
+            .fill(DS.surfaceElevated)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(CosmoColors.glassGrey.opacity(0.3), lineWidth: 1)
+                    .stroke(DS.border, lineWidth: 1)
             )
             .overlay(
                 Text(block.title)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(DS.textSecondary)
                     .lineLimit(2)
                     .padding(12)
             )
             .frame(width: block.size.width, height: block.size.height)
+            .dsRestingShadow()
     }
 
     // MARK: - Zoom Indicator
@@ -224,12 +225,13 @@ struct PaneCanvasView: View {
     private var zoomIndicator: some View {
         Text("\(Int(effectiveScale * 100))%")
             .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundColor(.white.opacity(0.4))
+            .foregroundColor(DS.textMuted)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(DS.surfaceElevated)
+                    .overlay(Capsule().stroke(DS.border, lineWidth: 1))
             )
             .padding(12)
             .opacity(effectiveScale == 1.0 ? 0 : 1)

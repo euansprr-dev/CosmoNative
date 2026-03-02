@@ -15,7 +15,7 @@ struct SwipeGalleryTab: View {
 
     @State private var hasAppeared = false
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     var body: some View {
         ZStack {
@@ -244,12 +244,12 @@ struct SwipeGalleryTab: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 10))
         }
-        .foregroundColor(isActive ? DS.text : DS.textSecondary)
+        .foregroundColor(isActive ? DS.text : DS.text)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? gold.opacity(0.15) : DS.border)
+                .fill(isActive ? gold.opacity(0.15) : DS.surfaceElevated)
         )
     }
 
@@ -286,6 +286,7 @@ struct SwipeGalleryTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Hook Type Menu
@@ -321,6 +322,7 @@ struct SwipeGalleryTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Narrative Menu (multi-select)
@@ -351,6 +353,7 @@ struct SwipeGalleryTab: View {
             narrativeDropdownLabel
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     @ViewBuilder
@@ -401,6 +404,7 @@ struct SwipeGalleryTab: View {
             formatDropdownLabel
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     @ViewBuilder
@@ -456,6 +460,7 @@ struct SwipeGalleryTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Creator Menu
@@ -491,6 +496,7 @@ struct SwipeGalleryTab: View {
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Sort Menu
@@ -517,15 +523,16 @@ struct SwipeGalleryTab: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
             }
-            .foregroundColor(DS.textSecondary)
+            .foregroundColor(DS.text)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.border)
+                    .fill(DS.surfaceElevated)
             )
         }
         .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     // MARK: - Active Filters
@@ -785,7 +792,7 @@ private struct SwipeGalleryCard: View {
         .clipped()
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .cardSelectionOverlay(isSelected: isSelected, accentColor: Color(hex: "#FFD700"))
+        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
         .shadow(
             color: .black.opacity(isHovered ? 0.4 : 0.2),
             radius: isHovered ? 16 : 8,
@@ -870,7 +877,7 @@ private struct SwipeGalleryCard: View {
                     .foregroundColor(DS.text)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.6)))
+                    .background(Capsule().fill(DS.bg.opacity(0.75)))
 
                     Spacer()
 
@@ -896,7 +903,7 @@ private struct SwipeGalleryCard: View {
                             .foregroundColor(DS.text)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(Capsule().fill(Color.black.opacity(0.6)))
+                            .background(Capsule().fill(DS.bg.opacity(0.75)))
                     }
                 }
             }

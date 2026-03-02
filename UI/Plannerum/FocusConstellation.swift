@@ -122,7 +122,7 @@ public struct FocusConstellation: View {
         ZStack {
             // Base - subtle glass
             RoundedRectangle(cornerRadius: 24)
-                .fill(DS.borderSubtle)
+                .fill(Color.white.opacity(0.04))
                 .background(
                     RoundedRectangle(cornerRadius: 24)
                         .fill(.ultraThinMaterial.opacity(0.2))
@@ -147,7 +147,7 @@ public struct FocusConstellation: View {
                     .fill(
                         viewModel.isInFocus
                             ? accentColor.opacity(0.3)
-                            : DS.border
+                            : Color.white.opacity(0.08)
                     )
                     .frame(height: 1)
                 Spacer()
@@ -163,11 +163,11 @@ public struct FocusConstellation: View {
             VStack(spacing: 8) {
                 Text("Ready to focus")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(PlannerumColors.textSecondary)
 
                 Text("Tap a block to begin your session")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundColor(PlannerumColors.textMuted)
             }
 
             // Dormant nodes (triangle formation)
@@ -195,7 +195,7 @@ public struct FocusConstellation: View {
 
                 context.stroke(
                     linePath,
-                    with: .color(DS.border),
+                    with: .color(Color.white.opacity(0.06)),
                     style: StrokeStyle(lineWidth: 1, dash: [4, 4])
                 )
             }
@@ -219,11 +219,11 @@ public struct FocusConstellation: View {
 
     private var dormantNodeDot: some View {
         Circle()
-            .fill(DS.border)
+            .fill(Color.white.opacity(0.08))
             .frame(width: 12, height: 12)
             .overlay(
                 Circle()
-                    .strokeBorder(DS.borderActive, lineWidth: 1)
+                    .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
             )
     }
 
@@ -274,7 +274,7 @@ public struct FocusConstellation: View {
                 path.addLine(to: timerPos)
                 context.stroke(
                     path,
-                    with: .color(DS.borderActive),
+                    with: .color(Color.white.opacity(0.15)),
                     style: StrokeStyle(lineWidth: Layout.lineWidth, dash: [6, 4], dashPhase: dashPhase)
                 )
             }
@@ -286,7 +286,7 @@ public struct FocusConstellation: View {
                 path.addLine(to: completePos)
                 context.stroke(
                     path,
-                    with: .color(DS.borderActive),
+                    with: .color(Color.white.opacity(0.15)),
                     style: StrokeStyle(lineWidth: Layout.lineWidth, dash: [6, 4], dashPhase: dashPhase)
                 )
             }
@@ -298,7 +298,7 @@ public struct FocusConstellation: View {
                 path.addLine(to: skipPos)
                 context.stroke(
                     path,
-                    with: .color(DS.borderActive),
+                    with: .color(Color.white.opacity(0.15)),
                     style: StrokeStyle(lineWidth: Layout.lineWidth, dash: [6, 4], dashPhase: dashPhase)
                 )
             }
@@ -344,13 +344,13 @@ public struct FocusConstellation: View {
 
                 // Node background
                 Circle()
-                    .fill(isHovered ? DS.borderActive : DS.border)
+                    .fill(Color.white.opacity(isHovered ? 0.12 : 0.08))
                     .frame(width: Layout.nodeSize, height: Layout.nodeSize)
 
                 // Node border
                 Circle()
                     .strokeBorder(
-                        isHovered ? accentColor.opacity(0.5) : DS.textMuted,
+                        isHovered ? accentColor.opacity(0.5) : Color.white.opacity(0.20),
                         lineWidth: 2
                     )
                     .frame(width: Layout.nodeSize, height: Layout.nodeSize)
@@ -362,14 +362,14 @@ public struct FocusConstellation: View {
                         .foregroundColor(
                             node == .active
                                 ? accentColor
-                                : (isHovered ? DS.text : DS.textSecondary)
+                                : (isHovered ? PlannerumColors.textPrimary : PlannerumColors.textSecondary)
                         )
 
                     if node == .timer && viewModel.isInFocus {
                         // Show timer value
                         Text(formatTime(viewModel.elapsedTime ?? 0))
                             .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundColor(PlannerumColors.textMuted)
                     }
                 }
             }
@@ -391,7 +391,7 @@ public struct FocusConstellation: View {
         VStack(spacing: 12) {
             // Separator
             Rectangle()
-                .fill(DS.border)
+                .fill(Color.white.opacity(0.08))
                 .frame(height: 1)
                 .padding(.horizontal, 40)
 
@@ -405,7 +405,7 @@ public struct FocusConstellation: View {
 
                     Text("\(block.blockType.displayName): \(block.title)")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .foregroundColor(PlannerumColors.textPrimary)
                         .lineLimit(1)
                 }
 
@@ -414,7 +414,7 @@ public struct FocusConstellation: View {
                     ZStack(alignment: .leading) {
                         // Track
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(DS.border)
+                            .fill(Color.white.opacity(0.08))
                             .frame(height: 6)
 
                         // Fill
@@ -438,10 +438,10 @@ public struct FocusConstellation: View {
                     // Remaining time
                     Text(formatTimeRemaining(block))
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundColor(PlannerumColors.textSecondary)
 
                     Text("·")
-                        .foregroundColor(DS.textMuted)
+                        .foregroundColor(PlannerumColors.textMuted)
 
                     // XP projection
                     HStack(spacing: 4) {
@@ -799,7 +799,7 @@ public struct HorizontalFocusStrip: View {
 
                     Text(block.title)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundColor(PlannerumColors.textPrimary)
                         .lineLimit(1)
                 }
             }
@@ -818,7 +818,7 @@ public struct HorizontalFocusStrip: View {
                 // Timer
                 Text(formatElapsed(viewModel.elapsedTime ?? 0))
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(PlannerumColors.textSecondary)
 
                 // XP
                 HStack(spacing: 4) {
@@ -835,7 +835,7 @@ public struct HorizontalFocusStrip: View {
                     actionButton(icon: "checkmark.circle.fill", color: .green) {
                         viewModel.completeFocus()
                     }
-                    actionButton(icon: "forward.fill", color: DS.textMuted) {
+                    actionButton(icon: "forward.fill", color: PlannerumColors.textMuted) {
                         viewModel.skipBlock()
                     }
                 }
@@ -852,19 +852,19 @@ public struct HorizontalFocusStrip: View {
             HStack(spacing: 10) {
                 // Calm indicator
                 Circle()
-                    .fill(DS.textMuted.opacity(0.3))
+                    .fill(PlannerumColors.textMuted.opacity(0.3))
                     .frame(width: 8, height: 8)
 
                 Text("Ready to focus")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundColor(PlannerumColors.textMuted)
 
                 Text("·")
-                    .foregroundColor(DS.textMuted.opacity(0.5))
+                    .foregroundColor(PlannerumColors.textMuted.opacity(0.5))
 
                 Text("Tap a block to begin")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted.opacity(0.7))
+                    .foregroundColor(PlannerumColors.textMuted.opacity(0.7))
             }
 
             Spacer()
@@ -881,10 +881,10 @@ public struct HorizontalFocusStrip: View {
 
     private var dormantNode: some View {
         Circle()
-            .fill(DS.borderSubtle)
+            .fill(Color.white.opacity(0.04))
             .overlay(
                 Circle()
-                    .strokeBorder(DS.borderActive, lineWidth: 1)
+                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
             )
             .frame(width: 28, height: 28)
     }
@@ -896,7 +896,7 @@ public struct HorizontalFocusStrip: View {
             ZStack(alignment: .leading) {
                 // Track
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(DS.border)
+                    .fill(Color.white.opacity(0.06))
                     .frame(height: 4)
 
                 // Fill
@@ -923,7 +923,7 @@ public struct HorizontalFocusStrip: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(color)
                 .frame(width: 32, height: 32)
-                .background(DS.border)
+                .background(Color.white.opacity(0.06))
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
@@ -933,13 +933,13 @@ public struct HorizontalFocusStrip: View {
 
     private var stripBackground: some View {
         RoundedRectangle(cornerRadius: 16)
-            .fill(DS.borderSubtle)
+            .fill(Color.white.opacity(0.03))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
                     .strokeBorder(
                         viewModel.isInFocus
                             ? accentColor.opacity(0.2)
-                            : DS.border,
+                            : Color.white.opacity(0.06),
                         lineWidth: 1
                     )
             )
@@ -964,13 +964,4 @@ public struct HorizontalFocusStrip: View {
                 pulsePhase += 0.1
             }
     }
-}
-
-// MARK: - Preview
-
-#Preview("Focus Constellation") {
-    FocusConstellation()
-        .frame(width: 600, height: 300)
-        .background(Color(red: 15/255, green: 15/255, blue: 20/255))
-        .preferredColorScheme(.dark)
 }

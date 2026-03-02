@@ -29,7 +29,7 @@ struct InstagramTranscriptView: View {
     @State private var autoTranscriptionProgress: String = ""
     @State private var autoTranscriptionContentType: TranscriptionContentType?
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     private var wordCount: Int {
         transcript.split(separator: " ").count
@@ -122,44 +122,26 @@ struct InstagramTranscriptView: View {
                         .overlay(
                             VStack(spacing: 8) {
                                 ProgressView()
-                                    .tint(.white)
+                                    .tint(DS.accent)
                                 Text("Loading video...")
                                     .font(.system(size: 11))
                                     .foregroundColor(DS.textSecondary)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(.black.opacity(0.4))
+                            .background(DS.bg.opacity(0.7))
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                         )
                 } else if let player = igPlayer {
-                    // Success — native AVPlayer
+                    // Success — native AVPlayer with macOS controls
                     ZStack {
                         VideoPlayer(player: player)
-                            .disabled(true)
-
-                        if !igIsPlaying {
-                            Button {
-                                togglePlayback()
-                            } label: {
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                                    .frame(width: 60, height: 60)
-                                    .overlay(
-                                        Image(systemName: "play.fill")
-                                            .font(.system(size: 24))
-                                            .foregroundColor(.white)
-                                            .offset(x: 2)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
 
                         if igIsExtractingVideo {
                             Rectangle()
-                                .fill(.black.opacity(0.5))
+                                .fill(DS.bg.opacity(0.7))
                                 .overlay(
                                     VStack(spacing: 8) {
-                                        ProgressView().tint(.white)
+                                        ProgressView().tint(DS.accent)
                                         Text("Refreshing video link...")
                                             .font(.system(size: 11))
                                             .foregroundColor(DS.textSecondary)
@@ -173,9 +155,6 @@ struct InstagramTranscriptView: View {
                         RoundedRectangle(cornerRadius: 16)
                             .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
-                    .onTapGesture {
-                        togglePlayback()
-                    }
                 } else if igVideoFailed {
                     // Failed — thumbnail + open in browser
                     igThumbnailPlaceholder
@@ -219,10 +198,7 @@ struct InstagramTranscriptView: View {
             }
             .frame(maxWidth: .infinity)
 
-            // Playback controls
-            if igPlayer != nil {
-                igPlaybackControls
-            }
+            // Native AVPlayerView controls handle playback
 
             // Metadata footer
             igMetadataFooter
@@ -245,18 +221,18 @@ struct InstagramTranscriptView: View {
                 AsyncImage(url: thumbURL) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    Rectangle().fill(Color.black.opacity(0.3))
+                    Rectangle().fill(DS.borderSubtle)
                 }
             } else if let thumbnailUrl = atom.richContent?.thumbnailUrl, !thumbnailUrl.isEmpty,
                       let url = URL(string: thumbnailUrl) {
                 AsyncImage(url: url) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    Rectangle().fill(Color.black.opacity(0.3))
+                    Rectangle().fill(DS.borderSubtle)
                 }
             } else {
                 Rectangle()
-                    .fill(Color.black.opacity(0.3))
+                    .fill(DS.borderSubtle)
                     .overlay(
                         Image(systemName: "camera.fill")
                             .font(.system(size: 32))
@@ -281,7 +257,7 @@ struct InstagramTranscriptView: View {
                         .frame(width: igProgressWidth(in: geometry.size.width), height: 4)
 
                     Circle()
-                        .fill(.white)
+                        .fill(DS.surfaceElevated)
                         .frame(width: 12, height: 12)
                         .offset(x: igProgressWidth(in: geometry.size.width) - 6)
                         .gesture(
@@ -656,7 +632,7 @@ struct InstagramTranscriptView: View {
                         Text("Run Analysis")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundColor(canAnalyze ? .black : DS.textMuted)
+                    .foregroundColor(canAnalyze ? DS.textOnAccent : DS.textMuted)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(

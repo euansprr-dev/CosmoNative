@@ -15,6 +15,8 @@ struct CanvasConnectionLinesLayer: View {
     let canvasOffset: CGSize
     let scaledPanOffset: CGSize
     let effectiveScale: CGFloat
+    /// Live drag offsets from CanvasView so lines follow blocks during drag
+    var blockDragOffsets: [String: CGSize] = [:]
 
     // MARK: - State
 
@@ -31,6 +33,8 @@ struct CanvasConnectionLinesLayer: View {
         static let minLineLength: CGFloat = 20
         static let maxLineLength: CGFloat = 2000
         static let hitTestWidth: CGFloat = 24
+        /// Gap between block edge and line endpoint so lines don't overlap blocks
+        static let edgePaddingGap: CGFloat = 6
     }
 
     // MARK: - Computed
@@ -149,8 +153,8 @@ struct CanvasConnectionLinesLayer: View {
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(Color.red.opacity(0.8))
-                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .fill(DS.red)
+                    .shadow(color: .black.opacity(0.15), radius: 6)
             )
         }
         .buttonStyle(.plain)
@@ -269,16 +273,18 @@ struct CanvasConnectionLinesLayer: View {
         )
     }
 
-    /// Block position in the canvas coordinate space (before scaleEffect is applied)
+    /// Block position in the canvas coordinate space (before scaleEffect is applied),
+    /// including live drag offset so lines follow blocks during drag
     private func blockScreenPosition(_ block: CanvasBlock) -> CGPoint {
-        CGPoint(
-            x: block.position.x + canvasOffset.width + scaledPanOffset.width,
-            y: block.position.y + canvasOffset.height + scaledPanOffset.height
+        let dragOffset = blockDragOffsets[block.id] ?? .zero
+        return CGPoint(
+            x: block.position.x + canvasOffset.width + scaledPanOffset.width + dragOffset.width,
+            y: block.position.y + canvasOffset.height + scaledPanOffset.height + dragOffset.height
         )
     }
 
-    /// Calculate line endpoints at the edges of blocks (not centers) so lines
-    /// are visible between blocks rather than hidden under them.
+    /// Calculate line endpoints just outside block edges with a small gap
+    /// so lines connect cleanly without overlapping blocks.
     private func edgeEndpoints(
         from: CGPoint, fromSize: CGSize,
         to: CGPoint, toSize: CGSize
@@ -293,15 +299,15 @@ struct CanvasConnectionLinesLayer: View {
         let toHalfW = toSize.width / 2
         let toHalfH = toSize.height / 2
 
-        // Offset start point from source block edge
-        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle)
+        // Offset start point from source block edge + gap
+        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap
         let start = CGPoint(
             x: from.x + cos(angle) * startOffset,
             y: from.y + sin(angle) * startOffset
         )
 
-        // Offset end point from target block edge (opposite direction)
-        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi)
+        // Offset end point from target block edge + gap (opposite direction)
+        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap
         let end = CGPoint(
             x: to.x + cos(angle + .pi) * endOffset,
             y: to.y + sin(angle + .pi) * endOffset

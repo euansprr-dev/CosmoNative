@@ -33,37 +33,37 @@ struct RadialMenuView: View {
         RadialAction(
             icon: "note.text",
             label: "Note",
-            color: Color(hex: "#F97316"),  // Orange
+            color: DS.entityNote,
             type: .createNote
         ),
         RadialAction(
             icon: "doc.text.fill",
             label: "Content",
-            color: Color(hex: "#3B82F6"),  // Blue
+            color: DS.entityContent,
             type: .createContent
         ),
         RadialAction(
             icon: "magnifyingglass",
             label: "Research",
-            color: Color(hex: "#10B981"),  // Green
+            color: DS.entityResearch,
             type: .createResearch
         ),
         RadialAction(
             icon: "link.circle.fill",
             label: "Connection",
-            color: Color(hex: "#8B5CF6"),  // Purple
+            color: DS.entityConnection,
             type: .createConnection
         ),
         RadialAction(
             icon: "brain.head.profile",
             label: "Agent",
-            color: Color(hex: "#06B6D4"),  // Cyan
+            color: DS.accent,
             type: .researchAgent
         ),
         RadialAction(
             icon: "tray.full.fill",
             label: "Database",
-            color: Color(hex: "#64748B"),  // Slate
+            color: DS.textSecondary,
             type: .fromDatabase
         ),
     ]
@@ -81,16 +81,17 @@ struct RadialMenuView: View {
             Button(action: { onDismiss() }) {
                 ZStack {
                     Circle()
-                        .fill(isCenterHovered ? Color(hex: "#2A2A35") : Color(hex: "#1A1A25"))
+                        .fill(DS.surfaceElevated)
                         .frame(width: isCenterHovered ? 52 : 48, height: isCenterHovered ? 52 : 48)
                         .overlay(
                             Circle()
                                 .stroke(
-                                    isCenterHovered ? DS.textMuted : DS.borderActive,
+                                    isCenterHovered ? DS.border : DS.borderSubtle,
                                     lineWidth: isCenterHovered ? 1.5 : 1
                                 )
                         )
-                        .shadow(color: Color.black.opacity(0.4), radius: isCenterHovered ? 16 : 12)
+                        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+                        .shadow(color: Color.black.opacity(0.05), radius: 32, x: 0, y: 16)
 
                     // X icon
                     Image(systemName: "xmark")
@@ -193,9 +194,9 @@ struct RadialMenuButton: View {
             VStack(spacing: 6) {
                 // Icon pill with dark glass styling
                 ZStack {
-                    // Background - dark glass
+                    // Background - white surface
                     RoundedRectangle(cornerRadius: isHovered ? 14 : 12)
-                        .fill(Color(hex: "#1A1A25"))
+                        .fill(DS.surfaceElevated)
                         .frame(
                             width: isHovered ? 56 : 48,
                             height: isHovered ? 56 : 48
@@ -204,7 +205,7 @@ struct RadialMenuButton: View {
                     // Border with accent color on hover
                     RoundedRectangle(cornerRadius: isHovered ? 14 : 12)
                         .stroke(
-                            isHovered ? action.color : DS.borderActive,
+                            isHovered ? action.color : DS.border,
                             lineWidth: isHovered ? 2 : 1
                         )
                         .frame(
@@ -225,8 +226,8 @@ struct RadialMenuButton: View {
                         .foregroundColor(isHovered ? action.color : DS.textSecondary)
                 }
                 .shadow(
-                    color: isHovered ? action.color.opacity(0.3) : Color.black.opacity(0.3),
-                    radius: isHovered ? 12 : 8
+                    color: isHovered ? action.color.opacity(0.3) : Color.black.opacity(0.05),
+                    radius: isHovered ? 12 : 12
                 )
 
                 // Label - always visible but more prominent on hover

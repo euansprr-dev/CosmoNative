@@ -135,34 +135,40 @@ public class CalendarSyncService: ObservableObject {
 
     // MARK: - CosmoOS Calendar Management
 
-    /// Find or create the dedicated "CosmoOS" calendar
+    /// Find or create the dedicated "CosmoOS" calendar (runs EventKit work off main thread)
     private func findOrCreateCosmoCalendar() {
-        // Look for existing CosmoOS calendar
-        let calendars = eventStore.calendars(for: .event)
-        if let existing = calendars.first(where: { $0.title == Self.cosmoCalendarTitle }) {
-            cosmoCalendar = existing
-            return
-        }
+        let store = self.eventStore
+        let calendarTitle = Self.cosmoCalendarTitle
+        Task.detached(priority: .userInitiated) {
+            // Look for existing CosmoOS calendar
+            let calendars = store.calendars(for: .event)
+            if let existing = calendars.first(where: { $0.title == calendarTitle }) {
+                await MainActor.run { self.cosmoCalendar = existing }
+                return
+            }
 
-        // Create a new CosmoOS calendar
-        let newCalendar = EKCalendar(for: .event, eventStore: eventStore)
-        newCalendar.title = Self.cosmoCalendarTitle
-        newCalendar.cgColor = NSColor(red: 139/255, green: 92/255, blue: 246/255, alpha: 1.0).cgColor  // Plannerum violet
+            // Create a new CosmoOS calendar
+            let newCalendar = EKCalendar(for: .event, eventStore: store)
+            newCalendar.title = calendarTitle
+            newCalendar.cgColor = NSColor(red: 139/255, green: 92/255, blue: 246/255, alpha: 1.0).cgColor  // Plannerum violet
 
-        // Use the default calendar source
-        if let defaultSource = eventStore.defaultCalendarForNewEvents?.source {
-            newCalendar.source = defaultSource
-        } else if let localSource = eventStore.sources.first(where: { $0.sourceType == .local }) {
-            newCalendar.source = localSource
-        } else if let firstSource = eventStore.sources.first {
-            newCalendar.source = firstSource
-        }
+            // Use the default calendar source
+            if let defaultSource = store.defaultCalendarForNewEvents?.source {
+                newCalendar.source = defaultSource
+            } else if let localSource = store.sources.first(where: { $0.sourceType == .local }) {
+                newCalendar.source = localSource
+            } else if let firstSource = store.sources.first {
+                newCalendar.source = firstSource
+            }
 
-        do {
-            try eventStore.saveCalendar(newCalendar, commit: true)
-            cosmoCalendar = newCalendar
-        } catch {
-            lastError = "Failed to create CosmoOS calendar: \(error.localizedDescription)"
+            do {
+                try store.saveCalendar(newCalendar, commit: true)
+                await MainActor.run { self.cosmoCalendar = newCalendar }
+            } catch {
+                await MainActor.run {
+                    self.lastError = "Failed to create CosmoOS calendar: \(error.localizedDescription)"
+                }
+            }
         }
     }
 

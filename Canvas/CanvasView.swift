@@ -78,6 +78,10 @@ struct CanvasView: View {
     // Provocation engine (AI devil's advocate)
     @StateObject private var provocationEngine = ProvocationEngine.shared
 
+    // Cluster drag state
+    @State private var clusterDragOffset: CGSize = .zero
+    @State private var draggingClusterId: UUID? = nil
+
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
 
@@ -104,11 +108,25 @@ struct CanvasView: View {
                         canvasOffset: canvasOffset,
                         scaledPanOffset: scaledPanOffset,
                         effectiveScale: effectiveScale,
+                        dropTargetClusterId: clusterEngine.dropTargetClusterId,
+                        selectedClusterId: clusterEngine.selectedClusterId,
+                        clusterDragOffset: draggingClusterId != nil ? clusterDragOffset : nil,
                         onRenameCluster: { id, newName in
                             clusterEngine.renameUserCluster(id: id, to: newName)
                         },
                         onRemoveCluster: { id in
                             clusterEngine.removeUserCluster(id: id)
+                        },
+                        onSelectCluster: { id in
+                            clusterEngine.selectCluster(id)
+                            // Deselect any selected block
+                            if id != nil { selectedBlockId = nil }
+                        },
+                        onDragCluster: { id, translation in
+                            handleClusterDrag(clusterId: id, translation: translation)
+                        },
+                        onDragEndCluster: { id, translation in
+                            handleClusterDragEnd(clusterId: id, translation: translation)
                         }
                     )
 
@@ -122,7 +140,8 @@ struct CanvasView: View {
                         blocks: spatialEngine.blocks,
                         canvasOffset: canvasOffset,
                         scaledPanOffset: scaledPanOffset,
-                        effectiveScale: effectiveScale
+                        effectiveScale: effectiveScale,
+                        blockDragOffsets: blockDragOffsets
                     )
                 }
                 .scaleEffect(effectiveScale, anchor: UnitPoint(
@@ -295,12 +314,12 @@ struct CanvasView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(CosmoColors.thinkspaceTertiary, in: Capsule())
+                .background(DS.surfaceElevated, in: Capsule())
                 .overlay(
                     Capsule()
                         .stroke(DS.borderActive, lineWidth: 1)
                 )
-                .shadow(color: CosmoColors.thinkspacePurple.opacity(0.2), radius: 8, y: 2)
+                .shadow(color: DS.accent.opacity(0.1), radius: 8, y: 2)
                 .padding(.trailing, 20)
                 .padding(.bottom, 20)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -354,15 +373,15 @@ struct CanvasView: View {
         ZStack {
             // Visual background with GPU acceleration
             ZStack {
-                // Layer 1: Deep void base
-                CosmoColors.thinkspaceVoid
+                // Layer 1: Warm parchment canvas base
+                DS.canvas
                     .ignoresSafeArea()
 
                 // Layer 2: Subtle aurora gradient zones (2-3% opacity)
                 ThinkspaceAuroraView()
                     .ignoresSafeArea()
 
-                // Layer 3: Infinite tiling grid - dark mode
+                // Layer 3: Infinite tiling grid — warm gray dots
                 GridPatternView(
                     offset: CGSize(
                         width: canvasOffset.width + scaledPanOffset.width,
@@ -516,6 +535,7 @@ struct CanvasView: View {
                 }
                 spatialEngine.blocks = updatedBlocks
                 selectedBlockId = nil
+                clusterEngine.selectCluster(nil)
                 drawingState.clearSelection()
 
                 // Post notification AFTER state change is complete
@@ -1036,21 +1056,6 @@ struct CanvasView: View {
                     }
                 }
 
-                // Listen for cluster re-synthesis requests
-                NotificationCenter.default.addObserver(
-                    forName: CosmoNotification.Canvas.clusterResynthesizeRequested,
-                    object: nil,
-                    queue: .main
-                ) { [self] notification in
-                    nonisolated(unsafe) let notification = notification
-                    Task { @MainActor in
-                        if let idStr = notification.userInfo?["clusterId"] as? String,
-                           let uuid = UUID(uuidString: idStr) {
-                            await clusterEngine.synthesizeCluster(id: uuid, blocks: spatialEngine.blocks)
-                        }
-                    }
-                }
-
                 // Listen for focus mode entry to record incubation interactions
                 NotificationCenter.default.addObserver(
                     forName: .enterFocusMode,
@@ -1083,7 +1088,9 @@ struct CanvasView: View {
                             let zoomFactor = 1.0 + (delta * zoomSensitivity)
                             let newScale = canvasScale * zoomFactor
 
-                            canvasScale = min(max(newScale, minScale), maxScale)
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                canvasScale = min(max(newScale, minScale), maxScale)
+                            }
 
                             // Consume the event when zooming
                             return nil
@@ -1121,8 +1128,9 @@ struct CanvasView: View {
                 }
                 return .ignored
             }
-            // TAB: Toggle minimap navigator
+            // TAB: Toggle minimap navigator (skip when Command-K is open — Tab cycles tabs there)
             .onKeyPress(.tab) {
+                guard !appState.isCommandKVisible else { return .ignored }
                 withAnimation(ProMotionSprings.snappy) {
                     showMinimap.toggle()
                 }
@@ -1283,13 +1291,6 @@ struct CanvasView: View {
                     showClusterPopover = false
                 }
             },
-            onSynthesize: {
-                synthesisSourceBlockIds = clusterPopoverBlockIds
-                withAnimation(ProMotionSprings.snappy) {
-                    showClusterPopover = false
-                    showSynthesisWorkspace = true
-                }
-            },
             onDismiss: {
                 withAnimation(ProMotionSprings.snappy) {
                     showClusterPopover = false
@@ -1306,8 +1307,8 @@ struct CanvasView: View {
             blocks: spatialEngine.blocks,
             clusters: clusterEngine.allClusters,
             currentViewport: computeCurrentViewport(),
-            onNavigate: { canvasPosition in
-                navigateTo(canvasPosition: canvasPosition)
+            onNavigate: { canvasPosition, animated in
+                navigateTo(canvasPosition: canvasPosition, animated: animated)
             },
             onDismiss: {
                 withAnimation(ProMotionSprings.snappy) {
@@ -1331,15 +1332,20 @@ struct CanvasView: View {
         )
     }
 
-    /// Animate viewport to center on a canvas position
-    private func navigateTo(canvasPosition: CGPoint) {
+    /// Move viewport to center on a canvas position, optionally animated
+    private func navigateTo(canvasPosition: CGPoint, animated: Bool = true) {
         let screenCenterX = canvasSize.width / 2
         let screenCenterY = canvasSize.height / 2
-        withAnimation(ProMotionSprings.snappy) {
-            canvasOffset = CGSize(
-                width: screenCenterX - canvasPosition.x,
-                height: screenCenterY - canvasPosition.y
-            )
+        let newOffset = CGSize(
+            width: screenCenterX - canvasPosition.x,
+            height: screenCenterY - canvasPosition.y
+        )
+        if animated {
+            withAnimation(ProMotionSprings.snappy) {
+                canvasOffset = newOffset
+            }
+        } else {
+            canvasOffset = newOffset
         }
     }
 
@@ -1629,13 +1635,16 @@ struct CanvasView: View {
         }
         
         spatialEngine.blocks[blockIndex].size = size
-        
+
         // Also update position if provided (for anchored resizing)
         if let position = userInfo["position"] as? CGPoint {
             spatialEngine.blocks[blockIndex].position = position
         }
+
+        // Recompute cluster bounds so zones expand/shrink with resized blocks
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
     }
-    
+
     // MARK: - Zoom/Pan Persistence
 
     private func debouncedSaveZoomPan() {
@@ -1842,6 +1851,16 @@ struct CanvasView: View {
         // Mark selected (one-time update)
         if selectedBlockId != blockId {
             selectedBlockId = blockId
+            clusterEngine.selectCluster(nil)
+        }
+
+        // Check if dragged block is near a cluster zone (for drop highlight)
+        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            let draggedPosition = CGPoint(
+                x: block.position.x + translation.width,
+                y: block.position.y + translation.height
+            )
+            clusterEngine.updateDropTarget(for: draggedPosition)
         }
     }
 
@@ -1890,13 +1909,17 @@ struct CanvasView: View {
         }
     }
 
-    /// Update cluster membership when a block is dragged into/out of a user cluster zone
+    /// Update cluster membership when a block is dragged into/out of a user cluster zone.
+    /// Uses a generous proximity check (80pt outset) so blocks dropped near a cluster get absorbed.
     private func updateClusterMembership(for block: CanvasBlock) {
         let blockUUID = block.entityUuid
         let position = block.position
 
-        // Check if block landed inside any user cluster zone
-        if let targetCluster = clusterEngine.userCluster(containing: position) {
+        // Clear the visual drop target highlight
+        clusterEngine.clearDropTarget()
+
+        // Check if block landed inside or near any user cluster zone (proximity-based)
+        if let targetCluster = clusterEngine.nearestDropTargetCluster(for: position) {
             // Add to target cluster if not already a member
             if !targetCluster.blockUUIDs.contains(blockUUID) {
                 clusterEngine.addBlockToCluster(
@@ -1907,9 +1930,12 @@ struct CanvasView: View {
             }
         }
 
-        // Remove from clusters where the block is no longer inside the zone
+        // Remove from clusters where the block has been dragged far away.
+        // Use a slightly larger rect so small movements within the zone don't eject.
+        let ejectInset: CGFloat = -40  // 40pt grace zone before ejecting
         for cluster in clusterEngine.userClusters {
-            if cluster.blockUUIDs.contains(blockUUID) && !cluster.boundingRect.contains(position) {
+            let expandedRect = cluster.boundingRect.insetBy(dx: ejectInset, dy: ejectInset)
+            if cluster.blockUUIDs.contains(blockUUID) && !expandedRect.contains(position) {
                 clusterEngine.removeBlockFromCluster(
                     blockUUID: blockUUID,
                     clusterId: cluster.id,
@@ -1918,8 +1944,53 @@ struct CanvasView: View {
             }
         }
 
-        // Recompute bounds
+        // Recompute bounds so the zone visually expands to include the new block
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+    }
+
+    // MARK: - Cluster Drag Handlers
+
+    /// Handle live cluster drag — sets drag offsets for all member blocks + the cluster zone
+    private func handleClusterDrag(clusterId: UUID, translation: CGSize) {
+        draggingClusterId = clusterId
+        clusterDragOffset = translation
+
+        // Set drag offsets for all member blocks so they move in sync
+        let memberUUIDs = clusterEngine.memberBlockUUIDs(for: clusterId)
+        for block in spatialEngine.blocks {
+            if memberUUIDs.contains(block.entityUuid) {
+                blockDragOffsets[block.id] = translation
+            }
+        }
+    }
+
+    /// Commit cluster drag — move all member blocks to their new positions
+    private func handleClusterDragEnd(clusterId: UUID, translation: CGSize) {
+        let memberUUIDs = clusterEngine.memberBlockUUIDs(for: clusterId)
+
+        // Commit final positions to the @Published array and database
+        for index in spatialEngine.blocks.indices {
+            let block = spatialEngine.blocks[index]
+            guard memberUUIDs.contains(block.entityUuid) else { continue }
+
+            let newPosition = CGPoint(
+                x: block.position.x + translation.width,
+                y: block.position.y + translation.height
+            )
+            spatialEngine.blocks[index].position = newPosition
+            spatialEngine.updateBlockPosition(block.id, position: newPosition)
+
+            // Clear this block's drag offset
+            blockDragOffsets.removeValue(forKey: block.id)
+        }
+
+        // Clear cluster drag state
+        draggingClusterId = nil
+        clusterDragOffset = .zero
+
+        // Recompute cluster bounds and persist
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        clusterEngine.persistAfterMove()
     }
 
     // Legacy handlers (kept for compatibility with other callers)
@@ -2473,6 +2544,9 @@ struct CanvasView: View {
             spatialEngine.blocks[index].size = newSize
         }
 
+        // Recompute cluster bounds so zones expand/shrink with resized blocks
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+
         print("✅ Resized block to \(newSize)")
     }
 
@@ -2616,8 +2690,8 @@ struct CanvasView: View {
             do {
                 // Create connection in database
                 print("🔗 Creating connection in database...")
-                let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Connection in
-                    var connection = Connection.new(title: "New Connection")
+                let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
+                    var connection = Atom.new(type: .connection, title: "New Connection")
                     try connection.insert(db)
                     connection.id = db.lastInsertedRowID
                     print("🔗 Connection inserted with id: \(connection.id ?? -999)")
@@ -2903,13 +2977,13 @@ struct FloatingBlockView: View {
     // Get the pastel color for this entity type
     private var blockColor: Color {
         switch block.entityType {
-        case .idea: return CosmoColors.lavender
-        case .content: return CosmoColors.skyBlue
-        case .task: return CosmoColors.coral
-        case .research: return CosmoColors.emerald
-        case .note: return CosmoColors.note
-        case .cosmoAI: return CosmoColors.cosmoAI
-        default: return CosmoColors.glassGrey
+        case .idea: return DS.entityIdea
+        case .content: return DS.entityContent
+        case .task: return DS.entityTask
+        case .research: return DS.entityResearch
+        case .note: return DS.entityNote
+        case .cosmoAI: return DS.accent
+        default: return DS.textMuted
         }
     }
 
@@ -2940,7 +3014,7 @@ struct FloatingBlockView: View {
                 if let subtitle = block.subtitle {
                     Text(subtitle)
                         .font(.system(size: 13))
-                        .foregroundColor(CosmoColors.textSecondary)
+                        .foregroundColor(DS.textSecondary)
                         .lineLimit(4)
                 }
 
@@ -2951,10 +3025,10 @@ struct FloatingBlockView: View {
                     ForEach(Array(block.metadata.prefix(2)), id: \.key) { key, value in
                         Text("\(key): \(value)")
                             .font(.system(size: 10))
-                            .foregroundColor(CosmoColors.textTertiary)
+                            .foregroundColor(DS.textMuted)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
-                            .background(CosmoColors.glassGrey.opacity(0.4))
+                            .background(DS.borderSubtle.opacity(0.4))
                             .cornerRadius(4)
                     }
 
@@ -2963,7 +3037,7 @@ struct FloatingBlockView: View {
                     if block.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 10))
-                            .foregroundColor(CosmoColors.textTertiary)
+                            .foregroundColor(DS.textMuted)
                     }
                 }
             }
@@ -3044,17 +3118,17 @@ struct CanvasControls: View {
         Button(action: { spatialEngine.clearCanvas() }) {
             Image(systemName: "trash")
                 .font(.system(size: 16))
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundColor(DS.textSecondary)
                 .frame(width: 40, height: 40)
-                .background(CosmoColors.softWhite)
+                .background(DS.surfaceElevated)
                 .cornerRadius(10)
-                .shadow(color: CosmoColors.glassGrey.opacity(0.4), radius: 6, y: 2)
+                .shadow(color: Color.black.opacity(0.08), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
     }
 }
 
-// MARK: - Grid Pattern View (Infinite Tiling - Dark Mode)
+// MARK: - Grid Pattern View (Infinite Tiling — Greenhouse Light Mode)
 struct GridPatternView: View {
     var offset: CGSize = .zero  // Canvas pan offset for infinite tiling
     var scale: CGFloat = 1.0    // Zoom scale for infinite canvas effect
@@ -3082,10 +3156,10 @@ struct GridPatternView: View {
                 for y in stride(from: startY, to: endY, by: spacing) {
                     let halfDot = dotSize / 2
                     let rect = CGRect(x: x - halfDot, y: y - halfDot, width: dotSize, height: dotSize)
-                    // Dark grid color at 10% opacity
+                    // Warm gray dots visible on parchment canvas
                     context.fill(
                         Path(ellipseIn: rect),
-                        with: .color(CosmoColors.thinkspaceGrid.opacity(0.1))
+                        with: .color(Color(hex: "D8D7D3").opacity(0.5))
                     )
                 }
             }
@@ -3100,7 +3174,7 @@ struct ThinkspaceAuroraView: View {
             // Top-left purple aurora
             RadialGradient(
                 colors: [
-                    CosmoColors.thinkspacePurple.opacity(0.025),
+                    DS.accent.opacity(0.015),
                     Color.clear
                 ],
                 center: UnitPoint(x: 0.1, y: 0.1),

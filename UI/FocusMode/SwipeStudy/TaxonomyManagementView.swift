@@ -20,9 +20,9 @@ struct TaxonomyManagementView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().background(DS.borderActive)
+            Divider().background(DS.borderSubtle)
             dimensionPicker
-            Divider().background(DS.borderActive)
+            Divider().background(DS.borderSubtle)
             valuesList
         }
         .frame(width: 480, height: 520)
@@ -83,11 +83,11 @@ struct TaxonomyManagementView: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(selectedDimension == dimension ? gold.opacity(0.2) : DS.borderSubtle)
+                        .fill(selectedDimension == dimension ? gold.opacity(0.15) : DS.surfaceHover)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
                                 .strokeBorder(
-                                    selectedDimension == dimension ? gold.opacity(0.5) : DS.border,
+                                    selectedDimension == dimension ? gold.opacity(0.5) : DS.borderSubtle,
                                     lineWidth: 1
                                 )
                         )
@@ -102,7 +102,7 @@ struct TaxonomyManagementView: View {
         VStack(spacing: 0) {
             if isLoading {
                 Spacer()
-                ProgressView().tint(.white)
+                ProgressView().tint(DS.textSecondary)
                 Spacer()
             } else {
                 ScrollView {
@@ -162,7 +162,7 @@ struct TaxonomyManagementView: View {
                     .foregroundColor(DS.textMuted)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(DS.border, in: Capsule())
+                    .background(DS.surfaceHover, in: Capsule())
             }
 
             // Move buttons
@@ -203,7 +203,7 @@ struct TaxonomyManagementView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var addValueBar: some View {
@@ -215,7 +215,7 @@ struct TaxonomyManagementView: View {
                     .foregroundColor(DS.text)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
                     .onSubmit { addNewValue() }
 
                 Button {
@@ -404,11 +404,4 @@ struct TaxonomyValueRow: Identifiable {
     var sortOrder: Int
     var atomUUID: String?
     var usageCount: Int = 0
-}
-
-// MARK: - Preview
-
-#Preview("Taxonomy Management View") {
-    TaxonomyManagementView()
-        .frame(width: 480, height: 520)
 }

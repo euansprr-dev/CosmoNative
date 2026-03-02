@@ -282,10 +282,6 @@ struct CosmoAIBlockView: View {
     }
 
     private func openFocusMode() {
-        guard block.entityId > 0 else {
-            print("⚠️ CosmoAIBlockView.openFocusMode: no backing atom (entityId=\(block.entityId)), skipping")
-            return
-        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,

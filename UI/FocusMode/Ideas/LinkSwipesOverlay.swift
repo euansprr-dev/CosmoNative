@@ -20,8 +20,8 @@ struct LinkSwipesOverlay: View {
     var body: some View {
         ZStack {
             // Backdrop
-            Color.black.opacity(0.5)
-                .background(.ultraThinMaterial)
+            Color.black.opacity(0.15)
+                .background(.regularMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { isPresented = false }
 
@@ -56,7 +56,7 @@ struct LinkSwipesOverlay: View {
                         lineWidth: 1
                     )
             )
-            .shadow(color: .black.opacity(0.5), radius: 40, y: 20)
+            .shadow(color: .black.opacity(0.15), radius: 40, y: 20)
         }
         .onAppear { Task { await loadAllSwipes() } }
         .onKeyPress(.escape) {
@@ -355,7 +355,7 @@ struct LinkSwipesOverlay: View {
             } label: {
                 Text("Link Selected (\(selectedUUIDs.count))")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(accentIndigo, in: RoundedRectangle(cornerRadius: 8))

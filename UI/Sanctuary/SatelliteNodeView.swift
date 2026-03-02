@@ -94,7 +94,7 @@ public struct SatelliteNodeView: View {
                 // Orbital ring (hairline, slow rotation)
                 Circle()
                     .stroke(
-                        type.primaryColor.opacity(0.2),
+                        type.primaryColor.opacity(0.35),
                         lineWidth: Layout.orbitalRingWidth
                     )
                     .frame(width: Layout.orbitalRingSize, height: Layout.orbitalRingSize)
@@ -125,8 +125,8 @@ public struct SatelliteNodeView: View {
                             .stroke(
                                 LinearGradient(
                                     colors: [
-                                        Color.white.opacity(0.3),
-                                        Color.white.opacity(0.1)
+                                        type.primaryColor.opacity(0.2),
+                                        type.primaryColor.opacity(0.1)
                                     ],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
@@ -144,8 +144,8 @@ public struct SatelliteNodeView: View {
                 // Icon
                 Image(systemName: type.icon)
                     .font(.system(size: Layout.iconSize, weight: .medium))
-                    .foregroundColor(DS.text)
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    .foregroundColor(DS.textOnAccent)
+                    .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
 
                 // Badge (if present)
                 if let count = badgeCount, count > 0 {
@@ -154,7 +154,7 @@ public struct SatelliteNodeView: View {
                             Spacer()
                             Text("\(count)")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(DS.text)
+                                .foregroundColor(DS.textOnAccent)
                                 .frame(width: Layout.badgeSize, height: Layout.badgeSize)
                                 .background(
                                     Circle()
@@ -175,10 +175,9 @@ public struct SatelliteNodeView: View {
                 .font(.system(size: 10, weight: .regular))
                 .foregroundColor(
                     isHovered
-                        ? OnyxColors.Text.primary
-                        : OnyxColors.Text.secondary
+                        ? DS.text
+                        : DS.textSecondary
                 )
-                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
         }
         // FIX: Use Circle contentShape to match orb visual + limit hover/tap to actual content
         .contentShape(Circle().scale(1.3))  // Slightly larger than orb for easier targeting
@@ -217,7 +216,7 @@ public struct SatelliteNodeView: View {
 struct SatelliteNodeView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
-            SanctuaryColors.voidPrimary
+            DS.bg
                 .ignoresSafeArea()
 
             HStack(spacing: 200) {
@@ -240,7 +239,7 @@ struct SatelliteNodeView_Previews: PreviewProvider {
                 )
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }
 #endif

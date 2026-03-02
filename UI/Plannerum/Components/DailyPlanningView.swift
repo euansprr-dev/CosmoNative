@@ -76,7 +76,7 @@ public struct DailyPlanningView: View {
                         .foregroundColor(PlannerumColors.textSecondary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
-                        .background(DS.border)
+                        .background(Color.white.opacity(0.08))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -86,18 +86,4 @@ public struct DailyPlanningView: View {
         .padding(.vertical, PlannerumLayout.spacingXL)
         .frame(maxWidth: .infinity)
     }
-}
-
-// MARK: - Preview
-
-#Preview("Daily Planning View") {
-    DailyPlanningView(
-        externalEventCount: 3,
-        unscheduledTasks: [],
-        onAutoPlan: {},
-        onShowUnscheduledTray: {}
-    )
-    .frame(width: 400, height: 300)
-    .background(Color(red: 15/255, green: 15/255, blue: 20/255))
-    .preferredColorScheme(.dark)
 }

@@ -1,11 +1,12 @@
 // CosmoOS/Canvas/CosmoBlockWrapper.swift
-// Native floating block wrapper for Thinkspace - dark glass design
+// Native floating block wrapper for Thinkspace — Greenhouse light mode
 // No traffic lights, clean card aesthetic matching Sanctuary
 // December 2025 - ProMotion springs, 3D tilt, selection toolbar
+// March 2026 — Greenhouse light-mode rebrand
 
 import SwiftUI
 
-/// A native dark glass wrapper that provides clean, minimal chrome
+/// A clean white wrapper that provides minimal chrome
 /// for all floating block types on the Thinkspace canvas.
 struct CosmoBlockWrapper<Content: View>: View {
     let block: CanvasBlock
@@ -98,13 +99,6 @@ struct CosmoBlockWrapper<Content: View>: View {
         )
     }
 
-    // Onyx neutral shadow elevation
-    private var currentOnyxElevation: OnyxElevation {
-        if isDragging { return .floating }
-        if isHovered { return .hovered }
-        return .resting
-    }
-
     // 3D tilt amount based on hover position
     private var tiltAxis: (x: CGFloat, y: CGFloat, z: CGFloat) {
         guard isHovered && !isExpanded && !isDragging && !isSelected else {
@@ -149,6 +143,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             .background(blockBackground)
             .clipShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
             .overlay(blockBorder)
+            // Top-edge highlight — removed for light mode (no-op)
             // Simple edge resize overlay (safe implementation)
             .overlay {
                 SimpleResizeOverlay(
@@ -158,9 +153,24 @@ struct CosmoBlockWrapper<Content: View>: View {
                     maxSize: CGSize(width: maxWidth, height: maxHeight)
                 )
             }
-            // Onyx neutral dual-layer shadow + optional accent glow when selected
-            .onyxShadow(currentOnyxElevation, accentGlow: isSelected ? accentColor : nil)
-            .compositingGroup()
+            // Light mode shadow — soft, natural depth
+            .shadow(
+                color: .black.opacity(isDragging ? 0.10 : 0.04),
+                radius: isDragging ? 20 : (isHovered ? 16 : 8),
+                x: 0,
+                y: isDragging ? 8 : (isHovered ? 4 : 2)
+            )
+            .shadow(
+                color: .black.opacity(isDragging ? 0.04 : 0.02),
+                radius: isDragging ? 4 : (isHovered ? 4 : 2),
+                x: 0,
+                y: isDragging ? 2 : 1
+            )
+            // Accent glow when selected
+            .shadow(
+                color: isSelected ? accentColor.opacity(0.15) : Color.clear,
+                radius: 16, x: 0, y: 0
+            )
             // 3D tilt effect on hover (only when not selected)
             .rotation3DEffect(
                 .degrees(isHovered && !isExpanded && !isDragging && !isSelected ? 1.5 : 0),
@@ -250,16 +260,19 @@ struct CosmoBlockWrapper<Content: View>: View {
 
     // MARK: - Background
 
+    @ViewBuilder
     private var blockBackground: some View {
-        ZStack {
-            // Flat Onyx raised surface
-            OnyxColors.Elevation.raised
-
-            // Subtle inner glow when selected
-            if isSelected {
+        // Greenhouse: clean white card surface with optional accent tint when selected
+        if isSelected {
+            ZStack {
+                RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                    .fill(DS.surfaceElevated)
                 RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
                     .fill(accentColor.opacity(0.03))
             }
+        } else {
+            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                .fill(DS.surfaceElevated)
         }
     }
 
@@ -268,13 +281,22 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var blockBorder: some View {
         let shape = RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
         return ZStack {
-            // Base border
-            shape.stroke(
-                isSelected
-                    ? accentColor.opacity(0.5)
-                    : crystallizationBorderColor,
-                lineWidth: crystallizationLevel >= .distilled ? 1.5 : 1
-            )
+            // Base border — solid 1px for light mode
+            if isSelected {
+                shape.stroke(accentColor.opacity(0.5), lineWidth: 1)
+            } else if crystallizationLevel > .raw {
+                // Crystallization levels keep accent-tinted borders
+                shape.stroke(
+                    crystallizationBorderColor,
+                    lineWidth: crystallizationLevel >= .distilled ? 1.5 : 1
+                )
+            } else if isHovered {
+                // Hovered: slightly darker border
+                shape.stroke(DS.borderActive, lineWidth: 1)
+            } else {
+                // Normal: standard neutral border
+                shape.stroke(DS.border, lineWidth: 1)
+            }
 
             // Outer glow for connected+ levels
             if crystallizationLevel >= .connected && !isSelected {
@@ -290,7 +312,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var crystallizationBorderColor: Color {
         switch crystallizationLevel {
         case .raw:
-            return isHovered ? DS.borderActive : DS.border
+            return DS.border // fallback, handled by gradient above
         case .highlighted:
             return accentColor.opacity(0.15)
         case .distilled:
@@ -385,17 +407,12 @@ struct BlockSelectionToolbar: View {
         .animation(.easeInOut(duration: 0.15), value: hoveredAction)
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
-        .background(toolbarBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.border, lineWidth: 1)
         )
-        .onyxShadow(.floating)
-    }
-
-    private var toolbarBackground: some View {
-        OnyxColors.Elevation.floating
+        .dsFloatingShadow()
     }
 
     private func executeAction(_ action: ToolbarAction) {
@@ -828,7 +845,7 @@ struct BlockResizeHandle: View {
                 .frame(width: 14, height: 14)
                 .background(
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(CosmoColors.thinkspaceTertiary.opacity(isHovered || isResizing ? 0.8 : 0.5))
+                        .fill(DS.borderSubtle.opacity(isHovered || isResizing ? 0.8 : 0.5))
                 )
                 .scaleEffect(isResizing ? 1.1 : (isHovered ? 1.05 : 1.0))
         }
@@ -886,7 +903,7 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
 
     static var previews: some View {
         ZStack {
-            CosmoColors.thinkspaceVoid
+            DS.canvas
                 .ignoresSafeArea()
 
             // Create block then modify for preview
@@ -905,7 +922,7 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
 
             CosmoBlockWrapper(
                 block: previewBlock,
-                accentColor: CosmoColors.blockContent,
+                accentColor: DS.entityContent,
                 icon: "doc.text.fill",
                 title: "Sample Idea",
                 isExpanded: $isExpanded

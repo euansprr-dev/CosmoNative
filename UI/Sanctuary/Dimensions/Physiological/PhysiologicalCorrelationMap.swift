@@ -21,8 +21,8 @@ public struct PhysiologicalCorrelationMap: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
             // Header
-            Text("Correlation Map")
-                .font(OnyxTypography.label)
+            Text("CORRELATION MAP")
+                .font(SanctuaryTypography.label)
                 .foregroundColor(SanctuaryColors.Text.tertiary)
                 .tracking(2)
 
@@ -223,7 +223,7 @@ public struct HealthPredictionCard: View {
                         .font(.system(size: 12))
                         .foregroundColor(SanctuaryColors.XP.primary)
 
-                    Text("Prediction")
+                    Text("PREDICTION")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(SanctuaryColors.XP.primary)
                         .tracking(1)
@@ -232,7 +232,7 @@ public struct HealthPredictionCard: View {
                 Spacer()
 
                 // Confidence badge
-                Text("Confidence: \(Int(prediction.confidence * 100))%")
+                Text("CONFIDENCE: \(Int(prediction.confidence * 100))%")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(SanctuaryColors.Text.tertiary)
             }

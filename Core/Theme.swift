@@ -1,27 +1,28 @@
 // CosmoOS/Core/Theme.swift
 // Design system and theming for Cosmo OS
-// "Pastel Spatial Minimalism" - Calm, airy, cognitive sanctuary
+// "Greenhouse" — Warm, natural, alive with ideas growing
+// March 2026 — Light-mode rebrand
 
 import SwiftUI
 import AppKit
 import GRDB
 
 // MARK: - CosmoColors (Primary Palette)
-// The soul of CosmoOS - soft, calm, breathable
+// The soul of CosmoOS — warm, calm, breathable
 struct CosmoColors {
     // ═══════════════════════════════════════════════════════════════
     // BASE LAYER - The soul of the OS
     // ═══════════════════════════════════════════════════════════════
 
-    /// Soft Off-White (#F7F7F5)
+    /// Warm Parchment (#F8F7F4)
     /// Think: sunlight hitting a blank page at 8 a.m.
     /// Warm, clean, breathable. The perfect neutral for thinking.
-    static let softWhite = Color(hex: "F7F7F5")
+    static let softWhite = Color(hex: "F8F7F4")
 
-    /// Canvas background - same as softWhite
-    static let canvasBackground = softWhite
+    /// Canvas background — slightly warmer
+    static let canvasBackground = Color(hex: "F2F1ED")
     static let background = softWhite
-    static let cardBackground = softWhite
+    static let cardBackground = Color.white
 
     // ═══════════════════════════════════════════════════════════════
     // DEPTH LAYER - Structural shadows
@@ -30,8 +31,6 @@ struct CosmoColors {
     /// Mist Grey (#E3E4E8) - Barely-there shadows
     static let mistGrey = Color(hex: "E3E4E8")
     static let slate = Color(hex: "64748B") // Slate 500
-
-    /// Glass Grey (#D7D9DE) - Translucent depth
 
     /// Glass Grey (#D7D9DE) - Translucent depth
     /// Everything feels like it's floating just a little
@@ -46,9 +45,9 @@ struct CosmoColors {
     /// Use for: selected states, hovering, active ideas
     static let skyBlue = Color(hex: "A8CCE8")
 
-    /// Pastel Lavender (#CAB8E8) - "Imagination"
-    /// Use for: generative elements, AI actions, semantic pulls
-    static let lavender = Color(hex: "CAB8E8")
+    /// Forest Green (#2D6A4F) - "Growth"
+    /// Primary accent color — organic, alive
+    static let lavender = Color(hex: "2D6A4F")
 
     /// Soft Coral (#F4AFA0) - "Attention Focus"
     /// Use for: recording indicators, voice-active states, capture mode
@@ -58,84 +57,81 @@ struct CosmoColors {
     // STATUS COLORS
     // ═══════════════════════════════════════════════════════════════
 
-    /// Muted Emerald (#8FC7A2) - Success/Complete
-    /// The feeling of a breath landing fully in your chest
-    static let emerald = Color(hex: "8FC7A2")
+    /// Success Green (#38B764)
+    static let emerald = Color(hex: "38B764")
     static let mint = emerald
-    static let amber = Color.orange.opacity(0.8) // Approximation or define specific hex
-    
-    /// Soft Red (#E69A9A) - Warning/Danger
-    /// Warm, not aggressive. Guiding back to clarity.
-    static let softRed = Color(hex: "E69A9A")
+    static let amber = Color(hex: "D97706")
+
+    /// Warning Red (#DC3545)
+    static let softRed = Color(hex: "DC3545")
 
     // ═══════════════════════════════════════════════════════════════
     // TEXT COLORS
     // ═══════════════════════════════════════════════════════════════
 
-    /// Primary text - dark but not harsh
-    static let textPrimary = Color(hex: "2D2D2D")
+    /// Primary text - near-black
+    static let textPrimary = Color(hex: "1A1A1F")
 
-    /// Secondary text - softer
-    static let textSecondary = Color(hex: "6B6B6B")
+    /// Secondary text - medium gray
+    static let textSecondary = Color(hex: "6B6B78")
 
     /// Tertiary text - hints and placeholders
-    static let textTertiary = Color(hex: "9B9B9B")
+    static let textTertiary = Color(hex: "767685")
 
     // ═══════════════════════════════════════════════════════════════
-    // ENTITY COLORS (Pastel versions)
+    // ENTITY COLORS (Bespoke muted palette for light backgrounds)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Idea - Lavender tint
-    static let idea = lavender
+    /// Idea - Muted indigo
+    static let idea = Color(hex: "6B6EA8")
 
-    /// Content - Sky blue tint
-    static let content = skyBlue
+    /// Content - Slate blue
+    static let content = Color(hex: "5B84B0")
 
-    /// Task - Coral tint
-    static let task = coral
+    /// Task - Dusty rose
+    static let task = Color(hex: "B06B6B")
 
-    /// Research - Emerald tint
-    static let research = emerald
+    /// Research - Forest teal
+    static let research = Color(hex: "4A8B72")
 
-    /// Note - Light yellow
-    static let note = Color(hex: "F5E6C8")
+    /// Note - Warm umber
+    static let note = Color(hex: "9B8A6E")
 
-    /// Cosmo AI - Deeper lavender
-    static let cosmoAI = Color(hex: "B8A0D8")
+    /// Cosmo AI - Forest green (matches accent)
+    static let cosmoAI = Color(hex: "2D6A4F")
 
     // ═══════════════════════════════════════════════════════════════
-    // THINKSPACE DARK MODE - Vast cognitive void
+    // THINKSPACE LIGHT MODE - Warm greenhouse canvas
     // Matching Sanctuary aesthetic for immersive thinking
     // ═══════════════════════════════════════════════════════════════
 
-    /// Deep void black (#0A0A0F) - Primary dark background
-    /// The infinite canvas, vast and calm
-    static let thinkspaceVoid = Color(hex: "0A0A0F")
+    /// Canvas background — warm parchment
+    static let thinkspaceVoid = Color(hex: "F2F1ED")
 
-    /// Secondary dark (#12121A) - Slightly lifted surfaces
-    static let thinkspaceSecondary = Color(hex: "12121A")
+    /// Secondary surface — slightly lifted
+    static let thinkspaceSecondary = Color(hex: "F5F4F0")
 
-    /// Tertiary dark (#1A1A25) - Block backgrounds, glass base
-    static let thinkspaceTertiary = Color(hex: "1A1A25")
+    /// Tertiary — block backgrounds, cards
+    static let thinkspaceTertiary = Color.white
 
-    /// Dark grid color (#3A3A45) - Subtle grid dots
-    static let thinkspaceGrid = Color(hex: "3A3A45")
+    /// Grid color — subtle warm gray dots
+    static let thinkspaceGrid = Color(hex: "D8D7D3")
 
-    /// Purple accent for shadows (#8B5CF6) - Sanctuary purple
-    static let thinkspacePurple = Color(hex: "8B5CF6")
+    /// Green accent for shadows
+    static let thinkspacePurple = Color(hex: "2D6A4F")
 
-    /// Block accent colors (dark mode versions)
-    static let blockNote = Color(hex: "F97316")       // Orange
-    static let blockContent = Color(hex: "3B82F6")    // Blue
-    static let blockResearch = Color(hex: "10B981")   // Green
-    static let blockConnection = Color(hex: "8B5CF6") // Purple
+    /// Block accent colors (light mode versions — bespoke palette)
+    static let blockNote = Color(hex: "9B8A6E")      // Warm umber
+    static let blockContent = Color(hex: "5B84B0")    // Slate blue
+    static let blockResearch = Color(hex: "4A8B72")   // Forest teal
+    static let blockConnection = Color(hex: "8B6BAB") // Soft purple
 
     // ═══════════════════════════════════════════════════════════════
     // GRADIENTS - Soft, airy transitions
     // ═══════════════════════════════════════════════════════════════
 
     static let aiGradient = LinearGradient(
-        colors: [lavender, skyBlue],
+        colors: [Color(hex: "2D6A4F"), Color(hex: "4A8B72")],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
@@ -212,10 +208,10 @@ struct CosmoTypography {
 
     // ═══════════════════════════════════════════════════════════════
     // SPACING - Cognitive science-backed line heights
-    // 1.5-1.7x line height reduces eye strain during extended reading
+    // 1.5-1.55x line height reduces eye strain during extended reading
     // ═══════════════════════════════════════════════════════════════
 
-    /// Body text line spacing (~1.5x line height)
+    /// Body text line spacing (~1.55x line height)
     static let bodyLineSpacing: CGFloat = 6
 
     /// Title line spacing
@@ -239,43 +235,43 @@ struct CosmoTypography {
     static let maxReadingWidth: CGFloat = 800
 }
 
-// MARK: - Mention Colors (High Contrast for White Backgrounds)
-/// Entity-specific colors for @mentions - darker/saturated for text visibility
+// MARK: - Mention Colors (High Contrast for Light Backgrounds)
+/// Entity-specific colors for @mentions — bespoke palette for light mode
 /// Based on color psychology principles for cognitive association
 struct CosmoMentionColors {
     // ═══════════════════════════════════════════════════════════════
-    // TEXT COLORS - Darker, saturated for readability on white
+    // TEXT COLORS - Saturated for readability on white
     // ═══════════════════════════════════════════════════════════════
 
-    /// Idea - Warm amber/gold (creativity, inspiration, "lightbulb" warmth)
-    static let idea = Color(hex: "B8860B")
+    /// Idea - Muted indigo
+    static let idea = Color(hex: "6B6EA8")
 
-    /// Content - Strong blue (focus, clarity, depth)
-    static let content = Color(hex: "2B6CB0")
+    /// Content - Slate blue
+    static let content = Color(hex: "5B84B0")
 
-    /// Task - Strong coral/red (energy, action, urgency without stress)
-    static let task = Color(hex: "C53030")
+    /// Task - Dusty rose
+    static let task = Color(hex: "B06B6B")
 
-    /// Research - Strong green (growth, discovery, knowledge)
-    static let research = Color(hex: "276749")
+    /// Research - Forest teal
+    static let research = Color(hex: "4A8B72")
 
-    /// Connection - Strong purple (wisdom, linking, neural connections)
-    static let connection = Color(hex: "6B46C1")
+    /// Connection - Soft purple
+    static let connection = Color(hex: "8B6BAB")
 
-    /// Note - Dark gold (memory, quick capture)
-    static let note = Color(hex: "975A16")
+    /// Note - Warm umber
+    static let note = Color(hex: "9B8A6E")
 
-    /// Cosmo AI - Deep violet (intelligence, insight, magic)
-    static let cosmoAI = Color(hex: "553C9A")
+    /// Cosmo AI - Forest green
+    static let cosmoAI = Color(hex: "2D6A4F")
 
-    /// Project - Indigo (organization, structure)
-    static let project = Color(hex: "4338CA")
+    /// Project - Muted indigo
+    static let project = Color(hex: "6B6EA8")
 
-    /// Swipe File - Warm gold (curated inspiration, swipe-worthy)
-    static let swipeFile = Color(hex: "D4940A")
+    /// Swipe File - Warm bronze
+    static let swipeFile = Color(hex: "B08C5A")
 
     /// Default fallback
-    static let defaultColor = Color(hex: "4A5568")
+    static let defaultColor = Color(hex: "6B6B78")
 
     // ═══════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
@@ -311,12 +307,12 @@ struct CosmoMentionColors {
 // MARK: - Legacy CosmoTheme (for backwards compatibility)
 struct CosmoTheme {
     struct Colors {
-        // Backgrounds - now using pastel palette
+        // Backgrounds - warm parchment palette
         static let background = CosmoColors.softWhite
         static let secondaryBackground = CosmoColors.mistGrey
         static let tertiaryBackground = CosmoColors.glassGrey
         static let canvasBackground = CosmoColors.canvasBackground
-        static let blockBackground = CosmoColors.glassGrey.opacity(0.3)
+        static let blockBackground = Color.white
 
         // Text
         static let text = CosmoColors.textPrimary
@@ -326,16 +322,16 @@ struct CosmoTheme {
         // System
         static let accent = CosmoColors.lavender
         static let success = CosmoColors.emerald
-        static let warning = CosmoColors.coral
+        static let warning = CosmoColors.amber
         static let error = CosmoColors.softRed
 
-        // Entity colors (pastel)
+        // Entity colors (bespoke palette)
         static let ideaColor = CosmoColors.idea
         static let contentColor = CosmoColors.content
-        static let connectionColor = CosmoColors.coral
+        static let connectionColor = Color(hex: "8B6BAB")
         static let researchColor = CosmoColors.research
         static let taskColor = CosmoColors.task
-        static let projectColor = CosmoColors.lavender
+        static let projectColor = CosmoColors.idea
         static let noteColor = CosmoColors.note
         static let cosmoColor = CosmoColors.cosmoAI
 
@@ -347,13 +343,13 @@ struct CosmoTheme {
         static let aiError = CosmoColors.softRed
 
         // Pastels for canvas blocks
-        static let pastelPurple = CosmoColors.lavender.opacity(0.5)
-        static let pastelBlue = CosmoColors.skyBlue.opacity(0.5)
-        static let pastelGreen = CosmoColors.emerald.opacity(0.5)
-        static let pastelPink = CosmoColors.coral.opacity(0.5)
-        static let pastelYellow = CosmoColors.note.opacity(0.5)
-        static let pastelOrange = CosmoColors.coral.opacity(0.6)
-        static let pastelCyan = CosmoColors.skyBlue.opacity(0.6)
+        static let pastelPurple = Color(hex: "8B6BAB").opacity(0.15)
+        static let pastelBlue = Color(hex: "5B84B0").opacity(0.15)
+        static let pastelGreen = Color(hex: "4A8B72").opacity(0.15)
+        static let pastelPink = Color(hex: "B06B6B").opacity(0.15)
+        static let pastelYellow = Color(hex: "9B8A6E").opacity(0.15)
+        static let pastelOrange = Color(hex: "B08C5A").opacity(0.15)
+        static let pastelCyan = Color(hex: "5B84B0").opacity(0.15)
 
         // Gradients
         static let cosmicGradient = CosmoColors.aiGradient
@@ -403,19 +399,19 @@ struct CosmoTheme {
     // MARK: - Shadows
     struct Shadows {
         static func small(_ color: Color = .black) -> some View {
-            Color.clear.shadow(color: color.opacity(0.1), radius: 4, x: 0, y: 2)
+            Color.clear.shadow(color: color.opacity(0.06), radius: 4, x: 0, y: 2)
         }
 
         static func medium(_ color: Color = .black) -> some View {
-            Color.clear.shadow(color: color.opacity(0.15), radius: 10, x: 0, y: 5)
+            Color.clear.shadow(color: color.opacity(0.08), radius: 10, x: 0, y: 5)
         }
 
         static func large(_ color: Color = .black) -> some View {
-            Color.clear.shadow(color: color.opacity(0.2), radius: 20, x: 0, y: 10)
+            Color.clear.shadow(color: color.opacity(0.10), radius: 20, x: 0, y: 10)
         }
 
         static func glow(_ color: Color) -> some View {
-            Color.clear.shadow(color: color.opacity(0.5), radius: 20, x: 0, y: 0)
+            Color.clear.shadow(color: color.opacity(0.3), radius: 20, x: 0, y: 0)
         }
     }
 
@@ -450,35 +446,27 @@ struct CosmoTheme {
 /// These animations are tuned for smooth, Apple-grade block interactions.
 struct BlockAnimations {
     /// Expansion spring - snappy but not jarring (0.35s response)
-    /// Used when a block expands inline on the canvas
     static let expand = Animation.spring(response: 0.35, dampingFraction: 0.75)
 
     /// Collapse spring - slightly faster (0.25s response)
-    /// Used when a block collapses back to normal size
     static let collapse = Animation.spring(response: 0.25, dampingFraction: 0.8)
 
     /// Hover lift - quick and subtle (0.15s response)
-    /// Used for hover effects on blocks
     static let hover = Animation.spring(response: 0.15, dampingFraction: 0.9)
 
     /// Glow pulse - slow and gentle
-    /// Used for ambient glow effects on blocks
     static let glowPulse = Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: true)
 
     /// Content fade - for expansion content transitions
-    /// Used when content appears/disappears during expansion
     static let contentFade = Animation.easeInOut(duration: 0.2)
 
     /// Pop in - for block appearance on canvas
-    /// Used when blocks are added to the canvas
     static let popIn = Animation.spring(response: 0.4, dampingFraction: 0.7)
 
     /// Pop out - for block removal from canvas
-    /// Used when blocks are removed from the canvas
     static let popOut = Animation.easeOut(duration: 0.15)
 
     /// Staggered entry for list items within blocks
-    /// Used for animated lists inside expanded blocks
     static func staggered(index: Int, baseDelay: Double = 0.05) -> Animation {
         .spring(response: 0.3, dampingFraction: 0.7).delay(Double(index) * baseDelay)
     }
@@ -492,150 +480,58 @@ struct BlockAnimations {
 
 // MARK: - Voice Command Animations (LLM-First Architecture)
 /// Animations optimized for voice-triggered actions.
-/// All voice actions should feel instant yet smooth.
 struct VoiceAnimations {
-    /// Create/Appear - quick pop-in for newly created blocks
     static let create = Animation.spring(response: 0.35, dampingFraction: 0.75)
-
-    /// Expand/Resize - smooth stretch for block/event expansion
     static let expand = Animation.spring(response: 0.4, dampingFraction: 0.8)
-
-    /// Move/Reposition - fluid glide for moving items
     static let move = Animation.spring(response: 0.5, dampingFraction: 0.75)
-
-    /// Delete/Fade - gentle fade out
     static let delete = Animation.easeOut(duration: 0.25)
-
-    /// Arrange Pattern - for bulk arrangement animations
     static let arrange = Animation.spring(response: 0.3, dampingFraction: 0.7)
 
-    /// Search result placement - staggered cascade
     static func searchResult(index: Int) -> Animation {
         .spring(response: 0.35, dampingFraction: 0.75)
         .delay(Double(index) * 0.08)
     }
 
-    /// Canvas placement - for placing blocks from voice commands
     static let place = Animation.spring(response: 0.4, dampingFraction: 0.7)
 }
 
 // MARK: - ProMotion Springs (120Hz Optimized)
 /// Apple Silicon native springs tuned for 120Hz ProMotion displays.
-/// Response values calibrated for buttery-smooth frame interpolation.
-/// December 2025 - Cutting-edge SwiftUI animation performance.
 struct ProMotionSprings {
-    // ═══════════════════════════════════════════════════════════════
-    // CORE INTERACTIONS - Sub-frame response times
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Snappy (0.12s) - Immediate feedback for taps, toggles
-    /// 120Hz allows tighter response without choppiness
+    // CORE INTERACTIONS
     static let snappy = Animation.spring(response: 0.12, dampingFraction: 0.82)
-
-    /// Bouncy (0.25s) - Playful bounce for emphasis
-    /// Slight overshoot creates delight without feeling slow
     static let bouncy = Animation.spring(response: 0.25, dampingFraction: 0.68, blendDuration: 0.08)
-
-    /// Gentle (0.35s) - Smooth, relaxed transitions
-    /// For background changes, ambient effects
     static let gentle = Animation.spring(response: 0.35, dampingFraction: 0.85)
 
-    // ═══════════════════════════════════════════════════════════════
-    // HOVER & PRESS - Micro-interaction refinement
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Hover (0.15s) - Quick response to cursor entry
-    /// Fast enough to feel instant, smooth enough to not flash
+    // HOVER & PRESS
     static let hover = Animation.spring(response: 0.15, dampingFraction: 0.78)
-
-    /// Press (0.08s) - Immediate tactile feedback
-    /// Must feel like touching glass
     static let press = Animation.spring(response: 0.08, dampingFraction: 0.92)
-
-    /// Release (0.2s) - Slightly slower return from press
-    /// Creates satisfying "snap back" feel
     static let release = Animation.spring(response: 0.2, dampingFraction: 0.72)
 
-    // ═══════════════════════════════════════════════════════════════
-    // CONTENT TRANSITIONS - Larger movements
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Card entrance (0.4s) - Elegant appearance for cards/blocks
-    /// Includes subtle overshoot for premium feel
+    // CONTENT TRANSITIONS
     static let cardEntrance = Animation.spring(response: 0.4, dampingFraction: 0.75)
-
-    /// Menu appear (0.25s) - Context menus, dropdowns
-    /// Quick but not jarring
     static let menuAppear = Animation.spring(response: 0.25, dampingFraction: 0.8)
-
-    /// Focus transition (0.3s) - Focus mode entry/exit
-    /// Cinematic but not sluggish
     static let focusTransition = Animation.spring(response: 0.3, dampingFraction: 0.82)
-
-    /// Modal (0.35s) - Full-screen overlays
     static let modal = Animation.spring(response: 0.35, dampingFraction: 0.8)
 
-    // ═══════════════════════════════════════════════════════════════
-    // WORLD-SWITCHING TRANSITIONS - Core space navigation
-    // ═══════════════════════════════════════════════════════════════
-
-    /// World exit (0.35s) - Current space recedes into the abyss
-    /// Smooth scale-down with fade, like falling away
+    // WORLD-SWITCHING
     static let worldExit = Animation.spring(response: 0.35, dampingFraction: 0.88)
-
-    /// World enter (0.45s) - New space emerges from the abyss
-    /// Slightly slower for dramatic emergence effect
     static let worldEnter = Animation.spring(response: 0.45, dampingFraction: 0.82)
-
-    /// World switch (0.4s) - Combined transition for simultaneous switch
-    /// Balanced timing for parallel fade/scale
     static let worldSwitch = Animation.spring(response: 0.4, dampingFraction: 0.85)
 
-    // ═══════════════════════════════════════════════════════════════
-    // STAGGER HELPERS - Choreographed sequences
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Staggered list items (30ms between each)
+    // STAGGER HELPERS
     static func staggered(index: Int, baseDelay: TimeInterval = 0.03) -> Animation {
         cardEntrance.delay(Double(index) * baseDelay)
     }
-
-    /// Cascade for menu items (25ms, faster)
     static func cascade(index: Int) -> Animation {
         menuAppear.delay(Double(index) * 0.025)
     }
 }
 
-// MARK: - CosmoShadows (Multi-Layer Depth System)
-/// Apple-grade shadow system with three conceptual layers:
-/// 1. Ambient - Always present, very soft (simulates ambient occlusion)
-/// 2. Direct - Main shadow from overhead light source
-/// 3. Soft Fill - Large, diffuse glow for depth
-///
+// MARK: - CosmoShadows (Light Mode Shadow System)
+/// Soft, natural shadows for light backgrounds.
 /// Shadows follow Apple's HIG: subtle, directional, purposeful.
 struct CosmoShadows {
-    // ═══════════════════════════════════════════════════════════════
-    // SHADOW COMPONENTS - Building blocks
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Ambient shadow - contact shadow, always present
-    static func ambient(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
-        Shadow(color: color.opacity(0.04 * intensity), radius: 2, x: 0, y: 1)
-    }
-
-    /// Direct shadow - main light source (top-center)
-    static func direct(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
-        Shadow(color: color.opacity(0.08 * intensity), radius: 8, x: 0, y: 4)
-    }
-
-    /// Soft fill shadow - large diffuse glow
-    static func softFill(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
-        Shadow(color: color.opacity(0.05 * intensity), radius: 20, x: 0, y: 8)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // SHADOW DATA TYPE
-    // ═══════════════════════════════════════════════════════════════
 
     struct Shadow {
         let color: Color
@@ -650,20 +546,32 @@ struct CosmoShadows {
         case pressed
         case dragging
     }
+
+    static func ambient(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
+        Shadow(color: color.opacity(0.03 * intensity), radius: 2, x: 0, y: 1)
+    }
+
+    static func direct(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
+        Shadow(color: color.opacity(0.05 * intensity), radius: 8, x: 0, y: 4)
+    }
+
+    static func softFill(color: Color = .black, intensity: CGFloat = 1.0) -> Shadow {
+        Shadow(color: color.opacity(0.03 * intensity), radius: 20, x: 0, y: 8)
+    }
 }
 
 // MARK: - Shadow View Extensions
 
 extension View {
-    /// Apply card-level 3-layer shadow with elevation state
+    /// Apply card-level shadow with elevation state
     @ViewBuilder
     func cardShadow(elevation: CosmoShadows.Elevation, accent: Color? = nil) -> some View {
         let intensity: CGFloat = {
             switch elevation {
             case .resting: return 1.0
-            case .hovered: return 1.3
+            case .hovered: return 1.5
             case .pressed: return 0.8
-            case .dragging: return 1.6
+            case .dragging: return 2.0
             }
         }()
 
@@ -678,42 +586,39 @@ extension View {
 
         self
             // Layer 1: Ambient
-            .shadow(color: .black.opacity(0.03 * intensity), radius: 1, x: 0, y: 1)
+            .shadow(color: .black.opacity(0.02 * intensity), radius: 1, x: 0, y: 1)
             // Layer 2: Direct
-            .shadow(color: .black.opacity(0.06 * intensity), radius: 6 * intensity, x: 0, y: 3 + yOffset)
-            // Layer 3: Soft fill (with optional accent)
+            .shadow(color: .black.opacity(0.04 * intensity), radius: 6 * intensity, x: 0, y: 3 + yOffset)
+            // Layer 3: Soft fill
             .shadow(
-                color: (accent ?? .black).opacity(0.04 * intensity),
+                color: (accent ?? .black).opacity(0.02 * intensity),
                 radius: 16 * intensity,
                 x: 0,
                 y: 6 + yOffset
             )
     }
 
-    /// Apply floating block 3-layer shadow with elevation state
+    /// Apply floating block shadow with elevation state
     @ViewBuilder
     func floatingShadow(elevation: CosmoShadows.Elevation, accent: Color? = nil) -> some View {
         let values: (ambientOpacity: CGFloat, directRadius: CGFloat, directY: CGFloat, fillRadius: CGFloat, fillY: CGFloat) = {
             switch elevation {
             case .resting:
-                return (0.04, 10, 5, 24, 10)
+                return (0.03, 10, 5, 24, 10)
             case .hovered:
-                return (0.05, 14, 7, 32, 14)
+                return (0.04, 14, 7, 32, 14)
             case .pressed:
-                return (0.03, 8, 4, 20, 8)
+                return (0.02, 8, 4, 20, 8)
             case .dragging:
-                return (0.06, 20, 12, 44, 20)
+                return (0.05, 20, 12, 44, 20)
             }
         }()
 
         self
-            // Layer 1: Ambient contact shadow
             .shadow(color: .black.opacity(values.ambientOpacity), radius: 2, x: 0, y: 1)
-            // Layer 2: Direct light shadow
-            .shadow(color: .black.opacity(0.1), radius: values.directRadius, x: 0, y: values.directY)
-            // Layer 3: Soft ambient glow
+            .shadow(color: .black.opacity(0.06), radius: values.directRadius, x: 0, y: values.directY)
             .shadow(
-                color: (accent ?? .black).opacity(0.06),
+                color: (accent ?? .black).opacity(0.03),
                 radius: values.fillRadius,
                 x: 0,
                 y: values.fillY
@@ -724,18 +629,14 @@ extension View {
     @ViewBuilder
     func focusedShadow(accent: Color) -> some View {
         self
-            // Layer 1: Tight ambient
-            .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-            // Layer 2: Medium direct
-            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 8)
-            // Layer 3: Accent glow
-            .shadow(color: accent.opacity(0.18), radius: 32, x: 0, y: 12)
+            .shadow(color: .black.opacity(0.03), radius: 2, x: 0, y: 1)
+            .shadow(color: .black.opacity(0.06), radius: 16, x: 0, y: 8)
+            .shadow(color: accent.opacity(0.12), radius: 24, x: 0, y: 8)
     }
 }
 
 // MARK: - Shadow Style API
 extension View {
-    /// Apply cosmo shadow style with optional accent color
     @ViewBuilder
     func cosmoShadow(_ style: CosmoShadowStyle, accent: Color? = nil) -> some View {
         switch style {
@@ -765,93 +666,41 @@ enum CosmoShadowStyle {
 }
 
 // MARK: - Focus Mode Animations (Thinking Canvas)
-/// Premium animations for the focus mode "thinking canvas" experience.
-/// Designed for smooth entry/exit transitions and spatial thinking interactions.
 struct FocusModeAnimations {
-    // ═══════════════════════════════════════════════════════════════
-    // ENTRY ANIMATIONS - Cinematic focus mode open
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Background fade + scale for immersive entry
-    /// Used when focus mode first appears
+    // ENTRY
     static let backgroundEntry = Animation.spring(response: 0.4, dampingFraction: 0.75)
-
-    /// Editor slides up with spring physics
-    /// Slightly delayed for cinematic sequence
     static let editorEntry = Animation.spring(response: 0.5, dampingFraction: 0.8)
-
-    /// Vignette animates inward to draw eye to center
     static let vignetteEntry = Animation.easeOut(duration: 0.6)
 
-    // ═══════════════════════════════════════════════════════════════
-    // EXIT ANIMATIONS - Quick, clean close
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Fast scale down + fade for clean exit
+    // EXIT
     static let exit = Animation.spring(response: 0.3, dampingFraction: 0.85)
-
-    /// Editor slides down on exit
     static let editorExit = Animation.easeIn(duration: 0.2)
 
-    // ═══════════════════════════════════════════════════════════════
-    // ORBITING BLOCKS - Related content appears from sides
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Orbiting blocks stagger in from sides
-    /// 0.05s delay between each block for elegant cascade
+    // ORBITING BLOCKS
     static func orbitingEntry(index: Int) -> Animation {
         .spring(response: 0.4, dampingFraction: 0.7).delay(0.1 + Double(index) * 0.05)
     }
-
-    /// Orbiting block hover - quick lift and glow
     static let orbitingHover = Animation.spring(response: 0.15, dampingFraction: 0.8)
-
-    /// Orbiting block drag snap back
     static let orbitingSnapBack = Animation.spring(response: 0.3, dampingFraction: 0.7)
 
-    // ═══════════════════════════════════════════════════════════════
-    // FOCUS BLOCKS - User-placed floating notes
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Focus block placement - bouncy pop in
+    // FOCUS BLOCKS
     static let focusBlockPlace = Animation.spring(response: 0.35, dampingFraction: 0.65)
-
-    /// Focus block removal - quick fade out
     static let focusBlockRemove = Animation.spring(response: 0.25, dampingFraction: 0.8)
-
-    /// Focus block selection highlight
     static let focusBlockSelect = Animation.spring(response: 0.2, dampingFraction: 0.85)
 
-    // ═══════════════════════════════════════════════════════════════
-    // MENTION ANIMATIONS - Entity linking magic
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Mention insertion shimmer
+    // MENTIONS
     static let mentionInsert = Animation.spring(response: 0.2, dampingFraction: 0.8)
-
-    /// Shimmer sweep across mention
     static let shimmerSweep = Animation.easeInOut(duration: 0.5)
-
-    /// Sparkle particles disperse
     static let sparkleDisperse = Animation.easeOut(duration: 0.6)
 
-    // ═══════════════════════════════════════════════════════════════
-    // MENU ANIMATIONS - Slash commands, mentions
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Menu pop in at cursor
+    // MENUS
     static let menuAppear = Animation.spring(response: 0.2, dampingFraction: 0.8)
-
-    /// Menu fade out
     static let menuDismiss = Animation.easeOut(duration: 0.15)
-
-    /// Menu item hover
     static let menuItemHover = Animation.easeOut(duration: 0.1)
 }
 
 // MARK: - Focus Mode View Modifiers
 extension View {
-    /// Apply focus mode entry animation with scale and fade
     func focusModeEntry(_ isAppearing: Bool) -> some View {
         self
             .scaleEffect(isAppearing ? 1.0 : 0.98)
@@ -859,7 +708,6 @@ extension View {
             .animation(FocusModeAnimations.backgroundEntry, value: isAppearing)
     }
 
-    /// Apply editor slide-up animation
     func editorEntry(_ isVisible: Bool, delay: Double = 0.1) -> some View {
         self
             .offset(y: isVisible ? 0 : 30)
@@ -867,7 +715,6 @@ extension View {
             .animation(FocusModeAnimations.editorEntry.delay(delay), value: isVisible)
     }
 
-    /// Apply orbiting block entry with stagger
     func orbitingBlockEntry(_ isVisible: Bool, index: Int) -> some View {
         self
             .offset(x: isVisible ? 0 : (index % 2 == 0 ? -50 : 50))
@@ -875,12 +722,11 @@ extension View {
             .animation(FocusModeAnimations.orbitingEntry(index: index), value: isVisible)
     }
 
-    /// Premium hover effect for focus mode blocks
+    /// Hover effect for focus mode blocks — shadow lift, not scale
     func focusBlockHover(_ isHovered: Bool, entityColor: Color) -> some View {
         self
-            .scaleEffect(isHovered ? 1.03 : 1.0)
             .shadow(
-                color: entityColor.opacity(isHovered ? 0.3 : 0.1),
+                color: entityColor.opacity(isHovered ? 0.15 : 0.05),
                 radius: isHovered ? 16 : 8,
                 y: isHovered ? 6 : 3
             )
@@ -920,37 +766,36 @@ extension Color {
 
 extension View {
     /// Apply cosmic glow effect (for AI blocks, selected items)
-    func cosmicGlow(_ color: Color, intensity: CGFloat = 0.3) -> some View {
+    func cosmicGlow(_ color: Color, intensity: CGFloat = 0.2) -> some View {
         self
-            .shadow(color: color.opacity(intensity), radius: 15, x: 0, y: 0)
-            .shadow(color: color.opacity(intensity * 0.5), radius: 30, x: 0, y: 0)
+            .shadow(color: color.opacity(intensity), radius: 12, x: 0, y: 0)
+            .shadow(color: color.opacity(intensity * 0.4), radius: 24, x: 0, y: 0)
     }
 
-    /// Subtle hover scale effect
+    /// Subtle hover shadow effect (NOT scale — shadow lift only)
     func hoverScale(_ isHovered: Bool, scale: CGFloat = 1.02) -> some View {
         self
-            .scaleEffect(isHovered ? scale : 1.0)
+            .shadow(
+                color: .black.opacity(isHovered ? 0.06 : 0.03),
+                radius: isHovered ? 12 : 6,
+                y: isHovered ? 4 : 2
+            )
             .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
     }
 
-    /// Card style with premium solid background (Apple-style, no blur for performance)
+    /// Card style with white bg and soft shadow
     func cardStyle(cornerRadius: CGFloat = 16) -> some View {
         self
             .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(CosmoColors.softWhite)
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.5), Color.white.opacity(0.2)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.white)
             )
-            .shadow(color: .black.opacity(0.10), radius: 10, x: 0, y: 5)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+            .shadow(color: .black.opacity(0.02), radius: 2, x: 0, y: 1)
     }
 
     /// AI state border
@@ -958,7 +803,7 @@ extension View {
         self
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(color.opacity(isActive ? 0.8 : 0.3), lineWidth: isActive ? 2 : 1)
+                    .stroke(color.opacity(isActive ? 0.6 : 0.2), lineWidth: isActive ? 2 : 1)
             )
     }
 
@@ -975,44 +820,22 @@ extension View {
 
 // MARK: - Button Styles
 // Note: Custom ButtonStyles removed due to compilation issues
-// Use standard SwiftUI modifiers instead:
-// Button("Text") { action() }
-//     .padding(.horizontal, 16)
-//     .padding(.vertical, 10)
-//     .background(Color.purple)
-//     .foregroundColor(.white)
-//     .cornerRadius(10)
+// Use standard SwiftUI modifiers instead
 
 // EntityType color and icon are defined in CosmoApp.swift
 
 // MARK: - Cosmo Notification Names
-/// Centralized notification names for cross-component communication.
-/// Used for features like typing pulse, focus state changes, etc.
 extension Notification.Name {
-    /// Posted when a keystroke occurs in any editor (for ambient background pulse)
     static let cosmoEditorKeystroke = Notification.Name("cosmo.editor.keystroke")
-
-    /// Posted when a block becomes focused (for context dimming)
     static let cosmoBlockFocused = Notification.Name("cosmo.block.focused")
-
-    /// Posted when a block loses focus
     static let cosmoBlockBlurred = Notification.Name("cosmo.block.blurred")
-
-    /// Posted when save completes successfully
     static let cosmoSaveCompleted = Notification.Name("cosmo.save.completed")
-
-    /// Posted when an entity is created
     static let cosmoEntityCreated = Notification.Name("cosmo.entity.created")
-
-    /// Posted when an entity is deleted
     static let cosmoEntityDeleted = Notification.Name("cosmo.entity.deleted")
 }
 
 // MARK: - 3D Tilt Effect Views
-/// Apple-grade 3D tilt effect that responds to hover position.
-/// Creates depth perception similar to visionOS spatial interactions.
 
-/// Geometry-aware 3D tilt wrapper view
 struct GeometricTiltView<Content: View>: View {
     var maxTilt: Double
     var perspective: CGFloat
@@ -1061,21 +884,17 @@ struct GeometricTiltView<Content: View>: View {
 }
 
 extension View {
-    /// Apply 3D tilt effect on hover - Apple-grade depth perception
     func cosmoTilt(maxTilt: Double = 2.5, perspective: CGFloat = 0.6) -> some View {
         GeometricTiltView(maxTilt: maxTilt, perspective: perspective) {
             self
         }
     }
 
-    /// Apply simple tilt without geometry tracking (for static tilt amounts)
-    /// NOTE: Animation should be applied at call site to avoid duplicate animations
     func cosmoTiltSimple(_ isHovered: Bool, amount: Double = 2.0) -> some View {
         self.rotation3DEffect(
             .degrees(isHovered ? amount : 0),
             axis: (x: -0.5, y: 1, z: 0),
             perspective: 0.6
         )
-        // Animation removed - apply at call site to prevent duplicate animation conflicts
     }
 }

@@ -110,7 +110,7 @@ public struct DimensionOrbView: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color.white.opacity(0.3),
+                                Color.white.opacity(0.4),
                                 Color.clear
                             ],
                             center: .topLeading,
@@ -130,7 +130,7 @@ public struct DimensionOrbView: View {
             }
             .frame(width: baseSize, height: baseSize)
             .clipShape(Circle())
-            .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: isHovered ? 10 : 6)
+            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: isHovered ? 10 : 6)
             .shadow(color: onyxDimensionColor.opacity(isHovered ? 0.4 : 0.2), radius: levelGlowRadius, x: 0, y: 0)
             .scaleEffect(pulseScale * (isSelected ? 1.15 : 1.0) * (isHovered ? 1.05 : 1.0))
             .offset(y: isHovered ? -4 : 0)
@@ -179,9 +179,9 @@ public struct DimensionOrbView: View {
                 .padding(.vertical, 2)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(OnyxColors.Elevation.void.opacity(0.85))
+                        .fill(DS.surface)
                 )
-                .shadow(color: OnyxColors.Elevation.void, radius: 4, x: 0, y: 0)
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 0)
                 .offset(y: baseSize / 2 + 22)
         }
         .frame(width: baseSize + 80, height: baseSize + 80)
@@ -201,7 +201,7 @@ public struct DimensionOrbView: View {
             // Track
             Circle()
                 .stroke(
-                    onyxDimensionColor.opacity(0.15),
+                    onyxDimensionColor.opacity(0.25),
                     style: StrokeStyle(lineWidth: 2, lineCap: .round)
                 )
                 .frame(width: baseSize + 16, height: baseSize + 16)
@@ -407,7 +407,7 @@ public struct InsightCardView: View {
 
 #Preview {
     ZStack {
-        Color.black.ignoresSafeArea()
+        DS.bg.ignoresSafeArea()
 
         VStack(spacing: 40) {
             DimensionOrbView(

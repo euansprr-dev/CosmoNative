@@ -23,7 +23,6 @@ struct ConnectionSidebarView: View {
     @State private var showProfilePicker = false
     @State private var allProfiles: [Atom] = []
 
-    private let panelWidth: CGFloat = 320
     private let accentColor = CosmoColors.blockConnection
 
     var body: some View {
@@ -34,7 +33,7 @@ struct ConnectionSidebarView: View {
                 Divider().background(DS.border)
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 28) {
                         sourceSection
                         ghostSuggestionsSection
                         contentUsageSection
@@ -44,7 +43,6 @@ struct ConnectionSidebarView: View {
                     .padding(16)
                 }
             }
-            .frame(width: panelWidth)
             .background(DS.surface)
             .onAppear {
                 Task { await loadAllData() }
@@ -106,7 +104,7 @@ struct ConnectionSidebarView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(source.title ?? "Untitled")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.text)
                         .lineLimit(2)
 
@@ -115,8 +113,8 @@ struct ConnectionSidebarView: View {
 
                 Spacer()
             }
-            .padding(10)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
+            .dsGlassCard()
         }
         .buttonStyle(.plain)
     }
@@ -152,13 +150,13 @@ struct ConnectionSidebarView: View {
 
     @ViewBuilder
     private func ghostSectionGroup(_ section: ConnectionSection) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: section.type.icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(section.type.accentColor)
                 Text(section.type.displayName)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(section.type.accentColor)
             }
 
@@ -171,16 +169,16 @@ struct ConnectionSidebarView: View {
     private func sidebarGhostCard(_ ghost: GhostSuggestion, sectionType: ConnectionSectionType) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(ghost.content)
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundColor(DS.textSecondary)
                 .italic()
                 .lineLimit(3)
 
             HStack(spacing: 4) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 8))
-                Text(ghost.sourceAtomTitle)
                     .font(.system(size: 9))
+                Text(ghost.sourceAtomTitle)
+                    .font(.system(size: 10))
                     .lineLimit(1)
             }
             .foregroundColor(sectionType.accentColor.opacity(0.6))
@@ -197,11 +195,11 @@ struct ConnectionSidebarView: View {
                 Spacer()
 
                 Text("\(ghost.confidencePercent)%")
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(DS.textMuted)
             }
         }
-        .padding(10)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(sectionType.accentColor.opacity(0.03))
@@ -219,9 +217,9 @@ struct ConnectionSidebarView: View {
         Button(action: action) {
             HStack(spacing: 3) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                 Text(label)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
             }
             .foregroundColor(color)
         }
@@ -250,9 +248,9 @@ struct ConnectionSidebarView: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "number")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                 Text("Used \(contentUsages.count) time\(contentUsages.count == 1 ? "" : "s")")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(DS.textMuted)
             .padding(.top, 4)
@@ -274,13 +272,13 @@ struct ConnectionSidebarView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(usage.atom.title ?? "Untitled")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.text)
                         .lineLimit(1)
 
                     if !usage.sectionsUsed.isEmpty {
                         Text(usage.sectionsUsed.joined(separator: ", "))
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)
                             .lineLimit(1)
                     }
@@ -288,8 +286,8 @@ struct ConnectionSidebarView: View {
 
                 Spacer()
             }
-            .padding(10)
-            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
+            .dsGlassCard()
         }
         .buttonStyle(.plain)
     }
@@ -320,17 +318,17 @@ struct ConnectionSidebarView: View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle.fill")
                 .font(.system(size: 14))
-                .foregroundColor(Color(hex: "#818CF8"))
+                .foregroundColor(DS.entityConnection)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.title ?? "Profile")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.text)
 
                 if let meta = profile.metadataValue(as: ClientProfileMetadata.self),
                    let niche = meta.niche {
                     Text(niche)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                 }
             }
@@ -346,8 +344,8 @@ struct ConnectionSidebarView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(10)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+        .padding(12)
+        .dsGlassCard()
     }
 
     private var profileAssignButton: some View {
@@ -359,12 +357,16 @@ struct ConnectionSidebarView: View {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 11))
                 Text("Assign Profiles")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(Color(hex: "#818CF8"))
+            .foregroundColor(DS.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .background(Color(hex: "#818CF8").opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showProfilePicker) {
@@ -406,17 +408,17 @@ struct ConnectionSidebarView: View {
             HStack(spacing: 10) {
                 Image(systemName: isLinked ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 13))
-                    .foregroundColor(isLinked ? Color(hex: "#818CF8") : DS.textMuted)
+                    .foregroundColor(isLinked ? DS.entityConnection : DS.textMuted)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.title ?? "Profile")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.text)
 
                     if let meta = profile.metadataValue(as: ClientProfileMetadata.self),
                        let niche = meta.niche {
                         Text(niche)
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(DS.textMuted)
                     }
                 }
@@ -425,7 +427,7 @@ struct ConnectionSidebarView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
-            .background(isLinked ? Color(hex: "#818CF8").opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(isLinked ? DS.entityConnection.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
@@ -471,23 +473,19 @@ struct ConnectionSidebarView: View {
             // AI collaborator weight note
             maturityWeightNote
         }
-        .padding(12)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(maturityColor(maturityLevel).opacity(0.2), lineWidth: 1)
-        )
+        .padding(14)
+        .dsGlassSection()
     }
 
     private func maturityMetricRow(label: String, value: String, progress: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundColor(DS.textSecondary)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(DS.textSecondary)
             }
 
@@ -522,9 +520,9 @@ struct ConnectionSidebarView: View {
 
         return HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text(note)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
         }
         .foregroundColor(DS.textMuted)
         .padding(.top, 4)
@@ -535,10 +533,10 @@ struct ConnectionSidebarView: View {
     private func sectionHeader(title: String, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .tracking(0.8)
                 .foregroundColor(DS.textMuted)
         }
@@ -549,26 +547,26 @@ struct ConnectionSidebarView: View {
             ProgressView()
                 .controlSize(.small)
             Text(text)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundColor(DS.textMuted)
         }
-        .padding(10)
+        .padding(12)
     }
 
     private func emptyStateCard(icon: String, text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(.system(size: 18))
                 .foregroundColor(DS.textMuted)
 
             Text(text)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundColor(DS.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .dsGlassCard(cornerRadius: 10)
     }
 
     private func maturityBadge(_ level: ConnectionMaturityLevel) -> some View {

@@ -13,20 +13,20 @@ import QuartzCore
 public struct PlannerumColors {
 
     // ─────────────────────────────────────────────────────────────────────────
-    // PRIMARY PALETTE - The signature Plannerium violet
+    // PRIMARY PALETTE - Forest green (Greenhouse rebrand)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Primary violet - temporal essence (#8B5CF6)
-    public static let primary = Color(red: 139/255, green: 92/255, blue: 246/255)
+    /// Primary green — forest green (#2D6A4F)
+    public static let primary = Color(hex: "2D6A4F")
 
-    /// Dark violet for emphasis (#7C3AED)
-    public static let primaryDark = Color(red: 124/255, green: 58/255, blue: 237/255)
+    /// Dark green for emphasis (#245943)
+    public static let primaryDark = Color(hex: "245943")
 
-    /// Light violet for highlights (#A78BFA)
-    public static let primaryLight = Color(red: 167/255, green: 139/255, blue: 250/255)
+    /// Light green for highlights (#4A8B72)
+    public static let primaryLight = Color(hex: "4A8B72")
 
     /// Glow color for active states
-    public static let glow = Color(red: 139/255, green: 92/255, blue: 246/255).opacity(0.6)
+    public static let glow = Color(hex: "2D6A4F").opacity(0.3)
 
     // ─────────────────────────────────────────────────────────────────────────
     // NOW MARKER - The living present
@@ -103,7 +103,7 @@ public struct PlannerumColors {
     public static let openTime = DS.borderSubtle
 
     /// Past time (dimmed)
-    public static let pastTime = Color.white.opacity(0.015)
+    public static let pastTime = Color.black.opacity(0.02)
 
     /// Hour labels → DS.textMuted
     public static let hourLabel = DS.textMuted
@@ -880,7 +880,7 @@ public struct FocusNowTokens {
     public static let primaryButton = PlannerumColors.primary
 
     /// Skip button background → DS.border
-    public static let skipButton = DS.border
+    public static let skipButton = DS.surfaceHover
 
     /// Energy match excellent
     public static let energyExcellent = Color(red: 34/255, green: 197/255, blue: 94/255)
@@ -898,7 +898,7 @@ public struct FocusNowTokens {
     public static let deadlineApproaching = Color(red: 245/255, green: 158/255, blue: 11/255)
 
     /// Context message background → DS.borderSubtle
-    public static let contextBackground = DS.borderSubtle
+    public static let contextBackground = DS.surface
 
     // MARK: - Typography
 

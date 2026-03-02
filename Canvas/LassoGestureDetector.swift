@@ -28,15 +28,23 @@ struct LassoGestureDetector {
         return inside
     }
 
-    /// Find all block IDs whose centers are enclosed by the lasso path.
+    /// Find all block IDs where ANY of the 5 test points (center + 4 corners)
+    /// fall inside the lasso path. This catches blocks mostly inside the lasso
+    /// even when their center is just outside.
     /// blockFrames maps blockId -> CGRect in the same coordinate space as lassoPath.
     static func enclosedBlocks(lassoPath: [CGPoint], blockFrames: [String: CGRect]) -> [String] {
         guard lassoPath.count >= 3 else { return [] }
 
         var enclosed: [String] = []
         for (blockId, frame) in blockFrames {
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            if pointInPolygon(center, polygon: lassoPath) {
+            let testPoints = [
+                CGPoint(x: frame.midX, y: frame.midY),      // center
+                CGPoint(x: frame.minX, y: frame.minY),      // top-left
+                CGPoint(x: frame.maxX, y: frame.minY),      // top-right
+                CGPoint(x: frame.minX, y: frame.maxY),      // bottom-left
+                CGPoint(x: frame.maxX, y: frame.maxY),      // bottom-right
+            ]
+            if testPoints.contains(where: { pointInPolygon($0, polygon: lassoPath) }) {
                 enclosed.append(blockId)
             }
         }

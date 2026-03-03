@@ -618,34 +618,31 @@ public struct PlannerumView: View {
     private var nowHeroSection: some View {
         if let session = sessionManager.currentSession, sessionManager.state != .idle {
             activeSessionCard(session)
-        } else {
-            FocusNowCard(
-                recommendation: plannerumViewModel.focusNowTask,
-                contextMessage: plannerumViewModel.contextMessage,
-                currentEnergy: plannerumViewModel.currentEnergy,
-                currentFocus: plannerumViewModel.currentFocus,
+        } else if let task = plannerumViewModel.currentScheduledTask,
+                  let end = plannerumViewModel.currentScheduledEnd {
+            ScheduledNowCard(
+                task: task,
+                scheduledEnd: end,
                 onStartSession: {
-                    if let task = plannerumViewModel.focusNowTask?.task {
-                        // Start the actual timer via ActiveSessionTimerManager
-                        let sessionType = sessionTypeForIntent(task.intent)
-                        sessionManager.startSession(
-                            taskId: task.id,
-                            taskTitle: task.title,
-                            sessionType: sessionType,
-                            targetMinutes: task.estimatedMinutes
-                        )
-
-                        // Route to the intent-specific workspace
-                        plannerumViewModel.startSession(for: task)
-                    }
-                },
-                onSkip: {
-                    Task { await plannerumViewModel.skipFocusNow() }
-                },
-                onTaskTap: { _ in
-                    selectedInboxItem = nil
+                    let sessionType = sessionTypeForIntent(task.intent)
+                    sessionManager.startSession(
+                        taskId: task.id,
+                        taskTitle: task.title,
+                        sessionType: sessionType,
+                        targetMinutes: task.estimatedMinutes > 0 ? task.estimatedMinutes : 30
+                    )
+                    plannerumViewModel.startSession(for: task)
                 }
             )
+        } else {
+            QuickStartCard { title, targetMinutes in
+                sessionManager.startSession(
+                    taskId: nil,
+                    taskTitle: title,
+                    sessionType: .deepWork,
+                    targetMinutes: targetMinutes
+                )
+            }
         }
     }
 

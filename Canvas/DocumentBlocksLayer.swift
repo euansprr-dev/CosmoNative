@@ -25,8 +25,8 @@ struct DocumentBlocksLayer: View {
     @State private var dragOffset: CGSize = .zero
     @State private var canvasSize: CGSize = .zero
 
-    // Refresh trigger to force UI updates
-    @State private var refreshId = UUID()
+    // Block count trigger for non-destructive UI refresh
+    @State private var blockCount = 0
 
     init(documentType: String, documentId: Int64, canvasCenter: CGPoint, canvasOffset: CGSize = .zero) {
         self.documentType = documentType
@@ -44,11 +44,10 @@ struct DocumentBlocksLayer: View {
                     .contentShape(Rectangle())
                     .allowsHitTesting(false) // Don't block clicks to editor behind
 
-                ForEach(spatialEngine.blocks) { block in
+                ForEach(spatialEngine.blocks, id: \.id) { block in
                     blockView(for: block)
                 }
             }
-            .id(refreshId) // Force refresh when blocks are reloaded
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onAppear {
                 canvasSize = geometry.size
@@ -221,9 +220,8 @@ struct DocumentBlocksLayer: View {
 
     private func loadBlocks() async {
         await spatialEngine.loadBlocks(for: documentType, documentId: documentId)
-        // Force UI refresh after loading
         await MainActor.run {
-            refreshId = UUID()
+            blockCount = spatialEngine.blocks.count
         }
     }
 

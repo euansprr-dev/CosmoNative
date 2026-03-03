@@ -114,7 +114,7 @@ struct ResearchBlockView: View {
             block: block,
             accentColor: accentColor,
             icon: "magnifyingglass",
-            title: block.title,
+            title: atom?.title ?? block.title,
             isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
@@ -167,7 +167,7 @@ struct ResearchBlockView: View {
                 .tracking(0.8)
 
             // Title
-            Text(block.title.isEmpty ? "Untitled Research" : block.title)
+            Text((atom?.title ?? block.title).isEmpty ? "Untitled Research" : (atom?.title ?? block.title))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(DS.text)
                 .lineLimit(2)

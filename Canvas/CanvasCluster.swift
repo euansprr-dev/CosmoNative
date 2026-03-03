@@ -3,6 +3,12 @@
 
 import SwiftUI
 
+/// Edge/corner used during cluster resize
+enum ClusterResizeEdge: Sendable {
+    case top, bottom, left, right
+    case topLeft, topRight, bottomLeft, bottomRight
+}
+
 struct CanvasCluster: Identifiable {
     let id: UUID
     var name: String
@@ -16,6 +22,10 @@ struct CanvasCluster: Identifiable {
     var thinkspaceId: String?
     var synthesis: String?
     var synthesisUpdatedAt: String?
+
+    /// Manual size override — when set, cluster won't auto-shrink below this size.
+    /// Auto-expand still grows beyond it when blocks require more space.
+    var manualSizeOverride: CGSize?
 
     // 8-color muted palette — visible on light canvas backgrounds
     static let palette: [Color] = [
@@ -34,7 +44,11 @@ struct CanvasCluster: Identifiable {
     /// Extra top padding to keep the cluster title above the highest block
     static let titleTopPadding: CGFloat = 48
 
-    /// Recompute bounding rect from current block positions
+    /// Minimum cluster dimensions during manual resize
+    static let minimumSize = CGSize(width: 200, height: 150)
+
+    /// Recompute bounding rect from current block positions.
+    /// Respects `manualSizeOverride` — auto-expand grows beyond it but never shrinks below it.
     mutating func updateBoundingRect(blocks: [CanvasBlock], padding: CGFloat = 40) {
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
         guard !memberBlocks.isEmpty else { return }
@@ -59,12 +73,37 @@ struct CanvasCluster: Identifiable {
         // Extra top padding for the title label
         let topPadding = padding + Self.titleTopPadding
 
+        var computedWidth = (maxX - minX) + padding * 2
+        var computedHeight = (maxY - minY) + padding + topPadding
+        var originX = minX - padding
+        var originY = minY - topPadding
+
+        // Respect manual size override — expand to at least the manual dimensions,
+        // centering the extra space so blocks remain visually inside.
+        if let manual = manualSizeOverride {
+            if computedWidth < manual.width {
+                let extra = manual.width - computedWidth
+                originX -= extra / 2
+                computedWidth = manual.width
+            }
+            if computedHeight < manual.height {
+                let extra = manual.height - computedHeight
+                originY -= extra / 2
+                computedHeight = manual.height
+            }
+        }
+
         boundingRect = CGRect(
-            x: minX - padding,
-            y: minY - topPadding,
-            width: (maxX - minX) + padding * 2,
-            height: (maxY - minY) + padding + topPadding
+            x: originX,
+            y: originY,
+            width: computedWidth,
+            height: computedHeight
         )
+    }
+
+    /// Clear the manual size override, allowing the cluster to auto-fit blocks again
+    mutating func clearManualSize() {
+        manualSizeOverride = nil
     }
 }
 
@@ -85,6 +124,10 @@ struct CodableCluster: Codable, Sendable {
     var rectWidth: Double?
     var rectHeight: Double?
 
+    // Persisted manual size override
+    var manualWidth: Double?
+    var manualHeight: Double?
+
     init(from cluster: CanvasCluster) {
         self.id = cluster.id.uuidString
         self.name = cluster.name
@@ -97,6 +140,11 @@ struct CodableCluster: Codable, Sendable {
         self.originY = cluster.boundingRect.origin.y
         self.rectWidth = cluster.boundingRect.size.width
         self.rectHeight = cluster.boundingRect.size.height
+        // Persist manual size override
+        if let manual = cluster.manualSizeOverride {
+            self.manualWidth = Double(manual.width)
+            self.manualHeight = Double(manual.height)
+        }
     }
 
     func toCanvasCluster(blocks: [CanvasBlock], thinkspaceId: String?) -> CanvasCluster {
@@ -106,6 +154,14 @@ struct CodableCluster: Codable, Sendable {
             persistedRect = CGRect(x: ox, y: oy, width: w, height: h)
         } else {
             persistedRect = .zero
+        }
+
+        // Restore manual size override
+        let manualSize: CGSize?
+        if let mw = manualWidth, let mh = manualHeight, mw > 0, mh > 0 {
+            manualSize = CGSize(width: mw, height: mh)
+        } else {
+            manualSize = nil
         }
 
         var cluster = CanvasCluster(
@@ -118,7 +174,8 @@ struct CodableCluster: Codable, Sendable {
             isUserCreated: true,
             thinkspaceId: thinkspaceId,
             synthesis: synthesis,
-            synthesisUpdatedAt: synthesisUpdatedAt
+            synthesisUpdatedAt: synthesisUpdatedAt,
+            manualSizeOverride: manualSize
         )
         // Recompute from blocks if matching members are found; otherwise keep persisted rect
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }

@@ -34,7 +34,7 @@ struct ConnectionBlockView: View {
             block: block,
             accentColor: accentColor,
             icon: "link.circle.fill",
-            title: block.title,
+            title: atom?.title ?? block.title,
             isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {

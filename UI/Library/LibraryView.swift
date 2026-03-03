@@ -461,6 +461,7 @@ struct SmartCollection: Identifiable {
 struct LibraryItem: Identifiable {
     let id: String
     let uuid: String
+    let entityId: Int64
     let title: String
     let atomType: AtomType
     let icon: String
@@ -477,6 +478,7 @@ struct LibraryItem: Identifiable {
     init(atom: Atom, childCount: Int = 0) {
         self.id = atom.uuid
         self.uuid = atom.uuid
+        self.entityId = atom.id ?? 0
         self.title = atom.title ?? "Untitled"
         self.atomType = atom.type
         self.isFolder = atom.type == .project

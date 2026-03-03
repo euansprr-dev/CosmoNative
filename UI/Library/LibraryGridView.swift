@@ -162,6 +162,11 @@ private struct LibraryCardView: View {
                 Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
             }
             Button {
+                openAsPane()
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+            Button {
                 addToCanvas()
             } label: {
                 Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
@@ -428,6 +433,17 @@ private struct LibraryCardView: View {
             object: nil,
             userInfo: ["type": entityType, "id": item.uuid]
         )
+    }
+
+    private func openAsPane() {
+        if let entityType = EntityType(rawValue: item.atomType.rawValue) {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["type": entityType, "id": item.entityId]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
     }
 
     private func addToCanvas() {

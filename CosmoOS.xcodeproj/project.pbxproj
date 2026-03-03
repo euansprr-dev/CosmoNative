@@ -427,6 +427,8 @@
 		C8A349DFA0880133512FCF36 /* DimensionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6B7B8069DB3913A3D0B9AB3 /* DimensionDetailView.swift */; };
 		C8DFDDE7EB5D689217D007D2 /* MidnightCronScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2A5B88B6195CD725AF04E8 /* MidnightCronScheduler.swift */; };
 		C92656D0F772CBBCCD6459C2 /* FocusNowCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 544DDC22CD41B912D6007C55 /* FocusNowCard.swift */; };
+		A12107DD8F225D0C96F5BACC /* ScheduledNowCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C94BDDDB86DDAF973412A5D8 /* ScheduledNowCard.swift */; };
+		705E10EFA4A728EFF75DFBA9 /* QuickStartCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C6A2FAA3FDE740E7E61574 /* QuickStartCard.swift */; };
 		C92D0083C7F247D4E72914DD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = AA399ECCEBB1274823F87A3D /* GRDB */; };
 		C9A3E71F5B8D42A1F0E6D3B8 /* StandingInstructionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9A3E71F5B8D42A1F0E6D3B7 /* StandingInstructionEngine.swift */; };
 		C9D8E7F6A5B4031291807E6D /* PhysiologicalDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607182930F4A5 /* PhysiologicalDataProvider.swift */; };
@@ -763,6 +765,8 @@
 		52E650D41B7677E26ECB6AC7 /* FunctionGemmaEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FunctionGemmaEngine.swift; sourceTree = "<group>"; };
 		540B4902D06A656DE6C8F498 /* SlashCommandMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandMenu.swift; sourceTree = "<group>"; };
 		544DDC22CD41B912D6007C55 /* FocusNowCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FocusNowCard.swift; path = UI/Plannerum/Components/FocusNowCard.swift; sourceTree = SOURCE_ROOT; };
+		C94BDDDB86DDAF973412A5D8 /* ScheduledNowCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScheduledNowCard.swift; path = UI/Plannerum/Components/ScheduledNowCard.swift; sourceTree = SOURCE_ROOT; };
+		A0C6A2FAA3FDE740E7E61574 /* QuickStartCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickStartCard.swift; path = UI/Plannerum/Components/QuickStartCard.swift; sourceTree = SOURCE_ROOT; };
 		5507B377E3F520DAC0C37E98 /* GeminiThinkingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiThinkingOverlay.swift; sourceTree = "<group>"; };
 		554321012380251170741668 /* PlaceholderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderCard.swift; sourceTree = "<group>"; };
 		55B14EDA1ABF3F16EB710D9A /* SanctuaryAnimationChoreographer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SanctuaryAnimationChoreographer.swift; sourceTree = "<group>"; };
@@ -1802,6 +1806,8 @@
 			isa = PBXGroup;
 			children = (
 				544DDC22CD41B912D6007C55 /* FocusNowCard.swift */,
+				C94BDDDB86DDAF973412A5D8 /* ScheduledNowCard.swift */,
+				A0C6A2FAA3FDE740E7E61574 /* QuickStartCard.swift */,
 				4DA6403FE28E4C128DE7E84D /* DailyQuestsPanel.swift */,
 				6F89CFAE2DD871AC7730E454 /* TodaysTasksPanel.swift */,
 				8154C05D93F02104999F4DFF /* UpcomingSection.swift */,
@@ -3119,6 +3125,8 @@
 				AD3C3D76723F6FF302E9D8FB /* PlannerumViewModel.swift in Sources */,
 				1347EE224D54EE43AEED965A /* TaskViewModel.swift in Sources */,
 				C92656D0F772CBBCCD6459C2 /* FocusNowCard.swift in Sources */,
+				A12107DD8F225D0C96F5BACC /* ScheduledNowCard.swift in Sources */,
+				705E10EFA4A728EFF75DFBA9 /* QuickStartCard.swift in Sources */,
 				82131167470DFBA12D21D87D /* TaskIntentPicker.swift in Sources */,
 				F7E8D9C0A1B2C3D4E5F60004 /* RecurrencePickerView.swift in Sources */,
 				96FB6BB63692C847CDBF2DF0 /* DailyPlanningView.swift in Sources */,

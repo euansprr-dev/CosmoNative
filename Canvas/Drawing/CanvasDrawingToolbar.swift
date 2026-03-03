@@ -90,7 +90,7 @@ struct CanvasDrawingToolbar: View {
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .regular))
-                .foregroundColor(drawingState.toolMode == mode ? .white : DS.textMuted)
+                .foregroundColor(drawingState.toolMode == mode ? DS.text : DS.textMuted)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -159,7 +159,7 @@ struct CanvasDrawingToolbar: View {
                 } label: {
                     Image(systemName: shapeIcon(kind))
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(drawingState.currentShapeKind == kind ? .white : DS.textMuted)
+                        .foregroundColor(drawingState.currentShapeKind == kind ? DS.text : DS.textMuted)
                         .frame(width: 24, height: 28)
                         .contentShape(Rectangle())
                 }
@@ -182,7 +182,7 @@ struct CanvasDrawingToolbar: View {
                 } label: {
                     Text(weight.rawValue)
                         .font(.system(size: 11, weight: drawingState.currentTextWeight == weight ? .bold : .regular))
-                        .foregroundColor(drawingState.currentTextWeight == weight ? .white : DS.textMuted)
+                        .foregroundColor(drawingState.currentTextWeight == weight ? DS.text : DS.textMuted)
                         .frame(width: 22, height: 28)
                         .contentShape(Rectangle())
                 }

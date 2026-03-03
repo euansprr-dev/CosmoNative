@@ -127,6 +127,12 @@ struct CanvasView: View {
                         },
                         onDragEndCluster: { id, translation in
                             handleClusterDragEnd(clusterId: id, translation: translation)
+                        },
+                        onResizeCluster: { id, delta, edge in
+                            clusterEngine.resizeCluster(id: id, delta: delta, edge: edge, blocks: spatialEngine.blocks)
+                        },
+                        onResizeEndCluster: { id in
+                            clusterEngine.commitClusterResize(id: id, blocks: spatialEngine.blocks)
                         }
                     )
 
@@ -403,7 +409,7 @@ struct CanvasView: View {
     }
 
     private var blocksLayer: some View {
-        ForEach(spatialEngine.blocks) { block in
+        ForEach(spatialEngine.blocks, id: \.id) { block in
             blockView(for: block)
         }
     }
@@ -1445,8 +1451,8 @@ struct CanvasView: View {
                     block.entityUuid = savedResearch.uuid
 
                 case .connection:
-                    let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Connection in
-                        var connection = Connection.new(title: blockTitle.isEmpty ? "New Connection" : blockTitle)
+                    let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
+                        var connection = Atom.new(type: .connection, title: blockTitle.isEmpty ? "New Connection" : blockTitle)
                         if !blockUuid.isEmpty { connection.uuid = blockUuid }
                         try connection.insert(db)
                         return connection

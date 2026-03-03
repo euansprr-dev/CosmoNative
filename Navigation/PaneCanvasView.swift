@@ -120,7 +120,7 @@ struct PaneCanvasView: View {
 
     @ViewBuilder
     private func blocksLayer(screenCenter: CGPoint) -> some View {
-        ForEach(spatialEngine.blocks) { block in
+        ForEach(spatialEngine.blocks, id: \.id) { block in
             blockView(for: block)
                 .position(
                     x: block.position.x + canvasOffset.width + scaledPanOffset.width + (blockDragOffsets[block.id]?.width ?? 0),

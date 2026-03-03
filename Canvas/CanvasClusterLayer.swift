@@ -22,6 +22,8 @@ struct CanvasClusterLayer: View {
     var onSelectCluster: ((UUID?) -> Void)?
     var onDragCluster: ((UUID, CGSize) -> Void)?
     var onDragEndCluster: ((UUID, CGSize) -> Void)?
+    var onResizeCluster: ((UUID, CGSize, ClusterResizeEdge) -> Void)?
+    var onResizeEndCluster: ((UUID) -> Void)?
 
     // MARK: - State
 
@@ -84,6 +86,11 @@ struct CanvasClusterLayer: View {
                     .padding(.trailing, 10)
                     .transition(.opacity)
             }
+
+            // Resize handles — only for selected user clusters
+            if cluster.isUserCreated && isSelected {
+                resizeHandlesOverlay(cluster: cluster, rect: rect)
+            }
         }
         .frame(width: rect.width, height: rect.height)
         .position(x: rect.midX, y: rect.midY)
@@ -120,6 +127,76 @@ struct CanvasClusterLayer: View {
     /// Counter-scale for label: stays readable when zoomed out, capped at 3x
     private var labelCounterScale: CGFloat {
         min(3.0, max(1.0, 1.0 / effectiveScale))
+    }
+
+    // MARK: - Resize Handles
+
+    @ViewBuilder
+    private func resizeHandlesOverlay(cluster: CanvasCluster, rect: CGRect) -> some View {
+        let handleSize: CGFloat = 10
+        let hitSize: CGFloat = 28
+
+        ZStack {
+            // Corner handles
+            resizeHandle(cluster: cluster, edge: .topLeft, handleSize: handleSize, hitSize: hitSize)
+                .position(x: 0, y: 0)
+            resizeHandle(cluster: cluster, edge: .topRight, handleSize: handleSize, hitSize: hitSize)
+                .position(x: rect.width, y: 0)
+            resizeHandle(cluster: cluster, edge: .bottomLeft, handleSize: handleSize, hitSize: hitSize)
+                .position(x: 0, y: rect.height)
+            resizeHandle(cluster: cluster, edge: .bottomRight, handleSize: handleSize, hitSize: hitSize)
+                .position(x: rect.width, y: rect.height)
+
+            // Edge handles (midpoints)
+            resizeHandle(cluster: cluster, edge: .top, handleSize: handleSize, hitSize: hitSize)
+                .position(x: rect.width / 2, y: 0)
+            resizeHandle(cluster: cluster, edge: .bottom, handleSize: handleSize, hitSize: hitSize)
+                .position(x: rect.width / 2, y: rect.height)
+            resizeHandle(cluster: cluster, edge: .left, handleSize: handleSize, hitSize: hitSize)
+                .position(x: 0, y: rect.height / 2)
+            resizeHandle(cluster: cluster, edge: .right, handleSize: handleSize, hitSize: hitSize)
+                .position(x: rect.width, y: rect.height / 2)
+        }
+        .frame(width: rect.width, height: rect.height)
+    }
+
+    @ViewBuilder
+    private func resizeHandle(cluster: CanvasCluster, edge: ClusterResizeEdge, handleSize: CGFloat, hitSize: CGFloat) -> some View {
+        let isCorner = [.topLeft, .topRight, .bottomLeft, .bottomRight].contains(edge)
+
+        Circle()
+            .fill(DS.surfaceElevated)
+            .overlay(
+                Circle()
+                    .stroke(cluster.color.opacity(0.8), lineWidth: 1.5)
+            )
+            .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
+            .frame(width: isCorner ? handleSize : handleSize * 0.8,
+                   height: isCorner ? handleSize : handleSize * 0.8)
+            .scaleEffect(labelCounterScale)
+            .contentShape(Rectangle().size(width: hitSize, height: hitSize))
+            .frame(width: hitSize, height: hitSize)
+            .allowsHitTesting(true)
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { gesture in
+                        let delta = CGSize(
+                            width: gesture.translation.width / effectiveScale,
+                            height: gesture.translation.height / effectiveScale
+                        )
+                        onResizeCluster?(cluster.id, delta, edge)
+                    }
+                    .onEnded { _ in
+                        onResizeEndCluster?(cluster.id)
+                    }
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeCursor(for: edge).set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
     }
 
     // MARK: - Label
@@ -226,6 +303,24 @@ struct CanvasClusterLayer: View {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+// MARK: - Resize Cursor Helper
+
+extension NSCursor {
+    static func resizeCursor(for edge: ClusterResizeEdge) -> NSCursor {
+        switch edge {
+        case .left, .right:
+            return .resizeLeftRight
+        case .top, .bottom:
+            return .resizeUpDown
+        case .topLeft, .bottomRight:
+            // macOS doesn't have diagonal cursors — use crosshair as closest match
+            return .crosshair
+        case .topRight, .bottomLeft:
+            return .crosshair
+        }
     }
 }
 

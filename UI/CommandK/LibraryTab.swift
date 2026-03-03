@@ -658,6 +658,19 @@ struct LibraryTab: View {
             }
 
             Button {
+                if let entityType = EntityType(rawValue: item.atomType.rawValue) {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openAsPane,
+                        object: nil,
+                        userInfo: ["type": entityType, "id": item.entityId]
+                    )
+                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                }
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+
+            Button {
                 NotificationCenter.default.post(
                     name: CosmoNotification.NodeGraph.addToCanvas,
                     object: nil,

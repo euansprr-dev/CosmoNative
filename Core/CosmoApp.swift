@@ -306,8 +306,8 @@ class AppState: ObservableObject {
                 return createdResearch.id
 
             case .connection:
-                let createdConnection = try await CosmoDatabase.shared.asyncWrite { db -> Connection in
-                    var newConnection = Connection.new(title: "New Connection")
+                let createdConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
+                    var newConnection = Atom.new(type: .connection, title: "New Connection")
                     try newConnection.insert(db)
                     newConnection.id = db.lastInsertedRowID
                     return newConnection

@@ -26,6 +26,12 @@ public final class PlannerumViewModel: ObservableObject {
     /// Current Focus Now recommendation
     @Published public private(set) var focusNowTask: TaskRecommendation?
 
+    /// Task whose scheduled time block covers the current moment
+    @Published public private(set) var currentScheduledTask: TaskViewModel?
+
+    /// Derived end time for the current scheduled block
+    @Published public private(set) var currentScheduledEnd: Date?
+
     /// Alternative task recommendations
     @Published public private(set) var alternativeTasks: [TaskRecommendation] = []
 
@@ -77,6 +83,7 @@ public final class PlannerumViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var refreshTask: Task<Void, Never>?
+    private var currentBlockTimer: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -101,6 +108,7 @@ public final class PlannerumViewModel: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        currentBlockTimer?.cancel()
     }
 
     // MARK: - Setup
@@ -180,6 +188,7 @@ public final class PlannerumViewModel: ObservableObject {
         }
 
         await generateRecommendation()
+        evaluateCurrentScheduledTask()
     }
 
     /// Start live updates
@@ -194,12 +203,23 @@ public final class PlannerumViewModel: ObservableObject {
 
         // Schedule midnight recurrence generation
         recurrenceEngine.scheduleMidnightRefresh()
+
+        // 30-second timer to re-evaluate current scheduled block
+        currentBlockTimer?.cancel()
+        currentBlockTimer = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                evaluateCurrentScheduledTask()
+            }
+        }
     }
 
     /// Stop live updates
     public func stopLiveUpdates() {
         refreshTask?.cancel()
         refreshTask = nil
+        currentBlockTimer?.cancel()
+        currentBlockTimer = nil
         recurrenceEngine.stopMidnightRefresh()
     }
 
@@ -250,6 +270,8 @@ public final class PlannerumViewModel: ObservableObject {
                 }
                 return task1.priority.sortOrder < task2.priority.sortOrder
             }
+
+            evaluateCurrentScheduledTask()
 
         } catch {
             lastError = error
@@ -378,6 +400,38 @@ public final class PlannerumViewModel: ObservableObject {
         } catch {
             // Skip tracking is non-critical
         }
+    }
+
+    // MARK: - Scheduled Block Detection
+
+    /// Scans todayTasks for a task whose scheduledStart time block covers the current moment.
+    /// Only considers tasks with explicit `scheduledStart` (time-block field, not just scheduledDate).
+    public func evaluateCurrentScheduledTask() {
+        let now = Date()
+
+        for task in todayTasks {
+            guard let start = task.scheduledStart else { continue }
+
+            // Derive end: explicit scheduledEnd → start + estimatedMinutes → start + 30min
+            let end: Date
+            if let explicitEnd = task.scheduledEnd {
+                end = explicitEnd
+            } else if task.estimatedMinutes > 0 {
+                end = start.addingTimeInterval(TimeInterval(task.estimatedMinutes * 60))
+            } else {
+                end = start.addingTimeInterval(30 * 60)
+            }
+
+            if start <= now && now <= end {
+                currentScheduledTask = task
+                currentScheduledEnd = end
+                return
+            }
+        }
+
+        // No task covers the current time
+        currentScheduledTask = nil
+        currentScheduledEnd = nil
     }
 
     // MARK: - Quest Operations

@@ -335,6 +335,78 @@ class CanvasClusterEngine: ObservableObject {
         persistUserClusters(thinkspaceId: tsId)
     }
 
+    // MARK: - Cluster Resize
+
+    /// The cluster currently being resized (for live preview)
+    @Published var resizingClusterId: UUID?
+
+    /// Rect captured at the start of a resize gesture (before any delta applied)
+    private var resizeStartRect: CGRect?
+
+    /// Apply a live resize to a cluster from a specific edge/corner.
+    /// `delta` is the cumulative DragGesture translation from drag start.
+    func resizeCluster(id: UUID, delta: CGSize, edge: ClusterResizeEdge, blocks: [CanvasBlock]) {
+        guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
+
+        // Capture starting rect on first call of this resize gesture
+        if resizingClusterId != id {
+            resizingClusterId = id
+            resizeStartRect = userClusters[index].boundingRect
+        }
+
+        guard let startRect = resizeStartRect else { return }
+        var rect = startRect
+        let minSize = CanvasCluster.minimumSize
+
+        switch edge {
+        case .right:
+            rect.size.width = max(minSize.width, startRect.width + delta.width)
+        case .left:
+            let newWidth = max(minSize.width, startRect.width - delta.width)
+            rect.origin.x = startRect.maxX - newWidth
+            rect.size.width = newWidth
+        case .bottom:
+            rect.size.height = max(minSize.height, startRect.height + delta.height)
+        case .top:
+            let newHeight = max(minSize.height, startRect.height - delta.height)
+            rect.origin.y = startRect.maxY - newHeight
+            rect.size.height = newHeight
+        case .bottomRight:
+            rect.size.width = max(minSize.width, startRect.width + delta.width)
+            rect.size.height = max(minSize.height, startRect.height + delta.height)
+        case .topLeft:
+            let newWidth = max(minSize.width, startRect.width - delta.width)
+            let newHeight = max(minSize.height, startRect.height - delta.height)
+            rect.origin.x = startRect.maxX - newWidth
+            rect.origin.y = startRect.maxY - newHeight
+            rect.size.width = newWidth
+            rect.size.height = newHeight
+        case .topRight:
+            rect.size.width = max(minSize.width, startRect.width + delta.width)
+            let newHeight = max(minSize.height, startRect.height - delta.height)
+            rect.origin.y = startRect.maxY - newHeight
+            rect.size.height = newHeight
+        case .bottomLeft:
+            let newWidth = max(minSize.width, startRect.width - delta.width)
+            rect.origin.x = startRect.maxX - newWidth
+            rect.size.width = newWidth
+            rect.size.height = max(minSize.height, startRect.height + delta.height)
+        }
+
+        userClusters[index].boundingRect = rect
+        userClusters[index].manualSizeOverride = rect.size
+    }
+
+    /// Commit a resize — recompute bounds (respecting manual override) and persist.
+    func commitClusterResize(id: UUID, blocks: [CanvasBlock]) {
+        guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
+        resizingClusterId = nil
+        resizeStartRect = nil
+        // Recompute so block-fit + manual override are reconciled
+        userClusters[index].updateBoundingRect(blocks: blocks)
+        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+    }
+
     /// ID of the cluster a block is currently being dragged over (for visual feedback)
     @Published var dropTargetClusterId: UUID?
 

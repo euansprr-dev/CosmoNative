@@ -70,6 +70,24 @@ struct CanvasBlock: Identifiable, Codable {
         self.velocity = .zero
     }
 
+    /// Default (design) size for this block's entity type.
+    /// Used by CosmoBlockWrapper to lay content out at a fixed reference size
+    /// so that resizing the block only changes the visual scale, not the layout.
+    var defaultSize: CGSize {
+        switch entityType {
+        case .task:       return CGSize(width: 280, height: 120)
+        case .project:    return CGSize(width: 320, height: 240)
+        case .research:   return CGSize(width: 320, height: 340)
+        case .content:    return CGSize(width: 320, height: 340)
+        case .connection: return CGSize(width: 340, height: 400)
+        case .idea:       return CGSize(width: 280, height: 180)
+        case .cosmoAI:    return CGSize(width: 320, height: 280)
+        case .note:       return CGSize(width: 320, height: 280)
+        case .calendar:   return CGSize(width: 400, height: 500)
+        default:          return CGSize(width: 280, height: 200)
+        }
+    }
+
     /// Placeholder block used when a block reference cannot be resolved
     static let placeholder = CanvasBlock(
         id: "placeholder",
@@ -140,6 +158,9 @@ struct CanvasBlock: Identifiable, Codable {
         case .idea:
             let ideaWrapper = IdeaWrapper(atom: atom)
             metadata["tags"] = ideaWrapper.tagsList.joined(separator: ", ")
+            if let ideaStatus = atom.ideaMetadata?.ideaStatus?.rawValue {
+                metadata["ideaStatus"] = ideaStatus
+            }
         case .task:
             let taskWrapper = TaskWrapper(atom: atom)
             metadata["status"] = taskWrapper.status

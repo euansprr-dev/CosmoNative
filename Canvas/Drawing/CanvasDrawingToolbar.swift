@@ -12,7 +12,7 @@ struct CanvasDrawingToolbar: View {
     private var toolItems: [(CanvasToolMode, String)] {
         [
             (.select, "cursorarrow"),
-            (.lasso, "lasso"),
+            (.lasso, drawingState.currentLassoSubMode == .zone ? "rectangle.dashed" : "lasso"),
             (.shape, "square"),
             (.draw, "pencil.tip"),
             (.text, "textformat"),
@@ -145,6 +145,9 @@ struct CanvasDrawingToolbar: View {
             } else if toolsVisible && drawingState.toolMode == .text {
                 weightPicker
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else if toolsVisible && drawingState.toolMode == .lasso {
+                lassoSubModePicker
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(ProMotionSprings.snappy, value: drawingState.toolMode)
@@ -190,6 +193,37 @@ struct CanvasDrawingToolbar: View {
             }
 
             // Small separator before tool icons
+            Rectangle()
+                .fill(DS.textMuted.opacity(0.25))
+                .frame(width: 1, height: 12)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private var lassoSubModePicker: some View {
+        HStack(spacing: 0) {
+            Button {
+                drawingState.currentLassoSubMode = .lasso
+            } label: {
+                Image(systemName: "lasso")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(drawingState.currentLassoSubMode == .lasso ? DS.text : DS.textMuted)
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                drawingState.currentLassoSubMode = .zone
+            } label: {
+                Image(systemName: "rectangle.dashed")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(drawingState.currentLassoSubMode == .zone ? DS.text : DS.textMuted)
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
             Rectangle()
                 .fill(DS.textMuted.opacity(0.25))
                 .frame(width: 1, height: 12)

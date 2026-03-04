@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct ClusterCreationPopover: View {
-    let blockIds: [String]
+    var blockIds: [String] = []
     let position: CGPoint
     let onCreateCluster: (String, Int) -> Void
     let onDismiss: () -> Void
@@ -35,24 +35,26 @@ struct ClusterCreationPopover: View {
         VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(spacing: 6) {
-                Image(systemName: "square.3.layers.3d")
+                Image(systemName: blockIds.isEmpty ? "rectangle.dashed" : "square.3.layers.3d")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.accent)
-                Text("New Cluster")
+                Text(blockIds.isEmpty ? "New Zone" : "New Cluster")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(DS.text)
 
                 Spacer()
 
-                Text("\(blockIds.count) blocks")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                if !blockIds.isEmpty {
+                    Text("\(blockIds.count) blocks")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
 
             // Name field
-            TextField("Cluster name...", text: $clusterName)
+            TextField(blockIds.isEmpty ? "Zone name..." : "Cluster name...", text: $clusterName)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)

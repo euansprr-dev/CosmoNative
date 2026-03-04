@@ -489,6 +489,7 @@
 		E25DC9F36F58874E6BDF0012 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 021370874E0B4F74C4977A12 /* MLXLMCommon */; };
 		E26E78DE53B0BDCB19BC87E7 /* WritingAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3C26ADF439AB1AB15DE293E /* WritingAnalyzer.swift */; };
 		E2F3A4B5C6D7E8091A2B3C4E /* ContentProfileEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B3C4D5E6F70809A1B2C3DE /* ContentProfileEditor.swift */; };
+		CF7764E9796FCC25BBD58C26 /* ProfileTranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 774A458FC5FC6802A4E8B96D /* ProfileTranscriptionManager.swift */; };
 		E3F1A89B5C27D4E0A81B6F32 /* InstagramAutoTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7D9E42F1B3A80D5F6E29174 /* InstagramAutoTranscriber.swift */; };
 		E3FD92F7136DAACF7832D500 /* WebsiteCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7EF000EFBCF560F275C5E84 /* WebsiteCapture.swift */; };
 		E41A3CB0413DE70DC120B3B3 /* 0000300_adapters.safetensors in Resources */ = {isa = PBXBuildFile; fileRef = E4FDD04AE45F22506C1976C3 /* 0000300_adapters.safetensors */; };
@@ -598,6 +599,9 @@
 		5A9C13D4F6E7B82A0C3D5E7F /* CanvasClusterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */; };
 		7C1E35F6A8B9DA4C2E5F7091 /* CanvasClusterLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */; };
 		A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */; };
+		E7F8019A2B3C4D5E6F708192 /* ClusterViewModeSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */; };
+		091A2B3C4D5E6F7081920314 /* ClusterListContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */; };
+		2B3C4D5E6F70819203142536 /* ClusterBoardContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */; };
 		C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */; };
 /* End PBXBuildFile section */
 
@@ -1122,6 +1126,7 @@
 		F1A2B3C4D5E6F7089A1B2C3D /* BrainstormAIEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrainstormAIEngine.swift; path = AI/BrainstormAIEngine.swift; sourceTree = SOURCE_ROOT; };
 		F255870EB2A86BB42CC9EB95 /* LegacyTypeStubs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyTypeStubs.swift; sourceTree = "<group>"; };
 		F2B3C4D5E6F70809A1B2C3DE /* ContentProfileEditor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentProfileEditor.swift; path = UI/FocusMode/Content/ContentProfileEditor.swift; sourceTree = SOURCE_ROOT; };
+		774A458FC5FC6802A4E8B96D /* ProfileTranscriptionManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfileTranscriptionManager.swift; path = UI/FocusMode/Content/ProfileTranscriptionManager.swift; sourceTree = SOURCE_ROOT; };
 		F2F7D1566B70E686AAFAB03B /* DatabaseActorCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseActorCore.swift; sourceTree = "<group>"; };
 		F53B73C0B31E7972B7DB2458 /* ConnectionSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSectionView.swift; sourceTree = "<group>"; };
 		F556E0C6AEBDE1BFBA7A4573 /* BehavioralDailyOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehavioralDailyOperations.swift; sourceTree = "<group>"; };
@@ -1199,6 +1204,9 @@
 		6B0D24E5A7F8C93B1D4E6F80 /* CanvasClusterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CanvasClusterEngine.swift; path = AI/CanvasClusterEngine.swift; sourceTree = SOURCE_ROOT; };
 		8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasClusterLayer.swift; sourceTree = "<group>"; };
 		B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterCreationPopover.swift; sourceTree = "<group>"; };
+		F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterViewModeSwitcher.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterListContent.swift; sourceTree = "<group>"; };
+		3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterBoardContent.swift; sourceTree = "<group>"; };
 		D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasMinimapOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -2189,6 +2197,7 @@
 				AA3C4D5E6F7A8B9C0D1E2F3A /* ContentPolishSidebar.swift */,
 				E7C9A4B38D1F52E06A4B3C7D /* BrainstormContextSidebar.swift */,
 				F2B3C4D5E6F70809A1B2C3DE /* ContentProfileEditor.swift */,
+				774A458FC5FC6802A4E8B96D /* ProfileTranscriptionManager.swift */,
 				20E26EAA2B8C812A39E2418B /* NewProfileFlowView.swift */,
 				8B7D2D8DA1B377F619C689B6 /* GuidedStoryCreatorView.swift */,
 				122BC26D8F6FD1CE7BBBC48F /* IntelligenceModelView.swift */,
@@ -2213,6 +2222,9 @@
 				8D2F46A7B9C0EB5D3F608102 /* CanvasClusterLayer.swift */,
 				D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */,
 				B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */,
+				F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */,
+				1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */,
+				3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */,
 				BB3D4E5F6A7B8C9D0E1F2031 /* CanvasConnectionLinesLayer.swift */,
 				DC015AD19E281A8886EA2EF9 /* CanvasView.swift */,
 				F7B8C9D0E1F20A3B4C5D6E7F /* CanvasViewLayersToolbar.swift */,
@@ -3023,6 +3035,9 @@
 				5A9C13D4F6E7B82A0C3D5E7F /* CanvasClusterEngine.swift in Sources */,
 				7C1E35F6A8B9DA4C2E5F7091 /* CanvasClusterLayer.swift in Sources */,
 				A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */,
+				E7F8019A2B3C4D5E6F708192 /* ClusterViewModeSwitcher.swift in Sources */,
+				091A2B3C4D5E6F7081920314 /* ClusterListContent.swift in Sources */,
+				2B3C4D5E6F70819203142536 /* ClusterBoardContent.swift in Sources */,
 				C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */,
 				06DC1A2B3E4F5A6B7C8D9E0F /* ResearchBlockDropdownView.swift in Sources */,
 				06DE3C4D5F6A7B8C9D0E1F2B /* SelectableTranscriptText.swift in Sources */,
@@ -3143,6 +3158,7 @@
 				BB4D5E6F7A8B9C0D1E2F3A4B /* ContentPolishSidebar.swift in Sources */,
 				F8DA5B4C9E2063F17B5C4D8E /* BrainstormContextSidebar.swift in Sources */,
 				E2F3A4B5C6D7E8091A2B3C4E /* ContentProfileEditor.swift in Sources */,
+				CF7764E9796FCC25BBD58C26 /* ProfileTranscriptionManager.swift in Sources */,
 				1FD68BBE455545E88FA78F23 /* NewProfileFlowView.swift in Sources */,
 				D16B53D8C65417B8C65199C1 /* GuidedStoryCreatorView.swift in Sources */,
 				885D7EC748F4E86F9FCE55CC /* IntelligenceModelView.swift in Sources */,

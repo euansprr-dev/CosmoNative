@@ -1,5 +1,6 @@
 // CosmoOS/Canvas/CanvasConnectionLinesLayer.swift
 // Container that queries graph edges and renders all visible pulse lines on the canvas
+// PERF: Throttled 15fps animation, cached endpoints, single-pass edge filtering
 
 import SwiftUI
 
@@ -25,6 +26,11 @@ struct CanvasConnectionLinesLayer: View {
     @State private var animationPhase: Double = 0
     @State private var selectedEdgeKey: String?
     @State private var deleteTask: Task<Void, Never>?
+    @State private var pulseTimer: Timer?
+
+    // PERF: Cached derived data — recomputed only on data changes, not every frame
+    @State private var cachedVisibleEdges: [GraphEdge] = []
+    @State private var cachedEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
 
     // MARK: - Constants
 
@@ -35,18 +41,8 @@ struct CanvasConnectionLinesLayer: View {
         static let hitTestWidth: CGFloat = 24
         /// Gap between block edge and line endpoint so lines don't overlap blocks
         static let edgePaddingGap: CGFloat = 6
-    }
-
-    // MARK: - Computed
-
-    /// Map of entityUuid -> block for quick lookup
-    private var blocksByUUID: [String: CanvasBlock] {
-        Dictionary(blocks.map { ($0.entityUuid, $0) }, uniquingKeysWith: { first, _ in first })
-    }
-
-    /// Block UUIDs currently on canvas
-    private var blockUUIDs: [String] {
-        blocks.map { $0.entityUuid }
+        /// Pulse animation frame rate — 15fps is more than enough for subtle energy flow
+        static let pulseFrameRate: TimeInterval = 1.0 / 15.0
     }
 
     // MARK: - Body
@@ -54,29 +50,27 @@ struct CanvasConnectionLinesLayer: View {
     var body: some View {
         ZStack {
             // Visual layer (no hit testing — decorative animated lines)
-            TimelineView(.animation) { context in
-                let phase = context.date.timeIntervalSinceReferenceDate
-
-                ZStack {
-                    ForEach(visibleEdges, id: \.deduplicationKey) { edge in
-                        if let endpoints = endpointsForEdge(edge) {
-                            KnowledgePulseLineView(
-                                from: endpoints.start,
-                                to: endpoints.end,
-                                weight: edge.combinedWeight,
-                                edgeType: edge.type ?? .contextual,
-                                animationPhase: phase
-                            )
-                        }
+            // PERF: No TimelineView — driven by 15fps timer updating animationPhase
+            ZStack {
+                ForEach(cachedVisibleEdges, id: \.deduplicationKey) { edge in
+                    if let endpoints = cachedEndpoints[edge.deduplicationKey] {
+                        KnowledgePulseLineView(
+                            from: endpoints.start,
+                            to: endpoints.end,
+                            weight: edge.combinedWeight,
+                            edgeType: edge.type ?? .contextual,
+                            animationPhase: animationPhase
+                        )
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)
 
             // Hit-test layer — invisible wide paths that respond to taps
-            ForEach(visibleEdges, id: \.deduplicationKey) { edge in
-                if let endpoints = endpointsForEdge(edge) {
+            // PERF: Uses same cachedEndpoints as visual layer
+            ForEach(cachedVisibleEdges, id: \.deduplicationKey) { edge in
+                if let endpoints = cachedEndpoints[edge.deduplicationKey] {
                     connectionHitArea(edge: edge, from: endpoints.start, to: endpoints.end)
                 }
             }
@@ -84,14 +78,26 @@ struct CanvasConnectionLinesLayer: View {
 
             // Delete button for selected connection
             if let selectedKey = selectedEdgeKey,
-               let edge = visibleEdges.first(where: { $0.deduplicationKey == selectedKey }),
-               let endpoints = endpointsForEdge(edge) {
+               let edge = cachedVisibleEdges.first(where: { $0.deduplicationKey == selectedKey }),
+               let endpoints = cachedEndpoints[edge.deduplicationKey] {
                 connectionDeleteButton(edge: edge, from: endpoints.start, to: endpoints.end)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: blockUUIDs) { _, _ in
+        .onChange(of: edges) { _, _ in
+            recomputeVisibleEdgesAndEndpoints()
+        }
+        .onChange(of: blocks.count) { _, _ in
             fetchEdges()
+        }
+        .onChange(of: canvasOffset) { _, _ in
+            recomputeEndpoints()
+        }
+        .onChange(of: scaledPanOffset) { _, _ in
+            recomputeEndpoints()
+        }
+        .onChange(of: blockDragOffsets) { _, _ in
+            recomputeEndpoints()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.graphNodeUpdated)) { _ in
             fetchEdges()
@@ -100,13 +106,96 @@ struct CanvasConnectionLinesLayer: View {
             // Deselect connection when a block is selected
             selectedEdgeKey = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.blockRenderedSizeChanged)) { _ in
+            // Recompute endpoints when a block's actual rendered size changes (e.g. autoHeight expansion)
+            recomputeEndpoints()
+        }
         .onAppear {
             fetchEdges()
+            startPulseTimer()
         }
         .onDisappear {
             loadTask?.cancel()
             deleteTask?.cancel()
+            pulseTimer?.invalidate()
+            pulseTimer = nil
         }
+    }
+
+    // MARK: - Pulse Timer
+
+    /// 15fps timer for subtle energy flow animation — replaces 120fps TimelineView
+    private func startPulseTimer() {
+        pulseTimer?.invalidate()
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: Constants.pulseFrameRate, repeats: true) { _ in
+            Task { @MainActor in
+                animationPhase = Date().timeIntervalSinceReferenceDate
+            }
+        }
+    }
+
+    // MARK: - Cached Computation
+
+    /// Recompute both visible edges and their endpoints (on data changes)
+    private func recomputeVisibleEdgesAndEndpoints() {
+        let blocksByUUID = Dictionary(blocks.map { ($0.entityUuid, $0) }, uniquingKeysWith: { first, _ in first })
+        let uuidSet = Set(blocks.map { $0.entityUuid })
+        var seenPairs = Set<String>()
+        var visibleResult: [GraphEdge] = []
+
+        for edge in edges {
+            guard uuidSet.contains(edge.sourceUUID) && uuidSet.contains(edge.targetUUID) else { continue }
+            let sorted = [edge.sourceUUID, edge.targetUUID].sorted()
+            let pairKey = "\(sorted[0]):\(sorted[1]):\(edge.edgeType)"
+            guard seenPairs.insert(pairKey).inserted else { continue }
+            visibleResult.append(edge)
+            if visibleResult.count >= Constants.maxVisibleLines { break }
+        }
+
+        cachedVisibleEdges = visibleResult
+
+        // Compute endpoints for all visible edges
+        var endpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
+        for edge in visibleResult {
+            if let ep = computeEndpoints(for: edge, blocksByUUID: blocksByUUID) {
+                endpoints[edge.deduplicationKey] = ep
+            }
+        }
+        cachedEndpoints = endpoints
+    }
+
+    /// Recompute only endpoints when canvas position changes (edges stay the same)
+    private func recomputeEndpoints() {
+        let blocksByUUID = Dictionary(blocks.map { ($0.entityUuid, $0) }, uniquingKeysWith: { first, _ in first })
+        var endpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
+        for edge in cachedVisibleEdges {
+            if let ep = computeEndpoints(for: edge, blocksByUUID: blocksByUUID) {
+                endpoints[edge.deduplicationKey] = ep
+            }
+        }
+        cachedEndpoints = endpoints
+    }
+
+    /// Compute endpoints for a single edge
+    private func computeEndpoints(for edge: GraphEdge, blocksByUUID: [String: CanvasBlock]) -> (start: CGPoint, end: CGPoint)? {
+        guard let fromBlock = blocksByUUID[edge.sourceUUID],
+              let toBlock = blocksByUUID[edge.targetUUID] else { return nil }
+
+        let fromPos = blockScreenPosition(fromBlock)
+        let toPos = blockScreenPosition(toBlock)
+        let distance = hypot(toPos.x - fromPos.x, toPos.y - fromPos.y)
+
+        guard distance >= Constants.minLineLength && distance <= Constants.maxLineLength else { return nil }
+
+        let fromActualSize = BlockRenderedSizeCache.shared.renderedSize(for: fromBlock)
+        let toActualSize = BlockRenderedSizeCache.shared.renderedSize(for: toBlock)
+        let fromRendered = CGSize(width: fromActualSize.width * fromBlock.scale, height: fromActualSize.height * fromBlock.scale)
+        let toRendered = CGSize(width: toActualSize.width * toBlock.scale, height: toActualSize.height * toBlock.scale)
+
+        return edgeEndpoints(
+            from: fromPos, fromSize: fromRendered,
+            to: toPos, toSize: toRendered
+        )
     }
 
     // MARK: - Hit Area
@@ -225,53 +314,7 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    // MARK: - Edge Filtering
-
-    /// Edges where both source and target are on canvas, deduplicated by
-    /// unordered UUID pair so bidirectional directed edges (A->B, B->A) render
-    /// only one line, limited to max count.
-    private var visibleEdges: [GraphEdge] {
-        let uuidSet = Set(blockUUIDs)
-        var seenPairs = Set<String>()
-        var result: [GraphEdge] = []
-
-        for edge in edges {
-            guard uuidSet.contains(edge.sourceUUID) && uuidSet.contains(edge.targetUUID) else { continue }
-
-            // Use sorted UUID pair as dedup key to collapse A->B and B->A
-            let sorted = [edge.sourceUUID, edge.targetUUID].sorted()
-            let pairKey = "\(sorted[0]):\(sorted[1]):\(edge.edgeType)"
-            guard seenPairs.insert(pairKey).inserted else { continue }
-
-            result.append(edge)
-            if result.count >= Constants.maxVisibleLines { break }
-        }
-
-        return result
-    }
-
     // MARK: - Position & Endpoint Helpers
-
-    /// Compute visible edge endpoints for a given edge, or nil if blocks not found or too close/far
-    private func endpointsForEdge(_ edge: GraphEdge) -> (start: CGPoint, end: CGPoint)? {
-        guard let fromBlock = blocksByUUID[edge.sourceUUID],
-              let toBlock = blocksByUUID[edge.targetUUID] else { return nil }
-
-        let fromPos = blockScreenPosition(fromBlock)
-        let toPos = blockScreenPosition(toBlock)
-        let distance = hypot(toPos.x - fromPos.x, toPos.y - fromPos.y)
-
-        guard distance >= Constants.minLineLength && distance <= Constants.maxLineLength else { return nil }
-
-        // Use actual rendered size (base size * block scale)
-        let fromRendered = CGSize(width: fromBlock.size.width * fromBlock.scale, height: fromBlock.size.height * fromBlock.scale)
-        let toRendered = CGSize(width: toBlock.size.width * toBlock.scale, height: toBlock.size.height * toBlock.scale)
-
-        return edgeEndpoints(
-            from: fromPos, fromSize: fromRendered,
-            to: toPos, toSize: toRendered
-        )
-    }
 
     /// Block position in the canvas coordinate space (before scaleEffect is applied),
     /// including live drag offset so lines follow blocks during drag
@@ -293,20 +336,17 @@ struct CanvasConnectionLinesLayer: View {
         let dy = to.y - from.y
         let angle = atan2(dy, dx)
 
-        // Calculate intersection with block edge using the block's half-dimensions
         let fromHalfW = fromSize.width / 2
         let fromHalfH = fromSize.height / 2
         let toHalfW = toSize.width / 2
         let toHalfH = toSize.height / 2
 
-        // Offset start point from source block edge + gap
         let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap
         let start = CGPoint(
             x: from.x + cos(angle) * startOffset,
             y: from.y + sin(angle) * startOffset
         )
 
-        // Offset end point from target block edge + gap (opposite direction)
         let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap
         let end = CGPoint(
             x: to.x + cos(angle + .pi) * endOffset,
@@ -321,10 +361,8 @@ struct CanvasConnectionLinesLayer: View {
         let cosA = abs(cos(angle))
         let sinA = abs(sin(angle))
         guard cosA > 0.001 && sinA > 0.001 else {
-            // Nearly axis-aligned — use the relevant half-dimension
             return cosA > sinA ? halfWidth : halfHeight
         }
-        // Intersection with rectangle edge
         let byWidth = halfWidth / cosA
         let byHeight = halfHeight / sinA
         return min(byWidth, byHeight)
@@ -334,7 +372,7 @@ struct CanvasConnectionLinesLayer: View {
 
     private func fetchEdges() {
         loadTask?.cancel()
-        let uuids = blockUUIDs
+        let uuids = blocks.map { $0.entityUuid }
         loadTask = Task {
             guard uuids.count >= 2 else {
                 edges = []

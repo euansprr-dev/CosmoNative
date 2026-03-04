@@ -592,25 +592,34 @@ class TelegramBridgeService: ObservableObject {
 
     /// Detects simple URL capture messages ("swipe this [URL]", "capture [URL]", bare URL)
     /// and executes captureSwipe directly, bypassing the LLM entirely.
+    /// Supports multiple URLs in a single message.
     /// Returns nil if the message doesn't match the fast-path pattern — falls through to LLM.
     private func tryFastCapture(text: String, chatId: String) async -> String? {
         let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Extract URL from the message
-        guard let urlRange = text.range(of: "https?://[^\\s]+", options: .regularExpression),
-              let url = URL(string: String(text[urlRange])) else {
-            return nil
+        // Extract ALL URLs from the message
+        let urlPattern = try! NSRegularExpression(pattern: "https?://[^\\s]+")
+        let nsRange = NSRange(text.startIndex..., in: text)
+        let matches = urlPattern.matches(in: text, range: nsRange)
+
+        let extractedURLs: [(url: URL, string: String)] = matches.compactMap { match in
+            guard let range = Range(match.range, in: text) else { return nil }
+            let urlString = String(text[range])
+            guard let url = URL(string: urlString) else { return nil }
+            return (url, urlString)
         }
 
-        let urlString = String(text[urlRange])
+        guard !extractedURLs.isEmpty else { return nil }
 
-        // Check if this is a supported swipe platform
+        // Filter to supported swipe platforms
         let swipeDomains = ["instagram.com", "youtube.com", "youtu.be", "x.com",
                             "twitter.com", "threads.net", "tiktok.com"]
-        guard let host = url.host?.lowercased(),
-              swipeDomains.contains(where: { host.contains($0) }) else {
-            return nil
+        let swipeURLs = extractedURLs.filter { pair in
+            guard let host = pair.url.host?.lowercased() else { return false }
+            return swipeDomains.contains(where: { host.contains($0) })
         }
+
+        guard !swipeURLs.isEmpty else { return nil }
 
         // Check for simple capture keywords — if there's idea-related language,
         // let the LLM handle it so it can use capture_swipe_with_idea
@@ -626,11 +635,13 @@ class TelegramBridgeService: ObservableObject {
         // Only fast-path simple captures. If there's idea language, let the LLM route.
         guard hasCaptureSignal && !hasIdeaSignal else {
             // Also fast-path bare URLs with no other text
-            let textWithoutURL = text.replacingOccurrences(of: urlString, with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard textWithoutURL.isEmpty else { return nil }
-            // Bare URL — treat as capture
-            return await executeFastCapture(url: urlString, chatId: chatId)
+            let textWithoutURLs = swipeURLs.reduce(text) { result, pair in
+                result.replacingOccurrences(of: pair.string, with: "")
+            }.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard textWithoutURLs.isEmpty else { return nil }
+            // Bare URL(s) — treat as capture
+            await sendChatAction(chatId: chatId, action: "typing")
+            return await executeFastCaptureBatch(urls: swipeURLs.map(\.string), chatId: chatId)
         }
 
         // Also check for client mention — if a client name is mentioned alongside "for",
@@ -646,58 +657,91 @@ class TelegramBridgeService: ObservableObject {
         }
 
         await sendChatAction(chatId: chatId, action: "typing")
-        return await executeFastCapture(url: urlString, chatId: chatId)
+        return await executeFastCaptureBatch(urls: swipeURLs.map(\.string), chatId: chatId)
     }
 
-    /// Execute capture_swipe directly via the tool executor
-    private func executeFastCapture(url: String, chatId: String) async -> String {
+    /// Execute capture_swipe for one or more URLs via the tool executor
+    private func executeFastCaptureBatch(urls: [String], chatId: String) async -> String {
         await sendChatAction(chatId: chatId, action: "typing")
-        do {
-            let result = try await AgentToolExecutor.shared.execute(
-                toolName: "capture_swipe",
-                arguments: ["url": url]
-            )
-            // Parse the result to build a friendly message
-            if let data = result.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               json["success"] as? Bool == true {
-                let title = json["title"] as? String ?? "Untitled"
-                let source = json["source"] as? String ?? "URL"
 
-                // Track in conversation memory
-                if let uuid = json["uuid"] as? String {
-                    var conversation: AgentConversation
-                    if let existing = await ConversationMemoryService.shared.loadConversation(id: chatId) {
-                        conversation = existing
-                    } else {
-                        conversation = AgentConversation(id: chatId, source: .telegram)
+        var captured: [(source: String, uuid: String)] = []
+        var failCount = 0
+
+        for url in urls {
+            do {
+                let result = try await AgentToolExecutor.shared.execute(
+                    toolName: "capture_swipe",
+                    arguments: ["url": url]
+                )
+                if let data = result.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   json["success"] as? Bool == true {
+                    let source = json["source"] as? String ?? "URL"
+                    let uuid = json["uuid"] as? String ?? ""
+                    captured.append((source: source, uuid: uuid))
+
+                    // Track in conversation memory
+                    if !uuid.isEmpty {
+                        var conversation: AgentConversation
+                        if let existing = await ConversationMemoryService.shared.loadConversation(id: chatId) {
+                            conversation = existing
+                        } else {
+                            conversation = AgentConversation(id: chatId, source: .telegram)
+                        }
+                        conversation.append(.user(url))
+                        if !conversation.linkedAtomUUIDs.contains(uuid) {
+                            conversation.linkedAtomUUIDs.append(uuid)
+                        }
+                        let responseText = "Captured swipe (\(source))"
+                        conversation.append(.assistant(responseText))
+                        await ConversationMemoryService.shared.saveConversation(conversation)
                     }
-                    conversation.append(.user(url))
-                    if !conversation.linkedAtomUUIDs.contains(uuid) {
-                        conversation.linkedAtomUUIDs.append(uuid)
-                    }
-                    let responseText = "Captured: \(title) (\(source))"
-                    conversation.append(.assistant(responseText))
-                    await ConversationMemoryService.shared.saveConversation(conversation)
+                } else {
+                    failCount += 1
                 }
-
-                let sourceDisplay = source.contains("youtube") ? "YouTube" :
-                    source.contains("instagram") ? "Instagram" :
-                    source.contains("twitter") || source.contains("x.com") ? "X / Twitter" :
-                    source.contains("linkedin") ? "LinkedIn" :
-                    source.contains("threads") ? "Threads" : source
-
-                var msg = "📌 Swiped!\n\n\(title)"
-                msg += "\n🔗 \(sourceDisplay)"
-                return msg
-            } else if let data = result.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let error = json["error"] as? String {
-                return "Capture failed: \(error)"
+            } catch {
+                failCount += 1
             }
-            return "Swiped."
-        } catch {
-            return "Capture failed: \(error.localizedDescription)"
+
+            // Refresh typing indicator between captures
+            if urls.count > 1 {
+                await sendChatAction(chatId: chatId, action: "typing")
+            }
+        }
+
+        guard !captured.isEmpty else {
+            return "Capture failed — couldn't process \(urls.count == 1 ? "the link" : "any of the links")."
+        }
+
+        // Platform display helper
+        let platformName: (String) -> String = { source in
+            source.contains("youtube") ? "YouTube" :
+            source.contains("instagram") ? "Instagram" :
+            source.contains("twitter") || source.contains("x.com") ? "X" :
+            source.contains("threads") ? "Threads" :
+            source.contains("tiktok") ? "TikTok" : source
+        }
+
+        if captured.count == 1 {
+            let platform = platformName(captured[0].source)
+            return "Got it — captured the \(platform) swipe to your database."
+        } else {
+            // Group by platform for a clean summary
+            var platformCounts: [String: Int] = [:]
+            for item in captured {
+                platformCounts[platformName(item.source), default: 0] += 1
+            }
+            let breakdown = platformCounts
+                .sorted(by: { $0.value > $1.value })
+                .map { "\($0.value) \($0.key)" }
+                .joined(separator: ", ")
+
+            var msg = "Got it — captured \(captured.count) swipes to your database."
+            msg += "\n📎 \(breakdown)"
+            if failCount > 0 {
+                msg += "\n⚠️ \(failCount) \(failCount == 1 ? "link" : "links") couldn't be processed."
+            }
+            return msg
         }
     }
 

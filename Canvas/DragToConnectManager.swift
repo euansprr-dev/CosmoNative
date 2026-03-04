@@ -120,13 +120,12 @@ final class DragToConnectManager: ObservableObject {
         }
     }
 
-    /// Hit-test current drag point against block frames to find hover target
+    /// Hit-test current drag point against block frames to find hover target.
+    /// All coordinates are in canvas space (inside the scaleEffect container).
     func checkTarget(
         blocks: [CanvasBlock],
         canvasOffset: CGSize,
-        scaledPanOffset: CGSize,
-        effectiveScale: CGFloat,
-        screenCenter: CGPoint
+        scaledPanOffset: CGSize
     ) {
         guard isActive, let source = sourceBlock else { return }
 
@@ -137,17 +136,15 @@ final class DragToConnectManager: ObservableObject {
         for block in blocks {
             guard block.id != source.id else { continue }
 
-            // Calculate block screen position
-            let blockX = block.position.x + canvasOffset.width + scaledPanOffset.width
-            let blockY = block.position.y + canvasOffset.height + scaledPanOffset.height
+            // Block center in canvas space
+            let blockCenterX = block.position.x + canvasOffset.width + scaledPanOffset.width
+            let blockCenterY = block.position.y + canvasOffset.height + scaledPanOffset.height
+            let blockCenter = CGPoint(x: blockCenterX, y: blockCenterY)
 
-            // Apply scale around screen center
-            let scaledX = screenCenter.x + (blockX - screenCenter.x) * effectiveScale
-            let scaledY = screenCenter.y + (blockY - screenCenter.y) * effectiveScale
-
-            let blockCenter = CGPoint(x: scaledX, y: scaledY)
-            let halfWidth = block.size.width * effectiveScale * block.scale / 2
-            let halfHeight = block.size.height * effectiveScale * block.scale / 2
+            // Use actual rendered size for accurate hit-testing on autoHeight blocks
+            let actualSize = BlockRenderedSizeCache.shared.renderedSize(for: block)
+            let halfWidth = actualSize.width * block.scale / 2
+            let halfHeight = actualSize.height * block.scale / 2
 
             // Expanded hit area
             let hitRect = CGRect(

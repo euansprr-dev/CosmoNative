@@ -45,8 +45,14 @@ struct CanvasDrawingGestureLayer: View {
                 }
 
             // Lasso visual preview
-            if drawingState.toolMode == .lasso, lassoPoints.count > 1 {
+            if drawingState.toolMode == .lasso, drawingState.currentLassoSubMode == .lasso, lassoPoints.count > 1 {
                 lassoPreview
+                    .allowsHitTesting(false)
+            }
+
+            // Zone rectangle preview
+            if drawingState.toolMode == .lasso, drawingState.currentLassoSubMode == .zone, drawingState.activeZoneRect != nil {
+                zonePreview
                     .allowsHitTesting(false)
             }
         }
@@ -66,6 +72,43 @@ struct CanvasDrawingGestureLayer: View {
         .stroke(
             DS.textMuted,
             style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [6, 4])
+        )
+    }
+
+    // MARK: - Zone Preview
+
+    private var zonePreview: some View {
+        let rect = drawingState.activeZoneRect ?? .zero
+        let screenOrigin = canvasToScreen(CGPoint(x: rect.minX, y: rect.minY))
+        let screenEnd = canvasToScreen(CGPoint(x: rect.maxX, y: rect.maxY))
+        let screenRect = CGRect(
+            x: min(screenOrigin.x, screenEnd.x),
+            y: min(screenOrigin.y, screenEnd.y),
+            width: abs(screenEnd.x - screenOrigin.x),
+            height: abs(screenEnd.y - screenOrigin.y)
+        )
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(DS.textMuted.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    DS.textMuted.opacity(0.6),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 5])
+                )
+        }
+        .frame(width: screenRect.width, height: screenRect.height)
+        .position(x: screenRect.midX, y: screenRect.midY)
+    }
+
+    // MARK: - Canvas → Screen Coordinate Conversion
+
+    private func canvasToScreen(_ point: CGPoint) -> CGPoint {
+        let offsetX = point.x + canvasOffset.width + scaledPanOffset.width
+        let offsetY = point.y + canvasOffset.height + scaledPanOffset.height
+        return CGPoint(
+            x: screenCenter.x + (offsetX - screenCenter.x) * effectiveScale,
+            y: screenCenter.y + (offsetY - screenCenter.y) * effectiveScale
         )
     }
 
@@ -106,24 +149,38 @@ struct CanvasDrawingGestureLayer: View {
                     eraseAtPoint(canvasLoc)
 
                 case .lasso:
-                    // Collect screen-space points for lasso (hit test against screen-space block frames)
-                    if lassoPoints.isEmpty {
-                        lassoPoints = [value.startLocation]
+                    switch drawingState.currentLassoSubMode {
+                    case .lasso:
+                        // Collect screen-space points for lasso (hit test against screen-space block frames)
+                        if lassoPoints.isEmpty {
+                            lassoPoints = [value.startLocation]
+                        }
+                        lassoPoints.append(value.location)
+                    case .zone:
+                        // Zone: drag rectangle in canvas coords
+                        if drawingState.activeZoneRect == nil {
+                            drawingState.beginZone(at: canvasStart)
+                        }
+                        drawingState.updateZone(to: canvasLoc)
                     }
-                    lassoPoints.append(value.location)
 
                 case .text, .select:
                     break
                 }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 switch drawingState.toolMode {
                 case .shape:
                     drawingState.finishShape()
                 case .draw:
                     drawingState.finishFreehand()
                 case .lasso:
-                    finishLasso()
+                    switch drawingState.currentLassoSubMode {
+                    case .lasso:
+                        finishLasso()
+                    case .zone:
+                        finishZone(startLocation: value.startLocation, endLocation: value.location)
+                    }
                 case .erase, .text, .select:
                     break
                 }
@@ -162,6 +219,29 @@ struct CanvasDrawingGestureLayer: View {
             name: CosmoNotification.Canvas.lassoEnclosedBlocks,
             object: nil,
             userInfo: ["blockIds": enclosed]
+        )
+    }
+
+    // MARK: - Zone Completion
+
+    private func finishZone(startLocation: CGPoint, endLocation: CGPoint) {
+        guard let rect = drawingState.finishZone() else { return }
+
+        // Compute screen-space position for the popover (center-top of drawn rectangle)
+        let popoverX = (startLocation.x + endLocation.x) / 2
+        let popoverY = min(startLocation.y, endLocation.y) - 40
+
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.zoneDrawn,
+            object: nil,
+            userInfo: [
+                "rectX": rect.origin.x,
+                "rectY": rect.origin.y,
+                "rectW": rect.size.width,
+                "rectH": rect.size.height,
+                "popoverX": popoverX,
+                "popoverY": popoverY,
+            ]
         )
     }
 

@@ -43,6 +43,7 @@ enum CosmoNotification {
         static let updateBlockPosition = Notification.Name("com.cosmo.canvas.updateBlockPosition")
         static let updateBlockSize = Notification.Name("com.cosmo.canvas.updateBlockSize")
         static let saveBlockSize = Notification.Name("com.cosmo.canvas.saveBlockSize")
+        static let blockRenderedSizeChanged = Notification.Name("com.cosmo.canvas.blockRenderedSizeChanged")
         static let updateBlockContent = Notification.Name("com.cosmo.canvas.updateBlockContent")
         static let updateBlockMetadata = Notification.Name("com.cosmo.canvas.updateBlockMetadata")
 
@@ -79,6 +80,9 @@ enum CosmoNotification {
 
         // Lasso synthesis
         static let lassoEnclosedBlocks = Notification.Name("com.cosmo.canvas.lassoEnclosedBlocks")
+
+        // Zone creation (empty cluster via zone tool)
+        static let zoneDrawn = Notification.Name("com.cosmo.canvas.zoneDrawn")
 
         // Trisociative collisions
         static let collisionsGenerated = Notification.Name("com.cosmo.canvas.collisionsGenerated")

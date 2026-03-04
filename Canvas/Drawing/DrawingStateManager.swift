@@ -22,6 +22,13 @@ final class DrawingStateManager: ObservableObject {
     @Published var currentFillColor: String? = nil
     @Published var currentStrokeWidth: CGFloat = 2.0
     @Published var currentTextWeight: DrawingTextWeight = .M
+    @Published var currentLassoSubMode: LassoSubMode = .lasso
+
+    // MARK: - Zone Tool State
+
+    /// The rectangle being dragged out in canvas coordinates (nil when not dragging)
+    @Published var activeZoneRect: CGRect?
+    private var zoneStartPoint: CGPoint?
 
     // MARK: - Drawings
 
@@ -496,6 +503,36 @@ final class DrawingStateManager: ObservableObject {
         } else {
             saveDrawing(drawing)
         }
+    }
+
+    // MARK: - Zone Gesture Handling
+
+    func beginZone(at point: CGPoint) {
+        zoneStartPoint = point
+        activeZoneRect = CGRect(origin: point, size: .zero)
+    }
+
+    func updateZone(to point: CGPoint) {
+        guard let start = zoneStartPoint else { return }
+        let x = min(start.x, point.x)
+        let y = min(start.y, point.y)
+        let w = abs(point.x - start.x)
+        let h = abs(point.y - start.y)
+        activeZoneRect = CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    /// Finishes the zone drag. Returns the canvas-space rect if large enough, otherwise nil.
+    func finishZone() -> CGRect? {
+        guard let rect = activeZoneRect,
+              rect.width > 20, rect.height > 20 else {
+            activeZoneRect = nil
+            zoneStartPoint = nil
+            return nil
+        }
+        let result = rect
+        activeZoneRect = nil
+        zoneStartPoint = nil
+        return result
     }
 
     // MARK: - Ramer-Douglas-Peucker Path Simplification

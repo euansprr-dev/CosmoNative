@@ -9,6 +9,20 @@ enum ClusterResizeEdge: Sendable {
     case topLeft, topRight, bottomLeft, bottomRight
 }
 
+/// How blocks inside a cluster are displayed
+enum ClusterViewMode: String, Codable, CaseIterable, Sendable {
+    case canvas   // Default — blocks float freely at canvas positions
+    case list     // Compact scannable rows inside the cluster zone
+    case board    // Kanban columns grouped by status/phase/type
+}
+
+/// Sort order for list mode rows
+enum ClusterSortOrder: String, Codable, CaseIterable, Sendable {
+    case dateUpdated
+    case type
+    case status
+}
+
 struct CanvasCluster: Identifiable {
     let id: UUID
     var name: String
@@ -26,6 +40,15 @@ struct CanvasCluster: Identifiable {
     /// Manual size override — when set, cluster won't auto-shrink below this size.
     /// Auto-expand still grows beyond it when blocks require more space.
     var manualSizeOverride: CGSize?
+
+    /// Zone clusters persist even when empty (no blocks). Created via zone tool.
+    var isZone: Bool = false
+
+    /// How member blocks are displayed (canvas/list/board)
+    var viewMode: ClusterViewMode = .canvas
+
+    /// Sort order for list mode
+    var sortOrder: ClusterSortOrder = .dateUpdated
 
     // 8-color muted palette — visible on light canvas backgrounds
     static let palette: [Color] = [
@@ -128,6 +151,13 @@ struct CodableCluster: Codable, Sendable {
     var manualWidth: Double?
     var manualHeight: Double?
 
+    // Zone clusters persist even when empty (nil decodes as false for backward compat)
+    var isZone: Bool?
+
+    // View mode persistence (nil → .canvas for backward compat)
+    var viewMode: String?
+    var sortOrder: String?
+
     init(from cluster: CanvasCluster) {
         self.id = cluster.id.uuidString
         self.name = cluster.name
@@ -145,6 +175,9 @@ struct CodableCluster: Codable, Sendable {
             self.manualWidth = Double(manual.width)
             self.manualHeight = Double(manual.height)
         }
+        self.isZone = cluster.isZone ? true : nil
+        self.viewMode = cluster.viewMode != .canvas ? cluster.viewMode.rawValue : nil
+        self.sortOrder = cluster.sortOrder != .dateUpdated ? cluster.sortOrder.rawValue : nil
     }
 
     func toCanvasCluster(blocks: [CanvasBlock], thinkspaceId: String?) -> CanvasCluster {
@@ -175,7 +208,10 @@ struct CodableCluster: Codable, Sendable {
             thinkspaceId: thinkspaceId,
             synthesis: synthesis,
             synthesisUpdatedAt: synthesisUpdatedAt,
-            manualSizeOverride: manualSize
+            manualSizeOverride: manualSize,
+            isZone: isZone ?? false,
+            viewMode: viewMode.flatMap { ClusterViewMode(rawValue: $0) } ?? .canvas,
+            sortOrder: sortOrder.flatMap { ClusterSortOrder(rawValue: $0) } ?? .dateUpdated
         )
         // Recompute from blocks if matching members are found; otherwise keep persisted rect
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }

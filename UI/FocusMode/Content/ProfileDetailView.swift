@@ -419,10 +419,7 @@ struct ProfileDetailView: View {
                         category: category,
                         title: "\(category == .reel ? "Reel" : "Thread") (\(post.platform.isEmpty ? "unknown" : post.platform))",
                         content: post.transcript,
-                        platform: post.platform,
-                        likes: post.likes,
-                        shares: post.shares,
-                        leads: post.leads
+                        platform: post.platform.isEmpty ? category.platformTag : post.platform
                     ))
                 }
             }

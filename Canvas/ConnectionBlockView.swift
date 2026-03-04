@@ -36,6 +36,7 @@ struct ConnectionBlockView: View {
             icon: "link.circle.fill",
             title: atom?.title ?? block.title,
             isExpanded: $isExpanded,
+            autoHeight: true,
             onFocusMode: openFocusMode
         ) {
             connectionContent
@@ -70,28 +71,25 @@ struct ConnectionBlockView: View {
                 .fill(DS.border)
                 .frame(height: 1)
 
-            // Scrollable sections
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 4) {
-                    ForEach(Array(sections.indices), id: \.self) { index in
-                        CompactSectionRow(
-                            section: $sections[index],
-                            onAddItem: { content in
-                                addItem(content: content, toSectionIndex: index)
-                            },
-                            onDeleteItem: { itemId in
-                                deleteItem(id: itemId, fromSectionIndex: index)
-                            },
-                            onEditItem: { itemId, newContent in
-                                editItem(id: itemId, newContent: newContent, inSectionIndex: index)
-                            }
-                        )
-                    }
+            // Sections — flow naturally so the block grows to fit content
+            VStack(spacing: 4) {
+                ForEach(Array(sections.indices), id: \.self) { index in
+                    CompactSectionRow(
+                        section: $sections[index],
+                        onAddItem: { content in
+                            addItem(content: content, toSectionIndex: index)
+                        },
+                        onDeleteItem: { itemId in
+                            deleteItem(id: itemId, fromSectionIndex: index)
+                        },
+                        onEditItem: { itemId, newContent in
+                            editItem(id: itemId, newContent: newContent, inSectionIndex: index)
+                        }
+                    )
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
             }
-            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
 
             // Footer
             footerBar
@@ -99,7 +97,7 @@ struct ConnectionBlockView: View {
                 .padding(.bottom, 8)
                 .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Compact Header
@@ -536,7 +534,7 @@ private struct CompactItemRow: View {
                 Text(item.content)
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 

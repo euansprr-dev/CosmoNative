@@ -496,6 +496,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
     var comments: Int?
     /// Lead count (for reel/thread categories)
     var leads: Int?
+    /// Source Instagram URL if this document was auto-transcribed from a URL
+    var sourceURL: String?
 
     init(
         id: UUID = UUID(),
@@ -508,7 +510,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         shares: Int? = nil,
         saves: Int? = nil,
         comments: Int? = nil,
-        leads: Int? = nil
+        leads: Int? = nil,
+        sourceURL: String? = nil
     ) {
         self.id = id
         self.category = category
@@ -521,6 +524,7 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         self.saves = saves
         self.comments = comments
         self.leads = leads
+        self.sourceURL = sourceURL
     }
 }
 
@@ -566,6 +570,15 @@ enum ProfileDocumentCategory: String, Codable, CaseIterable, Sendable {
     /// Whether this category has performance metrics (likes, shares, etc.)
     var hasMetrics: Bool {
         isHighPerformer || isUnderperformer
+    }
+
+    /// Platform tag derived from category, used to filter posts by content format.
+    var platformTag: String? {
+        switch self {
+        case .reel, .underperformingReel: return "reel"
+        case .thread, .underperformingThread: return "thread"
+        default: return nil
+        }
     }
 
     /// The corresponding top-performer category for an underperformer

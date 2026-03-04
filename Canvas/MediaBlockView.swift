@@ -14,6 +14,7 @@ struct MediaBlockView: View {
 
     @State private var atom: Atom?
     @State private var isLoading = true
+    @State private var isProcessing = false
     @State private var isHovered = false
     @State private var isDropdownOpen = false
     @State private var isPlayerActive = false
@@ -197,6 +198,11 @@ struct MediaBlockView: View {
             .animation(ProMotionSprings.snappy, value: block.isSelected)
         }
         .onAppear {
+            loadAtom()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .canvasAtomProcessed)) { notification in
+            guard let uuid = notification.userInfo?["atomUUID"] as? String,
+                  uuid == atom?.uuid else { return }
             loadAtom()
         }
         // Enforce aspect ratio during resize for reel/carousel/youtube
@@ -688,7 +694,15 @@ struct MediaBlockView: View {
 
             Spacer()
 
-            if !transcriptText.isEmpty {
+            if isProcessing && !isDropdownOpen {
+                HStack(spacing: scaled(3)) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("Processing...")
+                        .font(.system(size: scaled(9)))
+                        .foregroundColor(DS.textMuted)
+                }
+            } else if !transcriptText.isEmpty {
                 let count = transcriptText.count
                 Text("\(count > 1000 ? "\(count / 1000)k+" : "\(count)") chars")
                     .font(.system(size: scaled(9)))
@@ -701,7 +715,20 @@ struct MediaBlockView: View {
 
     @ViewBuilder
     private var transcriptContent: some View {
-        if transcriptText.isEmpty {
+        if isProcessing && transcriptText.isEmpty {
+            VStack(spacing: scaled(6)) {
+                CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
+                    .frame(height: scaled(16))
+                HStack(spacing: scaled(4)) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("AI is processing...")
+                        .font(.system(size: scaled(9)))
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+            .padding(.vertical, scaled(8))
+        } else if transcriptText.isEmpty {
             HStack {
                 Spacer()
                 Text("No transcript available")
@@ -751,7 +778,11 @@ struct MediaBlockView: View {
                 return
             }
 
-            await MainActor.run { atom = loaded }
+            await MainActor.run {
+                atom = loaded
+                let status = loaded.processingStatus
+                isProcessing = status != nil && status != "complete"
+            }
 
             // Load media using the same approach as SwipeStudyFocusModeView
             await loadMedia(atom: loaded)

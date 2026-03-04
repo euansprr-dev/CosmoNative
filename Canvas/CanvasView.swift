@@ -49,6 +49,9 @@ struct CanvasView: View {
     // Zoom/pan persistence
     @State private var zoomPanSaveTask: Task<Void, Never>?
 
+    // PERF: Debounced frame tracker update — only needed for right-click hit testing
+    @State private var frameUpdateTask: Task<Void, Never>?
+
     // Ambient knowledge panel
     @StateObject private var ambientEngine = AmbientFieldEngine()
     @State private var showAmbientPanel = false
@@ -64,10 +67,11 @@ struct CanvasView: View {
     @State private var showSynthesisWorkspace = false
     @State private var synthesisSourceBlockIds: [String] = []
 
-    // Cluster creation popover
+    // Cluster/zone creation popover
     @State private var showClusterPopover = false
     @State private var clusterPopoverBlockIds: [String] = []
     @State private var clusterPopoverPosition: CGPoint = .zero
+    @State private var zonePopoverRect: CGRect = .zero
 
     // Minimap overlay
     @State private var showMinimap = false
@@ -84,6 +88,9 @@ struct CanvasView: View {
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
+
+    // PERF: Cached set of block IDs with media content — avoids string ops per block per render
+    @State private var mediaContentBlockIds: Set<String> = []
 
     // MARK: - Canvas Content (broken out for type-checking performance)
 
@@ -133,7 +140,36 @@ struct CanvasView: View {
                         },
                         onResizeEndCluster: { id in
                             clusterEngine.commitClusterResize(id: id, blocks: spatialEngine.blocks)
-                        }
+                        },
+                        onChangeViewMode: { id, mode in
+                            clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
+                        },
+                        onChangeColor: { id, colorIndex in
+                            clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
+                        },
+                        onChangeSortOrder: { id, order in
+                            clusterEngine.setSortOrder(for: id, order: order)
+                        },
+                        onToggleListExpand: { clusterId, blockUUID in
+                            clusterEngine.toggleListExpand(clusterId: clusterId, blockUUID: blockUUID)
+                        },
+                        onBoardColumnDrop: { blockUUID, newValue, clusterId in
+                            clusterEngine.updateBlockColumnValue(blockUUID: blockUUID, newValue: newValue, clusterId: clusterId)
+                        },
+                        onOpenFocusMode: { uuid in
+                            if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
+                               block.entityId > 0 {
+                                NotificationCenter.default.post(
+                                    name: .enterFocusMode,
+                                    object: nil,
+                                    userInfo: [
+                                        "type": block.entityType,
+                                        "id": block.entityId
+                                    ]
+                                )
+                            }
+                        },
+                        expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
                     )
 
                     blocksLayer
@@ -148,6 +184,16 @@ struct CanvasView: View {
                         scaledPanOffset: scaledPanOffset,
                         effectiveScale: effectiveScale,
                         blockDragOffsets: blockDragOffsets
+                    )
+
+                    // Drag-to-connect overlay (canvas coordinates, inside scaled container
+                    // so it shares the same coordinate space as blocks and final connection lines)
+                    DragToConnectOverlay(
+                        connectManager: connectManager,
+                        blocks: spatialEngine.blocks,
+                        canvasOffset: canvasOffset,
+                        scaledPanOffset: scaledPanOffset,
+                        effectiveScale: effectiveScale
                     )
                 }
                 .scaleEffect(effectiveScale, anchor: UnitPoint(
@@ -172,15 +218,6 @@ struct CanvasView: View {
                     scaledPanOffset: scaledPanOffset,
                     effectiveScale: effectiveScale,
                     screenCenter: screenCenter
-                )
-
-                // Drag-to-connect overlay (screen coordinates, outside scaled container)
-                DragToConnectOverlay(
-                    connectManager: connectManager,
-                    blocks: spatialEngine.blocks,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale
                 )
 
                 // Provocation markers overlay (screen coordinates, on top of blocks)
@@ -258,36 +295,20 @@ struct CanvasView: View {
                     .padding(.leading, 16)
                     .padding(.bottom, 16)
             }
-            // Update block frame tracker for right-click hit-testing
+            // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
+            // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
             .onChange(of: spatialEngine.blocks.count) { _, _ in
-                blockFrameTracker.updateFrames(
-                    blocks: spatialEngine.blocks,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale,
-                    screenCenter: screenCenter
-                )
+                scheduleFrameUpdate(screenCenter: screenCenter)
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+                rebuildMediaContentCache()
             }
             .onChange(of: canvasOffset) { _, _ in
-                blockFrameTracker.updateFrames(
-                    blocks: spatialEngine.blocks,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale,
-                    screenCenter: screenCenter
-                )
+                scheduleFrameUpdate(screenCenter: screenCenter)
                 debouncedSaveZoomPan()
             }
             .onChange(of: canvasScale) { _, _ in
-                blockFrameTracker.updateFrames(
-                    blocks: spatialEngine.blocks,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale,
-                    screenCenter: screenCenter
-                )
+                scheduleFrameUpdate(screenCenter: screenCenter)
                 debouncedSaveZoomPan()
             }
         }
@@ -409,9 +430,19 @@ struct CanvasView: View {
     }
 
     private var blocksLayer: some View {
-        ForEach(spatialEngine.blocks, id: \.id) { block in
+        let consumed = clusterConsumedBlockUUIDs
+        return ForEach(spatialEngine.blocks.filter { !consumed.contains($0.entityUuid) }, id: \.id) { block in
             blockView(for: block)
         }
+    }
+
+    /// Block UUIDs consumed by non-canvas clusters (list/board) — hidden from normal blocksLayer
+    private var clusterConsumedBlockUUIDs: Set<String> {
+        var s = Set<String>()
+        for c in clusterEngine.userClusters where c.viewMode != .canvas {
+            s.formUnion(c.blockUUIDs)
+        }
+        return s
     }
 
     @ViewBuilder
@@ -425,8 +456,8 @@ struct CanvasView: View {
             case .calendar:
                 CalendarWindowView(block: block)
             case .research:
-                // Use borderless media block for research with video/media content
-                if hasMediaContent(block) {
+                // PERF: Use cached set instead of string operations per render
+                if mediaContentBlockIds.contains(block.id) {
                     MediaBlockView(block: block)
                 } else {
                     ResearchBlockView(block: block)
@@ -460,29 +491,21 @@ struct CanvasView: View {
             DragGesture(minimumDistance: 2) // Small threshold to avoid accidental drags
                 .onChanged { gesture in
                     if NSEvent.modifierFlags.contains(.option) {
-                        // Option+drag: connection mode
-                        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                        // Option+drag: connection mode (canvas coordinates — overlay is inside scaleEffect)
+                        let blockCanvasX = block.position.x + canvasOffset.width + scaledPanOffset.width
+                        let blockCanvasY = block.position.y + canvasOffset.height + scaledPanOffset.height
                         if !connectManager.isActive {
-                            let blockX = block.position.x + canvasOffset.width + scaledPanOffset.width
-                            let blockY = block.position.y + canvasOffset.height + scaledPanOffset.height
-                            let scaledX = screenCenter.x + (blockX - screenCenter.x) * effectiveScale
-                            let scaledY = screenCenter.y + (blockY - screenCenter.y) * effectiveScale
-                            connectManager.beginConnection(from: block, center: CGPoint(x: scaledX, y: scaledY))
+                            connectManager.beginConnection(from: block, center: CGPoint(x: blockCanvasX, y: blockCanvasY))
                         }
-                        // Update drag point (gesture translation is in the block's local space,
-                        // which is inside the scaled container — scale it to screen coords)
-                        let blockScreenX = screenCenter.x + (block.position.x + canvasOffset.width + scaledPanOffset.width - screenCenter.x) * effectiveScale
-                        let blockScreenY = screenCenter.y + (block.position.y + canvasOffset.height + scaledPanOffset.height - screenCenter.y) * effectiveScale
+                        // gesture.translation is in the block's local space (canvas coordinates)
                         connectManager.updateDrag(to: CGPoint(
-                            x: blockScreenX + gesture.translation.width * effectiveScale,
-                            y: blockScreenY + gesture.translation.height * effectiveScale
+                            x: blockCanvasX + gesture.translation.width,
+                            y: blockCanvasY + gesture.translation.height
                         ))
                         connectManager.checkTarget(
                             blocks: spatialEngine.blocks,
                             canvasOffset: canvasOffset,
-                            scaledPanOffset: scaledPanOffset,
-                            effectiveScale: effectiveScale,
-                            screenCenter: screenCenter
+                            scaledPanOffset: scaledPanOffset
                         )
                     } else {
                         // Normal drag: move block
@@ -520,12 +543,18 @@ struct CanvasView: View {
         ))
     }
 
-    /// Check if a research block has media content that should use the borderless MediaBlockView
-    private func hasMediaContent(_ block: CanvasBlock) -> Bool {
-        let url = (block.metadata["url"] ?? "").lowercased()
-        return url.contains("youtube") || url.contains("youtu.be") ||
+    /// PERF: Rebuild the media content cache when blocks change
+    private func rebuildMediaContentCache() {
+        var ids = Set<String>()
+        for block in spatialEngine.blocks where block.entityType == .research {
+            let url = (block.metadata["url"] ?? "").lowercased()
+            if url.contains("youtube") || url.contains("youtu.be") ||
                url.contains("instagram") || url.contains("tiktok") ||
-               block.metadata["isSwipeFile"] == "true"
+               block.metadata["isSwipeFile"] == "true" {
+                ids.insert(block.id)
+            }
+        }
+        mediaContentBlockIds = ids
     }
 
     private var panGestureBackground: some View {
@@ -624,6 +653,7 @@ struct CanvasView: View {
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
+                    rebuildMediaContentCache()
 
                     // Restore persisted zoom/pan for current thinkspace
                     if let ts = thinkspaceManager.currentThinkspace {
@@ -1043,6 +1073,31 @@ struct CanvasView: View {
                     }
                 }
 
+                // Listen for zone drawn — show zone creation popover
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.zoneDrawn,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        if let rectX = notification.userInfo?["rectX"] as? CGFloat,
+                           let rectY = notification.userInfo?["rectY"] as? CGFloat,
+                           let rectW = notification.userInfo?["rectW"] as? CGFloat,
+                           let rectH = notification.userInfo?["rectH"] as? CGFloat,
+                           let popoverX = notification.userInfo?["popoverX"] as? CGFloat,
+                           let popoverY = notification.userInfo?["popoverY"] as? CGFloat {
+                            zonePopoverRect = CGRect(x: rectX, y: rectY, width: rectW, height: rectH)
+                            clusterPopoverBlockIds = []  // Empty = zone mode
+                            clusterPopoverPosition = CGPoint(x: popoverX, y: popoverY)
+                            withAnimation(ProMotionSprings.snappy) {
+                                showClusterPopover = true
+                            }
+                            drawingState.toolMode = .select
+                        }
+                    }
+                }
+
                 // Listen for cluster creation from context menu
                 NotificationCenter.default.addObserver(
                     forName: CosmoNotification.Canvas.createClusterFromSelection,
@@ -1173,6 +1228,16 @@ struct CanvasView: View {
                 }
                 return .handled
             }
+            // Cmd+V: Paste URL from clipboard to create a block
+            .onKeyPress(characters: .init(charactersIn: "vV")) { press in
+                guard press.modifiers.contains(.command),
+                      !press.modifiers.contains(.shift),
+                      !appState.isCommandKVisible else {
+                    return .ignored
+                }
+                Task { await handleCanvasPaste() }
+                return .handled
+            }
             // Synthesis workspace overlay
             .sheet(isPresented: $showSynthesisWorkspace) {
                 synthesisWorkspaceOverlay
@@ -1281,18 +1346,28 @@ struct CanvasView: View {
             blockIds: clusterPopoverBlockIds,
             position: clusterPopoverPosition,
             onCreateCluster: { name, colorIndex in
-                // Convert block IDs to entity UUIDs for cluster membership
-                let blockUUIDs = spatialEngine.blocks
-                    .filter { clusterPopoverBlockIds.contains($0.id) }
-                    .map { $0.entityUuid }
                 let thinkspaceId = thinkspaceManager.currentThinkspace?.id
-                clusterEngine.createUserCluster(
-                    name: name,
-                    colorIndex: colorIndex,
-                    blockUUIDs: blockUUIDs,
-                    blocks: spatialEngine.blocks,
-                    thinkspaceId: thinkspaceId
-                )
+                if clusterPopoverBlockIds.isEmpty {
+                    // Zone mode — create empty zone cluster
+                    clusterEngine.createZoneCluster(
+                        name: name,
+                        colorIndex: colorIndex,
+                        boundingRect: zonePopoverRect,
+                        thinkspaceId: thinkspaceId
+                    )
+                } else {
+                    // Lasso mode — convert block IDs to entity UUIDs for cluster membership
+                    let blockUUIDs = spatialEngine.blocks
+                        .filter { clusterPopoverBlockIds.contains($0.id) }
+                        .map { $0.entityUuid }
+                    clusterEngine.createUserCluster(
+                        name: name,
+                        colorIndex: colorIndex,
+                        blockUUIDs: blockUUIDs,
+                        blocks: spatialEngine.blocks,
+                        thinkspaceId: thinkspaceId
+                    )
+                }
                 withAnimation(ProMotionSprings.snappy) {
                     showClusterPopover = false
                 }
@@ -1663,6 +1738,26 @@ struct CanvasView: View {
                 zoomLevel: Double(canvasScale),
                 panOffset: canvasOffset,
                 blockIds: blockIds
+            )
+        }
+    }
+
+    // MARK: - PERF: Debounced Frame Tracker
+
+    /// Schedule a frame tracker update with 100ms debounce.
+    /// The frame tracker is only used for right-click hit testing, so slight delay is fine.
+    private func scheduleFrameUpdate(screenCenter: CGPoint) {
+        frameUpdateTask?.cancel()
+        let capturedCenter = screenCenter
+        frameUpdateTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            blockFrameTracker.updateFrames(
+                blocks: spatialEngine.blocks,
+                canvasOffset: canvasOffset,
+                scaledPanOffset: scaledPanOffset,
+                effectiveScale: effectiveScale,
+                screenCenter: capturedCenter
             )
         }
     }
@@ -2864,6 +2959,177 @@ struct CanvasView: View {
         print("🆕 Created \(entityType) floating block for entity ID \(entityId)")
     }
 
+    // MARK: - Cmd+V Paste URL to Canvas
+
+    /// Handles Cmd+V paste: reads clipboard, classifies URL, creates atom + block, triggers background processing
+    private func handleCanvasPaste() async {
+        // Read clipboard
+        guard let clipboardString = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardString.isEmpty else { return }
+
+        // Only handle URLs
+        let lower = clipboardString.lowercased()
+        guard lower.hasPrefix("http://") || lower.hasPrefix("https://") else { return }
+
+        // Classify URL
+        let classifier = SwipeURLClassifier()
+        let classification = classifier.classify(clipboardString)
+
+        // Don't create blocks for raw text (shouldn't happen given URL guard, but be safe)
+        guard classification.isUrl else { return }
+
+        // Create atom based on classification
+        var atom: Atom
+        let isYouTube = classification.sourceType == .youtube || classification.sourceType == .youtubeShort
+
+        if isYouTube {
+            // YouTube → research atom (NOT swipe)
+            atom = Research.new(
+                title: "YouTube Video",
+                url: clipboardString,
+                sourceType: classification.sourceType
+            )
+            atom.processingStatus = "pending"
+            if let videoId = classification.contentId {
+                var richContent = ResearchRichContent()
+                richContent.sourceType = classification.sourceType
+                richContent.videoId = videoId
+                atom.setRichContent(richContent)
+            }
+        } else {
+            // Social platforms → swipe atom
+            switch classification.sourceType {
+            case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
+                let igType: ResearchRichContent.InstagramContentType = {
+                    switch classification.sourceType {
+                    case .instagramReel: return .reel
+                    case .instagramCarousel: return .carousel
+                    default: return .post
+                    }
+                }()
+                atom = Atom.swipeFromInstagram(
+                    instagramId: classification.contentId ?? "",
+                    url: clipboardString,
+                    hook: nil,
+                    type: igType
+                )
+            case .twitter, .xPost:
+                atom = Atom.swipeFromXPost(
+                    tweetId: classification.contentId ?? "",
+                    url: clipboardString,
+                    hook: nil
+                )
+            case .threads:
+                atom = Atom.swipeFromThreads(
+                    threadId: classification.contentId ?? "",
+                    url: clipboardString,
+                    hook: nil
+                )
+            case .tiktok:
+                atom = Atom.newSwipeFile(
+                    url: clipboardString,
+                    hook: nil,
+                    sourceType: .tiktok,
+                    contentSource: .clipboard
+                )
+            default:
+                // Generic URL → research atom (not swipe)
+                atom = Research.new(
+                    title: "Research",
+                    url: clipboardString,
+                    sourceType: classification.sourceType
+                )
+                atom.processingStatus = "pending"
+            }
+        }
+
+        // Save atom to database
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                try atom.insert(db)
+            }
+        } catch {
+            print("⚠️ [CanvasView] Failed to save pasted atom: \(error)")
+            return
+        }
+
+        // Create block at center of current viewport
+        let position = CGPoint(
+            x: canvasSize.width / 2 - canvasOffset.width,
+            y: canvasSize.height / 2 - canvasOffset.height
+        )
+        let block = CanvasBlock.fromAtom(atom, position: position)
+        await spatialEngine.addBlock(block, persist: true)
+        selectedBlockId = block.id
+        rebuildMediaContentCache()
+
+        print("📋 Pasted \(classification.sourceType.rawValue) URL → canvas block (uuid: \(atom.uuid))")
+
+        // Trigger background processing
+        let atomUUID = atom.uuid
+        let sourceType = classification.sourceType
+        Task {
+            await processCanvasPastedAtom(uuid: atomUUID, sourceType: sourceType, contentId: classification.contentId)
+        }
+    }
+
+    /// Background processing for a pasted atom — transcription, analysis, metadata enrichment
+    private func processCanvasPastedAtom(uuid: String, sourceType: ResearchRichContent.SourceType, contentId: String?) async {
+        let isYouTube = sourceType == .youtube || sourceType == .youtubeShort
+
+        if isYouTube, let videoId = contentId {
+            // YouTube research: fetch metadata + captions via YouTubeProcessor
+            do {
+                let ytData = try await YouTubeProcessor.shared.process(videoId: videoId)
+
+                // Update atom with fetched data
+                if var atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    atom.title = ytData.title
+                    atom.body = ytData.transcript.map(\.text).joined(separator: " ")
+                    atom.thumbnailUrl = ytData.thumbnailURL?.absoluteString
+                    atom.processingStatus = "complete"
+
+                    // Update rich content with transcript
+                    var richContent = atom.richContent ?? ResearchRichContent()
+                    richContent.transcript = atom.body
+                    richContent.transcriptStatus = ytData.transcriptStatus.rawValue
+                    richContent.title = ytData.title
+                    richContent.author = ytData.channelName
+                    atom.setRichContent(richContent)
+
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try atom.update(db)
+                    }
+                    print("✅ [CanvasView] YouTube processing complete for \(uuid)")
+                }
+            } catch {
+                print("⚠️ [CanvasView] YouTube processing failed for \(uuid): \(error)")
+                // Mark as complete even on failure so shimmer stops
+                if var atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    atom.processingStatus = "complete"
+                    try? await CosmoDatabase.shared.asyncWrite { db in try atom.update(db) }
+                }
+            }
+        } else {
+            // Swipe processing: use existing pipeline
+            SwipeProcessingService.shared.processSwipeInBackground(uuid: uuid)
+            // SwipeProcessingService runs asynchronously — wait for it to finish
+            // Poll briefly to detect completion for notification
+            for _ in 0..<120 {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                if !SwipeProcessingService.shared.isProcessing(uuid: uuid) { break }
+            }
+        }
+
+        // Post completion notification so block views can refresh
+        NotificationCenter.default.post(
+            name: .canvasAtomProcessed,
+            object: nil,
+            userInfo: ["atomUUID": uuid]
+        )
+    }
+
     // MARK: - Ambient Pull-to-Canvas
 
     private func handlePullAmbientToCanvas(notification: Notification) {
@@ -3269,6 +3535,7 @@ extension Notification.Name {
     static let createNoteBlock = Notification.Name("createNoteBlock")
     static let collapseExpandedBlock = Notification.Name("collapseExpandedBlock")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
+    static let canvasAtomProcessed = Notification.Name("canvasAtomProcessed")
 }
 
 // MARK: - Cosmo Context Provider

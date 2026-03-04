@@ -11,3 +11,9 @@ enum CanvasToolMode: String, CaseIterable {
     case erase
     case lasso
 }
+
+/// Sub-modes for the lasso tool slot — lasso selects blocks, zone draws empty rectangular zones
+enum LassoSubMode: String, CaseIterable {
+    case lasso
+    case zone
+}

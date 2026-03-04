@@ -26,7 +26,8 @@ struct SwipeGalleryTab: View {
 
                 Divider().background(DS.borderActive)
 
-                if filteredItems.isEmpty {
+                let items = viewModel.cachedFilteredSwipes
+                if items.isEmpty {
                     emptyState
                 } else {
                     GeometryReader { geometry in
@@ -34,19 +35,13 @@ struct SwipeGalleryTab: View {
                         let totalSpacing = CGFloat(columnCount - 1) * 16 + 48
                         let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
 
-                        ScrollView {
-                            SwipeMasonryLayout(columnCount: columnCount, spacing: 16) {
-                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                                    SwipeGalleryCard(item: item, cardWidth: cardWidth, viewModel: viewModel)
-                                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                                        .animation(
-                                            ProMotionSprings.cardEntrance.delay(Double(index % 12) * 0.03),
-                                            value: filteredItems.count
-                                        )
-                                }
-                            }
-                            .padding(24)
-                            .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
+                        let isSearching = !searchQuery.isEmpty
+                        let effectiveMode: SwipeViewMode = isSearching ? .flat : viewModel.swipeViewMode
+
+                        if effectiveMode == .clustered {
+                            clusteredScrollView(columnCount: columnCount, cardWidth: cardWidth)
+                        } else {
+                            flatLazyMasonryView(items: items, columnCount: columnCount, cardWidth: cardWidth)
                         }
                     }
                 }
@@ -64,13 +59,17 @@ struct SwipeGalleryTab: View {
             }
         }
         .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
+        .onChange(of: searchQuery) { newValue in
+            viewModel.swipeSearchQuery = newValue
+        }
         .onAppear {
+            viewModel.swipeSearchQuery = searchQuery
             if viewModel.swipeGalleryItems.isEmpty {
                 Task { await viewModel.loadSwipeGallery() }
             }
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
             // Register context provider for global Cosmo window
-            let provider = SwipeGalleryContextProvider(viewModel: viewModel, filteredCountRef: { [self] in self.filteredItems.count }, searchQuery: searchQuery)
+            let provider = SwipeGalleryContextProvider(viewModel: viewModel, filteredCountRef: { [self] in viewModel.cachedFilteredSwipes.count }, searchQuery: searchQuery)
             CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("swipeDeleted"))) { notification in
@@ -99,60 +98,241 @@ struct SwipeGalleryTab: View {
 
     // MARK: - Filtered Items
 
-    private var filteredItems: [SwipeGalleryItem] {
-        var items = viewModel.swipeGalleryItems
+    // MARK: - Flat Lazy Masonry View (Performance Fix)
 
-        if !searchQuery.isEmpty {
-            let q = searchQuery.lowercased()
-            items = items.filter { item in
-                item.title.lowercased().contains(q) ||
-                (item.hookText?.lowercased().contains(q) ?? false) ||
-                (item.author?.lowercased().contains(q) ?? false) ||
-                (item.niche?.lowercased().contains(q) ?? false) ||
-                (item.creatorName?.lowercased().contains(q) ?? false)
+    @ViewBuilder
+    private func flatLazyMasonryView(items: [SwipeGalleryItem], columnCount: Int, cardWidth: CGFloat) -> some View {
+        ScrollView {
+            HStack(alignment: .top, spacing: 16) {
+                ForEach(0..<columnCount, id: \.self) { columnIndex in
+                    LazyVStack(spacing: 16) {
+                        let colItems = Self.columnItems(for: columnIndex, columnCount: columnCount, items: items, cardWidth: cardWidth)
+                        ForEach(Array(colItems.enumerated()), id: \.element.id) { itemIndex, item in
+                            SwipeGalleryCard(item: item, cardWidth: cardWidth, viewModel: viewModel)
+                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        }
+                    }
+                    .frame(width: cardWidth)
+                }
+            }
+            .padding(24)
+            .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
+        }
+    }
+
+    /// Distribute items across columns by estimated height (masonry pattern)
+    private static func columnItems(for column: Int, columnCount: Int, items: [SwipeGalleryItem], cardWidth: CGFloat) -> [SwipeGalleryItem] {
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+        var columns: [[SwipeGalleryItem]] = Array(repeating: [], count: columnCount)
+
+        for item in items {
+            let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            columns[shortestColumn].append(item)
+            columnHeights[shortestColumn] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + 16
+        }
+
+        return column < columns.count ? columns[column] : []
+    }
+
+    // MARK: - Clustered Scroll View
+
+    @ViewBuilder
+    private func clusteredScrollView(columnCount: Int, cardWidth: CGFloat) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                ForEach(viewModel.cachedClusteredSections) { section in
+                    Section {
+                        if viewModel.expandedFormatGroups.contains(section.id) {
+                            ForEach(section.clusters) { cluster in
+                                clusterRow(cluster, columnCount: columnCount, cardWidth: cardWidth)
+                            }
+                        }
+                    } header: {
+                        formatSectionHeader(section)
+                    }
+                }
+            }
+            .padding(24)
+            .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
+        }
+    }
+
+    // MARK: - Format Section Header (Layer 1)
+
+    @ViewBuilder
+    private func formatSectionHeader(_ section: FormatSection) -> some View {
+        let isExpanded = viewModel.expandedFormatGroups.contains(section.id)
+
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                if isExpanded {
+                    viewModel.expandedFormatGroups.remove(section.id)
+                } else {
+                    viewModel.expandedFormatGroups.insert(section.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: section.formatGroup.icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(section.formatGroup.color)
+
+                Text(section.formatGroup.displayName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(DS.text)
+
+                Text("\(section.totalItemCount)")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundColor(DS.textMuted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(DS.surfaceElevated))
+
+                Spacer()
+
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+        }
+        .buttonStyle(.plain)
+        .background(DS.bg)
+    }
+
+    // MARK: - Cluster Row (Layer 2)
+
+    @ViewBuilder
+    private func clusterRow(_ cluster: SwipeCluster, columnCount: Int, cardWidth: CGFloat) -> some View {
+        let isExpanded = viewModel.expandedClusters.contains(cluster.id)
+
+        VStack(alignment: .leading, spacing: 8) {
+            // Cluster header
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    if isExpanded {
+                        viewModel.expandedClusters.remove(cluster.id)
+                    } else {
+                        viewModel.expandedClusters.insert(cluster.id)
+                    }
+                }
+            } label: {
+                clusterHeaderLabel(cluster, isExpanded: isExpanded)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                // Expanded: show all cards in lazy masonry
+                flatLazyMasonryView(items: cluster.items, columnCount: columnCount, cardWidth: cardWidth)
+                    .frame(height: estimateClusterHeight(cluster, columnCount: columnCount, cardWidth: cardWidth))
+            } else {
+                // Collapsed: thumbnail preview strip
+                clusterPreviewStrip(cluster)
             }
         }
+        .padding(.bottom, 12)
+    }
 
-        if let platformFilter = viewModel.swipePlatformFilter {
-            items = items.filter { $0.platformName == platformFilter }
+    @ViewBuilder
+    private func clusterHeaderLabel(_ cluster: SwipeCluster, isExpanded: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: cluster.narrativeIcon)
+                .font(.system(size: 12))
+                .foregroundColor(cluster.narrativeColor)
+
+            Text(cluster.displayName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.text)
+
+            Text("\(cluster.itemCount)")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundColor(DS.textMuted)
+
+            Spacer()
+
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.textMuted)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
 
-        if let hookFilter = viewModel.swipeHookTypeFilter {
-            items = items.filter { $0.hookType == hookFilter }
-        }
+    // MARK: - Cluster Preview Strip (Collapsed)
 
-        if !viewModel.swipeNarrativeFilters.isEmpty {
-            items = items.filter { item in
-                guard let narrative = item.primaryNarrative else { return false }
-                return viewModel.swipeNarrativeFilters.contains(narrative)
+    @ViewBuilder
+    private func clusterPreviewStrip(_ cluster: SwipeCluster) -> some View {
+        let previewItems = Array(cluster.items.prefix(4))
+        let thumbSize: CGFloat = 64
+
+        HStack(spacing: 8) {
+            ForEach(previewItems, id: \.id) { item in
+                swipeThumbnailMini(item: item, size: thumbSize)
+            }
+
+            if cluster.items.count > 4 {
+                Text("+\(cluster.items.count - 4)")
+                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                    .foregroundColor(DS.textSecondary)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .background(DS.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(DS.border, lineWidth: 1)
+                    )
             }
         }
+        .padding(.horizontal, 8)
+    }
 
-        if !viewModel.swipeContentFormatFilters.isEmpty {
-            items = items.filter { item in
-                guard let format = item.swipeContentFormat else { return false }
-                return viewModel.swipeContentFormatFilters.contains(format)
+    @ViewBuilder
+    private func swipeThumbnailMini(item: SwipeGalleryItem, size: CGFloat) -> some View {
+        Group {
+            if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    case .failure, .empty:
+                        miniPlaceholder(item: item)
+                    @unknown default:
+                        miniPlaceholder(item: item)
+                    }
+                }
+            } else {
+                miniPlaceholder(item: item)
             }
         }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(DS.border, lineWidth: 1)
+        )
+    }
 
-        if let nicheFilter = viewModel.swipeNicheFilter {
-            items = items.filter { $0.niche == nicheFilter }
+    @ViewBuilder
+    private func miniPlaceholder(item: SwipeGalleryItem) -> some View {
+        ZStack {
+            DS.surfaceElevated
+            Text(String(item.title.prefix(2)).uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
         }
+    }
 
-        if let creatorFilter = viewModel.swipeCreatorFilter {
-            items = items.filter { $0.creatorName == creatorFilter }
+    /// Estimate total height for an expanded cluster to size the embedded scroll view
+    private func estimateClusterHeight(_ cluster: SwipeCluster, columnCount: Int, cardWidth: CGFloat) -> CGFloat {
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+        for item in cluster.items {
+            let shortest = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            columnHeights[shortest] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + 16
         }
-
-        switch viewModel.swipeSortMode {
-        case .score:
-            items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
-        case .recent:
-            items.sort { $0.createdAt > $1.createdAt }
-        case .oldest:
-            items.sort { $0.createdAt < $1.createdAt }
-        }
-
-        return items
+        return (columnHeights.max() ?? 200) + 48
     }
 
     // MARK: - Filter Bar (Library style)
@@ -177,6 +357,8 @@ struct SwipeGalleryTab: View {
 
                     filterSeparator
 
+                    viewModeToggle
+
                     sortMenu
 
                     if hasActiveFilters {
@@ -195,6 +377,22 @@ struct SwipeGalleryTab: View {
         Rectangle()
             .fill(DS.borderActive)
             .frame(width: 1, height: 20)
+    }
+
+    private var viewModeToggle: some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.swipeViewMode = viewModel.swipeViewMode == .clustered ? .flat : .clustered
+            }
+        } label: {
+            Image(systemName: viewModel.swipeViewMode == .clustered ? "folder.fill" : "square.grid.2x2.fill")
+                .font(.system(size: 12))
+                .foregroundColor(DS.text)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 6).fill(DS.surfaceElevated))
+        }
+        .buttonStyle(.plain)
+        .help(viewModel.swipeViewMode == .clustered ? "Switch to flat grid" : "Switch to clustered view")
     }
 
     // MARK: - Stats Label
@@ -742,6 +940,28 @@ private struct SwipeGalleryCard: View {
     /// Total card height — fixed to prevent masonry layout miscalculation from async image loading
     private var totalCardHeight: CGFloat {
         previewHeight + infoSectionHeight
+    }
+
+    /// Static height estimation for lazy column distribution (no instance needed)
+    static func estimatedHeight(for item: SwipeGalleryItem, cardWidth: CGFloat) -> CGFloat {
+        let infoHeight: CGFloat = 90
+        let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
+        let previewHeight: CGFloat
+        if hasThumbnail {
+            switch item.platform {
+            case "youtube":
+                previewHeight = cardWidth * 9 / 16
+            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
+                previewHeight = min(cardWidth * 16 / 9, 420)
+            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
+                previewHeight = cardWidth * 5 / 4
+            default:
+                previewHeight = cardWidth * 9 / 16
+            }
+        } else {
+            previewHeight = 80
+        }
+        return previewHeight + infoHeight
     }
 
     /// Platform-specific accent color for the preview gradient

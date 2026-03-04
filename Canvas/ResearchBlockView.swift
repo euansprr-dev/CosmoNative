@@ -11,101 +11,24 @@ struct ResearchBlockView: View {
     @State private var isExpanded = false
     @State private var atom: Atom?
     @State private var isLoading = true
+    @State private var isProcessing = false
     @State private var isPlayerActive = false
     @State private var currentTimestamp: TimeInterval = 0
     @State private var isDropdownOpen = false
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
+    // PERF: Cached parsed metadata — computed once in loadAtom(), not on every render
+    @State private var platform: String?
+    @State private var author: String?
+    @State private var duration: String?
+    @State private var resolvedURL: String?
+    @State private var contentType: String = "Research"
+    @State private var isYouTubeContent: Bool = false
+    @State private var videoId: String?
+    @State private var resolvedThumbnailURL: String?
+
     // Green accent for research
     private let accentColor = DS.entityResearch
-
-    // MARK: - Parsed Metadata
-
-    private var platform: String? {
-        guard let structured = atom?.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return block.metadata["platform"]
-        }
-        return json["platform"] as? String ?? json["source_type"] as? String
-    }
-
-    private var author: String? {
-        guard let structured = atom?.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return block.metadata["author"]
-        }
-        return json["author"] as? String ?? json["channel"] as? String
-    }
-
-    private var duration: String? {
-        guard let structured = atom?.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return block.metadata["duration"]
-        }
-        return json["duration"] as? String ?? json["duration_string"] as? String
-    }
-
-    private var thumbnailURL: String? {
-        guard let structured = atom?.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return block.metadata["thumbnail"]
-        }
-        return json["thumbnail_url"] as? String ?? json["thumbnail"] as? String
-    }
-
-    /// Resolve the URL from atom data first, then fall back to block metadata
-    private var resolvedURL: String? {
-        // 1. Check loaded atom's url property
-        if let url = atom?.url, !url.isEmpty { return url }
-        // 2. Check atom's structured JSON
-        if let structured = atom?.structured,
-           let data = structured.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let url = json["url"] as? String, !url.isEmpty { return url }
-            if let url = json["source_url"] as? String, !url.isEmpty { return url }
-        }
-        // 3. Fall back to block metadata
-        if let url = block.metadata["url"], !url.isEmpty { return url }
-        return nil
-    }
-
-    private var contentType: String {
-        let url = resolvedURL?.lowercased() ?? ""
-        if url.contains("youtube") || url.contains("youtu.be") || url.contains("vimeo") || url.contains("loom") {
-            return "Video"
-        } else if url.hasSuffix(".pdf") {
-            return "PDF"
-        } else if url.contains("twitter") || url.contains("x.com") || url.contains("linkedin") {
-            return "Social"
-        } else if !url.isEmpty {
-            return "Article"
-        }
-        return "Research"
-    }
-
-    private var isYouTubeContent: Bool {
-        let url = resolvedURL?.lowercased() ?? ""
-        return url.contains("youtube") || url.contains("youtu.be")
-    }
-
-    private var videoId: String? {
-        extractYouTubeVideoId(from: resolvedURL)
-    }
-
-    /// Build a YouTube thumbnail URL from the video ID if no explicit thumbnail is available
-    private var resolvedThumbnailURL: String? {
-        // Check atom's thumbnailUrl first
-        if let thumb = atom?.thumbnailUrl, !thumb.isEmpty { return thumb }
-        if let thumb = thumbnailURL, !thumb.isEmpty { return thumb }
-        if let vid = videoId {
-            return "https://img.youtube.com/vi/\(vid)/hqdefault.jpg"
-        }
-        return nil
-    }
 
     // MARK: - Body
 
@@ -121,6 +44,11 @@ struct ResearchBlockView: View {
             researchContent
         }
         .onAppear {
+            loadAtom()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .canvasAtomProcessed)) { notification in
+            guard let uuid = notification.userInfo?["atomUUID"] as? String,
+                  uuid == atom?.uuid else { return }
             loadAtom()
         }
     }
@@ -362,6 +290,16 @@ struct ResearchBlockView: View {
                         .foregroundColor(DS.textSecondary)
 
                     Spacer()
+
+                    if isProcessing && !isDropdownOpen {
+                        HStack(spacing: 3) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Processing...")
+                                .font(.system(size: 9))
+                                .foregroundColor(DS.textMuted)
+                        }
+                    }
                 }
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
@@ -370,12 +308,28 @@ struct ResearchBlockView: View {
 
             // Dropdown content
             if isDropdownOpen {
-                ResearchBlockDropdownView(
-                    atomUUID: block.entityUuid,
-                    atomBody: atom?.body
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .padding(.top, 4)
+                if isProcessing && (atom?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(spacing: 6) {
+                        CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
+                            .frame(height: 16)
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("AI is processing...")
+                                .font(.system(size: 9))
+                                .foregroundColor(DS.textMuted)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    ResearchBlockDropdownView(
+                        atomUUID: block.entityUuid,
+                        atomBody: atom?.body
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .padding(.top, 4)
+                }
             }
         }
     }
@@ -455,16 +409,102 @@ struct ResearchBlockView: View {
     private func loadAtom() {
         Task {
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                // PERF: Parse structured JSON once, cache all derived metadata
+                let parsed = Self.parseMetadata(atom: loaded, block: block)
                 await MainActor.run {
                     atom = loaded
+                    platform = parsed.platform
+                    author = parsed.author
+                    duration = parsed.duration
+                    resolvedURL = parsed.resolvedURL
+                    contentType = parsed.contentType
+                    isYouTubeContent = parsed.isYouTube
+                    videoId = parsed.videoId
+                    resolvedThumbnailURL = parsed.thumbnailURL
+                    let status = loaded.processingStatus
+                    isProcessing = status != nil && status != "complete"
                     isLoading = false
                 }
             } else {
+                // Fall back to block metadata when atom not found
+                let url = block.metadata["url"]
+                let urlLower = (url ?? "").lowercased()
+                let vid = extractYouTubeVideoId(from: url)
                 await MainActor.run {
+                    platform = block.metadata["platform"]
+                    author = block.metadata["author"]
+                    duration = block.metadata["duration"]
+                    resolvedURL = url
+                    isYouTubeContent = urlLower.contains("youtube") || urlLower.contains("youtu.be")
+                    videoId = vid
+                    contentType = Self.computeContentType(url: urlLower)
+                    resolvedThumbnailURL = block.metadata["thumbnail"] ?? vid.map { "https://img.youtube.com/vi/\($0)/hqdefault.jpg" }
                     isLoading = false
                 }
             }
         }
+    }
+
+    /// Parse all metadata from atom's structured JSON in one pass (called once on load)
+    private static func parseMetadata(atom: Atom, block: CanvasBlock) -> (platform: String?, author: String?, duration: String?, resolvedURL: String?, contentType: String, isYouTube: Bool, videoId: String?, thumbnailURL: String?) {
+        var json: [String: Any]?
+        if let structured = atom.structured,
+           let data = structured.data(using: .utf8) {
+            json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+
+        let platform = json?["platform"] as? String ?? json?["source_type"] as? String ?? block.metadata["platform"]
+        let author = json?["author"] as? String ?? json?["channel"] as? String ?? block.metadata["author"]
+        let duration = json?["duration"] as? String ?? json?["duration_string"] as? String ?? block.metadata["duration"]
+
+        // Resolve URL
+        var resolvedURL: String?
+        if let url = atom.url, !url.isEmpty { resolvedURL = url }
+        else if let url = json?["url"] as? String, !url.isEmpty { resolvedURL = url }
+        else if let url = json?["source_url"] as? String, !url.isEmpty { resolvedURL = url }
+        else if let url = block.metadata["url"], !url.isEmpty { resolvedURL = url }
+
+        let urlLower = (resolvedURL ?? "").lowercased()
+        let isYouTube = urlLower.contains("youtube") || urlLower.contains("youtu.be")
+        let contentType = computeContentType(url: urlLower)
+
+        // Video ID
+        var videoId: String?
+        if let urlStr = resolvedURL {
+            if let range = urlStr.range(of: "v=") {
+                let start = range.upperBound
+                let end = urlStr[start...].firstIndex(of: "&") ?? urlStr.endIndex
+                videoId = String(urlStr[start..<end])
+            } else if urlStr.contains("youtu.be/") {
+                let parts = urlStr.components(separatedBy: "youtu.be/")
+                if parts.count > 1 {
+                    let idPart = parts[1]
+                    let end = idPart.firstIndex(of: "?") ?? idPart.firstIndex(of: "&") ?? idPart.endIndex
+                    videoId = String(idPart[..<end])
+                }
+            }
+        }
+
+        // Thumbnail URL
+        var thumbnailURL: String?
+        if let thumb = atom.thumbnailUrl, !thumb.isEmpty { thumbnailURL = thumb }
+        else if let thumb = json?["thumbnail_url"] as? String ?? json?["thumbnail"] as? String, !thumb.isEmpty { thumbnailURL = thumb }
+        else if let vid = videoId { thumbnailURL = "https://img.youtube.com/vi/\(vid)/hqdefault.jpg" }
+
+        return (platform, author, duration, resolvedURL, contentType, isYouTube, videoId, thumbnailURL)
+    }
+
+    private static func computeContentType(url: String) -> String {
+        if url.contains("youtube") || url.contains("youtu.be") || url.contains("vimeo") || url.contains("loom") {
+            return "Video"
+        } else if url.hasSuffix(".pdf") {
+            return "PDF"
+        } else if url.contains("twitter") || url.contains("x.com") || url.contains("linkedin") {
+            return "Social"
+        } else if !url.isEmpty {
+            return "Article"
+        }
+        return "Research"
     }
 
     // MARK: - Focus Mode

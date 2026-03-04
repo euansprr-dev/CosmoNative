@@ -54,6 +54,12 @@ struct ThinkspaceSidebar: View {
     private let sidebarWidth: CGFloat = 280
     private let repository = AtomRepository.shared
 
+    // Project color palette (matches ProjectCreationModal)
+    private let projectColorPalette = [
+        "#A8CCE8", "#CAB8E8", "#F4AFA0", "#8FC7A2",
+        "#F5E6C8", "#E8B8A8", "#A8D8E8", "#D8A8E8",
+    ]
+
     private func updateManagerVisibility(_ visible: Bool) {
         manager.isSidebarVisible = visible
     }
@@ -322,6 +328,24 @@ struct ThinkspaceSidebar: View {
                                 renameProjectText = project.title ?? ""
                             } label: {
                                 Label("Rename Project", systemImage: "pencil")
+                            }
+
+                            Menu {
+                                ForEach(projectColorPalette, id: \.self) { colorHex in
+                                    Button {
+                                        Task { await updateProjectColor(project, to: colorHex) }
+                                    } label: {
+                                        Label {
+                                            Text(colorLabel(for: colorHex))
+                                        } icon: {
+                                            Image(systemName: currentColorHex(for: project) == colorHex
+                                                  ? "checkmark.circle.fill"
+                                                  : "circle.fill")
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Change Color", systemImage: "paintpalette")
                             }
 
                             Divider()
@@ -669,7 +693,8 @@ struct ThinkspaceSidebar: View {
         }
         Task {
             do {
-                let project = try await repository.createProject(title: trimmed)
+                let nextColor = nextAvailableColor()
+                let project = try await repository.createProject(title: trimmed, color: nextColor)
                 await manager.loadThinkspaces()
                 await loadProjects()
                 withAnimation(ProMotionSprings.snappy) {
@@ -854,6 +879,45 @@ struct ThinkspaceSidebar: View {
     private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
         guard let projectUuid = thinkspace.projectUuid else { return nil }
         return projects.first { $0.uuid == projectUuid }
+    }
+
+    private func nextAvailableColor() -> String {
+        let usedColors = Set(projects.compactMap {
+            $0.metadataValue(as: ProjectMetadata.self)?.color
+        })
+        return projectColorPalette.first { !usedColors.contains($0) }
+            ?? projectColorPalette[projects.count % projectColorPalette.count]
+    }
+
+    private func updateProjectColor(_ project: Atom, to colorHex: String) async {
+        do {
+            var metadata = project.metadataValue(as: ProjectMetadata.self) ?? ProjectMetadata()
+            metadata.color = colorHex
+            var updated = project.withMetadata(metadata)
+            updated.updatedAt = ISO8601DateFormatter().string(from: Date())
+            try await repository.update(updated)
+            await loadProjects()
+        } catch {
+            print("Failed to update project color: \(error)")
+        }
+    }
+
+    private func currentColorHex(for project: Atom) -> String? {
+        project.metadataValue(as: ProjectMetadata.self)?.color
+    }
+
+    private func colorLabel(for hex: String) -> String {
+        switch hex {
+        case "#A8CCE8": return "Sky Blue"
+        case "#CAB8E8": return "Lavender"
+        case "#F4AFA0": return "Coral"
+        case "#8FC7A2": return "Emerald"
+        case "#F5E6C8": return "Cream"
+        case "#E8B8A8": return "Peach"
+        case "#A8D8E8": return "Cyan"
+        case "#D8A8E8": return "Purple"
+        default: return hex
+        }
     }
 }
 

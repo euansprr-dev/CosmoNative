@@ -31,6 +31,13 @@ struct NewProfileFlowView: View {
     @State private var writeText = ""
     @State private var writeTitle = ""
 
+    // URL transcription
+    @StateObject private var transcriptionManager = ProfileTranscriptionManager()
+    @State private var showURLModal = false
+    @State private var urlInput = ""
+    @State private var reviewingDocumentId: UUID?
+    @State private var reviewEditText: String = ""
+
     // Step 3: Generation
     @State private var isGenerating = false
     @State private var generationProgress = ""
@@ -74,6 +81,14 @@ struct NewProfileFlowView: View {
         }
         .sheet(isPresented: $showWriteModal) {
             writeInAppModal
+        }
+        .sheet(isPresented: $showURLModal) {
+            urlInputModal
+        }
+        .overlay {
+            if reviewingDocumentId != nil {
+                urlTranscriptReviewOverlay
+            }
         }
     }
 
@@ -372,48 +387,127 @@ struct NewProfileFlowView: View {
 
     @ViewBuilder
     private func documentCard(_ doc: ProfileDocument) -> some View {
+        let txState = transcriptionManager.states[doc.id]
+        let isTranscribing = txState?.isTranscribing == true
+
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            documentCardHeader(doc, isTranscribing: isTranscribing)
+            documentCardBody(doc, txState: txState)
+        }
+        .padding(10)
+        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(isTranscribing ? DS.accent.opacity(0.3) : DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func documentCardHeader(_ doc: ProfileDocument, isTranscribing: Bool) -> some View {
+        HStack {
+            if doc.sourceURL != nil {
+                Image(systemName: "link")
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.accent.opacity(0.7))
+            } else {
                 Image(systemName: doc.filename != nil ? "doc.text.fill" : "text.alignleft")
                     .font(DS.timestamp)
                     .foregroundColor(DS.accent.opacity(0.7))
+            }
 
-                Text(doc.title.isEmpty ? (doc.filename ?? "Untitled") : doc.title)
-                    .font(DS.buttonText)
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
+            Text(doc.title.isEmpty ? (doc.filename ?? "Untitled") : doc.title)
+                .font(DS.buttonText)
+                .foregroundColor(DS.text)
+                .lineLimit(1)
 
-                Spacer()
+            Spacer()
 
+            if !isTranscribing && !doc.content.isEmpty {
                 Text("\(doc.content.count) chars")
                     .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
-
-                Button(action: { removeDocument(doc.id) }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(DS.cardMeta)
-                        .foregroundColor(DS.textMuted)
-                }
-                .buttonStyle(.plain)
             }
 
-            if !doc.content.isEmpty {
+            Button(action: { removeDocument(doc.id); transcriptionManager.states.removeValue(forKey: doc.id) }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(DS.cardMeta)
+                    .foregroundColor(DS.textMuted)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func documentCardBody(_ doc: ProfileDocument, txState: ProfileTranscriptionManager.TranscriptionState?) -> some View {
+        if txState?.isTranscribing == true {
+            // Shimmer while transcribing
+            VStack(alignment: .leading, spacing: 4) {
+                CosmicShimmerText(lines: 3, entityColor: DS.accent, lineHeight: 10, lineSpacing: 4)
+                    .frame(height: 42)
+                Text(txState?.progressText ?? "Transcribing...")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.accent.opacity(0.6))
+            }
+        } else if let error = txState?.error {
+            // Error state
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.orange)
+                Text(error)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.orange.opacity(0.9))
+                    .lineLimit(2)
+            }
+        } else if !doc.content.isEmpty {
+            // Transcript preview — clickable for URL-transcribed docs
+            if doc.sourceURL != nil {
+                documentCardPreviewButton(doc)
+            } else {
                 Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
                     .font(DS.timestamp)
                     .foregroundColor(DS.textMuted)
                     .lineLimit(2)
             }
         }
-        .padding(10)
-        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(DS.border, lineWidth: 1)
-        )
+    }
+
+    @ViewBuilder
+    private func documentCardPreviewButton(_ doc: ProfileDocument) -> some View {
+        Button(action: {
+            reviewingDocumentId = doc.id
+            reviewEditText = doc.content
+        }) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let sourceURL = doc.sourceURL {
+                    Text(sourceURL)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(DS.textMuted.opacity(0.6))
+                        .lineLimit(1)
+                }
+                Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var documentActionButtons: some View {
         HStack(spacing: 10) {
+            // URL button — only for content categories (reels/threads)
+            if selectedDocCategory.hasMetrics {
+                Button(action: {
+                    urlInput = ""
+                    showURLModal = true
+                }) {
+                    actionButtonLabel(icon: "link", text: "Add URL")
+                }
+                .buttonStyle(.plain)
+            }
+
             Button(action: { openDocumentPicker() }) {
                 actionButtonLabel(icon: "doc.badge.plus", text: "Upload .docx")
             }
@@ -791,7 +885,8 @@ struct NewProfileFlowView: View {
                     let doc = ProfileDocument(
                         category: selectedDocCategory,
                         title: pasteTitle.isEmpty ? "Pasted content" : pasteTitle,
-                        content: pasteText
+                        content: pasteText,
+                        platform: selectedDocCategory.platformTag
                     )
                     documents.append(doc)
                     showPasteModal = false
@@ -879,7 +974,8 @@ struct NewProfileFlowView: View {
                     let doc = ProfileDocument(
                         category: selectedDocCategory,
                         title: writeTitle.isEmpty ? "Written document" : writeTitle,
-                        content: writeText
+                        content: writeText,
+                        platform: selectedDocCategory.platformTag
                     )
                     documents.append(doc)
                     showWriteModal = false
@@ -911,6 +1007,227 @@ struct NewProfileFlowView: View {
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(writeText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.border : DS.accent)
             )
+    }
+
+    // MARK: - URL Input Modal
+
+    private var urlInputModal: some View {
+        VStack(spacing: 0) {
+            urlInputModalHeader
+            Divider().background(DS.border)
+            urlInputModalBody
+            Divider().background(DS.border)
+            urlInputModalFooter
+        }
+        .frame(width: 480, height: 220)
+        .background(DS.surface)
+        .cornerRadius(DS.radiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.border, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var urlInputModalHeader: some View {
+        HStack {
+            Text("Add Instagram URL")
+                .font(DS.navTitle)
+                .foregroundColor(DS.text)
+            Spacer()
+            Button("Cancel") { showURLModal = false }
+                .font(DS.cardMeta)
+                .foregroundColor(DS.textSecondary)
+                .buttonStyle(.plain)
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder
+    private var urlInputModalBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Paste the Instagram URL of a \(selectedDocCategory.displayName.lowercased()) post. It will be auto-transcribed using the same engine as the swipe file.")
+                .font(DS.timestamp)
+                .foregroundColor(DS.textMuted)
+
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.accent.opacity(0.6))
+
+                TextField("https://www.instagram.com/reel/...", text: $urlInput)
+                    .textFieldStyle(.plain)
+                    .font(DS.sectionDesc)
+                    .foregroundColor(DS.text)
+                    .onSubmit { submitURLFromModal() }
+            }
+            .padding(10)
+            .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder
+    private var urlInputModalFooter: some View {
+        HStack {
+            Spacer()
+            Button(action: { submitURLFromModal() }) {
+                urlAddButtonLabel
+            }
+            .buttonStyle(.plain)
+            .disabled(!isValidInstagramURL(urlInput))
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder
+    private var urlAddButtonLabel: some View {
+        let isValid = isValidInstagramURL(urlInput)
+        Text("Transcribe")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(isValid ? DS.accent : DS.border)
+            )
+    }
+
+    private func isValidInstagramURL(_ string: String) -> Bool {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let host = url.host?.lowercased() else { return false }
+        return host.contains("instagram.com")
+    }
+
+    private func submitURLFromModal() {
+        let urlString = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: urlString), isValidInstagramURL(urlString) else { return }
+
+        let docId = UUID()
+        let placeholder = ProfileDocument(
+            id: docId,
+            category: selectedDocCategory,
+            title: "Transcribing...",
+            content: "",
+            platform: selectedDocCategory.platformTag,
+            sourceURL: urlString
+        )
+        documents.append(placeholder)
+        showURLModal = false
+        urlInput = ""
+
+        Task {
+            if let completed = await transcriptionManager.transcribe(
+                url: url, documentId: docId, category: selectedDocCategory
+            ) {
+                if let index = documents.firstIndex(where: { $0.id == docId }) {
+                    documents[index] = completed
+                }
+            }
+        }
+    }
+
+    // MARK: - Transcript Review Overlay
+
+    @ViewBuilder
+    private var urlTranscriptReviewOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture { saveAndCloseURLReview() }
+
+            VStack(spacing: 0) {
+                urlReviewHeader
+                Divider().background(DS.border)
+                urlReviewEditor
+                Divider().background(DS.border)
+                urlReviewFooter
+            }
+            .frame(width: 500, height: 420)
+            .background(DS.surface)
+            .cornerRadius(DS.radiusMedium)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var urlReviewHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transcript Review")
+                    .font(DS.navTitle)
+                    .foregroundColor(DS.text)
+                if let reviewId = reviewingDocumentId,
+                   let doc = documents.first(where: { $0.id == reviewId }),
+                   let sourceURL = doc.sourceURL {
+                    Text(sourceURL)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(DS.textMuted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: { saveAndCloseURLReview() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(DS.borderSubtle, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder
+    private var urlReviewEditor: some View {
+        TextEditor(text: $reviewEditText)
+            .font(DS.cardMeta)
+            .foregroundColor(DS.text)
+            .scrollContentBackground(.hidden)
+            .padding(12)
+    }
+
+    @ViewBuilder
+    private var urlReviewFooter: some View {
+        HStack {
+            Text("\(reviewEditText.count) characters")
+                .font(.system(size: 10))
+                .foregroundColor(DS.textMuted)
+            Spacer()
+            Button(action: { saveAndCloseURLReview() }) {
+                Text("Save Changes")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(DS.accent, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+    }
+
+    private func saveAndCloseURLReview() {
+        if let reviewId = reviewingDocumentId,
+           let index = documents.firstIndex(where: { $0.id == reviewId }) {
+            documents[index].content = reviewEditText
+            // Update title if it was the placeholder
+            if documents[index].title == "Transcribing..." {
+                documents[index].title = String(reviewEditText.prefix(60))
+            }
+        }
+        reviewingDocumentId = nil
+        reviewEditText = ""
     }
 
     // MARK: - Shared Components
@@ -995,7 +1312,8 @@ struct NewProfileFlowView: View {
                     category: selectedDocCategory,
                     title: url.deletingPathExtension().lastPathComponent,
                     content: content,
-                    filename: url.lastPathComponent
+                    filename: url.lastPathComponent,
+                    platform: selectedDocCategory.platformTag
                 )
                 documents.append(doc)
             }
@@ -1170,11 +1488,7 @@ struct NewProfileFlowView: View {
             .map { doc in
                 TopPost(
                     transcript: doc.content,
-                    platform: doc.platform ?? "",
-                    likes: doc.likes ?? 0,
-                    shares: doc.shares ?? 0,
-                    leads: doc.leads ?? 0,
-                    views: 0
+                    platform: doc.platform ?? doc.category.platformTag ?? ""
                 )
             }
 

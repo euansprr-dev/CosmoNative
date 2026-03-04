@@ -274,6 +274,24 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
+    /// Create an empty zone cluster with a defined bounding rect and no blocks
+    func createZoneCluster(name: String, colorIndex: Int, boundingRect: CGRect, thinkspaceId: String?) {
+        let cluster = CanvasCluster(
+            id: UUID(),
+            name: name,
+            blockUUIDs: [],
+            colorIndex: colorIndex,
+            boundingRect: boundingRect,
+            isCollapsed: false,
+            isUserCreated: true,
+            thinkspaceId: thinkspaceId,
+            manualSizeOverride: boundingRect.size,
+            isZone: true
+        )
+        userClusters.append(cluster)
+        persistUserClusters(thinkspaceId: thinkspaceId)
+    }
+
     /// Remove a user cluster
     func removeUserCluster(id: UUID) {
         guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
@@ -286,6 +304,13 @@ class CanvasClusterEngine: ObservableObject {
     func renameUserCluster(id: UUID, to newName: String) {
         guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
         userClusters[index].name = newName
+        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+    }
+
+    /// Change a user cluster's color
+    func changeClusterColor(id: UUID, colorIndex: Int) {
+        guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
+        userClusters[index].colorIndex = colorIndex
         persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
 
@@ -302,7 +327,8 @@ class CanvasClusterEngine: ObservableObject {
     func removeBlockFromCluster(blockUUID: String, clusterId: UUID, blocks: [CanvasBlock]) {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
         userClusters[index].blockUUIDs.removeAll { $0 == blockUUID }
-        if userClusters[index].blockUUIDs.isEmpty {
+        if userClusters[index].blockUUIDs.isEmpty && !userClusters[index].isZone {
+            // Non-zone clusters auto-delete when empty; zone clusters persist
             let thinkspaceId = userClusters[index].thinkspaceId
             userClusters.remove(at: index)
             persistUserClusters(thinkspaceId: thinkspaceId)
@@ -325,7 +351,13 @@ class CanvasClusterEngine: ObservableObject {
     /// Update bounding rects for all user clusters (call after block positions change)
     func updateUserClusterBounds(blocks: [CanvasBlock]) {
         for index in userClusters.indices {
-            userClusters[index].updateBoundingRect(blocks: blocks)
+            // List/board clusters don't auto-resize from block positions
+            guard userClusters[index].viewMode == .canvas else { continue }
+            // Zones with no blocks keep their manually-set boundingRect
+            let hasMembers = blocks.contains { userClusters[index].blockUUIDs.contains($0.entityUuid) }
+            if hasMembers {
+                userClusters[index].updateBoundingRect(blocks: blocks)
+            }
         }
     }
 
@@ -333,6 +365,101 @@ class CanvasClusterEngine: ObservableObject {
     func persistAfterMove() {
         guard let tsId = userClusters.first?.thinkspaceId else { return }
         persistUserClusters(thinkspaceId: tsId)
+    }
+
+    // MARK: - View Mode Management
+
+    /// Transient state: which block is expanded in list mode (per cluster)
+    @Published var expandedBlockUUIDs: [UUID: String] = [:]
+
+    /// Switch cluster view mode. Auto-sizes for list/board if needed.
+    func setViewMode(for clusterId: UUID, mode: ClusterViewMode, blocks: [CanvasBlock]) {
+        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+        userClusters[index].viewMode = mode
+
+        // Auto-size for list/board modes if cluster is too small
+        if mode != .canvas {
+            let rect = userClusters[index].boundingRect
+            let minWidth: CGFloat = mode == .board ? 500 : 320
+            let minHeight: CGFloat = 300
+            if rect.width < minWidth || rect.height < minHeight {
+                let newWidth = max(rect.width, minWidth)
+                let newHeight = max(rect.height, minHeight)
+                userClusters[index].boundingRect.size = CGSize(width: newWidth, height: newHeight)
+                userClusters[index].manualSizeOverride = CGSize(width: newWidth, height: newHeight)
+            }
+        }
+
+        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+    }
+
+    /// Change sort order for list mode
+    func setSortOrder(for clusterId: UUID, order: ClusterSortOrder) {
+        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+        userClusters[index].sortOrder = order
+        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+    }
+
+    /// Toggle expanded block in list mode
+    func toggleListExpand(clusterId: UUID, blockUUID: String) {
+        if expandedBlockUUIDs[clusterId] == blockUUID {
+            expandedBlockUUIDs[clusterId] = nil
+        } else {
+            expandedBlockUUIDs[clusterId] = blockUUID
+        }
+    }
+
+    /// Update atom metadata when a card is dragged between board columns
+    func updateBlockColumnValue(blockUUID: String, newValue: String, clusterId: UUID) {
+        guard let clusterIndex = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+        let members = Set(userClusters[clusterIndex].blockUUIDs)
+        guard members.contains(blockUUID) else { return }
+
+        Task {
+            do {
+                let repo = AtomRepository.shared
+                guard var atom = try await repo.fetch(uuid: blockUUID) else { return }
+
+                // Determine what to update based on atom type
+                switch atom.type {
+                case .task:
+                    var taskMeta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    taskMeta.status = newValue
+                    if newValue == "completed" {
+                        taskMeta.isCompleted = true
+                        taskMeta.completedAt = ISO8601DateFormatter().string(from: Date())
+                    } else {
+                        taskMeta.isCompleted = false
+                        taskMeta.completedAt = nil
+                    }
+                    atom = atom.withMetadata(taskMeta)
+
+                case .content:
+                    // Update content status in metadata dict
+                    var metaDict = atom.metadataDict ?? [:]
+                    metaDict["status"] = newValue
+                    if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                       let str = String(data: data, encoding: .utf8) {
+                        atom.metadata = str
+                    }
+
+                case .idea:
+                    if let status = IdeaStatus(rawValue: newValue) {
+                        var ideaMeta = atom.ideaMetadata ?? IdeaMetadata()
+                        ideaMeta.ideaStatus = status
+                        atom = atom.withMetadata(ideaMeta)
+                    }
+
+                default:
+                    return  // No-op for types without status
+                }
+
+                atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                try await repo.update(atom)
+            } catch {
+                print("CanvasClusterEngine: updateBlockColumnValue failed: \(error)")
+            }
+        }
     }
 
     // MARK: - Cluster Resize

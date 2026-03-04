@@ -102,10 +102,7 @@ final class ProfileMigrationService {
                     category: category,
                     title: "\(category == .reel ? "Reel" : "Thread") #\(i + 1)",
                     content: post.transcript,
-                    platform: post.platform.isEmpty ? nil : post.platform,
-                    likes: post.likes > 0 ? post.likes : nil,
-                    shares: post.shares > 0 ? post.shares : nil,
-                    leads: post.leads > 0 ? post.leads : nil
+                    platform: post.platform.isEmpty ? category.platformTag : post.platform
                 ))
             }
         }
@@ -119,7 +116,8 @@ final class ProfileMigrationService {
                 documents.append(ProfileDocument(
                     category: category,
                     title: "\(category == .reel ? "Reel" : "Thread") #\(i + 1)",
-                    content: transcript
+                    content: transcript,
+                    platform: category.platformTag
                 ))
             }
         }

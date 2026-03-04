@@ -1016,3 +1016,161 @@ private struct SwipeAnalysisWrapper: Codable {
     }
 }
 
+// MARK: - Auto-Clustering Models
+
+/// Layer 1 grouping: maps ContentFormat cases into broad format families
+public enum FormatGroup: String, CaseIterable, Identifiable {
+    case shortFormVideo
+    case staticCarousel
+    case text
+    case longForm
+    case uncategorized
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .shortFormVideo: return "Short-Form Video"
+        case .staticCarousel: return "Carousels"
+        case .text: return "Text"
+        case .longForm: return "Long-Form"
+        case .uncategorized: return "Uncategorized"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .shortFormVideo: return "play.rectangle.fill"
+        case .staticCarousel: return "square.stack.fill"
+        case .text: return "text.alignleft"
+        case .longForm: return "doc.richtext.fill"
+        case .uncategorized: return "questionmark.folder.fill"
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .shortFormVideo: return Color(hex: "#EF4444")  // Red
+        case .staticCarousel: return Color(hex: "#F59E0B")  // Amber
+        case .text: return Color(hex: "#3B82F6")            // Blue
+        case .longForm: return Color(hex: "#8B5CF6")        // Purple
+        case .uncategorized: return Color(hex: "#6B7280")   // Gray
+        }
+    }
+
+    public static func group(for format: ContentFormat?) -> FormatGroup {
+        guard let f = format else { return .uncategorized }
+        if ContentFormat.shortFormVideo.contains(f) || f == .reel { return .shortFormVideo }
+        if ContentFormat.staticFormats.contains(f) { return .staticCarousel }
+        if ContentFormat.textFormats.contains(f) { return .text }
+        if ContentFormat.longFormFormats.contains(f) { return .longForm }
+        return .uncategorized
+    }
+}
+
+/// Layer 2 cluster: a narrative grouping within a format group
+public struct SwipeCluster: Identifiable {
+    public let id: String
+    public let formatGroup: FormatGroup
+    public let narrative: NarrativeStyle?
+    public var items: [SwipeGalleryItem]
+
+    public var displayName: String {
+        narrative?.displayName ?? "Other"
+    }
+
+    public var itemCount: Int { items.count }
+    public var isOtherBucket: Bool { narrative == nil }
+
+    public var narrativeColor: Color {
+        narrative?.color ?? Color(hex: "#6B7280")
+    }
+
+    public var narrativeIcon: String {
+        narrative?.icon ?? "folder.fill"
+    }
+}
+
+/// Layer 1 section: a format group containing narrative clusters
+public struct FormatSection: Identifiable {
+    public let id: String
+    public let formatGroup: FormatGroup
+    public var clusters: [SwipeCluster]
+
+    public var totalItemCount: Int {
+        clusters.reduce(0) { $0 + $1.itemCount }
+    }
+}
+
+/// Builds 2-level clustered sections from a flat list of gallery items.
+/// Groups with < minClusterSize items in a narrative merge into "Other".
+public func buildClusteredSections(
+    from items: [SwipeGalleryItem],
+    minClusterSize: Int = 5
+) -> [FormatSection] {
+    // Layer 1: group by format
+    var formatBuckets: [FormatGroup: [SwipeGalleryItem]] = [:]
+    for item in items {
+        let group = FormatGroup.group(for: item.swipeContentFormat)
+        formatBuckets[group, default: []].append(item)
+    }
+
+    // Build sections in stable order
+    let groupOrder: [FormatGroup] = [.shortFormVideo, .staticCarousel, .text, .longForm, .uncategorized]
+
+    var sections: [FormatSection] = []
+    for group in groupOrder {
+        guard let groupItems = formatBuckets[group], !groupItems.isEmpty else { continue }
+
+        // Layer 2: sub-group by narrative
+        var narrativeBuckets: [NarrativeStyle: [SwipeGalleryItem]] = [:]
+        var noNarrative: [SwipeGalleryItem] = []
+
+        for item in groupItems {
+            if let narrative = item.primaryNarrative {
+                narrativeBuckets[narrative, default: []].append(item)
+            } else {
+                noNarrative.append(item)
+            }
+        }
+
+        var clusters: [SwipeCluster] = []
+        var otherItems = noNarrative
+
+        // Promote narrative groups that meet threshold, merge rest into Other
+        for (narrative, narrativeItems) in narrativeBuckets {
+            if narrativeItems.count >= minClusterSize {
+                clusters.append(SwipeCluster(
+                    id: "\(group.rawValue)-\(narrative.rawValue)",
+                    formatGroup: group,
+                    narrative: narrative,
+                    items: narrativeItems
+                ))
+            } else {
+                otherItems.append(contentsOf: narrativeItems)
+            }
+        }
+
+        // Sort named clusters by item count descending
+        clusters.sort { $0.itemCount > $1.itemCount }
+
+        // Add "Other" bucket if non-empty
+        if !otherItems.isEmpty {
+            clusters.append(SwipeCluster(
+                id: "\(group.rawValue)-other",
+                formatGroup: group,
+                narrative: nil,
+                items: otherItems
+            ))
+        }
+
+        sections.append(FormatSection(
+            id: group.rawValue,
+            formatGroup: group,
+            clusters: clusters
+        ))
+    }
+
+    return sections
+}
+

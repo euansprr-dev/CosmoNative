@@ -872,13 +872,18 @@ final class UnifiedWritingEngine: ObservableObject {
 
             // C2: Top transcripts REMOVED from Block 2 — they now live in Block 3 as client examples
 
-            // C3: Brand story — capped at 1 doc, 1000 chars
+            // C3: Brand story + voice guide — full content, no truncation
             if let documents = meta.documents {
                 let storyDocs = documents.filter { $0.category == .story }
                 if let firstStory = storyDocs.first {
                     lines.append("--- BRAND STORY CONTEXT ---")
-                    let truncated = firstStory.content.count > 1000 ? String(firstStory.content.prefix(1000)) + "..." : firstStory.content
-                    lines.append(truncated)
+                    lines.append(firstStory.content)
+                    lines.append("")
+                }
+                let voiceGuideDocs = documents.filter { $0.category == .voiceGuide }
+                if let firstGuide = voiceGuideDocs.first {
+                    lines.append("--- VOICE GUIDE ---")
+                    lines.append(firstGuide.content)
                     lines.append("")
                 }
             }
@@ -886,6 +891,9 @@ final class UnifiedWritingEngine: ObservableObject {
             // Legacy fallback — no intelligence model
             appendLegacyProfile(to: &lines, meta: meta)
         }
+
+        // Top 5 best-performing posts for this client, filtered by current content format
+        appendTopPerformingPosts(to: &lines, meta: meta, format: detectContentFormat())
 
         let result = lines.joined(separator: "\n")
         cachedBlock2 = result
@@ -3139,15 +3147,79 @@ final class UnifiedWritingEngine: ObservableObject {
         }
     }
 
+    /// Appends the client's top 5 best-performing posts to Block 2, filtered by the current
+    /// content format (reel vs thread/carousel). Char limits: 3K for reels, 10K for threads/carousels.
+    /// Sources in priority order: ProfileDocuments (.reel/.thread) → TopPost → topPerformingTranscripts.
+    private func appendTopPerformingPosts(to lines: inout [String], meta: ClientProfileMetadata, format: WritingContentFormat) {
+        let isReel = format == .instagramReel || format == .youtubeShort || format == .tiktokScript
+        let charLimit = isReel ? 3_000 : 10_000
+        let formatLabel = isReel ? "REELS" : "THREADS/CAROUSELS"
+        let targetCategory: ProfileDocumentCategory = isReel ? .reel : .thread
+
+        var collected: [String] = []
+
+        // 1. ProfileDocuments with .reel or .thread category
+        if let documents = meta.documents {
+            for doc in documents where doc.category == targetCategory && collected.count < 5 {
+                collected.append(doc.content)
+            }
+        }
+
+        // 2. TopPost objects filtered by platform string
+        if collected.count < 5, let posts = meta.topPerformingPosts, !posts.isEmpty {
+            let platformMatches = isReel
+                ? ["reel", "reels", "short", "shorts", "tiktok"]
+                : ["thread", "threads", "carousel", "carousels", "post"]
+            for post in posts where collected.count < 5 {
+                let p = post.platform.lowercased()
+                guard platformMatches.contains(where: { p.contains($0) }) else { continue }
+                guard !collected.contains(where: { $0 == post.transcript }) else { continue }
+                collected.append(post.transcript)
+            }
+        }
+
+        // 3. Fallback: unfiltered TopPost (if we still have fewer than 5)
+        if collected.count < 5, let posts = meta.topPerformingPosts {
+            for post in posts where collected.count < 5 {
+                guard !collected.contains(where: { $0 == post.transcript }) else { continue }
+                collected.append(post.transcript)
+            }
+        }
+
+        // 4. Last resort: plain transcript strings
+        if collected.count < 5, let transcripts = meta.topPerformingTranscripts {
+            for transcript in transcripts where collected.count < 5 {
+                collected.append(transcript)
+            }
+        }
+
+        guard !collected.isEmpty else { return }
+
+        let top5 = Array(collected.prefix(5))
+        lines.append("")
+        lines.append("--- CLIENT BEST-PERFORMING \(formatLabel) (\(top5.count) posts) ---")
+        lines.append("These are this client's top-performing posts for the format you're writing. Study the voice, structure, pacing, and patterns. Match this quality bar.")
+        lines.append("")
+        for (i, transcript) in top5.enumerated() {
+            lines.append("POST #\(i + 1):")
+            if transcript.count > charLimit {
+                lines.append(String(transcript.prefix(charLimit)) + "...")
+            } else {
+                lines.append(transcript)
+            }
+            lines.append("")
+        }
+    }
+
     // MARK: - Token Budget Constants (C5)
 
-    /// Maximum character budget for Block 1 (methodology + platform constraints).
-    /// ~22K chars ≈ ~5.5K tokens at 4 chars/token.
-    private let block1MaxChars = 22_000
+    /// Maximum character budget for Block 1 (methodology + platform constraints + Voice DNA).
+    /// ~24K chars ≈ ~6K tokens at 4 chars/token.
+    private let block1MaxChars = 24_000
 
-    /// Maximum character budget for Block 2 (client intelligence model + brand story).
-    /// ~18K chars ≈ ~4.5K tokens at 4 chars/token.
-    private let block2MaxChars = 18_000
+    /// Maximum character budget for Block 2 (client intelligence model + brand story + voice guide + top posts).
+    /// ~80K chars ≈ ~20K tokens at 4 chars/token. Opus 4.6 has 1M token context — this is ~2% utilization.
+    private let block2MaxChars = 80_000
 
     private func buildCachedBlocks(contentAtom: Atom) {
         _ = assembleBlock1()

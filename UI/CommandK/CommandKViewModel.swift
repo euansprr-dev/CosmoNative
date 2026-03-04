@@ -15,6 +15,27 @@ public enum SearchPhase: Sendable {
     case complete       // Search complete
 }
 
+// MARK: - SwipeViewMode
+
+enum SwipeViewMode: String, CaseIterable {
+    case clustered
+    case flat
+
+    var displayName: String {
+        switch self {
+        case .clustered: return "Clustered"
+        case .flat: return "Grid"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .clustered: return "folder.fill"
+        case .flat: return "square.grid.2x2.fill"
+        }
+    }
+}
+
 // MARK: - CommandKViewModel
 /// ViewModel for the Command-K overlay
 /// Manages query state, results, and constellation visualization
@@ -88,6 +109,24 @@ public final class CommandKViewModel: ObservableObject {
     /// Whether swipe gallery has been loaded
     private var swipeGalleryLoaded = false
 
+    /// Cached filtered swipes — recomputed only when filter inputs change
+    @Published public private(set) var cachedFilteredSwipes: [SwipeGalleryItem] = []
+
+    /// Cached clustered sections — recomputed from cachedFilteredSwipes
+    @Published public private(set) var cachedClusteredSections: [FormatSection] = []
+
+    /// View mode for swipe gallery: clustered folders or flat grid
+    @Published var swipeViewMode: SwipeViewMode = .clustered
+
+    /// Search query passed from SwipeGalleryTab for filtering
+    @Published var swipeSearchQuery: String = ""
+
+    /// Expansion state for Layer 1 format group sections
+    @Published var expandedFormatGroups: Set<String> = Set(FormatGroup.allCases.map(\.rawValue))
+
+    /// Expansion state for Layer 2 narrative clusters (collapsed by default)
+    @Published var expandedClusters: Set<String> = []
+
     // MARK: - Multi-Select State
 
     /// UUIDs of cards selected via Shift+Click across gallery tabs
@@ -158,6 +197,8 @@ public final class CommandKViewModel: ObservableObject {
     public init() {
         setupQueryDebounce()
         setupFilterObserver()
+        setupSwipeFilterPipeline()
+        setupSwipeRefreshListener()
     }
 
     // MARK: - Query Handling
@@ -743,6 +784,104 @@ public final class CommandKViewModel: ObservableObject {
         } catch {
             errorMessage = "Failed to load swipe gallery: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Swipe Filter Pipeline
+
+    /// Sets up Combine pipeline to memoize filtered swipes + clustered sections.
+    /// Recomputes only when a filter input changes (debounced 50ms).
+    private func setupSwipeFilterPipeline() {
+        // Observe all filter inputs and recompute when any change
+        Publishers.CombineLatest4(
+            $swipeGalleryItems,
+            $swipePlatformFilter,
+            $swipeHookTypeFilter,
+            $swipeSortMode
+        )
+        .combineLatest(
+            Publishers.CombineLatest4(
+                $swipeNarrativeFilters,
+                $swipeContentFormatFilters,
+                $swipeNicheFilter,
+                $swipeCreatorFilter
+            )
+        )
+        .combineLatest($swipeSearchQuery)
+        .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+        .sink { [weak self] _ in
+            self?.recomputeFilteredSwipes()
+        }
+        .store(in: &cancellables)
+    }
+
+    /// Recompute cached filtered swipes and clustered sections from current filter state.
+    func recomputeFilteredSwipes() {
+        var items = swipeGalleryItems
+
+        if !swipeSearchQuery.isEmpty {
+            let q = swipeSearchQuery.lowercased()
+            items = items.filter { item in
+                item.title.lowercased().contains(q) ||
+                (item.hookText?.lowercased().contains(q) ?? false) ||
+                (item.author?.lowercased().contains(q) ?? false) ||
+                (item.niche?.lowercased().contains(q) ?? false) ||
+                (item.creatorName?.lowercased().contains(q) ?? false)
+            }
+        }
+
+        if let platformFilter = swipePlatformFilter {
+            items = items.filter { $0.platformName == platformFilter }
+        }
+
+        if let hookFilter = swipeHookTypeFilter {
+            items = items.filter { $0.hookType == hookFilter }
+        }
+
+        if !swipeNarrativeFilters.isEmpty {
+            items = items.filter { item in
+                guard let narrative = item.primaryNarrative else { return false }
+                return swipeNarrativeFilters.contains(narrative)
+            }
+        }
+
+        if !swipeContentFormatFilters.isEmpty {
+            items = items.filter { item in
+                guard let format = item.swipeContentFormat else { return false }
+                return swipeContentFormatFilters.contains(format)
+            }
+        }
+
+        if let nicheFilter = swipeNicheFilter {
+            items = items.filter { $0.niche == nicheFilter }
+        }
+
+        if let creatorFilter = swipeCreatorFilter {
+            items = items.filter { $0.creatorName == creatorFilter }
+        }
+
+        switch swipeSortMode {
+        case .score:
+            items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
+        case .recent:
+            items.sort { $0.createdAt > $1.createdAt }
+        case .oldest:
+            items.sort { $0.createdAt < $1.createdAt }
+        }
+
+        cachedFilteredSwipes = items
+        cachedClusteredSections = buildClusteredSections(from: items)
+    }
+
+    /// Listen for new swipe creation to auto-refresh gallery
+    private func setupSwipeRefreshListener() {
+        NotificationCenter.default.publisher(for: .researchCreated)
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.swipeGalleryLoaded = false
+                Task { await self.loadSwipeGallery() }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Idea Gallery

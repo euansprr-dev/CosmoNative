@@ -140,7 +140,14 @@ final class InstagramAutoTranscriber {
         // Running in parallel caused AVFoundation resource contention and memory pressure.
         // Sequential is safer — the video file is only used by one subsystem at a time.
         print("InstagramAutoTranscriber: Starting speech pipeline...")
-        let speech = await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        let speech: [SpeechSegment]
+        if APIKeys.hasWhisper {
+            // Prefer OpenAI Whisper API — higher quality, handles full audio without truncation
+            speech = await runWhisperPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        } else {
+            // Fallback: on-device Apple Speech (can truncate long audio)
+            speech = await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        }
         print("InstagramAutoTranscriber: Speech pipeline returned \(speech.count) segments")
 
         // Step 5: Merge results
@@ -626,6 +633,21 @@ final class InstagramAutoTranscriber {
         let hasSpeech = !speech.isEmpty
 
         if hasGemini && hasSpeech {
+            // Check if visual text is just noise and speech is the real content
+            let geminiWordCount = geminiSlides.map(\.text).joined(separator: " ")
+                .split(separator: " ").count
+            let speechWordCount = speech.map(\.text).joined(separator: " ")
+                .split(separator: " ").count
+
+            if isVoiceoverDominant(visualWordCount: geminiWordCount, speechWordCount: speechWordCount, visualSlideCount: geminiSlides.count) {
+                print("InstagramAutoTranscriber: Voiceover dominant over Gemini (\(geminiWordCount) visual words in \(geminiSlides.count) slides vs \(speechWordCount) speech words) — treating as voiceover-only")
+                return TranscriptionResult(
+                    slides: speechToSlides(speech: speech),
+                    contentType: .voiceoverOnly,
+                    averageOCRConfidence: 1.0
+                )
+            }
+
             // Deduplicate adjacent slides first (Gemini can return dupes at batch boundaries)
             var slides = collapseNearDuplicateAdjacentSlides(geminiSlides)
 
@@ -811,7 +833,105 @@ final class InstagramAutoTranscriber {
         }
     }
 
-    // MARK: - Speech Recognition Pipeline
+    // MARK: - Whisper API Pipeline (Preferred)
+
+    /// Extract audio from video and transcribe via OpenAI Whisper API.
+    /// Returns sentence-level SpeechSegments for the existing merge pipeline.
+    /// Falls back to Apple SFSpeechRecognizer if Whisper fails.
+    private func runWhisperPipeline(
+        videoURL: URL,
+        progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async -> [SpeechSegment] {
+        guard await hasUsableAudioTrack(videoURL) else {
+            print("InstagramAutoTranscriber: Skipping Whisper pipeline (no audio track)")
+            return []
+        }
+
+        progressHandler(.recognizingSpeech(0.1))
+
+        // Step 1: Extract audio as M4A
+        guard let audioData = await extractAudioAsM4A(from: videoURL) else {
+            print("InstagramAutoTranscriber: Audio extraction failed, falling back to Apple Speech")
+            return await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        }
+
+        print("InstagramAutoTranscriber: Extracted audio (\(audioData.count / 1024)KB), sending to Whisper API...")
+        progressHandler(.recognizingSpeech(0.3))
+
+        // Step 2: Transcribe via Whisper API
+        do {
+            let transcript = try await WhisperTranscriptionService.shared.transcribe(
+                audioData: audioData,
+                format: .m4a
+            )
+
+            guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                print("InstagramAutoTranscriber: Whisper returned empty transcript")
+                return []
+            }
+
+            print("InstagramAutoTranscriber: Whisper transcription complete (\(transcript.count) chars)")
+            progressHandler(.recognizingSpeech(1.0))
+
+            // Step 3: Split into sentence-level segments for the merge pipeline
+            return splitIntoSentenceSegments(transcript)
+        } catch {
+            print("InstagramAutoTranscriber: Whisper API failed: \(error.localizedDescription), falling back to Apple Speech")
+            return await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        }
+    }
+
+    /// Extract audio track from video file as M4A data.
+    private func extractAudioAsM4A(from videoURL: URL) async -> Data? {
+        let asset = AVURLAsset(url: videoURL)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whisper_\(UUID().uuidString).m4a")
+
+        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            return nil
+        }
+
+        exporter.outputFileType = .m4a
+        exporter.outputURL = outputURL
+
+        await exporter.export()
+
+        guard exporter.status == .completed else {
+            print("InstagramAutoTranscriber: Audio export failed: \(exporter.error?.localizedDescription ?? "unknown")")
+            return nil
+        }
+
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        return try? Data(contentsOf: outputURL)
+    }
+
+    /// Split a Whisper transcript (fully punctuated text) into sentence-level SpeechSegments.
+    /// Timestamps are not available from the basic Whisper API, so they're set to 0.
+    private func splitIntoSentenceSegments(_ text: String) -> [SpeechSegment] {
+        var segments: [SpeechSegment] = []
+        var current = ""
+
+        for char in text {
+            current.append(char)
+            if char == "." || char == "!" || char == "?" {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    segments.append(SpeechSegment(text: trimmed, timestamp: 0, duration: 0))
+                }
+                current = ""
+            }
+        }
+
+        // Flush remaining text
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            segments.append(SpeechSegment(text: trimmed, timestamp: 0, duration: 0))
+        }
+
+        return segments
+    }
+
+    // MARK: - Speech Recognition Pipeline (Fallback)
 
     /// Run speech recognition on the video (with 45-second timeout to prevent hangs)
     private func runSpeechPipeline(
@@ -974,6 +1094,24 @@ final class InstagramAutoTranscriber {
 
     // MARK: - Merge Logic
 
+    /// Detect when speech is the primary content and visual text is incidental noise
+    /// (watermarks, handles, background text) or auto-captions (subtitles that mirror speech).
+    /// Returns true when the reel should be treated as voiceover-only.
+    private func isVoiceoverDominant(visualWordCount: Int, speechWordCount: Int, visualSlideCount: Int = 0) -> Bool {
+        if visualWordCount == 0 { return true }
+        // Negligible visual text — almost certainly noise (real text reels have 15-200+ words)
+        if visualWordCount <= 10 && speechWordCount > 0 { return true }
+        // Visual text is minor compared to speech (noise + meaningful voiceover)
+        if speechWordCount >= visualWordCount * 4 && visualWordCount <= 25 { return true }
+        // Auto-caption detection: many tiny slides (1-3 words each) = subtitles, not content.
+        // Real text-on-screen reels have 5-30 words per slide; auto-captions have 1-3.
+        if visualSlideCount >= 10 && speechWordCount > 0 {
+            let avgWordsPerSlide = visualWordCount / max(visualSlideCount, 1)
+            if avgWordsPerSlide < 4 { return true }
+        }
+        return false
+    }
+
     /// Merge OCR and speech results based on what was detected
     private func mergeResults(
         ocr: [OCRFrameResult],
@@ -988,9 +1126,24 @@ final class InstagramAutoTranscriber {
         let avgConfidence: Float
 
         if hasOCR && hasSpeech {
-            contentType = .voiceoverPlusText
-            slides = mergeVoiceoverPlusText(ocr: ocr, speech: speech)
-            avgConfidence = ocr.map(\.confidence).reduce(0, +) / Float(ocr.count)
+            // Compute OCR slides to get both word count and slide count for heuristics
+            let ocrSlides = ocrToSlides(ocr: ocr)
+            let ocrWordCount = ocrSlides.map(\.text).joined(separator: " ")
+                .split(separator: " ").count
+            let speechWordCount = speech.map(\.text).joined(separator: " ")
+                .split(separator: " ").count
+
+            if isVoiceoverDominant(visualWordCount: ocrWordCount, speechWordCount: speechWordCount, visualSlideCount: ocrSlides.count) {
+                // OCR text is noise or auto-captions — use speech as single block
+                print("InstagramAutoTranscriber: Voiceover dominant (\(ocrWordCount) visual words in \(ocrSlides.count) slides vs \(speechWordCount) speech words) — treating as voiceover-only")
+                contentType = .voiceoverOnly
+                slides = speechToSlides(speech: speech)
+                avgConfidence = 1.0
+            } else {
+                contentType = .voiceoverPlusText
+                slides = mergeVoiceoverPlusText(ocr: ocr, speech: speech)
+                avgConfidence = ocr.map(\.confidence).reduce(0, +) / Float(ocr.count)
+            }
         } else if hasOCR {
             contentType = .textOnly
             slides = ocrToSlides(ocr: ocr)
@@ -1067,23 +1220,54 @@ final class InstagramAutoTranscriber {
         return slides
     }
 
-    /// Convert speech segments into a single continuous transcript slide.
-    /// When content is voiceover-only (no visual text), the transcript is one block
-    /// rather than artificial sentence-level splits.
+    /// Convert speech segments into slides, grouping sentences to stay under the
+    /// per-slide character limit. Short voiceovers become 1 slide; longer ones split
+    /// at natural sentence boundaries.
     private func speechToSlides(speech: [SpeechSegment]) -> [TranscriptSlide] {
         guard !speech.isEmpty else { return [] }
 
-        let fullText = speech.map(\.text).joined(separator: " ")
-        let startTime = speech.first?.timestamp ?? 0
-        let endTime = speech.last.map { $0.timestamp + $0.duration } ?? startTime
+        let charLimit = TranscriptSlide.characterLimit // 450
 
-        return [TranscriptSlide(
-            text: fullText,
-            slideNumber: 1,
-            timestamp: startTime,
-            endTimestamp: endTime,
-            source: .speechAudio
-        )]
+        var slides: [TranscriptSlide] = []
+        var currentText = ""
+        var slideStart: TimeInterval = speech[0].timestamp
+        var slideEnd: TimeInterval = speech[0].timestamp + speech[0].duration
+        var slideNumber = 1
+
+        for segment in speech {
+            let candidate = currentText.isEmpty ? segment.text : currentText + " " + segment.text
+
+            if candidate.count > charLimit && !currentText.isEmpty {
+                // Flush current slide
+                slides.append(TranscriptSlide(
+                    text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    slideNumber: slideNumber,
+                    timestamp: slideStart,
+                    endTimestamp: slideEnd,
+                    source: .speechAudio
+                ))
+                slideNumber += 1
+                currentText = segment.text
+                slideStart = segment.timestamp
+            } else {
+                currentText = candidate
+            }
+            slideEnd = segment.timestamp + segment.duration
+        }
+
+        // Flush remaining
+        let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            slides.append(TranscriptSlide(
+                text: trimmed,
+                slideNumber: slideNumber,
+                timestamp: slideStart,
+                endTimestamp: slideEnd,
+                source: .speechAudio
+            ))
+        }
+
+        return slides
     }
 
     /// Merge voiceover + text: visual slides are primary, speech appended as [Voiceover:] annotations.
@@ -1127,10 +1311,29 @@ final class InstagramAutoTranscriber {
 
     /// Clean up and deduplicate OCR slides using Claude.
     /// Always called for Instagram reels to filter background noise and fix artifacts.
-    func cleanupWithClaude(slides: [TranscriptSlide]) async -> [TranscriptSlide]? {
+    func cleanupWithClaude(slides: [TranscriptSlide], isCarousel: Bool = false) async -> [TranscriptSlide]? {
         let slideTexts = slides.map(\.text)
+
+        let lineBreakRule: String
+        if isCarousel {
+            lineBreakRule = """
+            6. PRESERVE intentional line breaks from the original slide. Carousel slides often have \
+            deliberate formatting — bullet points, short punchy lines, lists, or headers on separate lines. \
+            Keep those line breaks. Only join lines that are clearly a single sentence fragmented by OCR. \
+            However, if multiple lines are clearly part of the same flowing paragraph (full sentences that \
+            continue from one line to the next), join them into one paragraph.
+            """
+        } else {
+            lineBreakRule = """
+            6. JOIN text into flowing sentences — do NOT preserve visual line breaks from the \
+            image. Each slide's text should read as a natural paragraph. Only use a newline to \
+            separate a distinct header/title from the body text below it.
+            """
+        }
+
+        let contentLabel = isCarousel ? "carousel slides" : "Instagram slides"
         let prompt = """
-        You are cleaning up auto-transcribed text from Instagram carousel slides. The OCR \
+        You are cleaning up auto-transcribed text from Instagram \(contentLabel). The OCR \
         captured ALL visible text from each slide image. Your job is to extract ONLY the \
         main text overlays that the creator intended viewers to read.
 
@@ -1144,10 +1347,8 @@ final class InstagramAutoTranscriber {
         4. FIX incomplete sentences: if a sentence is clearly cut off mid-word due to OCR, \
         complete the word naturally or remove the fragment.
         5. KEEP the creator's original wording — do not rephrase or add new content.
-        6. JOIN text into flowing sentences — do NOT preserve visual line breaks from the \
-        image. Each slide's text should read as a natural paragraph. Only use a newline to \
-        separate a distinct header/title from the body text below it.
-        7. Each slide should contain the COMPLETE text from that carousel slide — do not \
+        \(lineBreakRule)
+        7. Each slide should contain the COMPLETE text from that slide — do not \
         truncate or summarize.
 
         Return ONLY a JSON array of strings — one string per cleaned slide. You may return \
@@ -1593,9 +1794,10 @@ final class InstagramAutoTranscriber {
             // Run Vision OCR — use lower bounding box threshold for carousel slides
             // (carousel text is often smaller than reel overlay text)
             let ocrResult = await recognizeText(in: cgImage, at: 0, minBoxOverride: 0.02)
-            // Join OCR lines with spaces to avoid mid-sentence line breaks.
-            // The Claude cleanup step will handle paragraph structure.
-            let text = ocrResult?.lines.joined(separator: " ") ?? ""
+            // Join OCR lines with newlines to preserve the visual line breaks
+            // from the carousel slide. Claude cleanup will remove OCR artifacts
+            // while keeping intentional line breaks.
+            let text = ocrResult?.lines.joined(separator: "\n") ?? ""
             let confidence = ocrResult?.confidence ?? 0
 
             slides.append(TranscriptSlide(
@@ -1699,8 +1901,9 @@ final class InstagramAutoTranscriber {
         - Watermarks, brand logos
         - Text in background images (not overlaid by creator)
 
-        Return ONLY the text content as a single string. Join multiple lines into one flowing sentence.
-        If there is a header/title, put it first followed by a newline, then the body text.
+        Return ONLY the text content as a single string. PRESERVE the line breaks from the original slide — \
+        if text appears on separate lines in the image, keep them on separate lines in your output. \
+        Do not merge lines into one flowing sentence.
         If no readable text is found, return an empty string.
         """
 

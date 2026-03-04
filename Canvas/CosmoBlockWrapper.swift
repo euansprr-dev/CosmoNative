@@ -22,6 +22,9 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Incubation heartbeat
     var isHeartbeating: Bool = false
 
+    // When true, the block grows vertically to fit content (no fixed height, no scaling)
+    var autoHeight: Bool = false
+
     // Optional callbacks
     var onClose: (() -> Void)? = nil
     var onFocusMode: (() -> Void)? = nil
@@ -35,7 +38,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     @State private var blockSize: CGSize
     @State private var isResizing = false
     @State private var isDragging = false
-    @State private var hoverLocation: CGPoint = CGPoint(x: 0.5, y: 0.5)
 
     // Selection is read from block, not a binding
     private var isSelected: Bool { block.isSelected }
@@ -47,9 +49,9 @@ struct CosmoBlockWrapper<Content: View>: View {
     private let maxWidth: CGFloat = 1200
     private let maxHeight: CGFloat = 1000
 
-    // Reference size for content scaling
-    private let referenceWidth: CGFloat = 320
-    private let referenceHeight: CGFloat = 280
+    // Reference size for content scaling (from block's default design size)
+    private var referenceWidth: CGFloat { block.defaultSize.width }
+    private var referenceHeight: CGFloat { block.defaultSize.height }
 
     init(
         block: CanvasBlock,
@@ -57,6 +59,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         icon: String,
         title: String,
         isExpanded: Binding<Bool>,
+        autoHeight: Bool = false,
         onClose: (() -> Void)? = nil,
         onFocusMode: (() -> Void)? = nil,
         onDuplicate: (() -> Void)? = nil,
@@ -68,6 +71,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         self.icon = icon
         self.title = title
         self._isExpanded = isExpanded
+        self.autoHeight = autoHeight
         self.onClose = onClose
         self.onFocusMode = onFocusMode
         self.onDuplicate = onDuplicate
@@ -86,29 +90,21 @@ struct CosmoBlockWrapper<Content: View>: View {
         isExpanded ? min(blockSize.height * expandedScale, maxHeight) : blockSize.height
     }
 
-    private var contentScale: CGFloat {
-        let area = max(effectiveWidth * effectiveHeight, 1)
-        let referenceArea = referenceWidth * referenceHeight
-        return max(sqrt(area / referenceArea), 0.5)
-    }
-
-    private var unscaledContentSize: CGSize {
+    /// The size at which content is laid out — always at least the block's
+    /// default design size so the layout stays stable when the block shrinks.
+    private var contentLayoutSize: CGSize {
         CGSize(
-            width: effectiveWidth / contentScale,
-            height: effectiveHeight / contentScale
+            width: max(effectiveWidth, referenceWidth),
+            height: max(effectiveHeight, referenceHeight)
         )
     }
 
-    // 3D tilt amount based on hover position
-    private var tiltAxis: (x: CGFloat, y: CGFloat, z: CGFloat) {
-        guard isHovered && !isExpanded && !isDragging && !isSelected else {
-            return (0, 0, 0)
-        }
-        return (
-            x: (hoverLocation.y - 0.5) * -2,
-            y: (hoverLocation.x - 0.5) * 2,
-            z: 0
-        )
+    /// Uniform scale factor to fit `contentLayoutSize` into the actual block frame.
+    /// When block >= default size in both dimensions, this is 1.0 (no scaling).
+    /// When block is smaller, content scales down proportionally.
+    private var contentScale: CGFloat {
+        min(effectiveWidth / contentLayoutSize.width,
+            effectiveHeight / contentLayoutSize.height)
     }
 
     // MARK: - Body
@@ -118,16 +114,23 @@ struct CosmoBlockWrapper<Content: View>: View {
             // Main card — tap gestures constrained to card bounds
             VStack(spacing: 0) {
                 // Content area
-                content()
-                    .frame(
-                        width: unscaledContentSize.width,
-                        height: unscaledContentSize.height,
-                        alignment: .topLeading
-                    )
-                    .scaleEffect(contentScale, anchor: .topLeading)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .clipped()
-                    .contentShape(Rectangle())
+                if autoHeight {
+                    // Auto-height mode: content flows naturally, no scaling
+                    content()
+                        .frame(width: effectiveWidth, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                } else {
+                    // Fixed-size mode: content scaled to fit block dimensions
+                    content()
+                        .frame(
+                            width: contentLayoutSize.width,
+                            height: contentLayoutSize.height,
+                            alignment: .topLeading
+                        )
+                        .scaleEffect(contentScale, anchor: .topLeading)
+                        .frame(width: effectiveWidth, height: effectiveHeight, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                }
 
                 // Crystallization indicator (only shown when level > raw)
                 if crystallizationLevel > .raw {
@@ -139,7 +142,18 @@ struct CosmoBlockWrapper<Content: View>: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
-            .frame(width: effectiveWidth, height: effectiveHeight)
+            .frame(width: effectiveWidth, height: autoHeight ? nil : effectiveHeight)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear {
+                            BlockRenderedSizeCache.shared.update(blockId: block.id, size: geo.size)
+                        }
+                        .onChange(of: geo.size) { _, newSize in
+                            BlockRenderedSizeCache.shared.update(blockId: block.id, size: newSize)
+                        }
+                }
+            )
             .background(blockBackground)
             .clipShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
             .overlay(blockBorder)
@@ -153,30 +167,14 @@ struct CosmoBlockWrapper<Content: View>: View {
                     maxSize: CGSize(width: maxWidth, height: maxHeight)
                 )
             }
-            // Light mode shadow — soft, natural depth
+            // PERF: Single shadow instead of 3 — reduces GPU shadow rendering cost
             .shadow(
-                color: .black.opacity(isDragging ? 0.10 : 0.04),
-                radius: isDragging ? 20 : (isHovered ? 16 : 8),
+                color: .black.opacity(isDragging ? 0.10 : (isSelected ? 0.06 : 0.04)),
+                radius: isDragging ? 20 : (isHovered ? 14 : 8),
                 x: 0,
                 y: isDragging ? 8 : (isHovered ? 4 : 2)
             )
-            .shadow(
-                color: .black.opacity(isDragging ? 0.04 : 0.02),
-                radius: isDragging ? 4 : (isHovered ? 4 : 2),
-                x: 0,
-                y: isDragging ? 2 : 1
-            )
-            // Accent glow when selected
-            .shadow(
-                color: isSelected ? accentColor.opacity(0.15) : Color.clear,
-                radius: 16, x: 0, y: 0
-            )
-            // 3D tilt effect on hover (only when not selected)
-            .rotation3DEffect(
-                .degrees(isHovered && !isExpanded && !isDragging && !isSelected ? 1.5 : 0),
-                axis: tiltAxis,
-                perspective: 0.5
-            )
+            // PERF: Removed rotation3DEffect (1.5deg is imperceptible, but GPU-expensive)
             .scaleEffect(isHovered && !isExpanded && !isSelected ? 1.008 : 1.0)
             .offset(y: isHovered && !isExpanded && !isSelected ? -2 : 0)
             .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
@@ -250,11 +248,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         .animation(ProMotionSprings.hover, value: isHovered)
         .animation(isExpanded ? ProMotionSprings.bouncy : ProMotionSprings.snappy, value: isExpanded)
         .onHover { hovering in
-            // Direct state update - animation is handled by .animation modifier
             isHovered = hovering
-            if !hovering {
-                hoverLocation = CGPoint(x: 0.5, y: 0.5)
-            }
         }
     }
 

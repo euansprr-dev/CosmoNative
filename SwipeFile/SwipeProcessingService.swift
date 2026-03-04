@@ -187,7 +187,8 @@ final class SwipeProcessingService {
         let needsCleanup = transcriptionResult.contentType != .voiceoverOnly
             && !finalSlides.allSatisfy({ $0.source == .geminiVision })
         if needsCleanup {
-            if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: finalSlides) {
+            let isCarousel = carouselItems != nil && !carouselItems!.isEmpty
+            if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: finalSlides, isCarousel: isCarousel) {
                 finalSlides = cleaned
             }
         }

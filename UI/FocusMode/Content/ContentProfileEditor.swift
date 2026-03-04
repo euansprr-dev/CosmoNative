@@ -37,6 +37,12 @@ struct ContentProfileEditor: View {
     // Performance
     @State private var topPerformingTranscripts: [String] = [""]
     @State private var bestFormats: Set<String> = []
+    @State private var documents: [ProfileDocument] = []
+    @StateObject private var transcriptionManager = ProfileTranscriptionManager()
+    @State private var topPostURLInput: String = ""
+    @State private var underperformingURLInput: String = ""
+    @State private var reviewingDocumentId: UUID?
+    @State private var reviewEditText: String = ""
 
     // Posting
     @State private var postingFrequency: String = ""
@@ -74,6 +80,11 @@ struct ContentProfileEditor: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
         .onAppear { loadExisting() }
+        .overlay {
+            if reviewingDocumentId != nil {
+                transcriptReviewOverlay
+            }
+        }
     }
 
     // MARK: - Header
@@ -284,26 +295,65 @@ struct ContentProfileEditor: View {
                 formatChips
             }
 
-            // Top performing transcripts
-            VStack(alignment: .leading, spacing: 8) {
-                fieldLabel("Top Performing Content")
-                Text("Paste transcripts or text of top-performing posts for AI context")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.35))
+            // Top performing content
+            topPerformingSection
 
-                ForEach(topPerformingTranscripts.indices, id: \.self) { index in
-                    transcriptField(index: index)
-                }
+            // Underperforming content
+            underperformingSection
+        }
+    }
 
-                if topPerformingTranscripts.count < 5 {
-                    Button(action: { topPerformingTranscripts.append("") }) {
-                        addTranscriptButtonLabel
-                    }
-                    .buttonStyle(.plain)
+    // MARK: - Top Performing Content
+
+    private var topPerformingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel("Top Performing Content")
+            Text("Paste transcripts or Instagram URLs of best-performing posts")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.35))
+
+            // URL-transcribed documents
+            ForEach(documents.filter { $0.category.isHighPerformer }) { doc in
+                documentEntryCard(doc)
+            }
+
+            // Legacy manual transcript fields
+            ForEach(topPerformingTranscripts.indices, id: \.self) { index in
+                transcriptField(index: index)
+            }
+
+            // URL input row
+            urlInputRow(text: $topPostURLInput, category: .reel)
+
+            // Add manual transcript button
+            if topPerformingTranscripts.count < 5 {
+                addButton(label: "Add transcript") {
+                    topPerformingTranscripts.append("")
                 }
             }
         }
     }
+
+    // MARK: - Underperforming Content
+
+    private var underperformingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel("Underperforming Content")
+            Text("Posts that didn't perform well — helps AI learn what to avoid")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.35))
+
+            // URL-transcribed underperforming documents
+            ForEach(documents.filter { $0.category.isUnderperformer }) { doc in
+                documentEntryCard(doc)
+            }
+
+            // URL input row
+            urlInputRow(text: $underperformingURLInput, category: .underperformingReel)
+        }
+    }
+
+    // MARK: - Format Chips
 
     private var formatChips: some View {
         let formats = ContentFormat.allCases
@@ -347,6 +397,143 @@ struct ContentProfileEditor: View {
             )
     }
 
+    // MARK: - Document Entry Card
+
+    @ViewBuilder
+    private func documentEntryCard(_ doc: ProfileDocument) -> some View {
+        let state = transcriptionManager.states[doc.id]
+        VStack(alignment: .leading, spacing: 6) {
+            documentEntryHeader(doc, state: state)
+            documentEntryContent(doc, state: state)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    state?.isTranscribing == true
+                        ? CosmoColors.lavender.opacity(0.15)
+                        : Color.white.opacity(0.06),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func documentEntryHeader(_ doc: ProfileDocument, state: ProfileTranscriptionManager.TranscriptionState?) -> some View {
+        HStack(spacing: 6) {
+            if let sourceURL = doc.sourceURL {
+                Image(systemName: "link")
+                    .font(.system(size: 10))
+                    .foregroundColor(CosmoColors.lavender.opacity(0.7))
+                Text(sourceURL.count > 40 ? "..." + sourceURL.suffix(37) : sourceURL)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.4))
+                    .lineLimit(1)
+            } else {
+                Text(doc.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+
+            Spacer()
+
+            documentCategoryPill(doc.category)
+
+            Button(action: { removeDocument(doc.id) }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func documentCategoryPill(_ category: ProfileDocumentCategory) -> some View {
+        let color: Color = category.isHighPerformer ? CosmoColors.emerald : .orange
+        Text(category.isHighPerformer ? "Top" : "Under")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(color.opacity(0.8))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+
+    @ViewBuilder
+    private func documentEntryContent(_ doc: ProfileDocument, state: ProfileTranscriptionManager.TranscriptionState?) -> some View {
+        if state?.isTranscribing == true {
+            // Shimmer state
+            VStack(alignment: .leading, spacing: 4) {
+                CosmicShimmerText(lines: 3, entityColor: CosmoColors.lavender, lineHeight: 10, lineSpacing: 4)
+                    .frame(height: 42)
+                Text(state?.progressText ?? "Transcribing...")
+                    .font(.system(size: 10))
+                    .foregroundColor(CosmoColors.lavender.opacity(0.6))
+            }
+        } else if let error = state?.error {
+            // Error state
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                Text(error)
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange.opacity(0.8))
+                    .lineLimit(2)
+            }
+        } else if !doc.content.isEmpty {
+            // Transcript preview — clickable to open review overlay
+            Button(action: { openReviewOverlay(doc) }) {
+                Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - URL Input Row
+
+    @ViewBuilder
+    private func urlInputRow(text: Binding<String>, category: ProfileDocumentCategory) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "link")
+                .font(.system(size: 11))
+                .foregroundColor(CosmoColors.lavender.opacity(0.5))
+
+            TextField("Paste Instagram URL...", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(.white)
+                .onSubmit { submitURL(text: text, category: category) }
+
+            Button(action: { submitURL(text: text, category: category) }) {
+                urlSubmitIcon(text: text)
+            }
+            .buttonStyle(.plain)
+            .disabled(!isValidInstagramURL(text.wrappedValue))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func urlSubmitIcon(text: Binding<String>) -> some View {
+        Image(systemName: "arrow.right.circle.fill")
+            .font(.system(size: 16))
+            .foregroundColor(
+                isValidInstagramURL(text.wrappedValue)
+                    ? CosmoColors.lavender
+                    : CosmoColors.lavender.opacity(0.3)
+            )
+    }
+
+    // MARK: - Legacy Transcript Field
+
     @ViewBuilder
     private func transcriptField(index: Int) -> some View {
         HStack(alignment: .top, spacing: 8) {
@@ -373,15 +560,157 @@ struct ContentProfileEditor: View {
         }
     }
 
+    // MARK: - Helpers
+
     @ViewBuilder
-    private var addTranscriptButtonLabel: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "plus")
-                .font(.system(size: 10))
-            Text("Add transcript")
-                .font(.system(size: 11, weight: .medium))
+    private func addButton(label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10))
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(CosmoColors.lavender.opacity(0.7))
         }
-        .foregroundColor(CosmoColors.lavender.opacity(0.7))
+        .buttonStyle(.plain)
+    }
+
+    private func isValidInstagramURL(_ string: String) -> Bool {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let host = url.host?.lowercased() else { return false }
+        return host.contains("instagram.com")
+    }
+
+    private func submitURL(text: Binding<String>, category: ProfileDocumentCategory) {
+        let urlString = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: urlString), isValidInstagramURL(urlString) else { return }
+
+        let docId = UUID()
+        let placeholder = ProfileDocument(
+            id: docId,
+            category: category,
+            title: "Transcribing...",
+            content: "",
+            platform: "instagram",
+            sourceURL: urlString
+        )
+        documents.append(placeholder)
+        text.wrappedValue = ""
+
+        Task {
+            if let completed = await transcriptionManager.transcribe(
+                url: url, documentId: docId, category: category
+            ) {
+                if let index = documents.firstIndex(where: { $0.id == docId }) {
+                    documents[index] = completed
+                }
+            }
+        }
+    }
+
+    private func removeDocument(_ id: UUID) {
+        documents.removeAll { $0.id == id }
+        transcriptionManager.states.removeValue(forKey: id)
+    }
+
+    private func openReviewOverlay(_ doc: ProfileDocument) {
+        reviewingDocumentId = doc.id
+        reviewEditText = doc.content
+    }
+
+    private func saveAndCloseReview() {
+        if let reviewId = reviewingDocumentId,
+           let index = documents.firstIndex(where: { $0.id == reviewId }) {
+            documents[index].content = reviewEditText
+        }
+        reviewingDocumentId = nil
+        reviewEditText = ""
+    }
+
+    // MARK: - Transcript Review Overlay
+
+    @ViewBuilder
+    private var transcriptReviewOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture { saveAndCloseReview() }
+
+            VStack(spacing: 0) {
+                reviewOverlayHeader
+                Divider().background(Color.white.opacity(0.08))
+                reviewOverlayEditor
+                Divider().background(Color.white.opacity(0.08))
+                reviewOverlayFooter
+            }
+            .frame(width: 480, height: 400)
+            .background(CosmoColors.thinkspaceSecondary)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var reviewOverlayHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transcript Review")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                if let reviewId = reviewingDocumentId,
+                   let doc = documents.first(where: { $0.id == reviewId }),
+                   let sourceURL = doc.sourceURL {
+                    Text(sourceURL)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.35))
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: { saveAndCloseReview() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.4))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder
+    private var reviewOverlayEditor: some View {
+        TextEditor(text: $reviewEditText)
+            .font(.system(size: 12))
+            .foregroundColor(.white.opacity(0.85))
+            .scrollContentBackground(.hidden)
+            .padding(12)
+    }
+
+    @ViewBuilder
+    private var reviewOverlayFooter: some View {
+        HStack {
+            Text("\(reviewEditText.count) characters")
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.3))
+            Spacer()
+            Button(action: { saveAndCloseReview() }) {
+                Text("Save Changes")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(CosmoColors.lavender, in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
     }
 
     // MARK: - Posting Section
@@ -467,7 +796,7 @@ struct ContentProfileEditor: View {
                 saveButtonLabel
             }
             .buttonStyle(.plain)
-            .disabled(clientName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+            .disabled(clientName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving || transcriptionManager.hasActiveTranscriptions)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -958,14 +1287,22 @@ struct ContentProfileEditor: View {
             coreBeliefs = meta.coreBeliefs ?? []
             voiceNotes = meta.voiceNotes ?? ""
             uniqueAngle = meta.uniqueAngle ?? ""
-            topPerformingTranscripts = meta.topPerformingTranscripts ?? [""]
-            if topPerformingTranscripts.isEmpty { topPerformingTranscripts = [""] }
             bestFormats = Set(meta.bestFormats ?? [])
             postingFrequency = meta.postingFrequency ?? ""
             preferredPostTimes = meta.preferredPostTimes ?? []
             isPersonalBrand = meta.isPersonalBrand ?? true
             selectedPlatforms = Set(meta.platforms)
             signaturePhrases = meta.signaturePhrases ?? []
+
+            // Load documents (URL-transcribed entries)
+            documents = meta.documents?.filter { $0.category.hasMetrics } ?? []
+
+            // Load legacy manual transcripts — exclude any that already exist as documents
+            let docContents = Set(documents.filter { $0.sourceURL == nil }.map { $0.content })
+            let legacyTranscripts = (meta.topPerformingTranscripts ?? [])
+                .filter { !$0.isEmpty && !docContents.contains($0) }
+            topPerformingTranscripts = legacyTranscripts.isEmpty ? [""] : legacyTranscripts
+            if topPerformingTranscripts.isEmpty { topPerformingTranscripts = [""] }
         }
         // Fallback to ClientMetadata (Atom.swift format)
         else if let meta = atom.metadataValue(as: ClientMetadata.self) {
@@ -984,15 +1321,46 @@ struct ContentProfileEditor: View {
         let trimmedName = clientName.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
-        // Filter empty transcripts
-        let transcripts = topPerformingTranscripts
+        // Filter empty legacy transcripts
+        let manualTranscripts = topPerformingTranscripts
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        // Build merged documents array: URL-transcribed docs + manual transcripts as docs
+        var allDocuments = documents.filter {
+            !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        // Preserve any non-performance documents from existing metadata
+        let existingMeta = existingAtom?.metadataValue(as: ClientProfileMetadata.self)
+        if let existingDocs = existingMeta?.documents {
+            for doc in existingDocs where !doc.category.hasMetrics {
+                if !allDocuments.contains(where: { $0.id == doc.id }) {
+                    allDocuments.append(doc)
+                }
+            }
+        }
+
+        // Add manual transcripts as .reel ProfileDocuments (avoid duplicates)
+        let existingDocContents = Set(allDocuments.filter { $0.sourceURL == nil }.map { $0.content })
+        for transcript in manualTranscripts {
+            if !existingDocContents.contains(transcript) {
+                allDocuments.append(ProfileDocument(
+                    category: .reel,
+                    title: String(transcript.prefix(60)),
+                    content: transcript,
+                    platform: "instagram"
+                ))
+            }
+        }
+
+        // Build legacy topPerformingTranscripts for backward compat
+        let legacyTranscripts = allDocuments
+            .filter { $0.category.isHighPerformer && !$0.content.isEmpty }
+            .map { $0.content }
+
         let metadata = ClientProfileMetadata(
-            clientId: existingAtom.flatMap { atom in
-                atom.metadataValue(as: ClientProfileMetadata.self)?.clientId
-            } ?? UUID().uuidString,
+            clientId: existingMeta?.clientId ?? UUID().uuidString,
             clientName: trimmedName,
             platforms: Array(selectedPlatforms),
             activeStatus: true,
@@ -1004,14 +1372,16 @@ struct ContentProfileEditor: View {
             coreBeliefs: coreBeliefs.isEmpty ? nil : coreBeliefs,
             voiceNotes: voiceNotes.isEmpty ? nil : voiceNotes,
             uniqueAngle: uniqueAngle.isEmpty ? nil : uniqueAngle,
-            topPerformingTranscripts: transcripts.isEmpty ? nil : transcripts,
+            topPerformingTranscripts: legacyTranscripts.isEmpty ? nil : legacyTranscripts,
             bestFormats: bestFormats.isEmpty ? nil : Array(bestFormats),
             postingFrequency: postingFrequency.isEmpty ? nil : postingFrequency,
             preferredPostTimes: preferredPostTimes.isEmpty ? nil : preferredPostTimes,
             handle: handle.isEmpty ? nil : handle,
             niche: niche.isEmpty ? nil : niche,
             isPersonalBrand: isPersonalBrand,
-            signaturePhrases: signaturePhrases.isEmpty ? nil : signaturePhrases
+            signaturePhrases: signaturePhrases.isEmpty ? nil : signaturePhrases,
+            intelligenceModel: existingMeta?.intelligenceModel,
+            documents: allDocuments.isEmpty ? nil : allDocuments
         )
 
         do {

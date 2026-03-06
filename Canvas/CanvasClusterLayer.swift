@@ -11,11 +11,13 @@ struct CanvasClusterLayer: View {
 
     let clusters: [CanvasCluster]
     let blocks: [CanvasBlock]
+    let canvasSize: CGSize
     let canvasOffset: CGSize
     let scaledPanOffset: CGSize
     let effectiveScale: CGFloat
     var dropTargetClusterId: UUID?
     var selectedClusterId: UUID?
+    var resizingClusterId: UUID?
     var clusterDragOffset: CGSize?
     var onRenameCluster: ((UUID, String) -> Void)?
     var onRemoveCluster: ((UUID) -> Void)?
@@ -25,33 +27,33 @@ struct CanvasClusterLayer: View {
     var onResizeCluster: ((UUID, CGSize, ClusterResizeEdge) -> Void)?
     var onResizeEndCluster: ((UUID) -> Void)?
     var onChangeViewMode: ((UUID, ClusterViewMode) -> Void)?
+    var onChangeBoardGrouping: ((UUID, ClusterBoardGrouping) -> Void)?
     var onChangeColor: ((UUID, Int) -> Void)?
     var onChangeSortOrder: ((UUID, ClusterSortOrder) -> Void)?
     var onToggleListExpand: ((UUID, String) -> Void)?
-    var onBoardColumnDrop: ((String, String, UUID) -> Void)?   // blockUUID, newColumnValue, clusterId
+    var onBoardColumnDrop: ((BoardDropEvent) -> Void)?
     var onOpenFocusMode: ((String) -> Void)?
     var expandedBlockUUIDs: [UUID: String] = [:]
 
     // MARK: - State
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredClusterID: UUID?
     @State private var editingClusterID: UUID?
     @State private var editingName: String = ""
+    @State private var localResizingClusterId: UUID?
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            // Cluster zones
             ForEach(clusters) { cluster in
                 clusterZone(cluster)
             }
-
-            // Inspector panel — floats to the right of the selected cluster,
-            // rendered OUTSIDE the cluster zone so it never overlaps cluster content
             inspectorPanelOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: "clusterLayer")
     }
 
     // MARK: - Inspector Panel Overlay
@@ -65,12 +67,18 @@ struct CanvasClusterLayer: View {
 
     @ViewBuilder
     private func inspectorPanel(for cluster: CanvasCluster) -> some View {
-        let rect = clusterScreenRect(cluster)
-        let scale = labelCounterScale
-        let panelHalfWidth: CGFloat = 120 * scale
-        let panelHalfHeight: CGFloat = 110 * scale
-        let posX = rect.maxX + 12 + panelHalfWidth
-        let posY = rect.minY + panelHalfHeight
+        let baseRect = clusterScreenRect(cluster)
+        let drag = (selectedClusterId == cluster.id) ? (clusterDragOffset ?? .zero) : .zero
+        let rect = baseRect.offsetBy(dx: drag.width, dy: drag.height)
+        let panelSize = CGSize(width: 276, height: cluster.viewMode == .board ? 286 : 242)
+        let margin: CGFloat = 16
+
+        let desiredX = rect.maxX + 12
+        let desiredY = rect.minY
+        let maxX = max(margin, canvasSize.width - panelSize.width - margin)
+        let maxY = max(margin, canvasSize.height - panelSize.height - margin)
+        let clampedX = min(max(desiredX, margin), maxX)
+        let clampedY = min(max(desiredY, margin), maxY)
 
         ClusterInspectorPanel(
             cluster: cluster,
@@ -80,19 +88,26 @@ struct CanvasClusterLayer: View {
             onChangeViewMode: { mode in
                 onChangeViewMode?(cluster.id, mode)
             },
+            onChangeBoardGrouping: { grouping in
+                onChangeBoardGrouping?(cluster.id, grouping)
+            },
+            onDelete: {
+                onRemoveCluster?(cluster.id)
+                onSelectCluster?(nil)
+            },
             onDismiss: {
                 onSelectCluster?(nil)
             }
         )
-        .scaleEffect(scale, anchor: .topLeading)
-        .position(x: posX, y: posY)
-        .allowsHitTesting(true)
-        .zIndex(9999)
+        .frame(width: panelSize.width)
+        .position(
+            x: clampedX + panelSize.width / 2,
+            y: clampedY + panelSize.height / 2
+        )
         .transition(.opacity)
-        .animation(ProMotionSprings.snappy, value: selectedClusterId)
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: selectedClusterId)
     }
 
-    /// The currently selected user cluster (inspector only shows for user clusters)
     private var selectedUserCluster: CanvasCluster? {
         guard let id = selectedClusterId else { return nil }
         return clusters.first(where: { $0.id == id && $0.isUserCreated })
@@ -107,55 +122,58 @@ struct CanvasClusterLayer: View {
         let isEditing = editingClusterID == cluster.id
         let isDropTarget = dropTargetClusterId == cluster.id
         let isSelected = selectedClusterId == cluster.id
-        let showLabel = cluster.isUserCreated || isHovered || effectiveScale < 0.8
-        let hasAltContent = cluster.isUserCreated && cluster.viewMode != .canvas
+        let showLabel = cluster.isUserCreated || isHovered || effectiveScale < 0.7
+        let isZoneCluster = cluster.zoneType != nil
+        let hasAltContent = cluster.isUserCreated && (cluster.viewMode != .canvas || isZoneCluster)
+        let clusterIsResizing = resizingClusterId == cluster.id || localResizingClusterId == cluster.id
+        let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
         ZStack {
-            // Background fill
             RoundedRectangle(cornerRadius: 16)
-                .fill(cluster.color.opacity(isDropTarget ? 0.12 : (cluster.isUserCreated ? 0.06 : 0.05)))
+                .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
-                            isSelected
-                                ? cluster.color.opacity(0.6)
-                                : cluster.color.opacity(isDropTarget ? 0.5 : (cluster.isUserCreated ? 0.2 : (isHovered ? 0.25 : 0.0))),
-                            lineWidth: isSelected ? 2.5 : (isDropTarget ? 2.5 : 1.5)
+                            isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
+                            style: StrokeStyle(
+                                lineWidth: isSelected || isDropTarget ? 2 : 1.5,
+                                dash: (isSelected || isDropTarget) ? [] : [4, 4]
+                            )
                         )
                 )
-                .shadow(color: isDropTarget ? cluster.color.opacity(0.3) : .clear, radius: isDropTarget ? 12 : 0)
+                .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
+                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
 
-            // Content overlay: title label + list/board content
-            // Uses a VStack so content sits properly below the title, never overlapping
             if showLabel || hasAltContent {
                 VStack(spacing: 0) {
-                    // Title bar
                     if showLabel {
-                        clusterTitleBar(cluster, isEditing: isEditing, isHovered: isHovered, isSelected: isSelected)
-                            .scaleEffect(labelCounterScale)
-                            .frame(height: 44 * labelCounterScale)
+                        clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster)
+                            .frame(height: 42)
+                            .padding(.top, 8)
+                    } else {
+                        Spacer(minLength: 8)
                     }
 
-                    // List/Board content fills remaining space
                     if hasAltContent {
-                        clusterAlternativeContent(cluster, clusterWidth: rect.width)
-                            .padding(.top, 4)
+                        clusterAlternativeContent(
+                            cluster,
+                            clusterWidth: rect.width,
+                            clusterHeight: rect.height - 54
+                        )
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                    } else {
+                        Spacer(minLength: 0)
                     }
-
-                    Spacer(minLength: 0)
                 }
-                .padding(.top, 8)
             }
 
-            // Resize handles — only for selected user clusters
             if cluster.isUserCreated && isSelected {
                 resizeHandlesOverlay(cluster: cluster, rect: rect)
             }
         }
         .frame(width: rect.width, height: rect.height)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .position(x: rect.midX, y: rect.midY)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isDropTarget)
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .allowsHitTesting(cluster.isUserCreated)
         .onTapGesture(count: 1) {
@@ -164,12 +182,12 @@ struct CanvasClusterLayer: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 10)
+            (isZoneCluster || clusterIsResizing || resizingClusterId != nil || localResizingClusterId != nil)
+            ? nil
+            : DragGesture(minimumDistance: 10)
                 .onChanged { gesture in
                     guard cluster.isUserCreated else { return }
-                    if selectedClusterId != cluster.id {
-                        onSelectCluster?(cluster.id)
-                    }
+                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
                     onDragCluster?(cluster.id, gesture.translation)
                 }
                 .onEnded { gesture in
@@ -178,94 +196,114 @@ struct CanvasClusterLayer: View {
                 }
         )
         .onHover { hovered in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                hoveredClusterID = hovered ? cluster.id : nil
+            hoveredClusterID = hovered ? cluster.id : nil
+        }
+        .position(x: rect.midX, y: rect.midY)
+        .offset(x: dragOffset.width, y: dragOffset.height)
+        .transaction { tx in
+            if clusterIsResizing || draggingCluster(cluster.id) {
+                tx.animation = nil
             }
         }
     }
 
-    /// Counter-scale for labels: stays readable when zoomed out, capped at 3x
-    private var labelCounterScale: CGFloat {
-        min(3.0, max(1.0, 1.0 / effectiveScale))
+    private func draggingCluster(_ clusterId: UUID) -> Bool {
+        selectedClusterId == clusterId && clusterDragOffset != nil
     }
 
-    // MARK: - Title Bar (label + controls in one row)
+    private func backgroundOpacity(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Double {
+        if isDropTarget { return 0.12 }
+        if cluster.isUserCreated {
+            return (cluster.viewMode != .canvas || isZone) ? 0.09 : 0.06
+        }
+        return 0.05
+    }
+
+    // MARK: - Title Bar
 
     @ViewBuilder
-    private func clusterTitleBar(_ cluster: CanvasCluster, isEditing: Bool, isHovered: Bool, isSelected: Bool) -> some View {
-        HStack(spacing: 8) {
-            clusterLabel(cluster, isEditing: isEditing)
-
-            Spacer(minLength: 0)
-
-            // Delete button — visible on hover/select for user clusters
-            if cluster.isUserCreated && (isHovered || isSelected) {
-                Button {
-                    onRemoveCluster?(cluster.id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.red)
-                        .frame(width: 22, height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(DS.surfaceElevated)
-                                .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+    private func clusterTitleBar(_ cluster: CanvasCluster, isEditing: Bool, isZone: Bool) -> some View {
+        HStack(spacing: 6) {
+            if isZone, let zt = CommandCenterZoneType(rawValue: cluster.zoneType ?? "") {
+                Image(systemName: zt.iconName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(cluster.color)
             }
+            clusterLabel(cluster, isEditing: isEditing)
         }
         .padding(.horizontal, 12)
+        .contentShape(Rectangle())
+        .gesture(
+            (isZone && !isEditing && resizingClusterId == nil && localResizingClusterId == nil)
+            ? DragGesture(minimumDistance: 10)
+                .onChanged { gesture in
+                    if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
+                    onDragCluster?(cluster.id, gesture.translation)
+                }
+                .onEnded { gesture in
+                    onDragEndCluster?(cluster.id, gesture.translation)
+                }
+            : nil
+        )
     }
 
     // MARK: - Alternative Content (List / Board)
 
     @ViewBuilder
-    private func clusterAlternativeContent(_ cluster: CanvasCluster, clusterWidth: CGFloat) -> some View {
-        let scale = labelCounterScale
-        // Content is rendered at 1:1 (readable) size, then scaled to fit the cluster.
-        // Width in content-space = cluster pixel width / scale factor.
-        let contentWidth = max((clusterWidth / scale) - 24, 100)
+    private func clusterAlternativeContent(_ cluster: CanvasCluster, clusterWidth: CGFloat, clusterHeight: CGFloat) -> some View {
+        if let zoneType = cluster.zoneType {
+            let zoneWidth = max(clusterWidth - 4, 100)
+            let zoneHeight = max(clusterHeight - 8, 100)
 
-        Group {
-            switch cluster.viewMode {
-            case .canvas:
-                EmptyView()
-            case .list:
-                ClusterListContent(
-                    cluster: cluster,
-                    blocks: blocks,
-                    sortOrder: cluster.sortOrder,
-                    expandedBlockUUID: expandedBlockUUIDs[cluster.id],
-                    onChangeSortOrder: { order in
-                        onChangeSortOrder?(cluster.id, order)
-                    },
-                    onToggleExpand: { blockUUID in
-                        onToggleListExpand?(cluster.id, blockUUID)
-                    },
-                    onOpenFocusMode: { uuid in
-                        onOpenFocusMode?(uuid)
-                    }
-                )
-            case .board:
-                ClusterBoardContent(
-                    cluster: cluster,
-                    blocks: blocks,
-                    onBoardColumnDrop: { blockUUID, newValue in
-                        onBoardColumnDrop?(blockUUID, newValue, cluster.id)
-                    },
-                    onOpenFocusMode: { uuid in
-                        onOpenFocusMode?(uuid)
-                    }
-                )
+            ZoneContentView(
+                zoneType: zoneType,
+                contentSize: CGSize(width: zoneWidth, height: zoneHeight),
+                effectiveScale: effectiveScale
+            )
+            .frame(width: zoneWidth, height: zoneHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            let contentWidth = max(clusterWidth - 4, 120)
+            let contentHeight = max(clusterHeight - 8, 120)
+
+            Group {
+                switch cluster.viewMode {
+                case .canvas:
+                    EmptyView()
+                case .list:
+                    ClusterListContent(
+                        cluster: cluster,
+                        clusterColor: cluster.color,
+                        blocks: blocks,
+                        sortOrder: cluster.sortOrder,
+                        expandedBlockUUID: expandedBlockUUIDs[cluster.id],
+                        onChangeSortOrder: { order in
+                            onChangeSortOrder?(cluster.id, order)
+                        },
+                        onToggleExpand: { blockUUID in
+                            onToggleListExpand?(cluster.id, blockUUID)
+                        },
+                        onOpenFocusMode: { uuid in
+                            onOpenFocusMode?(uuid)
+                        }
+                    )
+                case .board:
+                    ClusterBoardContent(
+                        cluster: cluster,
+                        clusterColor: cluster.color,
+                        blocks: blocks,
+                        onBoardColumnDrop: { event in
+                            onBoardColumnDrop?(event)
+                        },
+                        onOpenFocusMode: { uuid in
+                            onOpenFocusMode?(uuid)
+                        }
+                    )
+                }
             }
+            .frame(width: contentWidth, height: contentHeight, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        .frame(width: contentWidth)
-        .frame(maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .scaleEffect(scale, anchor: .top)
     }
 
     // MARK: - Resize Handles
@@ -307,27 +345,25 @@ struct CanvasClusterLayer: View {
 
         Circle()
             .fill(DS.surfaceElevated)
-            .overlay(
-                Circle().stroke(cluster.color.opacity(0.8), lineWidth: 1.5)
-            )
+            .overlay(Circle().stroke(cluster.color.opacity(0.8), lineWidth: 1.5))
             .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
-            .frame(width: isCorner ? handleSize : handleSize * 0.8,
-                   height: isCorner ? handleSize : handleSize * 0.8)
-            .scaleEffect(labelCounterScale)
-            .contentShape(Rectangle().size(width: hitSize, height: hitSize))
+            .frame(width: isCorner ? handleSize : handleSize * 0.8, height: isCorner ? handleSize : handleSize * 0.8)
             .frame(width: hitSize, height: hitSize)
+            .contentShape(Rectangle())
             .allowsHitTesting(true)
-            .gesture(
-                DragGesture(minimumDistance: 2)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .named("clusterLayer"))
                     .onChanged { gesture in
-                        let delta = CGSize(
-                            width: gesture.translation.width / effectiveScale,
-                            height: gesture.translation.height / effectiveScale
-                        )
-                        onResizeCluster?(cluster.id, delta, edge)
+                        if localResizingClusterId != cluster.id {
+                            localResizingClusterId = cluster.id
+                        }
+                        onResizeCluster?(cluster.id, gesture.translation, edge)
                     }
                     .onEnded { _ in
                         onResizeEndCluster?(cluster.id)
+                        if localResizingClusterId == cluster.id {
+                            localResizingClusterId = nil
+                        }
                     }
             )
             .onHover { hovering in
@@ -355,21 +391,17 @@ struct CanvasClusterLayer: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(DS.surfaceElevated)
-                        .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+                        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(cluster.color.opacity(0.4), lineWidth: 1.5)
+                        .stroke(cluster.color.opacity(0.35), lineWidth: 1)
                 )
-                .onSubmit {
-                    commitRename(cluster)
-                }
-                .onExitCommand {
-                    editingClusterID = nil
-                }
+                .onSubmit { commitRename(cluster) }
+                .onExitCommand { editingClusterID = nil }
         } else {
             Text(cluster.name.uppercased())
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(DS.text)
                 .lineLimit(1)
                 .padding(.horizontal, 12)
@@ -377,7 +409,6 @@ struct CanvasClusterLayer: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(DS.surfaceElevated)
-                        .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -407,10 +438,9 @@ struct CanvasClusterLayer: View {
     private func clusterScreenRect(_ cluster: CanvasCluster) -> CGRect {
         let origin = cluster.boundingRect.origin
         let size = cluster.boundingRect.size
-        let drag = (selectedClusterId == cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
-        let screenX = origin.x + canvasOffset.width + scaledPanOffset.width + drag.width
-        let screenY = origin.y + canvasOffset.height + scaledPanOffset.height + drag.height
+        let screenX = origin.x + canvasOffset.width + scaledPanOffset.width
+        let screenY = origin.y + canvasOffset.height + scaledPanOffset.height
 
         return CGRect(x: screenX, y: screenY, width: size.width, height: size.height)
     }
@@ -421,8 +451,8 @@ struct CanvasClusterLayer: View {
 extension NSCursor {
     static func resizeCursor(for edge: ClusterResizeEdge) -> NSCursor {
         switch edge {
-        case .left, .right:     return .resizeLeftRight
-        case .top, .bottom:     return .resizeUpDown
+        case .left, .right: return .resizeLeftRight
+        case .top, .bottom: return .resizeUpDown
         case .topLeft, .bottomRight: return .crosshair
         case .topRight, .bottomLeft: return .crosshair
         }

@@ -49,10 +49,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     private let maxWidth: CGFloat = 1200
     private let maxHeight: CGFloat = 1000
 
-    // Reference size for content scaling (from block's default design size)
-    private var referenceWidth: CGFloat { block.defaultSize.width }
-    private var referenceHeight: CGFloat { block.defaultSize.height }
-
     init(
         block: CanvasBlock,
         accentColor: Color,
@@ -90,23 +86,6 @@ struct CosmoBlockWrapper<Content: View>: View {
         isExpanded ? min(blockSize.height * expandedScale, maxHeight) : blockSize.height
     }
 
-    /// The size at which content is laid out — always at least the block's
-    /// default design size so the layout stays stable when the block shrinks.
-    private var contentLayoutSize: CGSize {
-        CGSize(
-            width: max(effectiveWidth, referenceWidth),
-            height: max(effectiveHeight, referenceHeight)
-        )
-    }
-
-    /// Uniform scale factor to fit `contentLayoutSize` into the actual block frame.
-    /// When block >= default size in both dimensions, this is 1.0 (no scaling).
-    /// When block is smaller, content scales down proportionally.
-    private var contentScale: CGFloat {
-        min(effectiveWidth / contentLayoutSize.width,
-            effectiveHeight / contentLayoutSize.height)
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -120,14 +99,8 @@ struct CosmoBlockWrapper<Content: View>: View {
                         .frame(width: effectiveWidth, alignment: .topLeading)
                         .contentShape(Rectangle())
                 } else {
-                    // Fixed-size mode: content scaled to fit block dimensions
+                    // Fixed-size mode: content fills block dimensions directly
                     content()
-                        .frame(
-                            width: contentLayoutSize.width,
-                            height: contentLayoutSize.height,
-                            alignment: .topLeading
-                        )
-                        .scaleEffect(contentScale, anchor: .topLeading)
                         .frame(width: effectiveWidth, height: effectiveHeight, alignment: .topLeading)
                         .contentShape(Rectangle())
                 }
@@ -174,9 +147,7 @@ struct CosmoBlockWrapper<Content: View>: View {
                 x: 0,
                 y: isDragging ? 8 : (isHovered ? 4 : 2)
             )
-            // PERF: Removed rotation3DEffect (1.5deg is imperceptible, but GPU-expensive)
-            .scaleEffect(isHovered && !isExpanded && !isSelected ? 1.008 : 1.0)
-            .offset(y: isHovered && !isExpanded && !isSelected ? -2 : 0)
+            // Per design language: card hover is depth change, not scale.
             .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
             .onTapGesture {
                 // Single tap to select - post notification to CanvasView
@@ -246,7 +217,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         // ProMotion-optimized animations
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition
         .animation(ProMotionSprings.hover, value: isHovered)
-        .animation(isExpanded ? ProMotionSprings.bouncy : ProMotionSprings.snappy, value: isExpanded)
+        .animation(ProMotionSprings.snappy, value: isExpanded)
         .onHover { hovering in
             isHovered = hovering
         }

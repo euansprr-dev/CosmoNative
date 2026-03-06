@@ -1,5 +1,5 @@
 // CosmoOS/Navigation/MainView.swift
-// Spatial-first main view - NO sidebar, canvas is home
+// Sidebar + content area — Command Center is home, Thinkspaces are canvases
 
 import SwiftUI
 import AppKit
@@ -14,7 +14,6 @@ struct MainView: View {
     // Observe ThinkspaceManager for sidebar visibility changes
     @ObservedObject private var thinkspaceManager = ThinkspaceManager.shared
 
-    // Settings removed from Thinkspace — access via Sanctuary gear icon
     @State private var showRadialMenu = false
     @State private var radialMenuPosition: CGPoint = .zero
     @State private var rightClickMonitor: Any?
@@ -32,12 +31,14 @@ struct MainView: View {
     @State private var showBlockContextMenu = false
     @State private var blockContextMenuPosition: CGPoint = .zero
 
-    // Sanctuary state - NOW THE DEFAULT HOME VIEW
-    @State private var showingSanctuary = true  // Changed: Sanctuary is now the default entry point
-    @StateObject private var sanctuaryChoreographer = AnimationChoreographer()
+    // Navigation destination (Command Center is home)
+    @State private var currentDestination: SidebarDestination = .commandCenter
 
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
+
+    // Deep work session engine (moved from PlannerumView to global)
+    @StateObject private var sessionEngine = DeepWorkSessionEngine()
 
     // Cosmo Window (global floating AI chat panel, Option+A)
     @State private var showCosmoWindow = false
@@ -51,68 +52,13 @@ struct MainView: View {
     @State private var showCreatorProfile = false
     @State private var creatorProfileAtom: Atom?
 
-    // Satellite navigation state
-    @State private var showingPlannerum = false
-    @State private var showingThinkspace = false  // When true, shows Canvas (existing behavior)
+    // Track last-used thinkspace for T-key shortcut
+    @State private var lastThinkspaceId: String?
 
     var body: some View {
         ZStack {
-            // Main content area with optional split-pane layout.
-            // SplitPaneContainer wraps either the canvas or focus mode as the left side,
-            // with any open panes stacked vertically on the right.
-            // z-index follows focus mode state: z-10 (canvas) or z-195 (focus mode above Sanctuary/Plannerum).
-            SplitPaneContainer(paneManager: paneManager) {
-                ZStack {
-                    // Keep CanvasView alive to prevent onAppear/loadBlocks thrash on focus mode enter/exit
-                    CanvasView()
-                        .environmentObject(appState)
-                        .environmentObject(database)
-                        .environmentObject(voiceEngine)
-                        .environmentObject(blockFrameTracker)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .opacity(appState.focusedEntity == nil && !showingSanctuary ? 1.0 : (showingSanctuary ? 0.3 : 0))
-                        .allowsHitTesting(appState.focusedEntity == nil)
-                        .blur(radius: showingSanctuary ? 15 : 0)
-                        .scaleEffect(showingSanctuary ? 0.92 : 1.0)
-
-                    if let focusEntity = appState.focusedEntity {
-                        FocusModeView(entity: focusEntity)
-                            .environmentObject(appState)
-                            .environmentObject(database)
-                            .environmentObject(voiceEngine)
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    }
-                }
-            }
-            .zIndex(appState.focusedEntity != nil ? 195 : 10)
-            .animation(.easeInOut(duration: 0.4), value: showingSanctuary)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
-
-            // Top-left escape hint
-            VStack {
-                HStack {
-                    HStack(spacing: 5) {
-                        Text("esc")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(DS.textMuted)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(DS.border, in: RoundedRectangle(cornerRadius: 3))
-                        Text("to go back")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(DS.textMuted)
-                    }
-                    .padding(.leading, thinkspaceManager.isSidebarVisible ? 300 : 16)
-                    .padding(.top, 14)
-                    .opacity(showingSanctuary ? 0 : 1)
-                    .animation(.easeOut(duration: 0.2), value: showingSanctuary)
-                    .animation(ProMotionSprings.snappy, value: thinkspaceManager.isSidebarVisible)
-
-                    Spacer()
-                }
-                Spacer()
-            }
-            .zIndex(45)
+            // Main layout: sidebar + content area
+            mainContentLayout
 
 
             // Glass overlay for search results, clarifications, proactive suggestions
@@ -151,8 +97,6 @@ struct MainView: View {
                     .zIndex(200)
             }
 
-            // Settings accessible via Sanctuary gear icon
-
             // Cosmo Window — Global floating AI chat panel (Option+A)
             // zIndex 260: above CommandK (200), below InstagramSwipeModal (275)
             if showCosmoWindow {
@@ -190,38 +134,12 @@ struct MainView: View {
                 .zIndex(275)
             }
 
-            // Sanctuary Overlay (neural interface dashboard)
-            if showingSanctuary && !showingPlannerum {
-                SanctuaryView()
-                    .environmentObject(sanctuaryChoreographer)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(180)
-                    .onTapGesture {
-                        // Tap outside to dismiss
-                        closeSanctuary()
-                    }
-                    .gesture(
-                        DragGesture(minimumDistance: 50)
-                            .onEnded { value in
-                                // Swipe down to dismiss
-                                if value.translation.height > 50 {
-                                    closeSanctuary()
-                                }
-                            }
-                    )
-            }
-
-            // Plannerum Overlay (holographic planning command chamber)
-            // Full takeover view - replaces Sanctuary when navigating
-            if showingPlannerum {
-                PlannerumView(onDismiss: {
-                    closePlannerum()
-                })
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .leading)),
-                    removal: .opacity.combined(with: .move(edge: .leading))
-                ))
-                .zIndex(190)
+            // SessionTimerBar — global floating overlay for deep work sessions
+            if sessionEngine.activeSession != nil {
+                SessionTimerBar(engine: sessionEngine)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.top, 8)
+                    .zIndex(50)
             }
 
             // Radial Menu (right-click creation) - no overlay, just the menu
@@ -400,8 +318,6 @@ struct MainView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(ProMotionSprings.snappy, value: showCosmoWindow)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: showingSanctuary)
-        .animation(.spring(response: 0.5, dampingFraction: 0.78), value: showingPlannerum)
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = true
@@ -428,11 +344,8 @@ struct MainView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
-            // Settings now live in Sanctuary — navigate there
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                showingSanctuary = true
-                showingThinkspace = false
-            }
+            // Settings — navigate to Command Center
+            currentDestination = .commandCenter
         }
         .onReceive(NotificationCenter.default.publisher(for: .enterFocusMode)) { notification in
             if let type = notification.userInfo?["type"] as? EntityType,
@@ -499,40 +412,53 @@ struct MainView: View {
         // Cosmo Window context tracking
         .onChange(of: showCosmoWindow) { _, isOpen in
             if isOpen {
-                // Update context based on current view state
                 let vm = CosmoWindowViewModel.shared
-                if showingPlannerum {
-                    vm.updateContextManually(type: .plannerum)
-                } else if showingSanctuary {
-                    vm.updateContextManually(type: .sanctuary)
-                } else if appState.focusedEntity != nil {
+                if appState.focusedEntity != nil {
                     // Focus mode context is handled by the focus mode views themselves
-                } else {
+                } else if isThinkspaceActive {
                     vm.updateContextManually(type: .thinkspaceCanvas)
+                } else {
+                    // Command Center or Inbox — use sanctuary context
+                    vm.updateContextManually(type: .sanctuary)
                 }
             }
         }
-        .onChange(of: showingSanctuary) { _, isSanctuary in
-            if showCosmoWindow && isSanctuary {
-                CosmoWindowViewModel.shared.updateContextManually(type: .sanctuary)
+        .onChange(of: currentDestination) { _, newDest in
+            // Track last-used thinkspace for T-key navigation
+            if case .thinkspace(let id) = newDest {
+                lastThinkspaceId = id
             }
-        }
-        .onChange(of: showingPlannerum) { _, isPlannerum in
+            // Switch thinkspace when destination changes
+            switch newDest {
+            case .commandCenter:
+                break // Full-screen dashboard, no thinkspace switch needed
+            case .thinkspace(let id):
+                if let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == id }) {
+                    Task { await thinkspaceManager.switchTo(ts) }
+                }
+            case .inbox:
+                break
+            }
+            // Update Cosmo Window context
             if showCosmoWindow {
-                CosmoWindowViewModel.shared.updateContextManually(type: isPlannerum ? .plannerum : .sanctuary)
+                let vm = CosmoWindowViewModel.shared
+                switch newDest {
+                case .commandCenter, .inbox:
+                    vm.updateContextManually(type: .sanctuary)
+                case .thinkspace:
+                    vm.updateContextManually(type: .thinkspaceCanvas)
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            // Close Command-K first
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
                 commandKViewModel.clear()
             }
 
-            // Navigate to Thinkspace then add to canvas
-            navigateToThinkspace()
+            navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NotificationCenter.default.post(
                     name: .openEntityOnCanvas,
@@ -544,14 +470,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaToCanvas"))) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            // Close Command-K first
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
                 commandKViewModel.clear()
             }
 
-            // Navigate to Thinkspace then add to canvas
-            navigateToThinkspace()
+            navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NotificationCenter.default.post(
                     name: .openEntityOnCanvas,
@@ -563,14 +487,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 
-            // Close Command-K first
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
                 commandKViewModel.clear()
             }
 
-            // Navigate to Thinkspace then add to canvas
-            navigateToThinkspace()
+            navigateToLastThinkspace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NotificationCenter.default.post(
                     name: .openEntityOnCanvas,
@@ -594,7 +516,7 @@ struct MainView: View {
             Task { @MainActor in
                 if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                     let entityType = mapAtomTypeToEntityType(atom.type)
-                    navigateToThinkspace()
+                    navigateToLastThinkspace()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         NotificationCenter.default.post(
                             name: .openEntityOnCanvas,
@@ -606,15 +528,14 @@ struct MainView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
-            // Switch to the selected Thinkspace from Command-K (world-switch)
+            // Switch to the selected Thinkspace from Command-K
             if let id = notification.userInfo?["id"] as? Int64 {
-                // First navigate to Thinkspace with world-switch animation
-                navigateToThinkspace()
-                // Then switch to the specific Thinkspace
                 Task {
                     if let atom = try? await AtomRepository.shared.fetch(id: id),
                        let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == atom.uuid }) {
                         await ThinkspaceManager.shared.switchTo(thinkspace)
+                        lastThinkspaceId = atom.uuid
+                        currentDestination = .thinkspace(id: atom.uuid)
                     }
                 }
             }
@@ -641,24 +562,28 @@ struct MainView: View {
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
             configureProMotion()
+            // No thinkspace switch needed — Command Center is full-screen now
         }
         .onDisappear {
             removeRightClickMonitor()
             removeGlobalKeyMonitor()
         }
-        // Satellite navigation handlers (world-switch transitions)
+        // Satellite navigation handlers (legacy notifications → new routing)
         .onReceive(NotificationCenter.default.publisher(for: .sanctuaryThinkspaceRequested)) { _ in
-            // Navigate from Sanctuary to Canvas (Thinkspace)
-            navigateToThinkspace()
+            navigateToLastThinkspace()
         }
         .onReceive(NotificationCenter.default.publisher(for: .sanctuaryPlannerumRequested)) { _ in
-            // Navigate from Sanctuary to Plannerum
-            navigateToPlannerum()
+            // Plannerum is now a zone inside Command Center
+            currentDestination = .commandCenter
         }
-        // Voice navigation handler - routes "go to plannerum", "open thinkspace", etc.
+        // Voice navigation handler
         .onReceive(NotificationCenter.default.publisher(for: .voiceNavigationRequested)) { notification in
             guard let destination = notification.userInfo?["destination"] as? String else { return }
             handleVoiceNavigation(to: destination)
+        }
+        // Command Center navigation (from other systems)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
+            currentDestination = .commandCenter
         }
         // Open block in focus mode by UUID (used by promoteToContent, context panels, etc.)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
@@ -667,18 +592,85 @@ struct MainView: View {
         }
     }
 
-    /// Handle voice navigation to Plannerum, Thinkspace, or Sanctuary
-    /// Uses unified world-switching transitions
+    // MARK: - Main Content Layout (extracted to avoid type-checker timeout)
+
+    @ViewBuilder
+    private var mainContentLayout: some View {
+        HStack(spacing: 0) {
+            UnifiedSidebar(
+                currentDestination: $currentDestination,
+                thinkspaceManager: thinkspaceManager
+            )
+            .zIndex(200)
+
+            SplitPaneContainer(paneManager: paneManager) {
+                ZStack {
+                    destinationContent
+                    focusModeOverlay
+                }
+            }
+            .zIndex(appState.focusedEntity != nil ? 195 : 10)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+        }
+        .background(DS.surface)
+    }
+
+    /// The thinkspace ID for the current canvas destination (Command Center or a thinkspace)
+    private var activeCanvasThinkspaceId: String? {
+        switch currentDestination {
+        case .commandCenter: return ThinkspaceManager.commandCenterUUID
+        case .thinkspace(let id): return id
+        case .inbox: return nil
+        }
+    }
+
+    @ViewBuilder
+    private var destinationContent: some View {
+        if case .inbox = currentDestination {
+            Text("Inbox")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundColor(DS.textSecondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.bg)
+                .transition(.opacity)
+        } else if case .commandCenter = currentDestination {
+            CommandCenterDashboard()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.bg)
+                .transition(.opacity)
+        } else {
+            // Thinkspaces use CanvasView
+            CanvasView(thinkspaceId: activeCanvasThinkspaceId)
+                .environmentObject(appState)
+                .environmentObject(database)
+                .environmentObject(voiceEngine)
+                .environmentObject(blockFrameTracker)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(appState.focusedEntity == nil ? 1.0 : 0)
+                .allowsHitTesting(appState.focusedEntity == nil)
+                .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private var focusModeOverlay: some View {
+        if let focusEntity = appState.focusedEntity {
+            FocusModeView(entity: focusEntity)
+                .environmentObject(appState)
+                .environmentObject(database)
+                .environmentObject(voiceEngine)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        }
+    }
+
+    /// Handle voice navigation to Command Center, Thinkspace, etc.
     private func handleVoiceNavigation(to destination: String) {
         switch destination.lowercased() {
-        case "plannerum", "planning":
-            navigateToPlannerum()
+        case "plannerum", "planning", "sanctuary", "home", "command center":
+            currentDestination = .commandCenter
         case "thinkspace", "canvas":
-            navigateToThinkspace()
-        case "sanctuary", "home":
-            navigateToSanctuary()
+            navigateToLastThinkspace()
         default:
-            // For other destinations, keep existing behavior
             break
         }
     }
@@ -697,8 +689,6 @@ struct MainView: View {
         // Close any overlays that might be open
         withAnimation(.spring(response: 0.2)) {
             showCommandK = false
-            showingSanctuary = false
-            showingPlannerum = false
         }
 
         Task { @MainActor in
@@ -737,87 +727,47 @@ struct MainView: View {
         }
     }
 
-    // MARK: - Unified World-Switching Navigation
+    // MARK: - Navigation Helpers
 
-    /// Navigate to Planarium with world-switch animation
-    private func navigateToPlannerum() {
-        withAnimation(ProMotionSprings.worldSwitch) {
-            showingSanctuary = true
-            showingPlannerum = true
-        }
+    /// Whether the current destination is a thinkspace
+    private var isThinkspaceActive: Bool {
+        if case .thinkspace = currentDestination { return true }
+        return false
     }
 
-    /// Navigate to Thinkspace with world-switch animation
-    private func navigateToThinkspace() {
-        withAnimation(ProMotionSprings.worldSwitch) {
-            showingPlannerum = false
-            showingSanctuary = false
-            showingThinkspace = true
-        }
-    }
-
-    /// Navigate to Sanctuary with world-switch animation
-    private func navigateToSanctuary() {
-        withAnimation(ProMotionSprings.worldSwitch) {
-            showingPlannerum = false
-            showingSanctuary = true
-        }
-        // Start the choreographer for entry animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            sanctuaryChoreographer.startEntrySequence()
+    /// Navigate to the last-used thinkspace (or the first available)
+    private func navigateToLastThinkspace() {
+        if let id = lastThinkspaceId {
+            currentDestination = .thinkspace(id: id)
+        } else if let first = thinkspaceManager.thinkspaces.first {
+            lastThinkspaceId = first.id
+            currentDestination = .thinkspace(id: first.id)
         }
     }
 
     // MARK: - Global Keyboard Monitor
-    /// Uses NSEvent monitor for Escape key, and Ctrl+Z undo/redo fallback
-    /// (menu bar handles ⌘K, ⌘,, ⌘Z, ⌘⇧Z but Ctrl+Z is also common on Mac)
+    /// Uses NSEvent monitor for Escape key, keyboard shortcuts, and Ctrl+Z undo/redo fallback
     private func setupGlobalKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
-            // Escape to dismiss overlays (only on keyDown)
+            // Escape to dismiss overlays (only on keyDown) — peels back one layer at a time
             if event.type == .keyDown, event.keyCode == 53 {  // Escape key
+                // 1. Instagram modal
                 if swipeFileEngine.showInstagramModal {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         swipeFileEngine.cancelInstagramSave()
                     }
-                    return nil  // Consume event
+                    return nil
                 }
 
-                // Close Cosmo Window if open (zIndex 260, above most overlays)
+                // 2. Cosmo Window
                 if showCosmoWindow {
                     withAnimation(ProMotionSprings.snappy) {
                         showCosmoWindow = false
                     }
-                    return nil  // Consume event
+                    return nil
                 }
 
-                // Close Plannerum first if open (returns to Sanctuary)
-                if showingPlannerum {
-                    closePlannerum()
-                    return nil  // Consume event
-                }
-
-                // Return from Thinkspace (Canvas) to Sanctuary with world-switch
-                // Also handles default canvas state (showingThinkspace may be false on app launch)
-                if !showingSanctuary {
-                    navigateToSanctuary()
-                    showingThinkspace = false
-                    return nil  // Consume event
-                }
-
-                // Close Sanctuary if open (and Plannerum is not)
-                if showingSanctuary {
-                    closeSanctuary()
-                    return nil  // Consume event
-                }
-
-                if showBlockContextMenu {
-                    withAnimation(.spring(response: 0.2)) {
-                        showBlockContextMenu = false
-                        rightClickedBlockId = nil
-                    }
-                    return nil  // Consume event
-                }
-
+                // 3. Creator Profile
                 if showCreatorProfile {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         showCreatorProfile = false
@@ -826,6 +776,7 @@ struct MainView: View {
                     return nil
                 }
 
+                // 4. Creator Database
                 if showCreatorDatabase {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         showCreatorDatabase = false
@@ -833,65 +784,150 @@ struct MainView: View {
                     return nil
                 }
 
-                if showCommandK || showRadialMenu || appState.focusedEntity != nil {
+                // 5. Command-K
+                if showCommandK {
                     withAnimation(.spring(response: 0.2)) {
-                        if showCommandK {
-                            showCommandK = false
-                            commandKViewModel.clear()
-                        } else if showRadialMenu {
-                            showRadialMenu = false
-                        } else if appState.focusedEntity != nil {
-                            appState.focusedEntity = nil
-                        }
+                        showCommandK = false
+                        appState.isCommandKVisible = false
+                        commandKViewModel.clear()
                     }
-                    return nil  // Consume event
+                    return nil
                 }
 
-                // Close most recent pane (after focus mode/commandK/radial are handled)
+                // 6. Radial menu
+                if showRadialMenu {
+                    withAnimation(.spring(response: 0.2)) {
+                        showRadialMenu = false
+                    }
+                    return nil
+                }
+
+                // 7. Block context menu
+                if showBlockContextMenu {
+                    withAnimation(.spring(response: 0.2)) {
+                        showBlockContextMenu = false
+                        rightClickedBlockId = nil
+                    }
+                    return nil
+                }
+
+                // 8. Focus mode
+                if appState.focusedEntity != nil {
+                    withAnimation(.spring(response: 0.2)) {
+                        appState.focusedEntity = nil
+                    }
+                    return nil
+                }
+
+                // 9. Close most recent pane
                 if paneManager.isActive {
                     withAnimation(ProMotionSprings.snappy) {
                         paneManager.closeLastPane()
                     }
-                    return nil  // Consume event
+                    return nil
                 }
 
-                // Dismiss glass cards with Escape
+                // 10. Dismiss glass cards
                 if glassCenter.isVisible {
                     glassCenter.clearAll()
                     return nil
                 }
+
+                // 11. Navigate from thinkspace back to Command Center
+                if isThinkspaceActive {
+                    currentDestination = .commandCenter
+                    return nil
+                }
+
+                // 12. On Command Center — no action (home state)
             }
 
-            // P key - Open Plannerum from Sanctuary (world-switch)
+            // P key — navigate to Command Center (from anywhere)
             if event.type == .keyDown,
                event.keyCode == 35,  // P key
-               showingSanctuary,
-               !showingPlannerum,
+               !event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
-                navigateToPlannerum()
-                return nil  // Consume event
+                currentDestination = .commandCenter
+                return nil
             }
 
-            // T key - Open Thinkspace from Sanctuary (world-switch)
+            // T key — navigate to last-used thinkspace
             if event.type == .keyDown,
                event.keyCode == 17,  // T key
-               showingSanctuary,
-               !showingPlannerum,
+               !event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
-                navigateToThinkspace()
-                return nil  // Consume event
+                navigateToLastThinkspace()
+                return nil
             }
 
-            // L key - Open Command-K to Library tab from Sanctuary
+            // Cmd+\ — toggle sidebar visibility
+            if event.type == .keyDown,
+               event.keyCode == 42,  // \ key
+               event.modifierFlags.contains(.command),
+               !isFirstResponderTextField() {
+                ThinkspaceManager.shared.isSidebarVisible.toggle()
+                return nil
+            }
+
+            // N key — quick-add task (Command Center only)
+            if event.type == .keyDown,
+               event.keyCode == 45,  // N key
+               !event.modifierFlags.contains(.command),
+               !isFirstResponderTextField() {
+                if case .commandCenter = currentDestination {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("com.cosmo.commandCenter.quickAddTask"),
+                        object: nil
+                    )
+                    return nil
+                }
+            }
+
+            // S key — start deep work session (Command Center only)
+            if event.type == .keyDown,
+               event.keyCode == 1,  // S key
+               !event.modifierFlags.contains(.command),
+               !isFirstResponderTextField() {
+                if case .commandCenter = currentDestination,
+                   sessionEngine.activeSession == nil {
+                    sessionEngine.startSession(
+                        taskUUID: nil,
+                        taskTitle: "Quick Session",
+                        intent: .deepThink,
+                        plannedMinutes: 25
+                    )
+                    return nil
+                }
+            }
+
+            // Command Center keyboard navigation (arrow keys, Enter, Space, Tab, Delete)
+            if event.type == .keyDown,
+               !event.modifierFlags.contains(.command),
+               !isFirstResponderTextField() {
+                if case .commandCenter = currentDestination {
+                    let keyCode = event.keyCode
+                    // Arrow Up (126), Arrow Down (125), Enter (36), Space (49), Tab (48), Delete (51)
+                    if [126, 125, 36, 49, 48, 51].contains(keyCode) {
+                        NotificationCenter.default.post(
+                            name: Notification.Name("com.cosmo.commandCenter.keyboardAction"),
+                            object: nil,
+                            userInfo: ["keyCode": keyCode]
+                        )
+                        return nil
+                    }
+                }
+            }
+
+            // L key — open Command-K to Library tab
             if event.type == .keyDown,
                event.keyCode == 37,  // L key
-               showingSanctuary,
-               !showingPlannerum,
+               !event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
                 withAnimation(.spring(response: 0.2)) {
                     showCommandK = true
+                    appState.isCommandKVisible = true
                 }
-                return nil  // Consume event
+                return nil
             }
 
             // Cmd+Shift+C - Open command bar typing mode
@@ -1057,8 +1093,8 @@ struct MainView: View {
                 y: windowHeight - windowPoint.y
             )
 
-            // Don't show menus when overlays are active
-            guard !showingSanctuary, !showingPlannerum, !showCommandK, !showCosmoWindow, appState.focusedEntity == nil else {
+            // Don't show menus when overlays are active or not on a thinkspace
+            guard isThinkspaceActive, !showCommandK, !showCosmoWindow, appState.focusedEntity == nil else {
                 return event
             }
 
@@ -1136,46 +1172,7 @@ struct MainView: View {
         )
     }
 
-    // MARK: - Sanctuary Transitions
-
-    /// Opens the Sanctuary with the choreographed entry animation
-    /// Canvas fades, blurs, and z-translates back while Sanctuary materializes
-    private func openSanctuary() {
-        // Start the entry sequence animation
-        sanctuaryChoreographer.reset()
-
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-            showingSanctuary = true
-            showingThinkspace = false  // Reset Thinkspace state when returning to Sanctuary
-        }
-
-        // Start the internal choreographer for staggered element animations
-        sanctuaryChoreographer.startEntrySequence()
-    }
-
-    /// Closes the Sanctuary with the choreographed exit animation
-    /// Elements fade in reverse order, then canvas is restored
-    private func closeSanctuary() {
-        // Start exit sequence - choreographer handles the staggered animations
-        sanctuaryChoreographer.startExitSequence {
-            // After animation completes, hide the container
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                showingSanctuary = false
-            }
-        }
-    }
-
-    /// Closes Plannerum and returns to Sanctuary
-    /// Uses unified world-switch transition
-    private func closePlannerum() {
-        withAnimation(ProMotionSprings.worldSwitch) {
-            showingPlannerum = false
-        }
-        // Re-enter Sanctuary with fresh animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            sanctuaryChoreographer.startEntrySequence()
-        }
-    }
+    // MARK: - Legacy Transition Stubs (removed — navigation is now instant via currentDestination)
 
     // MARK: - NodeGraph Command-K Atom Opening
 
@@ -1278,13 +1275,6 @@ struct MainView: View {
         )
 
         print("✅ App Nap disabled for maximum performance")
-    }
-}
-
-// MARK: - Spatial Canvas View (Wrapper)
-struct SpatialCanvasView: View {
-    var body: some View {
-        CanvasView()
     }
 }
 

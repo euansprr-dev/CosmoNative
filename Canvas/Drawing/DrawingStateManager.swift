@@ -20,9 +20,13 @@ final class DrawingStateManager: ObservableObject {
     @Published var currentShapeKind: ShapeKind = .rectangle
     @Published var currentStrokeColor: String = "#1A1A1A"
     @Published var currentFillColor: String? = nil
-    @Published var currentStrokeWidth: CGFloat = 2.0
+    @Published var currentStrokeWidth: CGFloat = 2.5
     @Published var currentTextWeight: DrawingTextWeight = .M
     @Published var currentLassoSubMode: LassoSubMode = .lasso
+    @Published var recentColors: [String] = []
+
+    /// Shift held during shape creation constrains to 1:1 aspect ratio
+    @Published var shiftConstrain: Bool = false
 
     // MARK: - Zone Tool State
 
@@ -58,7 +62,12 @@ final class DrawingStateManager: ObservableObject {
 
     @Published var activeDrawing: CanvasDrawing?
     @Published var activePathPoints: [CGPoint] = []
+    @Published var activePathWidths: [CGFloat] = []
     @Published var editingTextId: String?
+
+    /// Timestamp of last freehand point for velocity calculation
+    private var lastPointTimestamp: Date?
+    private var lastPointPosition: CGPoint?
 
     // MARK: - Thinkspace
 
@@ -415,8 +424,16 @@ final class DrawingStateManager: ObservableObject {
 
     func updateShape(to point: CGPoint) {
         guard var drawing = activeDrawing else { return }
-        let w = point.x - drawing.origin.x
-        let h = point.y - drawing.origin.y
+        var w = point.x - drawing.origin.x
+        var h = point.y - drawing.origin.y
+
+        // Shift-constrain to 1:1 aspect ratio
+        if shiftConstrain {
+            let side = max(abs(w), abs(h))
+            w = w < 0 ? -side : side
+            h = h < 0 ? -side : side
+        }
+
         // Support dragging in any direction
         drawing.origin = CGPoint(
             x: min(drawing.origin.x, drawing.origin.x + w),
@@ -444,33 +461,89 @@ final class DrawingStateManager: ObservableObject {
 
     func beginFreehand(at point: CGPoint) {
         activePathPoints = [point]
+        activePathWidths = [currentStrokeWidth]
+        lastPointTimestamp = Date()
+        lastPointPosition = point
         activeDrawing = CanvasDrawing(
             drawingType: .freehand,
             origin: point,
             pathPoints: [point],
+            pathWidths: [currentStrokeWidth],
             strokeColor: currentStrokeColor,
             strokeWidth: currentStrokeWidth
         )
     }
 
     func addFreehandPoint(_ point: CGPoint) {
+        // Compute velocity-based width (Craft-style: very subtle variation)
+        let now = Date()
+        var width = currentStrokeWidth
+
+        if let lastTime = lastPointTimestamp, let lastPos = lastPointPosition {
+            let dt = now.timeIntervalSince(lastTime)
+            if dt > 0 {
+                let distance = hypot(point.x - lastPos.x, point.y - lastPos.y)
+                let velocity = distance / (dt * 1000) // px per ms
+
+                // Subtle velocity mapping: slow = 1.12× base, fast = 0.88× base
+                // Much gentler than before — Craft-like consistency with hints of variation
+                let factor = max(0.88, min(1.12, 1.12 - velocity * 0.12))
+                width = currentStrokeWidth * factor
+            }
+        }
+
+        // Heavy smoothing to prevent any visible jumps (80% previous, 20% new)
+        if let lastWidth = activePathWidths.last {
+            width = lastWidth * 0.8 + width * 0.2
+        }
+
         activePathPoints.append(point)
+        activePathWidths.append(width)
         activeDrawing?.pathPoints = activePathPoints
+        activeDrawing?.pathWidths = activePathWidths
+
+        lastPointTimestamp = now
+        lastPointPosition = point
     }
 
     func finishFreehand() {
         guard var drawing = activeDrawing, activePathPoints.count > 1 else {
             activeDrawing = nil
             activePathPoints = []
+            activePathWidths = []
+            lastPointTimestamp = nil
+            lastPointPosition = nil
             return
         }
-        let simplified = simplifyPath(activePathPoints, epsilon: 1.5)
-        drawing.pathPoints = simplified
+
+        // Save exactly what was shown during live preview — no post-processing.
+        // The renderer already applies Catmull-Rom bezier smoothing at render time,
+        // so the stored points don't need to be modified.
+        drawing.pathPoints = activePathPoints
+        drawing.pathWidths = activePathWidths
         drawing.zIndex = (drawings.map(\.zIndex).max() ?? 0) + 1
         saveDrawing(drawing)
         CosmoUndoManager.shared.register(CreateDrawingAction(drawing: drawing, drawingState: self))
         activeDrawing = nil
         activePathPoints = []
+        activePathWidths = []
+        lastPointTimestamp = nil
+        lastPointPosition = nil
+    }
+
+    /// 3-point moving average smoothing
+    private func smoothPoints(_ points: [CGPoint]) -> [CGPoint] {
+        guard points.count > 2 else { return points }
+        var result = [points[0]]
+        for i in 1..<(points.count - 1) {
+            let avg = CGPoint(
+                x: (points[i-1].x + points[i].x + points[i+1].x) / 3.0,
+                y: (points[i-1].y + points[i].y + points[i+1].y) / 3.0
+            )
+            result.append(avg)
+        }
+        result.append(points.last!)
+        return result
     }
 
     // MARK: - Text Creation
@@ -578,5 +651,15 @@ final class DrawingStateManager: ObservableObject {
 
     private func primarySelectedDrawingId() -> String? {
         drawings.last(where: { selectedDrawingIds.contains($0.id) })?.id ?? selectedDrawingIds.first
+    }
+
+    // MARK: - Recent Colors
+
+    func trackRecentColor(_ hex: String) {
+        recentColors.removeAll { $0 == hex }
+        recentColors.insert(hex, at: 0)
+        if recentColors.count > 4 {
+            recentColors = Array(recentColors.prefix(4))
+        }
     }
 }

@@ -508,6 +508,9 @@ struct ProMotionSprings {
     static let press = Animation.spring(response: 0.08, dampingFraction: 0.92)
     static let release = Animation.spring(response: 0.2, dampingFraction: 0.72)
 
+    // SIDEBAR
+    static let sidebar = Animation.spring(response: 0.28, dampingFraction: 0.92)
+
     // CONTENT TRANSITIONS
     static let cardEntrance = Animation.spring(response: 0.4, dampingFraction: 0.75)
     static let menuAppear = Animation.spring(response: 0.25, dampingFraction: 0.8)

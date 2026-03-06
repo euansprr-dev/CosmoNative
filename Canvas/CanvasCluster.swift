@@ -23,6 +23,13 @@ enum ClusterSortOrder: String, Codable, CaseIterable, Sendable {
     case status
 }
 
+/// Grouping strategy for board mode columns.
+enum ClusterBoardGrouping: String, Codable, CaseIterable, Sendable {
+    case auto
+    case type
+    case pipeline
+}
+
 struct CanvasCluster: Identifiable {
     let id: UUID
     var name: String
@@ -44,11 +51,17 @@ struct CanvasCluster: Identifiable {
     /// Zone clusters persist even when empty (no blocks). Created via zone tool.
     var isZone: Bool = false
 
+    /// Command Center zone type identifier — "welcomeHub", "planningDock", "goalForge", "questBoard"
+    var zoneType: String? = nil
+
     /// How member blocks are displayed (canvas/list/board)
     var viewMode: ClusterViewMode = .canvas
 
     /// Sort order for list mode
     var sortOrder: ClusterSortOrder = .dateUpdated
+
+    /// Grouping mode for board columns
+    var boardGrouping: ClusterBoardGrouping = .auto
 
     // 8-color muted palette — visible on light canvas backgrounds
     static let palette: [Color] = [
@@ -71,8 +84,9 @@ struct CanvasCluster: Identifiable {
     static let minimumSize = CGSize(width: 200, height: 150)
 
     /// Recompute bounding rect from current block positions.
-    /// Respects `manualSizeOverride` — auto-expand grows beyond it but never shrinks below it.
-    mutating func updateBoundingRect(blocks: [CanvasBlock], padding: CGFloat = 40) {
+    /// Canvas mode is grow-only by default so clusters don't jitter while dragging blocks.
+    /// Non-canvas modes are explicitly fitted by the cluster engine.
+    mutating func updateBoundingRect(blocks: [CanvasBlock], padding: CGFloat = 40, growOnly: Bool = true) {
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
         guard !memberBlocks.isEmpty else { return }
 
@@ -96,31 +110,46 @@ struct CanvasCluster: Identifiable {
         // Extra top padding for the title label
         let topPadding = padding + Self.titleTopPadding
 
-        var computedWidth = (maxX - minX) + padding * 2
-        var computedHeight = (maxY - minY) + padding + topPadding
-        var originX = minX - padding
-        var originY = minY - topPadding
+        let blockOriginX = minX - padding
+        let blockOriginY = minY - topPadding
+        let blockWidth = (maxX - minX) + padding * 2
+        let blockHeight = (maxY - minY) + padding + topPadding
 
-        // Respect manual size override — expand to at least the manual dimensions,
-        // centering the extra space so blocks remain visually inside.
+        // Grow-only merge to avoid shrinking during live block movement.
+        var finalMinX = blockOriginX
+        var finalMinY = blockOriginY
+        var finalMaxX = blockOriginX + blockWidth
+        var finalMaxY = blockOriginY + blockHeight
+
+        let current = boundingRect
+        if growOnly && current.width > 0 && current.height > 0 {
+            finalMinX = min(finalMinX, current.minX)
+            finalMinY = min(finalMinY, current.minY)
+            finalMaxX = max(finalMaxX, current.maxX)
+            finalMaxY = max(finalMaxY, current.maxY)
+        }
+
+        // Also respect manual size override as a floor
         if let manual = manualSizeOverride {
-            if computedWidth < manual.width {
-                let extra = manual.width - computedWidth
-                originX -= extra / 2
-                computedWidth = manual.width
+            let w = finalMaxX - finalMinX
+            let h = finalMaxY - finalMinY
+            if w < manual.width {
+                let extra = manual.width - w
+                finalMinX -= extra / 2
+                finalMaxX += extra / 2
             }
-            if computedHeight < manual.height {
-                let extra = manual.height - computedHeight
-                originY -= extra / 2
-                computedHeight = manual.height
+            if h < manual.height {
+                let extra = manual.height - h
+                finalMinY -= extra / 2
+                finalMaxY += extra / 2
             }
         }
 
         boundingRect = CGRect(
-            x: originX,
-            y: originY,
-            width: computedWidth,
-            height: computedHeight
+            x: finalMinX,
+            y: finalMinY,
+            width: finalMaxX - finalMinX,
+            height: finalMaxY - finalMinY
         )
     }
 
@@ -154,9 +183,52 @@ struct CodableCluster: Codable, Sendable {
     // Zone clusters persist even when empty (nil decodes as false for backward compat)
     var isZone: Bool?
 
+    // Command Center zone type (nil for non-zone clusters)
+    var zoneType: String?
+
     // View mode persistence (nil → .canvas for backward compat)
     var viewMode: String?
     var sortOrder: String?
+    var boardGrouping: String?
+
+    /// Direct memberwise init for programmatic construction (e.g., Command Center zone creation)
+    init(
+        id: String,
+        name: String,
+        blockUUIDs: [String] = [],
+        colorIndex: Int = 0,
+        synthesis: String? = nil,
+        synthesisUpdatedAt: String? = nil,
+        originX: Double? = nil,
+        originY: Double? = nil,
+        rectWidth: Double? = nil,
+        rectHeight: Double? = nil,
+        manualWidth: Double? = nil,
+        manualHeight: Double? = nil,
+        isZone: Bool? = nil,
+        zoneType: String? = nil,
+        viewMode: String? = nil,
+        sortOrder: String? = nil,
+        boardGrouping: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.blockUUIDs = blockUUIDs
+        self.colorIndex = colorIndex
+        self.synthesis = synthesis
+        self.synthesisUpdatedAt = synthesisUpdatedAt
+        self.originX = originX
+        self.originY = originY
+        self.rectWidth = rectWidth
+        self.rectHeight = rectHeight
+        self.manualWidth = manualWidth
+        self.manualHeight = manualHeight
+        self.isZone = isZone
+        self.zoneType = zoneType
+        self.viewMode = viewMode
+        self.sortOrder = sortOrder
+        self.boardGrouping = boardGrouping
+    }
 
     init(from cluster: CanvasCluster) {
         self.id = cluster.id.uuidString
@@ -176,8 +248,10 @@ struct CodableCluster: Codable, Sendable {
             self.manualHeight = Double(manual.height)
         }
         self.isZone = cluster.isZone ? true : nil
+        self.zoneType = cluster.zoneType
         self.viewMode = cluster.viewMode != .canvas ? cluster.viewMode.rawValue : nil
         self.sortOrder = cluster.sortOrder != .dateUpdated ? cluster.sortOrder.rawValue : nil
+        self.boardGrouping = cluster.boardGrouping != .auto ? cluster.boardGrouping.rawValue : nil
     }
 
     func toCanvasCluster(blocks: [CanvasBlock], thinkspaceId: String?) -> CanvasCluster {
@@ -210,8 +284,10 @@ struct CodableCluster: Codable, Sendable {
             synthesisUpdatedAt: synthesisUpdatedAt,
             manualSizeOverride: manualSize,
             isZone: isZone ?? false,
+            zoneType: zoneType,
             viewMode: viewMode.flatMap { ClusterViewMode(rawValue: $0) } ?? .canvas,
-            sortOrder: sortOrder.flatMap { ClusterSortOrder(rawValue: $0) } ?? .dateUpdated
+            sortOrder: sortOrder.flatMap { ClusterSortOrder(rawValue: $0) } ?? .dateUpdated,
+            boardGrouping: boardGrouping.flatMap { ClusterBoardGrouping(rawValue: $0) } ?? .auto
         )
         // Recompute from blocks if matching members are found; otherwise keep persisted rect
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }

@@ -5,6 +5,9 @@ import SwiftUI
 import GRDB
 
 struct CanvasView: View {
+    /// The thinkspace ID this canvas displays — passed directly to avoid race conditions
+    let thinkspaceId: String?
+
     @StateObject private var spatialEngine = SpatialEngine()
     @StateObject private var expansionManager = BlockExpansionManager()
     @StateObject private var connectManager = DragToConnectManager()
@@ -83,8 +86,8 @@ struct CanvasView: View {
     @StateObject private var provocationEngine = ProvocationEngine.shared
 
     // Cluster drag state
-    @State private var clusterDragOffset: CGSize = .zero
     @State private var draggingClusterId: UUID? = nil
+    @State private var draggingClusterMemberUUIDs: Set<String> = []
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
@@ -112,12 +115,14 @@ struct CanvasView: View {
                     CanvasClusterLayer(
                         clusters: clusterEngine.allClusters,
                         blocks: spatialEngine.blocks,
+                        canvasSize: geo.size,
                         canvasOffset: canvasOffset,
                         scaledPanOffset: scaledPanOffset,
                         effectiveScale: effectiveScale,
                         dropTargetClusterId: clusterEngine.dropTargetClusterId,
                         selectedClusterId: clusterEngine.selectedClusterId,
-                        clusterDragOffset: draggingClusterId != nil ? clusterDragOffset : nil,
+                        resizingClusterId: clusterEngine.resizingClusterId,
+                        clusterDragOffset: clusterDragOffsetForLayer(),
                         onRenameCluster: { id, newName in
                             clusterEngine.renameUserCluster(id: id, to: newName)
                         },
@@ -139,10 +144,14 @@ struct CanvasView: View {
                             clusterEngine.resizeCluster(id: id, delta: delta, edge: edge, blocks: spatialEngine.blocks)
                         },
                         onResizeEndCluster: { id in
+                            clearClusterDragPreview(clusterId: id)
                             clusterEngine.commitClusterResize(id: id, blocks: spatialEngine.blocks)
                         },
                         onChangeViewMode: { id, mode in
                             clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
+                        },
+                        onChangeBoardGrouping: { id, grouping in
+                            clusterEngine.setBoardGrouping(for: id, grouping: grouping)
                         },
                         onChangeColor: { id, colorIndex in
                             clusterEngine.changeClusterColor(id: id, colorIndex: colorIndex)
@@ -153,8 +162,8 @@ struct CanvasView: View {
                         onToggleListExpand: { clusterId, blockUUID in
                             clusterEngine.toggleListExpand(clusterId: clusterId, blockUUID: blockUUID)
                         },
-                        onBoardColumnDrop: { blockUUID, newValue, clusterId in
-                            clusterEngine.updateBlockColumnValue(blockUUID: blockUUID, newValue: newValue, clusterId: clusterId)
+                        onBoardColumnDrop: { event in
+                            clusterEngine.applyBoardDrop(event: event, blocks: &spatialEngine.blocks)
                         },
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
@@ -445,6 +454,13 @@ struct CanvasView: View {
         return s
     }
 
+    /// While a cluster is selected, its member blocks should not steal pointer events.
+    /// This guarantees cluster drag/resize gestures receive input deterministically.
+    private var selectedClusterMemberUUIDs: Set<String> {
+        guard let clusterId = clusterEngine.selectedClusterId else { return [] }
+        return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+    }
+
     @ViewBuilder
     private func blockView(for block: CanvasBlock) -> some View {
         Group {
@@ -487,6 +503,7 @@ struct CanvasView: View {
         .rotationEffect(.degrees(block.rotation))
         .opacity(block.opacity * expansionManager.opacity(for: block.id) * heatmapOpacity(for: block))
         .zIndex(draggingBlockId == block.id ? 1000 : (expansionManager.zIndex(for: block.id) + Double(block.zIndex)))
+        .allowsHitTesting(!selectedClusterMemberUUIDs.contains(block.entityUuid))
         .gesture(
             DragGesture(minimumDistance: 2) // Small threshold to avoid accidental drags
                 .onChanged { gesture in
@@ -541,6 +558,22 @@ struct CanvasView: View {
             insertion: .scale(scale: 0.8).combined(with: .opacity),
             removal: .scale(scale: 0.95).combined(with: .opacity)
         ))
+        .transaction { tx in
+            if draggingClusterMemberUUIDs.contains(block.entityUuid) {
+                tx.animation = nil
+            }
+        }
+    }
+
+    /// Derive the cluster zone's drag offset from member block offsets (all members share the same translation)
+    private func clusterDragOffsetForLayer() -> CGSize? {
+        guard draggingClusterId != nil else { return nil }
+        for block in spatialEngine.blocks where draggingClusterMemberUUIDs.contains(block.entityUuid) {
+            if let offset = blockDragOffsets[block.id] {
+                return offset
+            }
+        }
+        return nil
     }
 
     /// PERF: Rebuild the media content cache when blocks change
@@ -647,16 +680,16 @@ struct CanvasView: View {
                 let provider = CanvasContextProvider(spatialEngine: spatialEngine)
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
 
-                // Load persisted blocks from database for current ThinkSpace
+                // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
-                    let thinkspaceId = thinkspaceManager.currentThinkspace?.id
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
                     rebuildMediaContentCache()
 
                     // Restore persisted zoom/pan for current thinkspace
-                    if let ts = thinkspaceManager.currentThinkspace {
+                    if let tsId = thinkspaceId,
+                       let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
                         canvasScale = CGFloat(ts.zoomLevel)
                         canvasOffset = ts.panOffset
                     }
@@ -674,45 +707,6 @@ struct CanvasView: View {
                 // Register notification observers only once
                 guard !observersRegistered else { return }
                 observersRegistered = true
-                print("📡 Registering notification observers (first time only)")
-
-                // Listen for ThinkSpace changes to reload blocks
-                NotificationCenter.default.addObserver(
-                    forName: CosmoNotification.Canvas.thinkspaceChanged,
-                    object: nil,
-                    queue: .main
-                ) { [self] notification in
-                    nonisolated(unsafe) let notification = notification
-                    Task { @MainActor in
-                        // Get thinkspaceId - could be String or NSNull (for default canvas)
-                        let thinkspaceId: String?
-                        if let id = notification.userInfo?["thinkspaceId"] as? String {
-                            thinkspaceId = id
-                        } else {
-                            thinkspaceId = nil
-                        }
-                        await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
-                        drawingState.loadDrawings(thinkspaceId: thinkspaceId)
-                        CosmoUndoManager.shared.clearHistory()
-                        print("🔄 Reloaded blocks for ThinkSpace: \(thinkspaceId ?? "default")")
-
-                        // Restore zoom/pan for the switched-to thinkspace
-                        if let tsId = thinkspaceId,
-                           let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
-                            canvasScale = CGFloat(ts.zoomLevel)
-                            canvasOffset = ts.panOffset
-                        } else {
-                            canvasScale = 1.0
-                            canvasOffset = .zero
-                        }
-
-                        // Load user-created clusters for the thinkspace
-                        await clusterEngine.loadUserClusters(
-                            thinkspaceId: thinkspaceId,
-                            blocks: spatialEngine.blocks
-                        )
-                    }
-                }
 
                 // Listen for voice-driven placement commands
                 NotificationCenter.default.addObserver(
@@ -1165,6 +1159,30 @@ struct CanvasView: View {
                 if let monitor = scrollWheelMonitor {
                     NSEvent.removeMonitor(monitor)
                     scrollWheelMonitor = nil
+                }
+            }
+            .onChange(of: thinkspaceId) { _, newId in
+                // Reload canvas content when switching between Command Center ↔ thinkspaces
+                Task { @MainActor in
+                    await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
+                    drawingState.loadDrawings(thinkspaceId: newId)
+                    CosmoUndoManager.shared.clearHistory()
+
+                    // Restore zoom/pan for the new thinkspace
+                    if let tsId = newId,
+                       let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
+                        canvasScale = CGFloat(ts.zoomLevel)
+                        canvasOffset = ts.panOffset
+                    } else {
+                        canvasScale = 1.0
+                        canvasOffset = .zero
+                    }
+
+                    // Reload clusters
+                    await clusterEngine.loadUserClusters(
+                        thinkspaceId: newId,
+                        blocks: spatialEngine.blocks
+                    )
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
@@ -2051,25 +2069,34 @@ struct CanvasView: View {
 
     // MARK: - Cluster Drag Handlers
 
-    /// Handle live cluster drag — sets drag offsets for all member blocks + the cluster zone
+    /// Handle live cluster drag — writes per-block offsets into blockDragOffsets for smooth movement
     private func handleClusterDrag(clusterId: UUID, translation: CGSize) {
-        draggingClusterId = clusterId
-        clusterDragOffset = translation
+        // Don't drag while a resize gesture is active (handles fire both)
+        guard clusterEngine.resizingClusterId == nil else { return }
 
-        // Set drag offsets for all member blocks so they move in sync
-        let memberUUIDs = clusterEngine.memberBlockUUIDs(for: clusterId)
-        for block in spatialEngine.blocks {
-            if memberUUIDs.contains(block.entityUuid) {
-                blockDragOffsets[block.id] = translation
-            }
+        if draggingClusterId != clusterId {
+            draggingClusterId = clusterId
+            draggingClusterMemberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+        }
+        // Write offsets into the per-block dictionary so only member blocks re-evaluate
+        for block in spatialEngine.blocks where draggingClusterMemberUUIDs.contains(block.entityUuid) {
+            blockDragOffsets[block.id] = translation
         }
     }
 
     /// Commit cluster drag — move all member blocks to their new positions
     private func handleClusterDragEnd(clusterId: UUID, translation: CGSize) {
-        let memberUUIDs = clusterEngine.memberBlockUUIDs(for: clusterId)
+        // Don't commit drag if a resize gesture was active
+        guard clusterEngine.resizingClusterId == nil else { return }
 
-        // Commit final positions to the @Published array and database
+        let memberUUIDs: Set<String> = {
+            if draggingClusterId == clusterId, !draggingClusterMemberUUIDs.isEmpty {
+                return draggingClusterMemberUUIDs
+            }
+            return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+        }()
+
+        // Commit final positions and clear per-block drag offsets
         for index in spatialEngine.blocks.indices {
             let block = spatialEngine.blocks[index]
             guard memberUUIDs.contains(block.entityUuid) else { continue }
@@ -2080,18 +2107,36 @@ struct CanvasView: View {
             )
             spatialEngine.blocks[index].position = newPosition
             spatialEngine.updateBlockPosition(block.id, position: newPosition)
-
-            // Clear this block's drag offset
             blockDragOffsets.removeValue(forKey: block.id)
         }
 
+        // Move the cluster zone rect itself. This prevents list/board clusters from snapping
+        // back to their previous origin and avoids grow-only recompute artifacts for canvas mode.
+        clusterEngine.offsetClusterRect(id: clusterId, by: translation)
+
         // Clear cluster drag state
         draggingClusterId = nil
-        clusterDragOffset = .zero
+        draggingClusterMemberUUIDs = []
 
-        // Recompute cluster bounds and persist
-        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        // Persist moved cluster + member block positions
         clusterEngine.persistAfterMove()
+    }
+
+    /// Clears any live drag preview offsets for a specific cluster and its member blocks.
+    private func clearClusterDragPreview(clusterId: UUID) {
+        let memberUUIDs: Set<String>
+        if draggingClusterId == clusterId, !draggingClusterMemberUUIDs.isEmpty {
+            memberUUIDs = draggingClusterMemberUUIDs
+        } else {
+            memberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+        }
+        for block in spatialEngine.blocks where memberUUIDs.contains(block.entityUuid) {
+            blockDragOffsets.removeValue(forKey: block.id)
+        }
+        if draggingClusterId == clusterId {
+            draggingClusterId = nil
+            draggingClusterMemberUUIDs = []
+        }
     }
 
     // Legacy handlers (kept for compatibility with other callers)

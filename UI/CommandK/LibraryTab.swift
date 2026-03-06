@@ -156,7 +156,20 @@ struct LibraryTab: View {
 
     private var toolbarRow: some View {
         HStack(spacing: 12) {
-            Spacer()
+            // Stats (pinned left)
+            libraryStatsLabel
+
+            // Filters
+            typeFilterMenu
+
+            if !clientProfiles.isEmpty {
+                clientProfileFilterMenu
+            }
+
+            // Recently Deleted button
+            recentlyDeletedButton
+
+            filterSeparator
 
             // View toggle
             HStack(spacing: 4) {
@@ -170,22 +183,30 @@ struct LibraryTab: View {
                     .fill(DS.surfaceElevated)
             )
 
-            // Recently Deleted button
-            recentlyDeletedButton
-
             // Sort dropdown
             sortDropdown
 
-            // Type filter dropdown
-            typeFilterMenu
-
-            // Client profile filter
-            if !clientProfiles.isEmpty {
-                clientProfileFilterMenu
-            }
+            Spacer()
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 8)
+    }
+
+    private var filterSeparator: some View {
+        Rectangle()
+            .fill(DS.borderActive)
+            .frame(width: 1, height: 20)
+    }
+
+    private var libraryStatsLabel: some View {
+        HStack(spacing: 6) {
+            Text("\(filteredItems.count)")
+                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .foregroundColor(DS.text)
+            Text("items")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.textSecondary)
+        }
     }
 
     @ViewBuilder
@@ -268,13 +289,11 @@ struct LibraryTab: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surfaceHover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(DS.borderSubtle, lineWidth: 1)
-                    )
+                    .fill(DS.surface)
             )
         }
+        .menuStyle(.borderlessButton)
+        .tint(DS.text)
     }
 
     private var typeFilterMenu: some View {
@@ -338,16 +357,10 @@ struct LibraryTab: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(typeFilter != nil ? DS.accent.opacity(0.12) : DS.surfaceHover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(
-                                typeFilter != nil ? DS.accent.opacity(0.3) : DS.borderSubtle,
-                                lineWidth: 1
-                            )
-                    )
+                    .fill(typeFilter != nil ? DS.accent.opacity(0.12) : DS.surface)
             )
         }
+        .menuStyle(.borderlessButton)
         .tint(DS.text)
     }
 
@@ -554,16 +567,10 @@ struct LibraryTab: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(clientFilter != nil ? DS.accent.opacity(0.12) : DS.surfaceHover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(
-                                clientFilter != nil ? DS.accent.opacity(0.3) : DS.borderSubtle,
-                                lineWidth: 1
-                            )
-                    )
+                    .fill(clientFilter != nil ? DS.accent.opacity(0.12) : DS.surface)
             )
         }
+        .menuStyle(.borderlessButton)
         .tint(DS.text)
     }
 

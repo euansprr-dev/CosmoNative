@@ -156,31 +156,57 @@ struct CanvasMinimapOverlay: View {
 
     // MARK: - Cluster Zone
 
+    /// Zone accent colors keyed by zoneType identifier
+    private static let zoneAccentColors: [String: Color] = [
+        "welcomeHub": DS.accent,
+        "planningDock": Color(hex: "3B82F6"),   // Blue
+        "goalForge": Color(hex: "D97706"),      // Amber
+        "questBoard": Color(hex: "8B5CF6"),     // Violet
+    ]
+
+    /// SF Symbol icon for each zone type
+    private static let zoneIcons: [String: String] = [
+        "welcomeHub": "house.fill",
+        "planningDock": "calendar",
+        "goalForge": "target",
+        "questBoard": "gamecontroller.fill",
+    ]
+
     @ViewBuilder
     private func clusterZoneView(cluster: CanvasCluster, layout: MinimapLayout) -> some View {
         let rect = canvasRectToMinimap(cluster.boundingRect, layout: layout)
         let isHovered = hoveredCluster == cluster.id
+        let isZone = cluster.isZone && cluster.zoneType != nil
+        let zoneColor = cluster.zoneType.flatMap { Self.zoneAccentColors[$0] } ?? cluster.color
+        let borderWidth: CGFloat = isZone ? 1.5 : 1
 
         ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 8)
-                .fill(cluster.color.opacity(0.08))
+                .fill(zoneColor.opacity(isZone ? 0.10 : 0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(cluster.color.opacity(isHovered ? 0.4 : 0.2), lineWidth: 1)
+                        .stroke(zoneColor.opacity(isHovered ? 0.5 : (isZone ? 0.3 : 0.2)), lineWidth: borderWidth)
                 )
 
-            // Cluster name label
-            Text(cluster.name)
-                .font(.system(size: max(9, 11 * layout.scale), weight: .semibold))
-                .foregroundColor(cluster.color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule()
-                        .fill(DS.surfaceElevated)
-                        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                )
-                .padding(.top, 4)
+            // Zone/cluster name label with optional icon
+            HStack(spacing: 3) {
+                if let zt = cluster.zoneType, let icon = Self.zoneIcons[zt] {
+                    Image(systemName: icon)
+                        .font(.system(size: max(7, 9 * layout.scale), weight: .semibold))
+                        .foregroundColor(zoneColor)
+                }
+                Text(cluster.name)
+                    .font(.system(size: max(9, 11 * layout.scale), weight: .semibold))
+                    .foregroundColor(zoneColor)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(DS.surfaceElevated)
+                    .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+            )
+            .padding(.top, 4)
         }
         .frame(width: rect.width, height: rect.height)
         .position(x: rect.midX, y: rect.midY)

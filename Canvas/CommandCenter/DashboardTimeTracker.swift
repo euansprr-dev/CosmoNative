@@ -1,0 +1,366 @@
+// Canvas/CommandCenter/DashboardTimeTracker.swift
+// Timery-style time tracking panel: active timer, today's summary, saved presets
+// March 2026
+
+import SwiftUI
+
+struct DashboardTimeTracker: View {
+
+    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @State private var showAddPreset = false
+    @State private var newPresetTitle = ""
+    @State private var newPresetIntent: TaskIntent = .general
+    @State private var newPresetMinutes: Int = 30
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader
+
+            // Active session (when running)
+            if let session = viewModel.sessionEngine.activeSession {
+                activeTimerCard(session)
+            }
+
+            // Today's time summary
+            todayTimeSummary
+
+            // Saved timer presets
+            if !viewModel.savedTimerPresets.isEmpty || showAddPreset {
+                savedTimersSection
+            }
+        }
+    }
+
+    // MARK: - Header
+
+    private var sectionHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "timer")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.textMuted)
+
+            Text("TIME TRACKING")
+                .dsSectionLabel()
+
+            Spacer()
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    showAddPreset.toggle()
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: 20, height: 20)
+                    .background(DS.surface, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Active Timer Card
+
+    @ViewBuilder
+    private func activeTimerCard(_ session: ActiveDeepWorkSession) -> some View {
+        VStack(spacing: 8) {
+            HStack {
+                // Intent badge
+                Image(systemName: session.intent.iconName)
+                    .font(.system(size: 10))
+                    .foregroundColor(session.intent.color)
+
+                // Task name
+                Text(session.taskTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                // Focus score indicator
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(focusScoreColor)
+                        .frame(width: 8, height: 8)
+
+                    Text("\(Int(viewModel.sessionEngine.focusScore))%")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                // Timer display — large monospaced
+                Text(formattedElapsedTime)
+                    .font(.system(size: 28, weight: .light, design: .monospaced))
+                    .foregroundColor(DS.text)
+
+                Spacer()
+
+                // Controls
+                HStack(spacing: 8) {
+                    if viewModel.sessionEngine.isTimerRunning {
+                        controlButton(icon: "pause.fill", color: DS.text, bg: DS.surfaceElevated) {
+                            viewModel.sessionEngine.pauseSession()
+                        }
+                    } else {
+                        controlButton(icon: "play.fill", color: .white, bg: DS.accent) {
+                            viewModel.sessionEngine.resumeSession()
+                        }
+                    }
+
+                    controlButton(icon: "stop.fill", color: PlannerumColors.overdue, bg: PlannerumColors.overdue.opacity(0.1)) {
+                        Task { await viewModel.sessionEngine.endSession() }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func controlButton(icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(color)
+                .frame(width: 32, height: 32)
+                .background(bg, in: Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Today's Time Summary
+
+    private var todayTimeSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(formattedTodayTotal)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+
+                Text("tracked today")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textMuted)
+
+                Spacer()
+            }
+
+            // Intent breakdown bar
+            if !viewModel.todaySessionsByIntent.isEmpty {
+                intentBreakdownBar
+                intentLegend
+            }
+        }
+        .padding(10)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var intentBreakdownBar: some View {
+        GeometryReader { geo in
+            let total = max(viewModel.todayTrackedMinutes, 1)
+            HStack(spacing: 1) {
+                ForEach(sortedIntentEntries, id: \.key) { entry in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(entry.key.color)
+                        .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 4))
+                }
+            }
+        }
+        .frame(height: 8)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private var intentLegend: some View {
+        HStack(spacing: 8) {
+            ForEach(sortedIntentEntries.prefix(4), id: \.key) { entry in
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(entry.key.color)
+                        .frame(width: 6, height: 6)
+
+                    Text("\(entry.key.displayName)")
+                        .font(.system(size: 9))
+                        .foregroundColor(DS.textMuted)
+
+                    Text("\(entry.value)m")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
+            }
+        }
+    }
+
+    private var sortedIntentEntries: [(key: TaskIntent, value: Int)] {
+        viewModel.todaySessionsByIntent
+            .sorted { $0.value > $1.value }
+    }
+
+    // MARK: - Saved Timer Presets
+
+    private var savedTimersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SAVED TIMERS")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundColor(DS.textMuted)
+
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 8),
+                GridItem(.flexible(), spacing: 8)
+            ], spacing: 8) {
+                ForEach(viewModel.savedTimerPresets) { preset in
+                    presetTile(preset)
+                }
+            }
+
+            if showAddPreset {
+                addPresetForm
+            }
+        }
+    }
+
+    private func presetTile(_ preset: SavedTimerPreset) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: preset.intent.iconName)
+                .font(.system(size: 10))
+                .foregroundColor(preset.intent.color)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(preset.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Text("\(preset.plannedMinutes)m")
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.textMuted)
+            }
+
+            Spacer(minLength: 2)
+
+            Button {
+                viewModel.startPresetSession(preset)
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(DS.accent)
+                    .frame(width: 22, height: 22)
+                    .background(DS.accentSoft, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .contextMenu {
+            Button(role: .destructive) {
+                viewModel.deletePreset(id: preset.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    // MARK: - Add Preset Form
+
+    private var addPresetForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("", text: $newPresetTitle, prompt: Text("Timer name...").foregroundColor(DS.textMuted))
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(DS.text)
+
+            HStack(spacing: 6) {
+                // Intent picker (compact)
+                Menu {
+                    ForEach(TaskIntent.allCases, id: \.self) { intent in
+                        Button {
+                            newPresetIntent = intent
+                        } label: {
+                            Label(intent.displayName, systemImage: intent.iconName)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: newPresetIntent.iconName)
+                            .font(.system(size: 9))
+                        Text(newPresetIntent.displayName)
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(newPresetIntent.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(newPresetIntent.color.opacity(0.1), in: Capsule())
+                }
+
+                // Duration stepper
+                Stepper(value: $newPresetMinutes, in: 5...240, step: 15) {
+                    Text("\(newPresetMinutes)m")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.text)
+                }
+                .frame(width: 120)
+
+                Spacer()
+
+                Button("Save") {
+                    guard !newPresetTitle.isEmpty else { return }
+                    viewModel.savePreset(title: newPresetTitle, intent: newPresetIntent, minutes: newPresetMinutes)
+                    newPresetTitle = ""
+                    newPresetMinutes = 30
+                    newPresetIntent = .general
+                    showAddPreset = false
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.accent)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(10)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Helpers
+
+    private var focusScoreColor: Color {
+        let score = viewModel.sessionEngine.focusScore
+        if score >= 80 { return DS.green }
+        if score >= 50 { return DS.orange }
+        return PlannerumColors.overdue
+    }
+
+    private var formattedElapsedTime: String {
+        let totalSeconds = viewModel.sessionEngine.elapsedSeconds
+        let hours = totalSeconds / 3600
+        let mins = (totalSeconds % 3600) / 60
+        let secs = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, mins, secs)
+        }
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
+    private var formattedTodayTotal: String {
+        let total = viewModel.todayTrackedMinutes
+        let hours = total / 60
+        let mins = total % 60
+        if hours > 0 {
+            return "\(hours)h \(mins)m"
+        }
+        return "\(mins)m"
+    }
+}

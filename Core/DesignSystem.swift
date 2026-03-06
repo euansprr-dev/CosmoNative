@@ -136,6 +136,30 @@ enum DS {
     static let entityReadwiseSoft = Color(hex: "F2EBE0")
 
     // ═══════════════════════════════════════════════════════════════
+    // CLIENT COLORS — Deterministic palette for content profiles
+    // ═══════════════════════════════════════════════════════════════
+
+    /// 8-color palette for client profile identity. Assigned deterministically
+    /// by stable hash of client UUID, so colors are consistent across views.
+    static let clientPalette: [Color] = [
+        Color(hex: "2E86AB"),  // Cerulean
+        Color(hex: "A23B72"),  // Berry
+        Color(hex: "C18C5D"),  // Warm tan
+        Color(hex: "5E8C61"),  // Sage green
+        Color(hex: "7B68AE"),  // Soft violet
+        Color(hex: "D17B4F"),  // Burnt sienna
+        Color(hex: "4A8B9B"),  // Teal
+        Color(hex: "B5555A"),  // Dusty rose
+    ]
+
+    /// Deterministic color for a client profile UUID.
+    static func clientColor(for uuid: String) -> Color {
+        let hash = uuid.utf8.reduce(0) { ($0 &+ UInt32($1)) &* 31 }
+        let index = Int(hash % UInt32(clientPalette.count))
+        return clientPalette[index]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // GLASS — For elements on .regularMaterial overlays
     // Light mode: higher opacity values for visibility
     // ═══════════════════════════════════════════════════════════════

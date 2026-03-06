@@ -1,11 +1,12 @@
 // CosmoOS/Canvas/ClusterListContent.swift
-// List mode rendering for clusters — compact scannable rows inside the cluster zone
+// List mode rendering for clusters — compact scannable rows native to the cluster zone
 
 import SwiftUI
 
 struct ClusterListContent: View {
 
     let cluster: CanvasCluster
+    let clusterColor: Color
     let blocks: [CanvasBlock]
     let sortOrder: ClusterSortOrder
     let expandedBlockUUID: String?
@@ -13,27 +14,20 @@ struct ClusterListContent: View {
     let onToggleExpand: (String) -> Void
     let onOpenFocusMode: (String) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(spacing: 0) {
             sortBar
             separatorLine
             rowsList
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(DS.surfaceElevated.opacity(0.85))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.border.opacity(0.5), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var separatorLine: some View {
         Rectangle()
-            .fill(DS.border)
+            .fill(clusterColor.opacity(0.2))
             .frame(height: 1)
             .padding(.horizontal, 8)
     }
@@ -54,9 +48,7 @@ struct ClusterListContent: View {
                 .foregroundColor(DS.textMuted)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(DS.surface)
-                )
+                .background(Capsule().fill(clusterColor.opacity(0.12)))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -71,12 +63,12 @@ struct ClusterListContent: View {
         } label: {
             Text(order.displayName)
                 .font(.system(size: 11, weight: isActive ? .semibold : .regular))
-                .foregroundColor(isActive ? DS.accent : DS.textMuted)
+                .foregroundColor(isActive ? clusterColor : DS.textMuted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(isActive ? DS.accentSoft : Color.clear)
+                        .fill(isActive ? clusterColor.opacity(0.15) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -85,37 +77,76 @@ struct ClusterListContent: View {
     // MARK: - Rows List
 
     private var rowsList: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 0) {
-                ForEach(sortedBlocks, id: \.id) { block in
-                    VStack(spacing: 0) {
-                        ClusterListRow(
-                            block: block,
-                            isExpanded: expandedBlockUUID == block.entityUuid,
-                            onTap: { onToggleExpand(block.entityUuid) },
-                            onDoubleTap: { onOpenFocusMode(block.entityUuid) }
-                        )
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    if let expanded = expandedBlock {
+                        pinnedExpandedPreview(for: expanded)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 6)
+                            .padding(.bottom, 4)
+                    }
 
-                        if expandedBlockUUID == block.entityUuid {
-                            expandedContent(for: block)
-                        }
+                    ForEach(sortedBlocks, id: \.id) { block in
+                        VStack(spacing: 0) {
+                            ClusterListRow(
+                                block: block,
+                                clusterColor: clusterColor,
+                                isExpanded: expandedBlockUUID == block.entityUuid,
+                                onTap: { onToggleExpand(block.entityUuid) },
+                                onDoubleTap: { onOpenFocusMode(block.entityUuid) }
+                            )
+                            .id(block.entityUuid)
 
-                        if block.id != sortedBlocks.last?.id {
-                            Rectangle()
-                                .fill(DS.border.opacity(0.4))
-                                .frame(height: 1)
-                                .padding(.horizontal, 12)
+                            if block.id != sortedBlocks.last?.id {
+                                Rectangle()
+                                    .fill(clusterColor.opacity(0.12))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 12)
+                            }
                         }
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .onChange(of: expandedBlockUUID) { _, newValue in
+                guard let newValue else { return }
+                if reduceMotion {
+                    proxy.scrollTo(newValue, anchor: .top)
+                } else {
+                    withAnimation(ProMotionSprings.snappy) {
+                        proxy.scrollTo(newValue, anchor: .top)
+                    }
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private func expandedContent(for block: CanvasBlock) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func pinnedExpandedPreview(for block: CanvasBlock) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(CosmoMentionColors.color(for: block.entityType))
+                    .frame(width: 10, height: 10)
+                Text(block.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
+                Spacer()
+                Button {
+                    onToggleExpand(block.entityUuid)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(DS.textMuted)
+                        .frame(width: 16, height: 16)
+                        .background(Circle().fill(DS.surface))
+                }
+                .buttonStyle(.plain)
+            }
+
             if let subtitle = block.subtitle, !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.system(size: 11))
@@ -134,27 +165,27 @@ struct ClusterListContent: View {
                 Button {
                     onOpenFocusMode(block.entityUuid)
                 } label: {
-                    openButtonLabel
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .medium))
+                        Text("Open")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(DS.accent)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .padding(.leading, 28)
-        .background(DS.surface.opacity(0.5))
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(clusterColor.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(clusterColor.opacity(0.22), lineWidth: 1)
+        )
         .transition(.opacity.combined(with: .move(edge: .top)))
-    }
-
-    @ViewBuilder
-    private var openButtonLabel: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "arrow.up.right")
-                .font(.system(size: 9, weight: .medium))
-            Text("Open")
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(DS.accent)
     }
 
     // MARK: - Sorting
@@ -162,6 +193,11 @@ struct ClusterListContent: View {
     private var memberBlocks: [CanvasBlock] {
         let uuids = Set(cluster.blockUUIDs)
         return blocks.filter { uuids.contains($0.entityUuid) }
+    }
+
+    private var expandedBlock: CanvasBlock? {
+        guard let uuid = expandedBlockUUID else { return nil }
+        return memberBlocks.first(where: { $0.entityUuid == uuid })
     }
 
     private var sortedBlocks: [CanvasBlock] {
@@ -178,10 +214,17 @@ struct ClusterListContent: View {
 
     private func statusString(for block: CanvasBlock) -> String {
         switch block.entityType {
-        case .task:    return block.metadata["status"] ?? ""
-        case .content: return block.metadata["currentStep"] ?? block.metadata["status"] ?? ""
-        case .idea:    return block.metadata["ideaStatus"] ?? ""
-        default:       return block.entityType.rawValue
+        case .task:
+            let raw = block.metadata["status"] ?? "todo"
+            return CanvasClusterEngine.canonicalTaskStatus(raw)
+        case .content:
+            let raw = block.metadata["currentStep"] ?? block.metadata["status"] ?? "ideation"
+            return CanvasClusterEngine.canonicalContentPhase(raw)
+        case .idea:
+            let raw = block.metadata["ideaStatus"] ?? "spark"
+            return CanvasClusterEngine.canonicalIdeaStatus(raw)
+        default:
+            return block.entityType.rawValue
         }
     }
 }
@@ -191,7 +234,7 @@ struct ClusterListContent: View {
 extension ClusterSortOrder {
     var displayName: String {
         switch self {
-        case .dateUpdated: return "Date"
+        case .dateUpdated: return "Updated"
         case .type:        return "Type"
         case .status:      return "Status"
         }
@@ -203,6 +246,7 @@ extension ClusterSortOrder {
 struct ClusterListRow: View {
 
     let block: CanvasBlock
+    let clusterColor: Color
     let isExpanded: Bool
     let onTap: () -> Void
     let onDoubleTap: () -> Void
@@ -231,8 +275,6 @@ struct ClusterListRow: View {
         .onHover { hovering in isHovered = hovering }
     }
 
-    // Extracted subviews to help the type-checker
-
     private var typeIcon: some View {
         Circle()
             .fill(CosmoMentionColors.color(for: block.entityType))
@@ -259,7 +301,7 @@ struct ClusterListRow: View {
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(isHovered ? DS.surface : Color.clear)
+            .fill(isHovered ? clusterColor.opacity(0.1) : Color.clear)
     }
 
     // MARK: - Metadata Badge
@@ -273,22 +315,21 @@ struct ClusterListRow: View {
                 .foregroundColor(info.color)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(info.color.opacity(0.12))
-                )
+                .background(Capsule().fill(info.color.opacity(0.12)))
         }
     }
 
     private var badgeInfo: (text: String, color: Color) {
         switch block.entityType {
         case .task:
-            let status = block.metadata["status"] ?? "pending"
-            return (status.capitalized, CosmoMentionColors.task)
+            let status = CanvasClusterEngine.canonicalTaskStatus(block.metadata["status"] ?? "todo")
+            return (displayTaskStatus(status), CosmoMentionColors.task)
         case .content:
-            let phase = block.metadata["currentStep"] ?? block.metadata["status"] ?? "draft"
+            let raw = block.metadata["currentStep"] ?? block.metadata["status"] ?? "ideation"
+            let phase = CanvasClusterEngine.canonicalContentPhase(raw)
             return (phase.capitalized, CosmoMentionColors.content)
         case .idea:
-            let status = block.metadata["ideaStatus"] ?? "spark"
+            let status = CanvasClusterEngine.canonicalIdeaStatus(block.metadata["ideaStatus"] ?? "spark")
             return (status.capitalized, CosmoMentionColors.idea)
         case .research:
             let platform = block.metadata["platform"] ?? "Research"
@@ -300,6 +341,15 @@ struct ClusterListRow: View {
             return (status.capitalized, CosmoMentionColors.project)
         default:
             return (block.entityType.rawValue.capitalized, CosmoMentionColors.defaultColor)
+        }
+    }
+
+    private func displayTaskStatus(_ status: String) -> String {
+        switch status {
+        case "todo": return "To Do"
+        case "in_progress": return "In Progress"
+        case "completed": return "Done"
+        default: return status.capitalized
         }
     }
 }

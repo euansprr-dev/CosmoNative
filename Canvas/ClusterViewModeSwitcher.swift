@@ -1,5 +1,5 @@
 // CosmoOS/Canvas/ClusterViewModeSwitcher.swift
-// Floating inspector panel for cluster settings — color, view mode
+// Floating inspector panel for cluster settings — color, view mode, delete
 // Appears to the right of a selected user cluster
 
 import SwiftUI
@@ -11,9 +11,12 @@ struct ClusterInspectorPanel: View {
     let cluster: CanvasCluster
     let onChangeColor: (Int) -> Void
     let onChangeViewMode: (ClusterViewMode) -> Void
+    let onChangeBoardGrouping: (ClusterBoardGrouping) -> Void
+    let onDelete: () -> Void
     let onDismiss: () -> Void
 
-    private let panelWidth: CGFloat = 240
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let panelWidth: CGFloat = 276
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,6 +25,8 @@ struct ClusterInspectorPanel: View {
             colorSection
             sectionDivider
             viewModeSection
+            sectionDivider
+            deleteSection
         }
         .frame(width: panelWidth)
         .background(
@@ -81,10 +86,9 @@ struct ClusterInspectorPanel: View {
                 .foregroundColor(DS.textMuted)
                 .tracking(0.8)
 
-            HStack(spacing: 0) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 ForEach(0..<8, id: \.self) { index in
                     colorSwatch(index: index)
-                    if index < 7 { Spacer(minLength: 0) }
                 }
             }
         }
@@ -101,13 +105,14 @@ struct ClusterInspectorPanel: View {
         } label: {
             Circle()
                 .fill(CanvasCluster.palette[index])
-                .frame(width: 24, height: 24)
+                .frame(width: 22, height: 22)
                 .overlay(
                     Circle()
                         .stroke(DS.text.opacity(0.6), lineWidth: 2)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 28, height: 28)
                         .opacity(isActive ? 1 : 0)
                 )
+                .frame(width: 28, height: 28) // Reserve space for selection ring
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.15), value: isActive)
@@ -122,11 +127,15 @@ struct ClusterInspectorPanel: View {
                 .foregroundColor(DS.textMuted)
                 .tracking(0.8)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 ForEach(ClusterViewMode.allCases, id: \.self) { mode in
                     modePill(mode)
                 }
                 Spacer(minLength: 0)
+            }
+
+            if cluster.viewMode == .board {
+                boardGroupingSection
             }
         }
         .padding(.horizontal, 16)
@@ -138,8 +147,12 @@ struct ClusterInspectorPanel: View {
         let isActive = cluster.viewMode == mode
 
         Button {
-            withAnimation(ProMotionSprings.snappy) {
+            if reduceMotion {
                 onChangeViewMode(mode)
+            } else {
+                withAnimation(ProMotionSprings.snappy) {
+                    onChangeViewMode(mode)
+                }
             }
         } label: {
             Text(mode.displayName)
@@ -151,6 +164,69 @@ struct ClusterInspectorPanel: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(isActive ? DS.surface : Color.clear)
                 )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var boardGroupingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("BOARD GROUPING")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.textMuted)
+                .tracking(0.8)
+
+            HStack(spacing: 6) {
+                ForEach(ClusterBoardGrouping.allCases, id: \.self) { grouping in
+                    groupingPill(grouping)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    @ViewBuilder
+    private func groupingPill(_ grouping: ClusterBoardGrouping) -> some View {
+        let isActive = cluster.boardGrouping == grouping
+
+        Button {
+            if reduceMotion {
+                onChangeBoardGrouping(grouping)
+            } else {
+                withAnimation(ProMotionSprings.snappy) {
+                    onChangeBoardGrouping(grouping)
+                }
+            }
+        } label: {
+            Text(grouping.displayName)
+                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
+                .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isActive ? DS.surface : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Delete Section
+
+    private var deleteSection: some View {
+        Button {
+            onDelete()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Delete Cluster")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(DS.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
     }
@@ -172,6 +248,16 @@ extension ClusterViewMode {
         case .canvas: return "Canvas"
         case .list:   return "List"
         case .board:  return "Board"
+        }
+    }
+}
+
+extension ClusterBoardGrouping {
+    var displayName: String {
+        switch self {
+        case .auto: return "Auto"
+        case .type: return "Type"
+        case .pipeline: return "Pipeline"
         }
     }
 }

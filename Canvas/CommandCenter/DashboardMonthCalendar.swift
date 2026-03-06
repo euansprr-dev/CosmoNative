@@ -1,0 +1,195 @@
+// Canvas/CommandCenter/DashboardMonthCalendar.swift
+// Compact month calendar for the Command Center Dashboard
+// Click a day to filter tasks for that date
+// March 2026
+
+import SwiftUI
+
+struct DashboardMonthCalendar: View {
+
+    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+
+    @State private var displayedMonth: Date = Date()
+
+    private let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
+    private let cellSize: CGFloat = 30
+    private let calendar = Calendar.current
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            monthHeader
+            weekdayLabels
+            dayGrid
+        }
+    }
+
+    // MARK: - Month Header
+
+    private var monthHeader: some View {
+        HStack {
+            Text(monthYearText)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.text)
+
+            Spacer()
+
+            Button { changeMonth(by: -1) } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            if !calendar.isDate(displayedMonth, equalTo: Date(), toGranularity: .month) {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        displayedMonth = Date()
+                        viewModel.selectedDate = Date()
+                    }
+                } label: {
+                    Text("Today")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.accentSoft, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button { changeMonth(by: 1) } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Weekday Labels
+
+    private var weekdayLabels: some View {
+        HStack(spacing: 0) {
+            ForEach(weekdays, id: \.self) { day in
+                Text(day)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: cellSize, height: 16)
+            }
+        }
+    }
+
+    // MARK: - Day Grid
+
+    private var dayGrid: some View {
+        let weeks = generateWeeks()
+
+        return VStack(spacing: 2) {
+            ForEach(0..<weeks.count, id: \.self) { weekIndex in
+                HStack(spacing: 0) {
+                    ForEach(0..<7, id: \.self) { dayIndex in
+                        let date = weeks[weekIndex][dayIndex]
+                        dayCell(date: date)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dayCell(date: Date?) -> some View {
+        if let date = date {
+            let isSelected = calendar.isDate(date, inSameDayAs: viewModel.selectedDate)
+            let isToday = calendar.isDateInToday(date)
+            let dayNumber = calendar.component(.day, from: date)
+
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.selectedDate = date
+                }
+            } label: {
+                VStack(spacing: 1) {
+                    Text("\(dayNumber)")
+                        .font(.system(size: 12, weight: isToday ? .bold : .regular))
+                        .foregroundColor(dayTextColor(isSelected: isSelected, isToday: isToday))
+
+                    // Task density dot
+                    Circle()
+                        .fill(isToday && !isSelected ? DS.accent : DS.textMuted.opacity(0.3))
+                        .frame(width: 3, height: 3)
+                        .opacity(isToday ? 1 : 0)
+                }
+                .frame(width: cellSize, height: cellSize)
+                .background(
+                    Circle()
+                        .fill(isSelected ? DS.accent : Color.clear)
+                        .frame(width: 28, height: 28)
+                )
+            }
+            .buttonStyle(.plain)
+        } else {
+            Color.clear
+                .frame(width: cellSize, height: cellSize)
+        }
+    }
+
+    private func dayTextColor(isSelected: Bool, isToday: Bool) -> Color {
+        if isSelected { return .white }
+        if isToday { return DS.accent }
+        return DS.text
+    }
+
+    // MARK: - Week Generation
+
+    private func generateWeeks() -> [[Date?]] {
+        let components = calendar.dateComponents([.year, .month], from: displayedMonth)
+        guard let firstOfMonth = calendar.date(from: components),
+              let range = calendar.range(of: .day, in: .month, for: firstOfMonth) else {
+            return []
+        }
+
+        // Monday = 1 in ISO, Sunday = 7
+        let firstWeekday = calendar.component(.weekday, from: firstOfMonth)
+        // Convert to Monday-based offset (Mon=0, Tue=1, ..., Sun=6)
+        let offset = (firstWeekday + 5) % 7
+
+        var weeks: [[Date?]] = []
+        var currentWeek: [Date?] = Array(repeating: nil, count: offset)
+
+        for day in range {
+            if let date = calendar.date(bySetting: .day, value: day, of: firstOfMonth) {
+                currentWeek.append(date)
+                if currentWeek.count == 7 {
+                    weeks.append(currentWeek)
+                    currentWeek = []
+                }
+            }
+        }
+
+        // Pad final week
+        if !currentWeek.isEmpty {
+            while currentWeek.count < 7 {
+                currentWeek.append(nil)
+            }
+            weeks.append(currentWeek)
+        }
+
+        return weeks
+    }
+
+    // MARK: - Helpers
+
+    private var monthYearText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: displayedMonth)
+    }
+
+    private func changeMonth(by value: Int) {
+        withAnimation(ProMotionSprings.snappy) {
+            if let newMonth = calendar.date(byAdding: .month, value: value, to: displayedMonth) {
+                displayedMonth = newMonth
+            }
+        }
+    }
+}

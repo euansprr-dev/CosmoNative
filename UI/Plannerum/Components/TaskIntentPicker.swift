@@ -8,6 +8,17 @@
 
 import SwiftUI
 
+// MARK: - AtomPickerItem (migrated from DayTimelineView.swift)
+
+struct AtomPickerItem: Identifiable {
+    let uuid: String
+    let title: String
+    let typeLabel: String
+    let icon: String
+    let accentColor: Color
+    var id: String { uuid }
+}
+
 // MARK: - IntentGridItem
 
 /// Maps visual grid items to TaskIntent + metadata

@@ -13,6 +13,7 @@ enum DrawingType: String, Codable {
 
 enum ShapeKind: String, Codable, CaseIterable {
     case rectangle
+    case roundedRectangle
     case circle
     case line
     case arrow
@@ -53,6 +54,7 @@ struct CanvasDrawing: Identifiable, Codable {
     var size: CGSize?
     var rotation: Double
     var pathPoints: [CGPoint]?
+    var pathWidths: [CGFloat]?  // Per-point width for velocity-sensitive strokes
     var textContent: String?
     var textWeight: DrawingTextWeight?
     var strokeColor: String  // hex
@@ -69,11 +71,12 @@ struct CanvasDrawing: Identifiable, Codable {
         size: CGSize? = nil,
         rotation: Double = 0,
         pathPoints: [CGPoint]? = nil,
+        pathWidths: [CGFloat]? = nil,
         textContent: String? = nil,
         textWeight: DrawingTextWeight? = nil,
         strokeColor: String = "#1A1A1A",
         fillColor: String? = nil,
-        strokeWidth: CGFloat = 2.0,
+        strokeWidth: CGFloat = 2.5,
         opacity: Double = 1.0,
         zIndex: Int = 0
     ) {
@@ -84,6 +87,7 @@ struct CanvasDrawing: Identifiable, Codable {
         self.size = size
         self.rotation = rotation
         self.pathPoints = pathPoints
+        self.pathWidths = pathWidths
         self.textContent = textContent
         self.textWeight = textWeight
         self.strokeColor = strokeColor
@@ -135,7 +139,14 @@ struct CanvasDrawing: Identifiable, Codable {
     func toRecord(thinkspaceId: String?) -> CanvasDrawingRecord {
         var pathData: String? = nil
         if let points = pathPoints {
-            let pointDicts = points.map { ["x": $0.x, "y": $0.y] }
+            let widths = pathWidths
+            let pointDicts: [[String: Double]] = points.enumerated().map { i, pt in
+                var dict: [String: Double] = ["x": pt.x, "y": pt.y]
+                if let widths, i < widths.count {
+                    dict["w"] = Double(widths[i])
+                }
+                return dict
+            }
             if let data = try? JSONSerialization.data(withJSONObject: pointDicts),
                let str = String(data: data, encoding: .utf8) {
                 pathData = str
@@ -185,7 +196,7 @@ struct CanvasDrawing: Identifiable, Codable {
         self.opacity = record.opacity
         self.zIndex = record.zIndex ?? 0
 
-        // Parse path data
+        // Parse path data (supports optional per-point width via "w" key)
         if let pathData = record.pathData,
            let data = pathData.data(using: .utf8),
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Double]] {
@@ -193,8 +204,11 @@ struct CanvasDrawing: Identifiable, Codable {
                 guard let x = dict["x"], let y = dict["y"] else { return nil }
                 return CGPoint(x: x, y: y)
             }
+            let widths = arr.compactMap { $0["w"] }.map { CGFloat($0) }
+            self.pathWidths = widths.isEmpty ? nil : widths
         } else {
             self.pathPoints = nil
+            self.pathWidths = nil
         }
     }
 

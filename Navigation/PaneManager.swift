@@ -64,8 +64,8 @@ class PaneManager: ObservableObject {
     @Published var paneSizes: [CGFloat] = []
 
     /// Horizontal split ratio between left (main content) and right (pane column).
-    /// 0.5 = equal split. Clamped to 0.25...0.75.
-    @Published var mainSplitRatio: CGFloat = 0.5
+    /// 1.0 = full width (no panes visible). Animates to 0.5 when first pane opens.
+    @Published var mainSplitRatio: CGFloat = 1.0
 
     /// ID of the pane the user last interacted with (tap/focus).
     /// Used to determine which pane's context the CosmoWindow and voice system see.
@@ -127,11 +127,19 @@ class PaneManager: ObservableObject {
         guard !panes.contains(where: { $0.id == content.id }) else { return }
         guard panes.count < maxPanes else { return }
 
+        let isFirst = panes.isEmpty
         panes.append(content)
         redistributeSizes()
 
         // Auto-activate the newly opened pane
         activePaneId = content.id
+
+        // Animate split ratio when first pane opens
+        if isFirst {
+            withAnimation(ProMotionSprings.snappy) {
+                mainSplitRatio = 0.5
+            }
+        }
     }
 
     /// Close a pane at a specific index.
@@ -146,9 +154,11 @@ class PaneManager: ObservableObject {
             activePaneId = panes.last?.id
         }
 
-        // Reset split ratio when all panes are closed
+        // Animate split ratio back to full width when all panes are closed
         if panes.isEmpty {
-            mainSplitRatio = 0.5
+            withAnimation(ProMotionSprings.snappy) {
+                mainSplitRatio = 1.0
+            }
             activePaneId = nil
         }
     }
@@ -169,7 +179,9 @@ class PaneManager: ObservableObject {
     func closeAllPanes() {
         panes.removeAll()
         paneSizes.removeAll()
-        mainSplitRatio = 0.5
+        withAnimation(ProMotionSprings.snappy) {
+            mainSplitRatio = 1.0
+        }
         activePaneId = nil
     }
 

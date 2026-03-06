@@ -29,6 +29,14 @@ struct CanvasDrawingGestureLayer: View {
             Color.clear
                 .contentShape(Rectangle())
                 .allowsHitTesting(drawingState.toolMode != .select)
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active:
+                        updateCursor(for: drawingState.toolMode)
+                    case .ended:
+                        NSCursor.arrow.set()
+                    }
+                }
                 .gesture(drawingGesture)
                 .simultaneousGesture(
                     MagnifyGesture()
@@ -134,6 +142,8 @@ struct CanvasDrawingGestureLayer: View {
 
                 switch drawingState.toolMode {
                 case .shape:
+                    // Monitor Shift key for 1:1 aspect ratio constraint
+                    drawingState.shiftConstrain = NSEvent.modifierFlags.contains(.shift)
                     if drawingState.activeDrawing == nil {
                         drawingState.beginShape(at: canvasStart)
                     }
@@ -287,6 +297,25 @@ struct CanvasDrawingGestureLayer: View {
                 }
             }
             return false
+        }
+    }
+
+    // MARK: - Tool Cursors
+
+    private func updateCursor(for mode: CanvasToolMode) {
+        switch mode {
+        case .draw:
+            NSCursor.crosshair.set()
+        case .shape:
+            NSCursor.crosshair.set()
+        case .text:
+            NSCursor.iBeam.set()
+        case .erase:
+            NSCursor.disappearingItem.set()
+        case .lasso:
+            NSCursor.crosshair.set()
+        case .select:
+            NSCursor.arrow.set()
         }
     }
 }

@@ -79,6 +79,10 @@ struct SanctuarySettingsView: View {
     @State private var youtubeAPIKey: String = ""
     @State private var perplexityKey: String = ""
 
+    // Export
+    @State private var isExporting = false
+    @State private var exportComplete = false
+
 
     var body: some View {
         VStack(spacing: 0) {
@@ -467,6 +471,61 @@ struct SanctuarySettingsView: View {
             }
             .padding(SanctuaryLayout.Spacing.md)
             .background(glassCard)
+
+            // Data Export
+            settingsSection(title: "DATA EXPORT", icon: "square.and.arrow.up", color: CosmoColors.cosmoAI) {
+                VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+                    Text("Export your writing engine (system prompt, swipes, client profiles) for use in Claude Projects.")
+                        .font(SanctuaryTypography.bodySmall)
+                        .foregroundColor(SanctuaryColors.Text.secondary)
+
+                    Button(action: {
+                        isExporting = true
+                        exportComplete = false
+                        Task {
+                            await WritingContextExporter.exportAll()
+                            isExporting = false
+                            exportComplete = true
+                        }
+                    }) {
+                        HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                            if isExporting {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: exportComplete ? "checkmark.circle.fill" : "folder.badge.gearshape")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            Text(isExporting ? "Exporting..." : exportComplete ? "Exported to Desktop" : "Export for Claude Projects")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundColor(exportComplete ? SanctuaryColors.Semantic.success : CosmoColors.cosmoAI)
+                        .padding(.horizontal, SanctuaryLayout.Spacing.md)
+                        .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                                .fill((exportComplete ? SanctuaryColors.Semantic.success : CosmoColors.cosmoAI).opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isExporting)
+
+                    if exportComplete {
+                        Button(action: {
+                            NSWorkspace.shared.open(WritingContextExporter.exportRoot)
+                        }) {
+                            Text("Open ~/Desktop/CosmoExport")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(CosmoColors.cosmoAI)
+                                .underline()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(SanctuaryLayout.Spacing.md)
+                .background(glassCard)
+            }
 
             Spacer()
         }

@@ -112,23 +112,148 @@ struct CanvasDrawingsLayer: View {
 
     @ViewBuilder
     private func freehandStroke(for drawing: CanvasDrawing, points: [CGPoint]) -> some View {
+        let screenPoints = points.map { canvasToScreenDragged($0, drawingId: drawing.id) }
+        let widths = drawing.pathWidths ?? Array(repeating: drawing.strokeWidth, count: points.count)
+
+        if widths.count == screenPoints.count && screenPoints.count >= 2 {
+            // Variable-width stroke rendered as a filled outline
+            variableWidthStrokePath(points: screenPoints, widths: widths)
+                .fill(CanvasDrawing.colorFromHex(drawing.strokeColor))
+                .opacity(drawing.opacity)
+        } else {
+            // Fallback: smooth bezier stroke with constant width
+            smoothBezierPath(through: screenPoints)
+                .stroke(
+                    CanvasDrawing.colorFromHex(drawing.strokeColor),
+                    style: StrokeStyle(
+                        lineWidth: drawing.strokeWidth * effectiveScale,
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+                .opacity(drawing.opacity)
+        }
+    }
+
+    // MARK: - Variable-Width Stroke Rendering
+
+    /// Builds a filled Path that simulates a variable-width stroke by computing
+    /// perpendicular offsets at each point and connecting them with bezier curves.
+    private func variableWidthStrokePath(points: [CGPoint], widths: [CGFloat]) -> Path {
+        guard points.count >= 2 else { return Path() }
+
+        let scaledWidths = widths.map { $0 * effectiveScale / 2.0 }
+
+        // Compute perpendicular normals at each point
+        var normals: [CGPoint] = []
+        for i in 0..<points.count {
+            let prev = i > 0 ? points[i - 1] : points[i]
+            let next = i < points.count - 1 ? points[i + 1] : points[i]
+            let dx = next.x - prev.x
+            let dy = next.y - prev.y
+            let len = max(hypot(dx, dy), 0.001)
+            normals.append(CGPoint(x: -dy / len, y: dx / len))
+        }
+
+        // Build left and right edge points
+        var leftEdge: [CGPoint] = []
+        var rightEdge: [CGPoint] = []
+        for i in 0..<points.count {
+            let w = scaledWidths[i]
+            leftEdge.append(CGPoint(x: points[i].x + normals[i].x * w, y: points[i].y + normals[i].y * w))
+            rightEdge.append(CGPoint(x: points[i].x - normals[i].x * w, y: points[i].y - normals[i].y * w))
+        }
+
+        // Build filled path: left edge forward, right edge backward
+        return Path { path in
+            // Start cap (rounded)
+            path.addArc(
+                center: points[0],
+                radius: max(scaledWidths[0], 0.5),
+                startAngle: .radians(atan2(leftEdge[0].y - points[0].y, leftEdge[0].x - points[0].x) + Double.pi),
+                endAngle: .radians(atan2(leftEdge[0].y - points[0].y, leftEdge[0].x - points[0].x)),
+                clockwise: false
+            )
+
+            // Left edge with Catmull-Rom smoothing
+            addSmoothCurve(to: &path, through: leftEdge)
+
+            // End cap (rounded)
+            let lastIdx = points.count - 1
+            path.addArc(
+                center: points[lastIdx],
+                radius: max(scaledWidths[lastIdx], 0.5),
+                startAngle: .radians(atan2(leftEdge[lastIdx].y - points[lastIdx].y, leftEdge[lastIdx].x - points[lastIdx].x)),
+                endAngle: .radians(atan2(rightEdge[lastIdx].y - points[lastIdx].y, rightEdge[lastIdx].x - points[lastIdx].x)),
+                clockwise: false
+            )
+
+            // Right edge backward with Catmull-Rom smoothing
+            addSmoothCurve(to: &path, through: rightEdge.reversed())
+
+            path.closeSubpath()
+        }
+    }
+
+    /// Adds a smooth Catmull-Rom spline through the given points to the path.
+    /// Continues from current path position (does NOT move to first point).
+    private func addSmoothCurve(to path: inout Path, through points: [CGPoint]) {
+        guard points.count >= 2 else { return }
+
+        if points.count == 2 {
+            path.addLine(to: points[1])
+            return
+        }
+
+        // Continue from current position — addLine to first point to connect
+        path.addLine(to: points[0])
+        for i in 0..<(points.count - 1) {
+            let p0 = i > 0 ? points[i - 1] : points[i]
+            let p1 = points[i]
+            let p2 = points[i + 1]
+            let p3 = i + 2 < points.count ? points[i + 2] : points[i + 1]
+
+            // Catmull-Rom to cubic bezier control points
+            let cp1 = CGPoint(
+                x: p1.x + (p2.x - p0.x) / 6.0,
+                y: p1.y + (p2.y - p0.y) / 6.0
+            )
+            let cp2 = CGPoint(
+                x: p2.x - (p3.x - p1.x) / 6.0,
+                y: p2.y - (p3.y - p1.y) / 6.0
+            )
+            path.addCurve(to: p2, control1: cp1, control2: cp2)
+        }
+    }
+
+    /// Creates a smooth bezier path through points (for constant-width fallback)
+    private func smoothBezierPath(through points: [CGPoint]) -> Path {
         Path { path in
-            let first = canvasToScreenDragged(points[0], drawingId: drawing.id)
-            path.move(to: first)
-            for i in 1..<points.count {
-                let pt = canvasToScreenDragged(points[i], drawingId: drawing.id)
-                path.addLine(to: pt)
+            guard points.count >= 2 else { return }
+            path.move(to: points[0])
+
+            if points.count == 2 {
+                path.addLine(to: points[1])
+                return
+            }
+
+            for i in 0..<(points.count - 1) {
+                let p0 = i > 0 ? points[i - 1] : points[i]
+                let p1 = points[i]
+                let p2 = points[i + 1]
+                let p3 = i + 2 < points.count ? points[i + 2] : points[i + 1]
+
+                let cp1 = CGPoint(
+                    x: p1.x + (p2.x - p0.x) / 6.0,
+                    y: p1.y + (p2.y - p0.y) / 6.0
+                )
+                let cp2 = CGPoint(
+                    x: p2.x - (p3.x - p1.x) / 6.0,
+                    y: p2.y - (p3.y - p1.y) / 6.0
+                )
+                path.addCurve(to: p2, control1: cp1, control2: cp2)
             }
         }
-        .stroke(
-            CanvasDrawing.colorFromHex(drawing.strokeColor),
-            style: StrokeStyle(
-                lineWidth: drawing.strokeWidth * effectiveScale,
-                lineCap: .round,
-                lineJoin: .round
-            )
-        )
-        .opacity(drawing.opacity)
     }
 
     // MARK: - Shapes Layer
@@ -161,6 +286,8 @@ struct CanvasDrawingsLayer: View {
             switch drawing.shapeKind ?? .rectangle {
             case .rectangle:
                 rectangleShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
+            case .roundedRectangle:
+                roundedRectangleShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
             case .circle:
                 ellipseShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
             case .line:
@@ -225,8 +352,8 @@ struct CanvasDrawingsLayer: View {
                     path.addLine(to: end)
 
                     let angle = atan2(end.y - start.y, end.x - start.x)
-                    let headLength: CGFloat = 12 * effectiveScale
-                    let headAngle: CGFloat = .pi / 6
+                    let headLength: CGFloat = 16 * effectiveScale
+                    let headAngle: CGFloat = CGFloat.pi / 6
 
                     path.move(to: end)
                     path.addLine(to: CGPoint(
@@ -248,7 +375,7 @@ struct CanvasDrawingsLayer: View {
                 .frame(width: baseWidth, height: baseHeight)
                 .position(center)
 
-            case .rectangle:
+            case .rectangle, .roundedRectangle:
                 if drawing.fillColor != nil {
                     Rectangle()
                         .fill(Color.white.opacity(0.001))
@@ -338,8 +465,8 @@ struct CanvasDrawingsLayer: View {
             }
 
             let angle = atan2(end.y - start.y, end.x - start.x)
-            let headLength: CGFloat = 12 * effectiveScale
-            let headAngle: CGFloat = .pi / 6
+            let headLength: CGFloat = 16 * effectiveScale
+            let headAngle: CGFloat = CGFloat.pi / 6
             let leftHead = CGPoint(
                 x: end.x - headLength * cos(angle - headAngle),
                 y: end.y - headLength * sin(angle - headAngle)
@@ -351,7 +478,7 @@ struct CanvasDrawingsLayer: View {
             return distanceToSegment(point: point, start: end, end: leftHead) <= tolerance ||
                 distanceToSegment(point: point, start: end, end: rightHead) <= tolerance
 
-        case .rectangle:
+        case .rectangle, .roundedRectangle:
             if drawing.fillColor != nil {
                 let expanded = rect.insetBy(dx: -Constants.shapeHitPadding, dy: -Constants.shapeHitPadding)
                 return expanded.contains(point)
@@ -438,6 +565,22 @@ struct CanvasDrawingsLayer: View {
     }
 
     @ViewBuilder
+    private func roundedRectangleShape(drawing: CanvasDrawing, rect: CGRect, strokeWidth: CGFloat) -> some View {
+        let cornerRadius: CGFloat = 8 * effectiveScale
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            if let fill = drawing.fillSwiftUIColor {
+                shape.fill(fill)
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+            }
+            shape.stroke(drawing.strokeSwiftUIColor, lineWidth: strokeWidth)
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: rect.midY)
+        }
+    }
+
+    @ViewBuilder
     private func ellipseShape(drawing: CanvasDrawing, rect: CGRect, strokeWidth: CGFloat) -> some View {
         let shape = Ellipse()
         ZStack {
@@ -466,26 +609,37 @@ struct CanvasDrawingsLayer: View {
         let start = CGPoint(x: rect.minX, y: rect.minY)
         let end = CGPoint(x: rect.maxX, y: rect.maxY)
 
-        Path { path in
-            path.move(to: start)
-            path.addLine(to: end)
+        // Filled arrowhead with larger size
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let headLength: CGFloat = 16 * effectiveScale
+        let headAngle: CGFloat = .pi / 6
 
-            // Arrowhead
-            let angle = atan2(end.y - start.y, end.x - start.x)
-            let headLength: CGFloat = 12 * effectiveScale
-            let headAngle: CGFloat = .pi / 6
-            path.move(to: end)
-            path.addLine(to: CGPoint(
-                x: end.x - headLength * cos(angle - headAngle),
-                y: end.y - headLength * sin(angle - headAngle)
-            ))
-            path.move(to: end)
-            path.addLine(to: CGPoint(
-                x: end.x - headLength * cos(angle + headAngle),
-                y: end.y - headLength * sin(angle + headAngle)
-            ))
+        let leftTip = CGPoint(
+            x: end.x - headLength * cos(angle - headAngle),
+            y: end.y - headLength * sin(angle - headAngle)
+        )
+        let rightTip = CGPoint(
+            x: end.x - headLength * cos(angle + headAngle),
+            y: end.y - headLength * sin(angle + headAngle)
+        )
+
+        ZStack {
+            // Shaft line
+            Path { path in
+                path.move(to: start)
+                path.addLine(to: end)
+            }
+            .stroke(drawing.strokeSwiftUIColor, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
+
+            // Filled arrowhead
+            Path { path in
+                path.move(to: end)
+                path.addLine(to: leftTip)
+                path.addLine(to: rightTip)
+                path.closeSubpath()
+            }
+            .fill(drawing.strokeSwiftUIColor)
         }
-        .stroke(drawing.strokeSwiftUIColor, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
     }
 
     @ViewBuilder
@@ -705,56 +859,80 @@ struct CanvasDrawingsLayer: View {
         )
         let scaledStroke = drawing.strokeWidth * effectiveScale
 
-        switch drawing.shapeKind ?? .rectangle {
-        case .rectangle:
-            Rectangle()
+        ZStack {
+            switch drawing.shapeKind ?? .rectangle {
+            case .rectangle:
+                Rectangle()
+                    .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
+                    .frame(width: max(screenRect.width, 1), height: max(screenRect.height, 1))
+                    .position(x: screenRect.midX, y: screenRect.midY)
+            case .roundedRectangle:
+                RoundedRectangle(cornerRadius: 8 * effectiveScale, style: .continuous)
+                    .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
+                    .frame(width: max(screenRect.width, 1), height: max(screenRect.height, 1))
+                    .position(x: screenRect.midX, y: screenRect.midY)
+            case .circle:
+                Ellipse()
+                    .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
+                    .frame(width: max(screenRect.width, 1), height: max(screenRect.height, 1))
+                    .position(x: screenRect.midX, y: screenRect.midY)
+            case .line:
+                Path { path in
+                    path.move(to: CGPoint(x: screenRect.minX, y: screenRect.minY))
+                    path.addLine(to: CGPoint(x: screenRect.maxX, y: screenRect.maxY))
+                }
                 .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
-                .frame(width: max(screenRect.width, 1), height: max(screenRect.height, 1))
-                .position(x: screenRect.midX, y: screenRect.midY)
-        case .circle:
-            Ellipse()
+            case .arrow:
+                arrowShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
+                    .opacity(0.7)
+            case .triangle:
+                Path { path in
+                    path.move(to: CGPoint(x: screenRect.midX, y: screenRect.minY))
+                    path.addLine(to: CGPoint(x: screenRect.maxX, y: screenRect.maxY))
+                    path.addLine(to: CGPoint(x: screenRect.minX, y: screenRect.maxY))
+                    path.closeSubpath()
+                }
                 .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
-                .frame(width: max(screenRect.width, 1), height: max(screenRect.height, 1))
-                .position(x: screenRect.midX, y: screenRect.midY)
-        case .line:
-            Path { path in
-                path.move(to: CGPoint(x: screenRect.minX, y: screenRect.minY))
-                path.addLine(to: CGPoint(x: screenRect.maxX, y: screenRect.maxY))
             }
-            .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
-        case .arrow:
-            arrowShape(drawing: drawing, rect: screenRect, strokeWidth: scaledStroke)
-                .opacity(0.7)
-        case .triangle:
-            Path { path in
-                path.move(to: CGPoint(x: screenRect.midX, y: screenRect.minY))
-                path.addLine(to: CGPoint(x: screenRect.maxX, y: screenRect.maxY))
-                path.addLine(to: CGPoint(x: screenRect.minX, y: screenRect.maxY))
-                path.closeSubpath()
+
+            // Dimension label during shape creation
+            if screenRect.width > 20 && screenRect.height > 20 {
+                let canvasW = Int(screenRect.width / effectiveScale)
+                let canvasH = Int(screenRect.height / effectiveScale)
+                Text("\(canvasW) × \(canvasH)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(DS.textMuted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(DS.surfaceElevated.opacity(0.9))
+                    )
+                    .position(x: screenRect.midX, y: screenRect.maxY + 16)
             }
-            .stroke(drawing.strokeSwiftUIColor.opacity(0.7), lineWidth: scaledStroke)
         }
     }
 
     @ViewBuilder
     private func activeFreehandPreview() -> some View {
         let points = drawingState.activePathPoints
+        let widths = drawingState.activePathWidths
         if points.count > 1, let active = drawingState.activeDrawing {
-            Path { path in
-                let first = canvasToScreen(points[0])
-                path.move(to: first)
-                for i in 1..<points.count {
-                    path.addLine(to: canvasToScreen(points[i]))
-                }
+            let screenPoints = points.map { canvasToScreen($0) }
+
+            if widths.count == screenPoints.count {
+                variableWidthStrokePath(points: screenPoints, widths: widths)
+                    .fill(CanvasDrawing.colorFromHex(active.strokeColor))
+            } else {
+                smoothBezierPath(through: screenPoints)
+                    .stroke(
+                        CanvasDrawing.colorFromHex(active.strokeColor),
+                        style: StrokeStyle(
+                            lineWidth: active.strokeWidth * effectiveScale,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
+                    )
             }
-            .stroke(
-                CanvasDrawing.colorFromHex(active.strokeColor).opacity(0.8),
-                style: StrokeStyle(
-                    lineWidth: active.strokeWidth * effectiveScale,
-                    lineCap: .round,
-                    lineJoin: .round
-                )
-            )
         }
     }
 
@@ -871,27 +1049,49 @@ struct DrawingTextEditor: View {
     }
 
     var body: some View {
-        TextField("Type here...", text: $text)
-            .font(.system(size: fontSize, weight: textWeight.fontWeight))
-            .foregroundColor(CanvasDrawing.colorFromHex(strokeColor))
-            .textFieldStyle(.plain)
-            .focused($isFocused)
-            .frame(minWidth: 60)
-            .fixedSize()
-            .onAppear {
-                text = drawingState.drawings.first(where: { $0.id == drawingId })?.textContent ?? ""
+        ZStack(alignment: .leading) {
+            // Custom placeholder that's always visible on any background
+            if text.isEmpty {
+                Text("Type...")
+                    .font(.system(size: fontSize, weight: textWeight.fontWeight))
+                    .foregroundColor(DS.textMuted.opacity(0.6))
+                    .allowsHitTesting(false)
+            }
+
+            TextField("", text: $text)
+                .font(.system(size: fontSize, weight: textWeight.fontWeight))
+                .foregroundColor(CanvasDrawing.colorFromHex(strokeColor))
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .frame(minWidth: 80)
+                .fixedSize()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(DS.surfaceElevated.opacity(0.85))
+                .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+        )
+        .onAppear {
+            text = drawingState.drawings.first(where: { $0.id == drawingId })?.textContent ?? ""
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 isFocused = true
             }
-            .onChange(of: text) { _, newValue in
-                drawingState.updateTextContent(drawingId, content: newValue)
-            }
-            .onChange(of: isFocused) { _, focused in
-                if !focused {
-                    drawingState.finishTextEditing(drawingId)
-                }
-            }
-            .onSubmit {
+        }
+        .onChange(of: text) { _, newValue in
+            drawingState.updateTextContent(drawingId, content: newValue)
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused {
                 drawingState.finishTextEditing(drawingId)
+                // Auto-switch to select after placing text
+                drawingState.toolMode = .select
             }
+        }
+        .onSubmit {
+            drawingState.finishTextEditing(drawingId)
+            drawingState.toolMode = .select
+        }
     }
 }

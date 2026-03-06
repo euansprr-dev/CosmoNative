@@ -202,6 +202,26 @@ final class ResearchService {
         )
     }
 
+    /// Analyze with a specific model ID (e.g., "google/gemini-3.1-flash-lite-preview")
+    func analyze(
+        prompt: String,
+        systemPrompt: String? = nil,
+        model: String,
+        maxTokens: Int = 2000,
+        temperature: Double = 0.3
+    ) async throws -> String {
+        guard let apiKey = apiKey, !apiKey.isEmpty else {
+            throw ResearchError.noAPIKey
+        }
+        return try await callOpenRouter(
+            prompt: prompt,
+            systemPrompt: systemPrompt,
+            model: model,
+            maxTokens: maxTokens,
+            temperature: temperature
+        )
+    }
+
     // MARK: - Generate With Prompt Caching
 
     /// Send a request with structured system content blocks, each with optional cache_control.

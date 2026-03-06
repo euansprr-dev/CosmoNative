@@ -350,12 +350,23 @@ class AgentToolExecutor {
         if let clientUUID = clientUUID { contentMeta["clientProfileUUID"] = clientUUID }
         if let platform = platform { contentMeta["platform"] = platform }
 
-        // Inherit swipe UUIDs from analysis
-        var matchedSwipeCount = 0
+        // Inherit swipe UUIDs: merge user-linked swipes + analysis-matched swipes (deduplicated)
+        var allSwipeUUIDs: [String] = []
+        // First: user's explicitly linked swipes (highest priority)
+        if let linkedIds = ideaAtom.ideaMetadata?.linkedSwipeIds {
+            allSwipeUUIDs.append(contentsOf: linkedIds)
+        }
+        // Then: analysis-matched swipes (may overlap)
         if let matchingSwipes = insight.matchingSwipes, !matchingSwipes.isEmpty {
-            let swipeUUIDs = matchingSwipes.map { $0.swipeAtomUUID }
-            contentMeta["inheritedSwipeUUIDs"] = swipeUUIDs
-            matchedSwipeCount = swipeUUIDs.count
+            for match in matchingSwipes {
+                if !allSwipeUUIDs.contains(match.swipeAtomUUID) {
+                    allSwipeUUIDs.append(match.swipeAtomUUID)
+                }
+            }
+        }
+        let matchedSwipeCount = allSwipeUUIDs.count
+        if !allSwipeUUIDs.isEmpty {
+            contentMeta["inheritedSwipeUUIDs"] = allSwipeUUIDs
         }
 
         // Inherit framework from analysis
@@ -1112,6 +1123,7 @@ class AgentToolExecutor {
         let ideaContext = args["ideaContext"] as? String
         let clientName = args["clientName"] as? String
         let userHook = args["hook"] as? String
+        let userTitle = args["title"] as? String
 
         // 1. Capture the swipe via existing captureSwipe
         var swipeArgs: [String: Any] = ["url": url]
@@ -1131,20 +1143,25 @@ class AgentToolExecutor {
         let swipeHook = swipeJSON["hook"] as? String ?? ""
         let swipeSource = swipeJSON["source"] as? String ?? ""
 
-        // 2. Generate AI title for the idea
+        // 2. Use user-provided title or generate AI title
         var ideaTitle: String
-        do {
-            let titlePrompt = """
-            Generate a short, compelling idea title (max 10 words) based on this swipe hook: "\(swipeHook)"
-            \(ideaContext != nil ? "User context: \(ideaContext!)" : "")
-            Return just the title, nothing else.
-            """
-            ideaTitle = try await ResearchService.shared.analyzeContent(prompt: titlePrompt)
-            ideaTitle = ideaTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            if ideaTitle.isEmpty { ideaTitle = swipeTitle }
-        } catch {
-            ideaTitle = swipeTitle
+        if let userTitle = userTitle, !userTitle.isEmpty {
+            // User specified an explicit title — use it directly (no AI call, faster)
+            ideaTitle = userTitle
+        } else {
+            do {
+                let titlePrompt = """
+                Generate a short, compelling idea title (max 10 words) based on this swipe hook: "\(swipeHook)"
+                \(ideaContext != nil ? "User context: \(ideaContext!)" : "")
+                Return just the title, nothing else.
+                """
+                ideaTitle = try await ResearchService.shared.analyzeContent(prompt: titlePrompt)
+                ideaTitle = ideaTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                if ideaTitle.isEmpty { ideaTitle = swipeTitle }
+            } catch {
+                ideaTitle = swipeTitle
+            }
         }
 
         // 3. Build idea body

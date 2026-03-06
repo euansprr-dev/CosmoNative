@@ -143,6 +143,9 @@ struct ChildDoc: Identifiable, Equatable {
 class ThinkspaceManager: ObservableObject {
     static let shared = ThinkspaceManager()
 
+    /// Well-known UUID for the Command Center thinkspace
+    static let commandCenterUUID = "00000000-CC00-4000-A000-COMMANDCENTER"
+
     // MARK: - Published State
 
     /// All available Thinkspaces
@@ -173,6 +176,7 @@ class ThinkspaceManager: ObservableObject {
 
     private init() {
         Task {
+            await ensureCommandCenterExists()
             await loadThinkspaces()
             await openLastThinkspace()
         }
@@ -206,6 +210,126 @@ class ThinkspaceManager: ObservableObject {
             print("📚 Loaded \(thinkspaces.count) Thinkspaces")
         } catch {
             print("❌ Failed to load Thinkspaces: \(error)")
+        }
+    }
+
+    /// Thinkspaces visible in the sidebar (excludes Command Center)
+    var sidebarThinkspaces: [Thinkspace] {
+        thinkspaces.filter { $0.id != Self.commandCenterUUID }
+    }
+
+    /// Ensure the Command Center thinkspace exists in the database.
+    /// Auto-creates it with the unified dashboard zone on first launch.
+    /// Migrates existing users from the old 4-zone layout to the single dashboard.
+    func ensureCommandCenterExists() async {
+        do {
+            if let existing = try await repository.fetch(uuid: Self.commandCenterUUID),
+               !existing.isDeleted {
+                // Existing CC — check if it needs migration from legacy 4-zone layout
+                await migrateCommandCenterIfNeeded(existing)
+                return
+            }
+
+            // New user — create single dashboard zone
+            let dashboardZone = makeDashboardCluster()
+
+            let metadata = ThinkspaceMetadata(
+                name: "Command Center",
+                zoomLevel: 0.55,
+                clusters: [dashboardZone]
+            )
+
+            guard let metadataJson = try? JSONEncoder().encode(metadata),
+                  let metadataString = String(data: metadataJson, encoding: .utf8) else {
+                return
+            }
+
+            var atom = Atom.new(
+                type: .thinkspace,
+                title: "Command Center",
+                metadata: metadataString
+            )
+            atom.uuid = Self.commandCenterUUID
+
+            _ = try await repository.create(atom)
+            print("🏠 Created Command Center thinkspace")
+        } catch {
+            print("❌ Failed to ensure Command Center: \(error)")
+        }
+    }
+
+    /// Build the single unified dashboard cluster
+    private func makeDashboardCluster() -> CodableCluster {
+        let zoneType = CommandCenterZoneType.dashboard
+        let size = zoneType.defaultSize
+        let pos = zoneType.defaultPosition
+        return CodableCluster(
+            id: UUID().uuidString,
+            name: zoneType.displayName,
+            blockUUIDs: [],
+            colorIndex: 0,
+            originX: Double(pos.x - size.width / 2),
+            originY: Double(pos.y - size.height / 2),
+            rectWidth: Double(size.width),
+            rectHeight: Double(size.height),
+            manualWidth: Double(size.width),
+            manualHeight: Double(size.height),
+            isZone: true,
+            zoneType: zoneType.rawValue
+        )
+    }
+
+    /// Migrate from legacy 4-zone layout to single dashboard zone
+    private func migrateCommandCenterIfNeeded(_ atom: Atom) async {
+        guard let metadataString = atom.metadata,
+              let metadataData = metadataString.data(using: .utf8),
+              var metadata = try? JSONDecoder().decode(ThinkspaceMetadata.self, from: metadataData) else {
+            return
+        }
+
+        // Check if any legacy zone types exist
+        let hasLegacyZones = metadata.clusters.contains { cluster in
+            CommandCenterZoneType.legacyZoneTypes.contains(cluster.zoneType ?? "")
+        }
+
+        // Check if dashboard zone already exists
+        let hasDashboard = metadata.clusters.contains { $0.zoneType == "dashboard" }
+
+        guard hasLegacyZones && !hasDashboard else { return }
+
+        // Replace legacy zones with single dashboard
+        metadata.clusters.removeAll { cluster in
+            CommandCenterZoneType.legacyZoneTypes.contains(cluster.zoneType ?? "")
+        }
+        metadata.clusters.append(makeDashboardCluster())
+        metadata.zoomLevel = 0.55
+
+        // Save updated metadata
+        guard let newMetadataJson = try? JSONEncoder().encode(metadata),
+              let newMetadataString = String(data: newMetadataJson, encoding: .utf8) else {
+            return
+        }
+
+        var updatedAtom = atom
+        updatedAtom.metadata = newMetadataString
+
+        do {
+            try await repository.update(updatedAtom)
+            print("🔄 Migrated Command Center to unified dashboard")
+        } catch {
+            print("❌ Failed to migrate Command Center: \(error)")
+        }
+    }
+
+    /// Switch to the Command Center thinkspace
+    func switchToCommandCenter() async {
+        do {
+            if let atom = try await repository.fetch(uuid: Self.commandCenterUUID) {
+                let ts = Thinkspace(from: atom)
+                await switchTo(ts)
+            }
+        } catch {
+            print("❌ Failed to switch to Command Center: \(error)")
         }
     }
 

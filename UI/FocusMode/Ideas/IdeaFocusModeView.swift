@@ -973,6 +973,17 @@ struct IdeaFocusModeView: View {
         }
         .padding(10)
         .dsGlassCard(cornerRadius: 10)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Open linked swipe in split pane
+            if let swipeId = swipe.id {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane,
+                    object: nil,
+                    userInfo: ["type": EntityType.research, "id": swipeId]
+                )
+            }
+        }
     }
 
     @ViewBuilder

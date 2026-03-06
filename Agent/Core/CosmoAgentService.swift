@@ -762,67 +762,184 @@ class CosmoAgentService: ObservableObject {
 
     // MARK: - Fast Idea Capture
 
-    /// Intercepts "Idea for [client]: [title]" and "Idea: [title]" patterns.
-    /// Creates the idea atom directly without calling the LLM. Returns nil if the
-    /// message doesn't match the pattern (falls through to normal processing).
-    private func tryFastIdeaCapture(_ text: String) async -> String? {
-            let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Intercepts idea-capture patterns and creates the atom directly without the LLM.
+    /// Returns nil if the message doesn't match any pattern (falls through to normal processing).
+    ///
+    /// Supported patterns:
+    ///   - "Idea for [client]: [content]"
+    ///   - "Idea [client]: [content]"  (no "for")
+    ///   - "Idea: [content]"
+    ///   - "save this idea [content]" / "save idea [content]" / "new idea [content]"
+    ///
+    /// Metadata lines like "Format: reel" or "Platform: instagram" are parsed from trailing lines.
+    func tryFastIdeaCapture(_ text: String) async -> String? {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Pattern 1: "Idea for [client]: [title + optional body]"
-            if lower.hasPrefix("idea for ") {
-                let afterPrefix = String(text.dropFirst("idea for ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                // Split on first ":" to get client name and idea content
-                guard let colonIdx = afterPrefix.firstIndex(of: ":") else { return nil }
-                let clientName = String(afterPrefix[afterPrefix.startIndex..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let ideaContent = String(afterPrefix[afterPrefix.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !ideaContent.isEmpty else { return nil }
+        // Pattern 1: "Idea for [client]: [title + optional body]"
+        if lower.hasPrefix("idea for ") {
+            let afterPrefix = String(text.dropFirst("idea for ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let colonIdx = afterPrefix.firstIndex(of: ":") else { return nil }
+            let clientName = String(afterPrefix[afterPrefix.startIndex..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawContent = String(afterPrefix[afterPrefix.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawContent.isEmpty else { return nil }
 
-                // Extract title (first sentence or first line) and body (rest)
+            let (ideaContent, format, platform) = extractIdeaMetadataLines(rawContent)
+            let (title, body) = splitIdeaTitleBody(ideaContent)
+
+            return await createFastIdea(title: title, body: body, clientName: clientName, format: format, platform: platform)
+        }
+
+        // Pattern 2: "Idea: [title + optional body]"
+        if lower.hasPrefix("idea:") {
+            let rawContent = String(text.dropFirst("idea:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawContent.isEmpty else { return nil }
+
+            let (ideaContent, format, platform) = extractIdeaMetadataLines(rawContent)
+            let (title, body) = splitIdeaTitleBody(ideaContent)
+
+            return await createFastIdea(title: title, body: body, clientName: nil, format: format, platform: platform)
+        }
+
+        // Pattern 3: "Idea [client]: [content]" — client name directly after "idea" (no "for")
+        // Matches: "Idea josh: co-living vs rental", "Idea michael: podcast series"
+        if lower.hasPrefix("idea ") && !lower.hasPrefix("idea for ") {
+            let afterIdea = String(text.dropFirst("idea ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let colonIdx = afterIdea.firstIndex(of: ":") {
+                let clientName = String(afterIdea[afterIdea.startIndex..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawContent = String(afterIdea[afterIdea.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                // Only match if client name is short (1-3 words) and content is non-empty
+                guard !rawContent.isEmpty, !clientName.isEmpty, clientName.split(separator: " ").count <= 3 else { return nil }
+
+                let (ideaContent, format, platform) = extractIdeaMetadataLines(rawContent)
                 let (title, body) = splitIdeaTitleBody(ideaContent)
 
-                // Create the idea atom
-                let repo = AtomRepository.shared
-                let atom: Atom
-                do {
-                    atom = try await repo.create(type: .idea, title: title, body: body)
-                } catch {
-                    return nil  // Fall through to LLM
-                }
-
-                // Try to link to client profile
-                var clientNote = ""
-                if let clientAtom = try? await repo.fuzzyFindClient(query: clientName) {
-                    // Link idea to client via addingLink (returns new Atom)
-                    let link = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: clientAtom.uuid, entityType: "clientProfile")
-                    _ = try? await repo.update(uuid: atom.uuid) { a in
-                        let updated = a.addingLink(link)
-                        a.links = updated.links
-                    }
-                    clientNote = " for \(clientAtom.title ?? clientName)"
-                } else {
-                    clientNote = " for \(clientName)"
-                }
-
-                return "Saved idea\(clientNote): \"\(title)\""
+                return await createFastIdea(title: title, body: body, clientName: clientName, format: format, platform: platform)
             }
+        }
 
-            // Pattern 2: "Idea: [title + optional body]"
-            if lower.hasPrefix("idea:") {
-                let ideaContent = String(text.dropFirst("idea:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !ideaContent.isEmpty else { return nil }
+        // Pattern 4: "save [this] idea ..." / "new idea ..."
+        let saveIdeaPrefixes = ["save this idea ", "save idea: ", "save idea ", "new idea: ", "new idea "]
+        for prefix in saveIdeaPrefixes {
+            guard lower.hasPrefix(prefix) else { continue }
+            let rawContent = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawContent.isEmpty else { continue }
 
-                let (title, body) = splitIdeaTitleBody(ideaContent)
+            let (ideaContent, format, platform) = extractIdeaMetadataLines(rawContent)
 
-                do {
-                    _ = try await AtomRepository.shared.create(type: .idea, title: title, body: body)
-                } catch {
-                    return nil
-                }
+            // Check for trailing "for [client]" pattern
+            let (contentWithoutClient, clientName) = extractTrailingClient(ideaContent)
+            let (title, body) = splitIdeaTitleBody(contentWithoutClient)
 
-                return "Saved idea: \"\(title)\""
-            }
+            return await createFastIdea(title: title, body: body, clientName: clientName, format: format, platform: platform)
+        }
 
+        return nil
+    }
+
+    /// Create an idea atom with optional client link and metadata. Returns the confirmation message.
+    private func createFastIdea(title: String, body: String?, clientName: String?, format: ContentFormat?, platform: IdeaPlatform?) async -> String? {
+        let repo = AtomRepository.shared
+
+        // Build metadata if format or platform specified
+        var metadataJSON: String? = nil
+        if format != nil || platform != nil {
+            var meta = IdeaMetadata()
+            meta.ideaStatus = .spark
+            meta.contentFormat = format
+            meta.platform = platform
+            metadataJSON = try? String(data: JSONEncoder().encode(meta), encoding: .utf8)
+        }
+
+        let atom: Atom
+        do {
+            atom = try await repo.create(type: .idea, title: title, body: body, metadata: metadataJSON)
+        } catch {
             return nil
+        }
+
+        // Link to client if specified
+        var clientNote = ""
+        if let clientName = clientName, !clientName.isEmpty {
+            if let clientAtom = try? await repo.fuzzyFindClient(query: clientName) {
+                let link = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: clientAtom.uuid, entityType: "clientProfile")
+                _ = try? await repo.update(uuid: atom.uuid) { a in
+                    let updated = a.addingLink(link)
+                    a.links = updated.links
+                }
+                clientNote = " for \(clientAtom.title ?? clientName)"
+            } else {
+                clientNote = " for \(clientName)"
+            }
+        }
+
+        var extras: [String] = []
+        if let f = format { extras.append(f.displayName) }
+        if let p = platform { extras.append(p.displayName) }
+        let extraNote = extras.isEmpty ? "" : " [\(extras.joined(separator: ", "))]"
+
+        return "Saved idea\(clientNote): \"\(title)\"\(extraNote)"
+    }
+
+    /// Extract "Format: reel" / "Platform: instagram" metadata from trailing lines.
+    /// Returns the content without metadata lines, plus parsed format and platform.
+    private func extractIdeaMetadataLines(_ content: String) -> (content: String, format: ContentFormat?, platform: IdeaPlatform?) {
+        let lines = content.components(separatedBy: "\n")
+        var contentLines: [String] = []
+        var format: ContentFormat?
+        var platform: IdeaPlatform?
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("format:") {
+                let value = trimmed.dropFirst("format:".count).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                format = ContentFormat(rawValue: value)
+                // Handle common aliases
+                if format == nil {
+                    switch value {
+                    case "long form", "long-form", "longform", "blog": format = .longForm
+                    case "video": format = .youtube
+                    default: break
+                    }
+                }
+            } else if lower.hasPrefix("platform:") {
+                let value = trimmed.dropFirst("platform:".count).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                platform = IdeaPlatform(rawValue: value)
+                if platform == nil {
+                    switch value {
+                    case "twitter": platform = .x
+                    case "ig": platform = .instagram
+                    case "yt": platform = .youtube
+                    case "tt": platform = .tiktok
+                    default: break
+                    }
+                }
+            } else if !trimmed.isEmpty {
+                contentLines.append(trimmed)
+            }
+        }
+
+        let cleanContent = contentLines.joined(separator: "\n")
+        return (cleanContent.isEmpty ? content : cleanContent, format, platform)
+    }
+
+    /// Extract trailing "for [client]" from idea content.
+    /// "morning routines for michael" → ("morning routines", "michael")
+    private func extractTrailingClient(_ content: String) -> (content: String, clientName: String?) {
+        let lower = content.lowercased()
+        guard let forRange = lower.range(of: " for ", options: .backwards) else {
+            return (content, nil)
+        }
+        let afterFor = String(content[forRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = afterFor.split(separator: " ")
+        // Only treat as client name if 1-3 words and doesn't look like a description
+        guard !words.isEmpty, words.count <= 3 else { return (content, nil) }
+        let descriptionWords: Set<String> = ["the", "a", "an", "my", "our", "this", "that", "next", "every"]
+        if let first = words.first, descriptionWords.contains(String(first).lowercased()) {
+            return (content, nil)
+        }
+        let contentWithout = String(content[content.startIndex..<forRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (contentWithout, afterFor)
     }
 
     /// Split idea content into title (first sentence/line) and body (rest).
@@ -859,8 +976,21 @@ class CosmoAgentService: ObservableObject {
         // Check for quick idea capture patterns FIRST (highest priority)
         // "Idea for Michael: 5 underrated locations..." → capture, not brainstorm
         // "Idea: build a calculator app" → capture
-        if lower.hasPrefix("idea for ") || lower.hasPrefix("idea:") || lower.hasPrefix("task:") {
+        // "Idea josh: co-living vs rental" → capture (no "for")
+        if lower.hasPrefix("idea for ") || lower.hasPrefix("idea:") || lower.hasPrefix("task:")
+            || lower.hasPrefix("save idea") || lower.hasPrefix("save this idea") || lower.hasPrefix("new idea") {
             return .capture
+        }
+
+        // "Idea [name]: ..." — idea followed by short name then colon
+        if lower.hasPrefix("idea ") {
+            let afterIdea = String(lower.dropFirst("idea ".count))
+            if let colonIdx = afterIdea.firstIndex(of: ":") {
+                let possibleName = afterIdea[afterIdea.startIndex..<colonIdx].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !possibleName.isEmpty && possibleName.split(separator: " ").count <= 3 {
+                    return .capture
+                }
+            }
         }
 
         // Check for capture patterns (most specific after idea prefix)

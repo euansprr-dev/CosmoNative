@@ -34,6 +34,13 @@ class CanvasClusterEngine: ObservableObject {
     private let mergeThreshold: Double = 0.55
     private let boundingPadding: CGFloat = 40
 
+    private struct ModeSizing {
+        let minWidth: CGFloat
+        let minHeight: CGFloat
+        let maxWidth: CGFloat
+        let maxHeight: CGFloat
+    }
+
     // MARK: - Public API
 
     /// Schedule a debounced recompute. Call this when block count or positions change.
@@ -356,7 +363,7 @@ class CanvasClusterEngine: ObservableObject {
             // Zones with no blocks keep their manually-set boundingRect
             let hasMembers = blocks.contains { userClusters[index].blockUUIDs.contains($0.entityUuid) }
             if hasMembers {
-                userClusters[index].updateBoundingRect(blocks: blocks)
+                userClusters[index].updateBoundingRect(blocks: blocks, growOnly: true)
             }
         }
     }
@@ -365,6 +372,14 @@ class CanvasClusterEngine: ObservableObject {
     func persistAfterMove() {
         guard let tsId = userClusters.first?.thinkspaceId else { return }
         persistUserClusters(thinkspaceId: tsId)
+    }
+
+    /// Move a cluster rect directly in canvas space.
+    /// Used for manual drag so the rect translates cleanly instead of re-fitting.
+    func offsetClusterRect(id: UUID, by delta: CGSize) {
+        guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
+        userClusters[index].boundingRect.origin.x += delta.width
+        userClusters[index].boundingRect.origin.y += delta.height
     }
 
     // MARK: - View Mode Management
@@ -377,19 +392,21 @@ class CanvasClusterEngine: ObservableObject {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
         userClusters[index].viewMode = mode
 
-        // Auto-size for list/board modes if cluster is too small
-        if mode != .canvas {
-            let rect = userClusters[index].boundingRect
-            let minWidth: CGFloat = mode == .board ? 500 : 320
-            let minHeight: CGFloat = 300
-            if rect.width < minWidth || rect.height < minHeight {
-                let newWidth = max(rect.width, minWidth)
-                let newHeight = max(rect.height, minHeight)
-                userClusters[index].boundingRect.size = CGSize(width: newWidth, height: newHeight)
-                userClusters[index].manualSizeOverride = CGSize(width: newWidth, height: newHeight)
-            }
+        if mode == .canvas {
+            userClusters[index].clearManualSize()
+            userClusters[index].updateBoundingRect(blocks: blocks, growOnly: true)
+        } else if let fitted = fitClusterRectForMode(clusterId: clusterId, mode: mode, blocks: blocks, viewportInCanvas: nil) {
+            userClusters[index].boundingRect = fitted
+            userClusters[index].manualSizeOverride = fitted.size
         }
 
+        persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
+    }
+
+    /// Change board grouping mode for board view.
+    func setBoardGrouping(for clusterId: UUID, grouping: ClusterBoardGrouping) {
+        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
+        userClusters[index].boardGrouping = grouping
         persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
 
@@ -409,6 +426,59 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
+    /// Fit a list/board cluster into bounded dimensions while preserving manual override as a floor.
+    func fitClusterRectForMode(
+        clusterId: UUID,
+        mode: ClusterViewMode,
+        blocks: [CanvasBlock],
+        viewportInCanvas: CGRect?
+    ) -> CGRect? {
+        guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return nil }
+        let cluster = userClusters[index]
+        var rect = cluster.boundingRect
+
+        let sizing: ModeSizing = {
+            switch mode {
+            case .canvas:
+                return .init(minWidth: 240, minHeight: 180, maxWidth: 2200, maxHeight: 1600)
+            case .list:
+                return .init(minWidth: 360, minHeight: 280, maxWidth: 1100, maxHeight: 1200)
+            case .board:
+                return .init(minWidth: 560, minHeight: 320, maxWidth: 1600, maxHeight: 1200)
+            }
+        }()
+
+        let memberCount = blocks.filter { cluster.blockUUIDs.contains($0.entityUuid) }.count
+        let baseHeight = mode == .board ? 320.0 : 280.0
+        let perItem = mode == .board ? 18.0 : 26.0
+        let adaptiveHeight = CGFloat(baseHeight + (Double(max(memberCount - 4, 0)) * perItem))
+
+        var width = rect.width
+        var height = max(rect.height, adaptiveHeight)
+
+        if let manual = cluster.manualSizeOverride {
+            width = max(width, manual.width)
+            height = max(height, manual.height)
+        }
+
+        width = min(max(width, sizing.minWidth), sizing.maxWidth)
+        height = min(max(height, sizing.minHeight), sizing.maxHeight)
+
+        rect.size = CGSize(width: width, height: height)
+
+        if let viewport = viewportInCanvas {
+            let margin: CGFloat = 24
+            let minX = viewport.minX + margin
+            let maxX = viewport.maxX - margin - rect.width
+            let minY = viewport.minY + margin
+            let maxY = viewport.maxY - margin - rect.height
+            if minX <= maxX { rect.origin.x = min(max(rect.origin.x, minX), maxX) }
+            if minY <= maxY { rect.origin.y = min(max(rect.origin.y, minY), maxY) }
+        }
+
+        return rect
+    }
+
     /// Update atom metadata when a card is dragged between board columns
     func updateBlockColumnValue(blockUUID: String, newValue: String, clusterId: UUID) {
         guard let clusterIndex = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
@@ -424,8 +494,9 @@ class CanvasClusterEngine: ObservableObject {
                 switch atom.type {
                 case .task:
                     var taskMeta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
-                    taskMeta.status = newValue
-                    if newValue == "completed" {
+                    let canonical = Self.normalizedBoardColumnValue(for: .task, rawValue: newValue)
+                    taskMeta.status = canonical
+                    if canonical == "completed" {
                         taskMeta.isCompleted = true
                         taskMeta.completedAt = ISO8601DateFormatter().string(from: Date())
                     } else {
@@ -437,14 +508,17 @@ class CanvasClusterEngine: ObservableObject {
                 case .content:
                     // Update content status in metadata dict
                     var metaDict = atom.metadataDict ?? [:]
-                    metaDict["status"] = newValue
+                    let canonical = Self.normalizedBoardColumnValue(for: .content, rawValue: newValue)
+                    metaDict["status"] = canonical
+                    metaDict["currentStep"] = Self.contentStepForPhase(canonical)
                     if let data = try? JSONSerialization.data(withJSONObject: metaDict),
                        let str = String(data: data, encoding: .utf8) {
                         atom.metadata = str
                     }
 
                 case .idea:
-                    if let status = IdeaStatus(rawValue: newValue) {
+                    let canonical = Self.normalizedBoardColumnValue(for: .idea, rawValue: newValue)
+                    if let status = IdeaStatus(rawValue: canonical) {
                         var ideaMeta = atom.ideaMetadata ?? IdeaMetadata()
                         ideaMeta.ideaStatus = status
                         atom = atom.withMetadata(ideaMeta)
@@ -460,6 +534,61 @@ class CanvasClusterEngine: ObservableObject {
                 print("CanvasClusterEngine: updateBlockColumnValue failed: \(error)")
             }
         }
+    }
+
+    /// Apply a board drop event, including cross-cluster transfer and immediate local metadata update.
+    func applyBoardDrop(
+        event: BoardDropEvent,
+        blocks: inout [CanvasBlock],
+        mutateLocalMetadata: ((String, String, EntityType) -> Void)? = nil
+    ) {
+        guard userClusters.contains(where: { $0.id == event.targetClusterId }) else { return }
+
+        let sourceClusterId = userClusters.first(where: { $0.blockUUIDs.contains(event.blockUUID) })?.id
+        let blockIndex = blocks.firstIndex(where: { $0.entityUuid == event.blockUUID })
+        let entityType = blockIndex.map { blocks[$0].entityType }
+        let isTypeGroupingDrop = Self.isTypeGroupingColumn(event.targetColumnValue)
+        let canonical: String? = {
+            guard !isTypeGroupingDrop else { return nil }
+            return Self.normalizedBoardColumnValue(for: entityType ?? .idea, rawValue: event.targetColumnValue)
+        }()
+
+        // Membership transfer (supports cross-cluster drop)
+        if let sourceId = sourceClusterId, sourceId != event.targetClusterId,
+           let sourceIndex = userClusters.firstIndex(where: { $0.id == sourceId }) {
+            userClusters[sourceIndex].blockUUIDs.removeAll { $0 == event.blockUUID }
+            if userClusters[sourceIndex].blockUUIDs.isEmpty && !userClusters[sourceIndex].isZone {
+                userClusters.remove(at: sourceIndex)
+            } else if userClusters[sourceIndex].viewMode == .canvas {
+                userClusters[sourceIndex].updateBoundingRect(blocks: blocks, growOnly: true)
+            }
+        }
+
+        if let targetIndex = userClusters.firstIndex(where: { $0.id == event.targetClusterId }) {
+            if !userClusters[targetIndex].blockUUIDs.contains(event.blockUUID) {
+                userClusters[targetIndex].blockUUIDs.append(event.blockUUID)
+            }
+            if userClusters[targetIndex].viewMode == .canvas {
+                userClusters[targetIndex].updateBoundingRect(blocks: blocks, growOnly: true)
+            }
+        }
+
+        // Immediate in-memory update for visible board/list rows.
+        if let idx = blockIndex {
+            if let canonical {
+                applyLocalBoardValue(canonical, to: &blocks[idx])
+                mutateLocalMetadata?(event.blockUUID, canonical, blocks[idx].entityType)
+                persistAtomColumnValue(blockUUID: event.blockUUID, entityType: blocks[idx].entityType, canonicalValue: canonical)
+            }
+        } else {
+            if let canonical {
+                persistAtomColumnValue(blockUUID: event.blockUUID, entityType: nil, canonicalValue: canonical)
+            }
+        }
+
+        let thinkspaceId = userClusters.first(where: { $0.id == event.targetClusterId })?.thinkspaceId
+            ?? sourceClusterId.flatMap { id in userClusters.first(where: { $0.id == id })?.thinkspaceId }
+        persistUserClusters(thinkspaceId: thinkspaceId)
     }
 
     // MARK: - Cluster Resize
@@ -520,17 +649,19 @@ class CanvasClusterEngine: ObservableObject {
             rect.size.height = max(minSize.height, startRect.height + delta.height)
         }
 
-        userClusters[index].boundingRect = rect
-        userClusters[index].manualSizeOverride = rect.size
+        var updated = userClusters[index]
+        updated.boundingRect = rect
+        updated.manualSizeOverride = rect.size
+        userClusters[index] = updated
     }
 
-    /// Commit a resize — recompute bounds (respecting manual override) and persist.
+    /// Commit a resize — persist the new size directly without recomputing from blocks.
+    /// The manualSizeOverride was already set during resizeCluster(), and updateBoundingRect
+    /// would fight the user's resize by re-centering around block positions.
     func commitClusterResize(id: UUID, blocks: [CanvasBlock]) {
         guard let index = userClusters.firstIndex(where: { $0.id == id }) else { return }
         resizingClusterId = nil
         resizeStartRect = nil
-        // Recompute so block-fit + manual override are reconciled
-        userClusters[index].updateBoundingRect(blocks: blocks)
         persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
 
@@ -578,6 +709,14 @@ class CanvasClusterEngine: ObservableObject {
             }
 
             userClusters = metadata.clusters.map { $0.toCanvasCluster(blocks: blocks, thinkspaceId: tsId) }
+            for idx in userClusters.indices where userClusters[idx].viewMode != .canvas {
+                let id = userClusters[idx].id
+                let mode = userClusters[idx].viewMode
+                if let fitted = fitClusterRectForMode(clusterId: id, mode: mode, blocks: blocks, viewportInCanvas: nil) {
+                    userClusters[idx].boundingRect = fitted
+                    userClusters[idx].manualSizeOverride = fitted.size
+                }
+            }
         } catch {
             print("CanvasClusterEngine: Failed to load user clusters: \(error)")
         }
@@ -607,6 +746,161 @@ class CanvasClusterEngine: ObservableObject {
                 try await repo.update(atom)
             } catch {
                 print("CanvasClusterEngine: Failed to persist clusters: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Board Value Normalization
+
+    func normalizedBoardColumnValue(for type: EntityType, rawValue: String) -> String {
+        Self.normalizedBoardColumnValue(for: type, rawValue: rawValue)
+    }
+
+    static func normalizedBoardColumnValue(for type: EntityType, rawValue: String) -> String {
+        switch type {
+        case .task:
+            return canonicalTaskStatus(rawValue)
+        case .content:
+            return canonicalContentPhase(rawValue)
+        case .idea:
+            return canonicalIdeaStatus(rawValue)
+        default:
+            return rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+    }
+
+    static func canonicalTaskStatus(_ rawValue: String) -> String {
+        let key = normalizedKey(rawValue)
+        switch key {
+        case "todo", "to_do", "pending":
+            return "todo"
+        case "inprogress", "in_progress", "active", "doing":
+            return "in_progress"
+        case "completed", "done", "complete":
+            return "completed"
+        default:
+            return "todo"
+        }
+    }
+
+    static func canonicalContentPhase(_ rawValue: String) -> String {
+        let key = normalizedKey(rawValue)
+        switch key {
+        case "ideation", "brainstorm":
+            return "ideation"
+        case "draft":
+            return "draft"
+        case "polish":
+            return "polish"
+        case "archived", "archive":
+            return "archived"
+        default:
+            return "ideation"
+        }
+    }
+
+    static func canonicalIdeaStatus(_ rawValue: String) -> String {
+        let key = normalizedKey(rawValue)
+        switch key {
+        case "spark":
+            return "spark"
+        case "developing":
+            return "developing"
+        case "ready", "inproduction", "published":
+            return "ready"
+        case "archived", "archive":
+            return "archived"
+        default:
+            return "spark"
+        }
+    }
+
+    static func contentStepForPhase(_ phase: String) -> String {
+        switch canonicalContentPhase(phase) {
+        case "ideation": return "brainstorm"
+        case "draft": return "draft"
+        case "polish": return "polish"
+        case "archived": return "polish"
+        default: return "brainstorm"
+        }
+    }
+
+    private static func normalizedKey(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+    }
+
+    private static func isTypeGroupingColumn(_ rawValue: String) -> Bool {
+        let key = normalizedKey(rawValue)
+        switch key {
+        case "idea", "content", "connection", "research", "task", "project", "note", "cosmo_ai", "swipe_file":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func applyLocalBoardValue(_ canonical: String, to block: inout CanvasBlock) {
+        switch block.entityType {
+        case .task:
+            block.metadata["status"] = canonical
+        case .content:
+            block.metadata["status"] = canonical
+            block.metadata["currentStep"] = Self.contentStepForPhase(canonical)
+        case .idea:
+            block.metadata["ideaStatus"] = canonical
+        default:
+            block.metadata["status"] = canonical
+        }
+    }
+
+    private func persistAtomColumnValue(blockUUID: String, entityType: EntityType?, canonicalValue: String) {
+        Task {
+            do {
+                let repo = AtomRepository.shared
+                guard var atom = try await repo.fetch(uuid: blockUUID) else { return }
+                let resolvedType = entityType ?? EntityType(rawValue: atom.type.rawValue) ?? .idea
+
+                switch resolvedType {
+                case .task:
+                    var taskMeta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    let canonical = Self.canonicalTaskStatus(canonicalValue)
+                    taskMeta.status = canonical
+                    taskMeta.isCompleted = canonical == "completed"
+                    taskMeta.completedAt = canonical == "completed"
+                        ? ISO8601DateFormatter().string(from: Date())
+                        : nil
+                    atom = atom.withMetadata(taskMeta)
+
+                case .content:
+                    var metaDict = atom.metadataDict ?? [:]
+                    let canonical = Self.canonicalContentPhase(canonicalValue)
+                    metaDict["status"] = canonical
+                    metaDict["currentStep"] = Self.contentStepForPhase(canonical)
+                    if let data = try? JSONSerialization.data(withJSONObject: metaDict),
+                       let str = String(data: data, encoding: .utf8) {
+                        atom.metadata = str
+                    }
+
+                case .idea:
+                    let canonical = Self.canonicalIdeaStatus(canonicalValue)
+                    if let status = IdeaStatus(rawValue: canonical) {
+                        var ideaMeta = atom.ideaMetadata ?? IdeaMetadata()
+                        ideaMeta.ideaStatus = status
+                        atom = atom.withMetadata(ideaMeta)
+                    }
+
+                default:
+                    return
+                }
+
+                atom.updatedAt = ISO8601DateFormatter().string(from: Date())
+                try await repo.update(atom)
+            } catch {
+                print("CanvasClusterEngine: persistAtomColumnValue failed: \(error)")
             }
         }
     }

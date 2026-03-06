@@ -41,9 +41,9 @@ struct MediaBlockView: View {
     private let referenceSize = CGSize(width: 300, height: 260)
 
     private var contentScale: CGFloat {
-        let area = max(blockSize.width * blockSize.height, 1)
-        let referenceArea = referenceSize.width * referenceSize.height
-        return max(sqrt(area / referenceArea), 0.5)
+        let widthScale = blockSize.width / max(referenceSize.width, 1)
+        let heightScale = blockSize.height / max(referenceSize.height, 1)
+        return min(max(min(widthScale, heightScale), 0.6), 2.4)
     }
 
     private func scaled(_ value: CGFloat) -> CGFloat {

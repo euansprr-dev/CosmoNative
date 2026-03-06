@@ -366,6 +366,15 @@ class TelegramBridgeService: ObservableObject {
             }
         }
 
+        // Flash-Lite router bypasses debounce for single messages (no rapid-fire buffer)
+        // Handles ideas, tasks, queries, and any single-shot tool call via cheap LLM classification
+        if !processingChatIds.contains(chatIdStr) && debounceBuffers[chatIdStr] == nil {
+            if let (response, _) = await FlashLiteRouter.shared.tryRoute(text) {
+                await sendMessage(chatId: chatIdStr, text: response)
+                return
+            }
+        }
+
         // MARK: Debounce Logic
         // If already processing a message for this chat, buffer instead of rejecting
         if processingChatIds.contains(chatIdStr) {
@@ -505,6 +514,12 @@ class TelegramBridgeService: ObservableObject {
         // Fast-path URL capture (re-check for joined messages that contain URLs)
         if let fastCaptureResult = await tryFastCapture(text: text, chatId: chatId) {
             await sendLongMessage(chatId: chatId, text: fastCaptureResult)
+            return
+        }
+
+        // Flash-Lite router for debounced messages (ideas, tasks, queries, etc.)
+        if let (flashResponse, _) = await FlashLiteRouter.shared.tryRoute(text) {
+            await sendLongMessage(chatId: chatId, text: flashResponse)
             return
         }
 

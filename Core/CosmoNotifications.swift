@@ -116,6 +116,10 @@ enum CosmoNotification {
         // Thinkspace
         static let switchToThinkspace = Notification.Name("com.cosmo.nav.switchToThinkspace")
 
+        // Command Center
+        static let navigateToCommandCenter = Notification.Name("com.cosmo.navigation.commandCenter")
+        static let exitDrillIn = Notification.Name("com.cosmo.navigation.exitDrillIn")
+
         // Panes
         static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
 
@@ -199,6 +203,12 @@ enum CosmoNotification {
         // Entity linking
         static let linkEntities = Notification.Name("com.cosmo.entity.linkEntities")
         static let triggerAutoLink = Notification.Name("com.cosmo.entity.triggerAutoLink")
+    }
+
+    // MARK: - Gamification Notifications
+    enum Gamification {
+        static let xpAwarded = Notification.Name("xpAwarded")
+        static let taskCompleted = Notification.Name("com.cosmo.gamification.taskCompleted")
     }
 
     // MARK: - Project Notifications
@@ -584,6 +594,42 @@ extension CosmoNotification.Navigation.EntityPayload: NotificationPayload {}
 extension CosmoNotification.Navigation.FocusModePayload: NotificationPayload {}
 extension CosmoNotification.Voice.RecordingStatePayload: NotificationPayload {}
 extension CosmoNotification.Voice.TranscriptPayload: NotificationPayload {}
+
+// MARK: - Migrated Notification Extensions
+// (Moved from deleted XPTracerView.swift and ActiveFocusBar.swift)
+
+extension Notification.Name {
+    public static let xpAwarded = Notification.Name("xpAwarded")
+    public static let focusSessionStarted = Notification.Name("focusSessionStarted")
+    public static let focusSessionPaused = Notification.Name("focusSessionPaused")
+    public static let focusSessionCompleted = Notification.Name("focusSessionCompleted")
+    public static let atomsDidChange = Notification.Name("com.cosmo.atomsDidChange")
+}
+
+/// Triggers an XP tracer animation
+public struct XPAwardHelper {
+    public static func awardXP(
+        amount: Int,
+        from sourceFrame: CGRect,
+        to targetFrame: CGRect,
+        in coordinateSpace: CoordinateSpace = .global,
+        dimensionColors: [Color] = [PlannerumColors.xpGold]
+    ) {
+        let sourceCenter = CGPoint(x: sourceFrame.midX, y: sourceFrame.midY)
+        let targetCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+
+        NotificationCenter.default.post(
+            name: .xpAwarded,
+            object: nil,
+            userInfo: [
+                "xpAmount": amount,
+                "sourcePosition": sourceCenter,
+                "targetPosition": targetCenter,
+                "colors": dimensionColors
+            ]
+        )
+    }
+}
 
 // MARK: - Legacy Compatibility Note
 // The CosmoNotification enum provides namespaced notification names (e.g., CosmoNotification.Canvas.blockExpanded).

@@ -734,22 +734,22 @@ public struct PlannerumGlass {
 
     /// Block surface glass
     public struct Block {
-        public static let background = Color(red: 20/255, green: 20/255, blue: 30/255).opacity(0.85)
+        public static let background = DS.surfaceElevated.opacity(0.92)
         public static let blur: CGFloat = 24
         public static let glowRadius: CGFloat = 20
-        public static let glowOpacity: Double = 0.15
+        public static let glowOpacity: Double = 0.08
     }
 
     /// Inbox item glass
     public struct InboxItem {
-        public static let background = Color(red: 20/255, green: 20/255, blue: 32/255).opacity(0.8)
+        public static let background = DS.surfaceElevated.opacity(0.88)
         public static let blur: CGFloat = 16
         public static let cornerRadius: CGFloat = 8
     }
 
     /// Focus bar glass
     public struct FocusBar {
-        public static let background = Color(red: 12/255, green: 12/255, blue: 18/255).opacity(0.95)
+        public static let background = DS.surface.opacity(0.96)
         public static let blur: CGFloat = 40
     }
 }
@@ -992,7 +992,7 @@ public struct DailyQuestsTokens {
     public static let streakFire = Color(red: 251/255, green: 146/255, blue: 60/255)
 
     /// Locked quest overlay
-    public static let lockedOverlay = Color.black.opacity(0.5)
+    public static let lockedOverlay = DS.text.opacity(0.3)
 
     // MARK: - Typography
 
@@ -1065,7 +1065,7 @@ public struct NowViewTokens {
     public static let rowBackgroundHover = DS.border
 
     /// Checkbox unchecked border
-    public static let checkboxBorder = Color.white.opacity(0.3)
+    public static let checkboxBorder = DS.border
 
     /// Checkbox checked fill
     public static let checkboxChecked = Color(red: 34/255, green: 197/255, blue: 94/255)
@@ -1080,7 +1080,7 @@ public struct NowViewTokens {
     public static let priorityMedium = Color(red: 59/255, green: 130/255, blue: 246/255)
 
     /// Priority low
-    public static let priorityLow = Color.white.opacity(0.3)
+    public static let priorityLow = DS.textMuted
 
     /// Overdue background
     public static let overdueBackground = Color(red: 239/255, green: 68/255, blue: 68/255).opacity(0.15)

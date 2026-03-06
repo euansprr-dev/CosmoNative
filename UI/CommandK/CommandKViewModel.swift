@@ -36,6 +36,20 @@ enum SwipeViewMode: String, CaseIterable {
     }
 }
 
+// MARK: - IdeaViewMode
+
+enum IdeaViewMode: String, CaseIterable {
+    case grid
+    case list
+
+    var icon: String {
+        switch self {
+        case .grid: return "square.grid.2x2.fill"
+        case .list: return "list.bullet"
+        }
+    }
+}
+
 // MARK: - CommandKViewModel
 /// ViewModel for the Command-K overlay
 /// Manages query state, results, and constellation visualization
@@ -156,6 +170,9 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Whether idea gallery has been loaded
     private var ideaGalleryLoaded = false
+
+    /// View mode for idea gallery: grid (masonry cards) or list (grouped by client)
+    @Published var ideaViewMode: IdeaViewMode = .grid
 
     // MARK: - Configuration
 

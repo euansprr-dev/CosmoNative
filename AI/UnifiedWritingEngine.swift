@@ -192,7 +192,7 @@ final class UnifiedWritingEngine: ObservableObject {
     private let brainstormModel = ContentModelTier.writer.rawValue  // Opus for ALL phases — outline quality matters
     private let scorecardModel = ContentModelTier.strategist.rawValue
     private let maxRetries = 2
-    private let tokenSummarizationThreshold = 20_000
+    private let tokenSummarizationThreshold = 100_000  // Opus 4.6 has 1M context — don't summarize mid-session
 
     // MARK: - Phase-Aware Model Selection
 
@@ -504,7 +504,56 @@ final class UnifiedWritingEngine: ObservableObject {
     }
 
     /// Inject a phase transition marker into the conversation.
+    /// Prunes tool-call noise from history while preserving think analysis as plain text.
     func handlePhaseTransition(from: ContentStep, to: ContentStep, state: ContentFocusModeState) {
+        // Prune tool-call pattern from conversation history while preserving reasoning.
+        // The model mimics brainstorm tool-call chains (think→think→tools) degenerately
+        // in draft phase. All structured outputs (outline, hooks, title) are in Block 3,
+        // but think analysis (swipe breakdowns, structural reasoning) is NOT — extract it
+        // as plain assistant text to preserve draft quality.
+        let beforeCount = messages.count
+        var cleaned: [WritingMessage] = []
+
+        for msg in messages {
+            switch msg.role {
+            case .toolResult:
+                // Drop all tool results — outputs live in Block 3 / atom metadata
+                continue
+
+            case .assistant:
+                // Extract think content from tool calls before discarding them
+                var thinkContent = ""
+                if let toolCalls = msg.toolCalls {
+                    for tc in toolCalls where tc.toolName == "think" {
+                        if let data = tc.parameters.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let thought = json["thought"] as? String,
+                           !thought.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            thinkContent += thought + "\n"
+                        }
+                    }
+                }
+                let combinedContent = [msg.content, thinkContent]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n\n")
+
+                if !combinedContent.isEmpty {
+                    // Keep as plain text assistant message (no toolCalls)
+                    cleaned.append(WritingMessage(
+                        id: msg.id, role: .assistant, content: combinedContent, timestamp: msg.timestamp
+                    ))
+                }
+                // If neither text nor think content → drop entirely (tool-call-only noise)
+
+            case .user, .system:
+                cleaned.append(msg)
+            }
+        }
+
+        messages = cleaned
+        print("🔧 [UnifiedWritingEngine] Phase transition: pruned \(beforeCount) → \(messages.count) messages (think analysis preserved as text)")
+
         let outlineCount = state.outline.count
         let hookText = state.hooks.first ?? "(none)"
 
@@ -643,6 +692,9 @@ final class UnifiedWritingEngine: ObservableObject {
     ) async throws -> ConversationLoopResult {
         var pendingMessages: [WritingMessage] = []
         var lastAssistantMessage: WritingMessage?
+        var consecutiveThinkOnly = 0
+        var thinkToolRemoved = false
+        var activeTools = tools
 
         let toolNames = tools.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
         print("🔄 [UnifiedWritingEngine] Starting conversation loop (nonisolated). System blocks: \(systemBlocks.count), tools: \(toolNames)")
@@ -668,7 +720,7 @@ final class UnifiedWritingEngine: ObservableObject {
                     apiKey: apiKey,
                     systemBlocks: systemBlocks,
                     messages: apiMessages,
-                    tools: tools,
+                    tools: activeTools,
                     model: model,
                     maxTokens: 16384,
                     temperature: 0.3
@@ -743,6 +795,31 @@ final class UnifiedWritingEngine: ObservableObject {
                 let resultMsg = WritingMessage(role: .toolResult, content: result.content, toolResults: [result])
                 pendingMessages.append(resultMsg)
             }
+
+            // --- Anti-loop guard ---
+            let isThinkOnly = response.toolCalls.allSatisfy { $0.name == "think" }
+            let isEmptyThinkOnly = isThinkOnly && response.toolCalls.allSatisfy { call in
+                ((call.input["thought"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+
+            if isThinkOnly {
+                consecutiveThinkOnly += 1
+            } else {
+                consecutiveThinkOnly = 0
+            }
+
+            // Trigger: >=1 empty-think-only turn, OR >=2 consecutive think-only turns
+            if (isEmptyThinkOnly || consecutiveThinkOnly >= 2) && !thinkToolRemoved {
+                print("⚠️ [UnifiedWritingEngine] Anti-loop guard: removing think tool (thinkOnly=\(consecutiveThinkOnly), emptyThink=\(isEmptyThinkOnly))")
+                thinkToolRemoved = true
+                activeTools = activeTools.filter { tool in
+                    (tool["function"] as? [String: Any])?["name"] as? String != "think"
+                }
+                let nudge = WritingMessage(role: .system, content: "[System] Proceed with a concrete action — use write_draft, update_outline, edit_section, or produce your final text response.")
+                pendingMessages.append(nudge)
+            }
+
+            // --- End anti-loop guard ---
         }
 
         print("🔄 [UnifiedWritingEngine] Loop done. \(pendingMessages.count) new messages.")
@@ -1287,8 +1364,14 @@ final class UnifiedWritingEngine: ObservableObject {
             do {
                 switch call.name {
                 case "think":
-                    resultContent = handleThink(call.input)
-                    isError = false
+                    let thought = (call.input["thought"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if thought.isEmpty {
+                        resultContent = "Error: thought content is empty. Proceed with a concrete tool (write_draft, update_outline, etc.) or provide your final text response."
+                        isError = true
+                    } else {
+                        resultContent = handleThink(call.input)
+                        isError = false
+                    }
 
                 case "set_title":
                     resultContent = await handleSetTitle(call.input)
@@ -1627,10 +1710,14 @@ final class UnifiedWritingEngine: ObservableObject {
 
         let wordCount = content.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
 
+        // Convert structured JSON (carousel slides, thread tweets) to clean plaintext
+        // before storing and notifying. Strips internal fields like visualDirection.
+        let renderedContent = AgentToolExecutor.renderDraftForDisplay(content)
+
         NotificationCenter.default.post(
             name: .unifiedEngineDraftUpdate,
             object: nil,
-            userInfo: ["content": content, "format": format.rawValue]
+            userInfo: ["content": renderedContent, "format": format.rawValue]
         )
 
         // Persist draft content directly to atom body in GRDB
@@ -1639,7 +1726,7 @@ final class UnifiedWritingEngine: ObservableObject {
             do {
                 try await database.asyncWrite { db in
                     if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
-                        atom.body = content
+                        atom.body = renderedContent
                         atom.updatedAt = ISO8601DateFormatter().string(from: Date())
                         try atom.update(db)
                     }
@@ -1798,18 +1885,31 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         do {
-            let results = try await HybridSearchEngine.shared.search(
-                query: query,
-                limit: 10,
-                entityTypes: [.research]
-            )
+            // Query atoms_fts directly — HybridSearchEngine uses semantic_fts which
+            // doesn't index atom-based swipes (only legacy research table entries).
+            let ftsQuery = query.split(separator: " ")
+                .map { String($0).replacingOccurrences(of: "\"", with: "") }
+                .filter { $0.count > 2 }
+                .joined(separator: " OR ")
+
+            guard !ftsQuery.isEmpty else {
+                return "No matching swipes found for: \(query)"
+            }
+
+            let atoms: [Atom] = try await database.asyncRead { db in
+                try Atom.fetchAll(db, sql: """
+                    SELECT atoms.* FROM atoms
+                    JOIN atoms_fts ON atoms.uuid = atoms_fts.uuid
+                    WHERE atoms_fts MATCH ?
+                      AND atoms.type = 'research'
+                      AND atoms.is_deleted = 0
+                    ORDER BY bm25(atoms_fts, 0, 0, 1, 2, 1)
+                    LIMIT 20
+                    """, arguments: [ftsQuery])
+            }
 
             var swipeResults: [String] = []
-            for result in results {
-                guard let uuid = result.entityUUID else { continue }
-                guard let atom = try? await database.asyncRead({ db in
-                    try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
-                }) else { continue }
+            for atom in atoms {
                 guard atom.isSwipeFileAtom else { continue }
 
                 let analysis = atom.swipeAnalysis
@@ -2855,13 +2955,27 @@ final class UnifiedWritingEngine: ObservableObject {
         // Trigger summarization if EITHER token count is high OR message count exceeds 25.
         // The message count threshold catches cases where token estimation is still off,
         // and prevents the UI from rendering 40+ message bubbles which causes 100% CPU.
-        let needsSummarization = estimated > tokenSummarizationThreshold || messages.count > 25
+        let needsSummarization = estimated > tokenSummarizationThreshold || messages.count > 80
         guard needsSummarization else { return }
         guard messages.count > 15 else { return }
 
-        // Keep last 10 messages verbatim, summarize the rest
-        let toSummarize = Array(messages.prefix(messages.count - 10))
-        let toKeep = Array(messages.suffix(10))
+        // Keep last 10 messages verbatim, but adjust split point to not break tool pairs
+        var splitIndex = messages.count - 10
+
+        // Don't start the kept messages on a toolResult (needs its preceding tool_use)
+        while splitIndex > 0 && splitIndex < messages.count && messages[splitIndex].role == .toolResult {
+            splitIndex -= 1
+        }
+        // Don't split between assistant-with-toolCalls and its toolResult
+        if splitIndex > 0 && splitIndex < messages.count {
+            let prevMsg = messages[splitIndex - 1]
+            if prevMsg.role == .assistant && prevMsg.toolCalls != nil && !prevMsg.toolCalls!.isEmpty {
+                splitIndex -= 1
+            }
+        }
+
+        let toSummarize = Array(messages.prefix(splitIndex))
+        let toKeep = Array(messages.suffix(messages.count - splitIndex))
 
         // Build summary text from older messages
         let summaryInput = toSummarize.map { msg in
@@ -3218,8 +3332,8 @@ final class UnifiedWritingEngine: ObservableObject {
     private let block1MaxChars = 24_000
 
     /// Maximum character budget for Block 2 (client intelligence model + brand story + voice guide + top posts).
-    /// ~80K chars ≈ ~20K tokens at 4 chars/token. Opus 4.6 has 1M token context — this is ~2% utilization.
-    private let block2MaxChars = 80_000
+    /// Opus 4.6 has 1M token context — no reason to truncate client intelligence data.
+    private let block2MaxChars = 200_000
 
     private func buildCachedBlocks(contentAtom: Atom) {
         _ = assembleBlock1()

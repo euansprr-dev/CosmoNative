@@ -74,3 +74,41 @@ final class VoiceCommandRouterTests: XCTestCase {
         }
     }
 }
+
+@MainActor
+final class ExplicitLessonCaptureTests: XCTestCase {
+    private let explicitLessonMessage = """
+    Please save this as a lesson for future reference:
+
+    Never have that 3 beat pattern in sentences like "X. Y. Z.", always use commas, dots, or elipsis. (example: "The VA loan covers 100% of the purchase price. No down payment. No PMI." should be "The VA loan covers 100% of the purchase price so you don't need any downpayment".
+
+    This makes everything MUCH more conversational.
+    """
+
+    func testExplicitLessonParserExtractsFullRuleAndEvidence() {
+        let request = ExplicitLessonCaptureParser.parse(explicitLessonMessage)
+
+        XCTAssertNotNil(request)
+        XCTAssertEqual(
+            request?.rule,
+            #"Never have that 3 beat pattern in sentences like "X. Y. Z.", always use commas, dots, or elipsis. (example: "The VA loan covers 100% of the purchase price. No down payment. No PMI." should be "The VA loan covers 100% of the purchase price so you don't need any downpayment"."#
+        )
+        XCTAssertEqual(request?.category, "voice")
+        XCTAssertEqual(request?.evidence, "This makes everything MUCH more conversational.")
+    }
+
+    func testExplicitLessonParserIgnoresLessonQueries() {
+        XCTAssertNil(ExplicitLessonCaptureParser.parse("What lessons have you learned?"))
+        XCTAssertNil(ExplicitLessonCaptureParser.parse("show my lessons"))
+    }
+
+    func testTelegramLessonFastPathOnlyMatchesExplicitLessonRequests() {
+        XCTAssertTrue(TelegramBridgeService.shouldUseExplicitLessonFastPath(explicitLessonMessage))
+        XCTAssertFalse(TelegramBridgeService.shouldUseExplicitLessonFastPath("Idea: build a calculator app"))
+    }
+
+    func testFlashLiteGuardForcesLessonRequestsToAgentFallback() {
+        XCTAssertTrue(FlashLiteRouter.shouldForceAgentFallback(explicitLessonMessage))
+        XCTAssertFalse(FlashLiteRouter.shouldForceAgentFallback("Idea: build a calculator app"))
+    }
+}

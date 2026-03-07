@@ -32,6 +32,7 @@ struct CanvasClusterLayer: View {
     var onChangeSortOrder: ((UUID, ClusterSortOrder) -> Void)?
     var onToggleListExpand: ((UUID, String) -> Void)?
     var onBoardColumnDrop: ((BoardDropEvent) -> Void)?
+    var onClusterViewDrop: ((ClusterTransferEvent) -> Void)?
     var onOpenFocusMode: ((String) -> Void)?
     var expandedBlockUUIDs: [UUID: String] = [:]
 
@@ -147,7 +148,7 @@ struct CanvasClusterLayer: View {
             if showLabel || hasAltContent {
                 VStack(spacing: 0) {
                     if showLabel {
-                        clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster)
+                        clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster, allowDrag: hasAltContent)
                             .frame(height: 42)
                             .padding(.top, 8)
                     } else {
@@ -182,7 +183,7 @@ struct CanvasClusterLayer: View {
             }
         }
         .gesture(
-            (isZoneCluster || clusterIsResizing || resizingClusterId != nil || localResizingClusterId != nil)
+            (isZoneCluster || hasAltContent || clusterIsResizing || resizingClusterId != nil || localResizingClusterId != nil)
             ? nil
             : DragGesture(minimumDistance: 10)
                 .onChanged { gesture in
@@ -222,7 +223,7 @@ struct CanvasClusterLayer: View {
     // MARK: - Title Bar
 
     @ViewBuilder
-    private func clusterTitleBar(_ cluster: CanvasCluster, isEditing: Bool, isZone: Bool) -> some View {
+    private func clusterTitleBar(_ cluster: CanvasCluster, isEditing: Bool, isZone: Bool, allowDrag: Bool = false) -> some View {
         HStack(spacing: 6) {
             if isZone, let zt = CommandCenterZoneType(rawValue: cluster.zoneType ?? "") {
                 Image(systemName: zt.iconName)
@@ -234,7 +235,7 @@ struct CanvasClusterLayer: View {
         .padding(.horizontal, 12)
         .contentShape(Rectangle())
         .gesture(
-            (isZone && !isEditing && resizingClusterId == nil && localResizingClusterId == nil)
+            ((isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil)
             ? DragGesture(minimumDistance: 10)
                 .onChanged { gesture in
                     if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
@@ -285,6 +286,9 @@ struct CanvasClusterLayer: View {
                         },
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
+                        },
+                        onDrop: { event in
+                            onClusterViewDrop?(event)
                         }
                     )
                 case .board:
@@ -306,6 +310,9 @@ struct CanvasClusterLayer: View {
                         blocks: blocks,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
+                        },
+                        onDrop: { event in
+                            onClusterViewDrop?(event)
                         }
                     )
                 }

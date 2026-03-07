@@ -95,7 +95,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Dependencies
 
     private let plannerum = PlannerumViewModel.shared
-    let sessionEngine = DeepWorkSessionEngine()
+    let sessionEngine = DeepWorkSessionEngine.shared
     private let objectiveEngine = ObjectiveEngine()
     private let calendarService = CalendarSyncService.shared
     private var cancellables = Set<AnyCancellable>()
@@ -530,7 +530,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         metadata.priority = priority.rawValue
                     }
                     if let dueDate = parsed.dueDate ?? pendingTaskDate {
-                        metadata.dueDate = PlannerumFormatters.iso8601.string(from: dueDate)
+                        let dateStr = PlannerumFormatters.iso8601.string(from: dueDate)
+                        metadata.dueDate = dateStr
+                        metadata.focusDate = dateStr  // Keep focusDate in sync so task appears on the correct day
                     } else if viewMode == .today {
                         // Default to today when adding from the Today tab with no explicit date
                         metadata.dueDate = PlannerumFormatters.iso8601.string(from: Date())

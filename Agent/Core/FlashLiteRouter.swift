@@ -8,6 +8,10 @@ final class FlashLiteRouter {
 
     private let model = "google/gemini-3.1-flash-lite-preview"
 
+    static func shouldForceAgentFallback(_ text: String) -> Bool {
+        ExplicitLessonCaptureParser.shouldForceAgentFallback(text)
+    }
+
     private let systemPrompt = """
     You route Telegram messages to tools. Return ONLY valid JSON, no markdown.
 
@@ -60,6 +64,7 @@ final class FlashLiteRouter {
     - If the message references taking action on, creating content from, or writing based on an existing idea or swipe, return {"action":"agent"}
     - If the message gives creative direction (hook style, content adaptation, "make the hook like...", "similar to..."), return {"action":"agent"}
     - If the message uses referential language ("this idea", "that swipe", "using the") about previously discussed items, return {"action":"agent"}
+    - If the message asks to save a lesson, remember a rule, learn something for future reference, or store a writing principle, return {"action":"agent"}
     """
 
     // MARK: - Route
@@ -67,6 +72,10 @@ final class FlashLiteRouter {
     /// Attempts to route a message to a direct tool call via Flash-Lite classification.
     /// Returns (response, toolName) if handled, nil if the message needs the full agent.
     func tryRoute(_ text: String) async -> (response: String, toolName: String)? {
+        if Self.shouldForceAgentFallback(text) {
+            return nil
+        }
+
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: text,

@@ -1,5 +1,6 @@
 // CosmoOS/Canvas/ClusterListContent.swift
 // List mode rendering for clusters — compact scannable rows native to the cluster zone
+// March 2026: Added drag-and-drop between clusters
 
 import SwiftUI
 
@@ -13,8 +14,10 @@ struct ClusterListContent: View {
     let onChangeSortOrder: (ClusterSortOrder) -> Void
     let onToggleExpand: (String) -> Void
     let onOpenFocusMode: (String) -> Void
+    var onDrop: ((ClusterTransferEvent) -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +26,14 @@ struct ClusterListContent: View {
             rowsList
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onDrop(
+            of: [.text],
+            delegate: ClusterListDropDelegate(
+                targetClusterId: cluster.id,
+                isDropTargeted: $isDropTargeted,
+                onDrop: onDrop
+            )
+        )
     }
 
     private var separatorLine: some View {
@@ -97,6 +108,7 @@ struct ClusterListContent: View {
                                 onDoubleTap: { onOpenFocusMode(block.entityUuid) }
                             )
                             .id(block.entityUuid)
+                            .onDrag { NSItemProvider(object: block.entityUuid as NSString) }
 
                             if block.id != sortedBlocks.last?.id {
                                 Rectangle()
@@ -105,6 +117,11 @@ struct ClusterListContent: View {
                                     .padding(.horizontal, 12)
                             }
                         }
+                    }
+
+                    // Drop placeholder
+                    if isDropTargeted {
+                        listDropPlaceholder
                     }
                 }
                 .padding(.vertical, 4)
@@ -186,6 +203,43 @@ struct ClusterListContent: View {
                 .stroke(clusterColor.opacity(0.22), lineWidth: 1)
         )
         .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    // MARK: - Drop Placeholder
+
+    private var listDropPlaceholder: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .strokeBorder(clusterColor.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(clusterColor.opacity(0.5))
+                )
+
+            Text("Drop here")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(clusterColor.opacity(0.5))
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(
+                    clusterColor.opacity(0.35),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(clusterColor.opacity(0.05))
+                )
+        )
+        .padding(.horizontal, 8)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .animation(ProMotionSprings.snappy, value: isDropTargeted)
     }
 
     // MARK: - Sorting
@@ -351,5 +405,58 @@ struct ClusterListRow: View {
         case "completed": return "Done"
         default: return status.capitalized
         }
+    }
+}
+
+// MARK: - List Drop Delegate
+
+private struct ClusterListDropDelegate: DropDelegate {
+    let targetClusterId: UUID
+    @Binding var isDropTargeted: Bool
+    let onDrop: ((ClusterTransferEvent) -> Void)?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.text])
+    }
+
+    func dropEntered(info: DropInfo) {
+        withAnimation(ProMotionSprings.snappy) {
+            isDropTargeted = true
+        }
+    }
+
+    func dropExited(info: DropInfo) {
+        withAnimation(ProMotionSprings.snappy) {
+            isDropTargeted = false
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        withAnimation(ProMotionSprings.snappy) {
+            isDropTargeted = false
+        }
+        let providers = info.itemProviders(for: [.text])
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in
+                let blockUUID: String?
+                if let data = item as? Data {
+                    blockUUID = String(data: data, encoding: .utf8)
+                } else if let text = item as? String {
+                    blockUUID = text
+                } else if let text = item as? NSString {
+                    blockUUID = text as String
+                } else {
+                    blockUUID = nil
+                }
+                guard let blockUUID else { return }
+                DispatchQueue.main.async {
+                    onDrop?(ClusterTransferEvent(
+                        blockUUID: blockUUID,
+                        targetClusterId: targetClusterId
+                    ))
+                }
+            }
+        }
+        return true
     }
 }

@@ -37,8 +37,8 @@ struct MainView: View {
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
 
-    // Deep work session engine (moved from PlannerumView to global)
-    @StateObject private var sessionEngine = DeepWorkSessionEngine()
+    // Deep work session engine (singleton — survives navigation changes)
+    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
 
     // Cross-thinkspace drag manager (sidebar spring-loaded folders)
     @StateObject private var crossDragManager = CrossThinkspaceDragManager()
@@ -54,6 +54,9 @@ struct MainView: View {
 
     // Track last-used thinkspace for T-key shortcut
     @State private var lastThinkspaceId: String?
+
+    // Sidebar collapse state (mirrors UnifiedSidebar's @AppStorage)
+    @AppStorage("sidebarCollapsed") private var sidebarCollapsed: Bool = false
 
     var body: some View {
         ZStack {
@@ -369,6 +372,11 @@ struct MainView: View {
                 guard paneManager.canOpenThinkspace(thinkspaceId: thinkspaceId) else { return }
                 withAnimation(ProMotionSprings.snappy) {
                     paneManager.openPane(.thinkspace(thinkspaceId: thinkspaceId))
+                }
+            } else if notification.userInfo?["commandCenter"] as? Bool == true {
+                guard paneManager.canOpenCommandCenter() else { return }
+                withAnimation(ProMotionSprings.snappy) {
+                    paneManager.openPane(.commandCenter)
                 }
             }
             // Dismiss Command-K if it's open
@@ -1118,7 +1126,8 @@ struct MainView: View {
             }
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            if thinkspaceManager.isSidebarVisible && screenPoint.x < 300 {
+            let sidebarWidth: CGFloat = self.sidebarCollapsed ? 48 : 260
+            if screenPoint.x < sidebarWidth {
                 return event
             }
 

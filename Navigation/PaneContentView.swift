@@ -15,8 +15,8 @@ struct PaneContentView: View {
             // Content
             contentBody
 
-            // Close button (only for thinkspace panes — entity focus modes handle their own)
-            if content.thinkspaceId != nil {
+            // Close button (for thinkspace and command center panes — entity focus modes handle their own)
+            if content.thinkspaceId != nil || content.id == "commandCenter" {
                 paneCloseButton
             }
         }
@@ -45,6 +45,11 @@ struct PaneContentView: View {
 
         case .thinkspace(let thinkspaceId):
             PaneCanvasView(thinkspaceId: thinkspaceId)
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+
+        case .commandCenter:
+            CommandCenterDashboard()
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
         }

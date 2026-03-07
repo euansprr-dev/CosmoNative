@@ -76,6 +76,10 @@ struct ActiveDeepWorkSession: Codable, Sendable {
 @MainActor
 class DeepWorkSessionEngine: ObservableObject {
 
+    // MARK: - Singleton
+
+    static let shared = DeepWorkSessionEngine()
+
     // MARK: - Published State
 
     @Published var activeSession: ActiveDeepWorkSession?

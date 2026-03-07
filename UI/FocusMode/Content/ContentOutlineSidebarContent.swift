@@ -1,14 +1,15 @@
 // CosmoOS/UI/FocusMode/Content/ContentOutlineSidebarContent.swift
 // Content for the UniversalFocusSidebar when in content focus mode
-// Core idea, hooks list, outline checklist — extracted from ContentBrainstormView
-// February 2026
+// Core idea, hooks, outline + inherited context (source idea, swipes, framework, intelligence)
+// February 2026 — March 2026: consolidated right context panel into left sidebar
 
 import SwiftUI
 
 // MARK: - Content Outline Sidebar Content
 
 /// Provides the content for the left universal sidebar in Content Focus Mode.
-/// Shows core idea (editable), hooks (editable + add), and outline (draggable + checkmarks).
+/// Shows core idea (editable), hooks (editable + add), outline (draggable + checkmarks),
+/// then inherited context: source idea, matched swipes, connections, framework, intelligence.
 struct ContentOutlineSidebarContent: View {
     @Binding var state: ContentFocusModeState
     let atom: Atom
@@ -20,16 +21,104 @@ struct ContentOutlineSidebarContent: View {
     @State private var opusOutlineError: String?
     @FocusState private var coreIdeaFocused: Bool
 
+    // Context data (ported from ContentContextPanel)
+    @State private var sourceIdea: Atom?
+    @State private var matchedSwipeAtoms: [Atom] = []
+    @State private var inheritedConnectionAtoms: [Atom] = []
+    @State private var selectedFramework: String?
+    @State private var inheritedHooks: [String] = []
+    @State private var relatedContent: [RelatedAtomRef] = []
+    @State private var isLoadingRelated = false
+    @State private var relatedSearchTask: Task<Void, Never>?
+    @State private var metaPatternReport: MetaPatternReport?
+    @State private var isLoadingMetaPattern = false
+    @StateObject private var ambientEngine = AmbientFieldEngine()
+    @State private var showAllSwipes = false
+    @State private var showIntelligence = false
+    @State private var isLoadingContext = true
+
+    private let accentColor = CosmoMentionColors.content
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // Creation tools
                 coreIdeaSection
                 hooksSection
                 outlineSection
+
+                // Context divider
+                if hasAnyContext {
+                    contextDivider
+                }
+
+                // Inherited context sections
+                sourceIdeaSection
+                matchedSwipesSection
+                inheritedConnectionsSection
+                frameworkSection
+                inheritedHooksSection
+                intelligenceSection
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .onAppear {
+            Task { await loadInheritedContext() }
+            let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
+            ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
+        }
+    }
+
+    // MARK: - Context Divider
+
+    private var contextDivider: some View {
+        VStack(spacing: 8) {
+            Rectangle()
+                .fill(DS.border)
+                .frame(height: 1)
+
+            HStack(spacing: 6) {
+                Image(systemName: "link.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(accentColor)
+                Text("CONTEXT")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.textMuted)
+                Spacer()
+
+                if isLoadingContext {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(DS.textMuted)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var hasAnyContext: Bool {
+        sourceIdea != nil
+        || !matchedSwipeAtoms.isEmpty
+        || !inheritedConnectionAtoms.isEmpty
+        || (selectedFramework != nil && !selectedFramework!.isEmpty)
+        || !inheritedHooks.isEmpty
+        || hasIntelligenceData
+        || isLoadingContext
+    }
+
+    private var hasIntelligenceData: Bool {
+        metaPatternReport != nil
+        || hasDraftIntelligence
+        || !relatedContent.isEmpty
+        || !ambientEngine.ambientResults.isEmpty
+    }
+
+    private var hasDraftIntelligence: Bool {
+        let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
+        let swipeUUIDs = metadata?.inheritedSwipeUUIDs ?? []
+        return !swipeUUIDs.isEmpty
     }
 
     // MARK: - Core Idea Section
@@ -149,27 +238,7 @@ struct ContentOutlineSidebarContent: View {
 
     private var outlineSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("OUTLINE")
-                    .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.88)
-
-                if state.outline.isEmpty {
-                    generateOutlineButton
-                }
-
-                Spacer()
-
-                if !state.outline.isEmpty {
-                    Text("\(state.completedOutlineCount)/\(state.outline.count)")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(DS.accent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(DS.accent.opacity(0.15), in: Capsule())
-                }
-            }
+            outlineSectionHeader
 
             // AI-suggested badge
             if state.isAISuggestedOutline && !state.outline.isEmpty {
@@ -240,6 +309,31 @@ struct ContentOutlineSidebarContent: View {
     }
 
     @ViewBuilder
+    private var outlineSectionHeader: some View {
+        HStack(spacing: 6) {
+            Text("OUTLINE")
+                .font(DS.sectionLabel)
+                .foregroundColor(DS.textMuted)
+                .tracking(0.88)
+
+            if state.outline.isEmpty {
+                generateOutlineButton
+            }
+
+            Spacer()
+
+            if !state.outline.isEmpty {
+                Text("\(state.completedOutlineCount)/\(state.outline.count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(DS.accent.opacity(0.15), in: Capsule())
+            }
+        }
+    }
+
+    @ViewBuilder
     private var generateOutlineButton: some View {
         if isGeneratingOpusOutline {
             HStack(spacing: 4) {
@@ -303,6 +397,917 @@ struct ContentOutlineSidebarContent: View {
             state.addOutlineItem(trimmed)
             newOutlineText = ""
             state.save()
+        }
+    }
+
+    // MARK: - Source Idea Section
+
+    @ViewBuilder
+    private var sourceIdeaSection: some View {
+        if let idea = sourceIdea {
+            contextSectionHeader(title: "SOURCE IDEA", icon: "lightbulb.fill")
+            sourceIdeaCard(idea)
+        }
+    }
+
+    private func sourceIdeaCard(_ idea: Atom) -> some View {
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": idea.uuid]
+            )
+        } label: {
+            sourceIdeaCardLabel(idea)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func sourceIdeaCardLabel(_ idea: Atom) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 11))
+                .foregroundColor(CosmoMentionColors.idea)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(idea.title ?? "Untitled Idea")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
+
+                if let body = idea.body, !body.isEmpty {
+                    Text(String(body.prefix(60)))
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.textMuted)
+                        .lineLimit(1)
+                }
+
+                if let ideaMeta = idea.ideaMetadata,
+                   let status = ideaMeta.ideaStatus {
+                    ideaStatusBadge(status)
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundColor(DS.textMuted)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    private func ideaStatusBadge(_ status: IdeaStatus) -> some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(status.color)
+                .frame(width: 5, height: 5)
+            Text(status.displayName)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundColor(status.color)
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(status.color.opacity(0.15), in: Capsule())
+    }
+
+    // MARK: - Matched Swipes Section
+
+    @ViewBuilder
+    private var matchedSwipesSection: some View {
+        if !matchedSwipeAtoms.isEmpty {
+            contextSectionHeader(title: "MATCHED SWIPES", icon: "doc.on.doc.fill")
+            matchedSwipesContent
+        }
+    }
+
+    @ViewBuilder
+    private var matchedSwipesContent: some View {
+        VStack(spacing: 4) {
+            let displaySwipes = showAllSwipes ? matchedSwipeAtoms : Array(matchedSwipeAtoms.prefix(3))
+            ForEach(displaySwipes, id: \.uuid) { swipe in
+                swipeCard(swipe)
+            }
+
+            if matchedSwipeAtoms.count > 3 {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        showAllSwipes.toggle()
+                    }
+                } label: {
+                    showAllSwipesLabel
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var showAllSwipesLabel: some View {
+        HStack(spacing: 4) {
+            Text(showAllSwipes ? "Show less" : "Show all \(matchedSwipeAtoms.count)")
+                .font(.system(size: 9, weight: .medium))
+            Image(systemName: showAllSwipes ? "chevron.up" : "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundColor(DS.textMuted)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2)
+    }
+
+    private func swipeCard(_ swipe: Atom) -> some View {
+        Button {
+            // Open as pane (side-by-side) instead of replacing focus mode
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: [
+                    "type": EntityType.research,
+                    "id": swipe.id ?? Int64(0)
+                ]
+            )
+        } label: {
+            swipeCardLabel(swipe)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func swipeCardLabel(_ swipe: Atom) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(DS.entitySwipe)
+                .frame(width: 4, height: 4)
+
+            Text(swipe.title ?? "Untitled Swipe")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.text)
+                .lineLimit(1)
+
+            Spacer()
+
+            if let swipeAnalysis = swipe.swipeAnalysis,
+               let hookType = swipeAnalysis.hookType {
+                Text(hookType.displayName)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(DS.entitySwipe)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(DS.entitySwipe.opacity(0.12), in: Capsule())
+            }
+
+            Image(systemName: "rectangle.split.2x1")
+                .font(.system(size: 8))
+                .foregroundColor(DS.textMuted)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Inherited Connections Section
+
+    @ViewBuilder
+    private var inheritedConnectionsSection: some View {
+        if !inheritedConnectionAtoms.isEmpty {
+            contextSectionHeader(title: "CONNECTIONS", icon: "link.circle.fill")
+            connectionsContent
+        }
+    }
+
+    @ViewBuilder
+    private var connectionsContent: some View {
+        VStack(spacing: 4) {
+            ForEach(inheritedConnectionAtoms.prefix(3), id: \.uuid) { conn in
+                connectionCard(conn)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    private func connectionCard(_ conn: Atom) -> some View {
+        let maturity = conn.connectionMaturityLevel ?? "emerging"
+        return Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": conn.uuid]
+            )
+        } label: {
+            connectionCardLabel(conn, maturity: maturity)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func connectionCardLabel(_ conn: Atom, maturity: String) -> some View {
+        HStack(spacing: 6) {
+            Text(conn.title ?? "Connection")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.text)
+                .lineLimit(1)
+
+            Spacer()
+
+            connectionMaturityBadge(maturity)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private func connectionMaturityBadge(_ maturity: String) -> some View {
+        let color: Color = {
+            switch maturity.lowercased() {
+            case "mature", "deep": return Color(hex: "22C55E")
+            case "developing": return Color(hex: "3B82F6")
+            case "emerging": return Color(hex: "FBBF24")
+            default: return Color(hex: "64748B")
+            }
+        }()
+
+        Text(maturity.capitalized)
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Framework Section
+
+    @ViewBuilder
+    private var frameworkSection: some View {
+        if let framework = selectedFramework, !framework.isEmpty {
+            contextSectionHeader(title: "FRAMEWORK", icon: "rectangle.3.group.fill")
+
+            Text(framework)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(accentColor.opacity(0.12), in: Capsule())
+        }
+    }
+
+    // MARK: - Inherited Hooks Section (from context, read-only)
+
+    @ViewBuilder
+    private var inheritedHooksSection: some View {
+        if !inheritedHooks.isEmpty {
+            contextSectionHeader(title: "CONTEXT HOOKS", icon: "text.quote")
+            inheritedHooksContent
+        }
+    }
+
+    @ViewBuilder
+    private var inheritedHooksContent: some View {
+        VStack(spacing: 6) {
+            ForEach(Array(inheritedHooks.enumerated()), id: \.offset) { index, hook in
+                inheritedHookCard(hook, index: index)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    private func inheritedHookCard(_ hook: String, index: Int) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("\(index + 1)")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundColor(accentColor)
+                .frame(width: 14)
+
+            Text(hook)
+                .font(.system(size: 10))
+                .foregroundColor(DS.textSecondary)
+                .lineLimit(3)
+
+            Spacer(minLength: 2)
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(hook, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 8))
+                    .foregroundColor(DS.textMuted)
+                    .frame(width: 20, height: 20)
+                    .background(DS.surface, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Intelligence Section (Collapsible)
+
+    @ViewBuilder
+    private var intelligenceSection: some View {
+        if hasIntelligenceData || isLoadingMetaPattern || isLoadingRelated {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    showIntelligence.toggle()
+                }
+            } label: {
+                intelligenceHeaderLabel
+            }
+            .buttonStyle(.plain)
+
+            if showIntelligence {
+                intelligenceContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var intelligenceHeaderLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: showIntelligence ? "chevron.down" : "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(DS.textMuted)
+                .frame(width: 10)
+
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 9))
+                .foregroundColor(DS.textMuted)
+
+            Text("INTELLIGENCE")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(DS.textMuted)
+
+            Spacer()
+
+            let count = intelligenceItemCount
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(accentColor.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    private var intelligenceItemCount: Int {
+        var count = 0
+        if metaPatternReport != nil { count += 1 }
+        if hasDraftIntelligence { count += 1 }
+        count += relatedContent.count
+        count += ambientEngine.ambientResults.count
+        return count
+    }
+
+    @ViewBuilder
+    private var intelligenceContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            whatsWorkingSubsection
+            draftIntelligenceSubsection
+            relatedContentSubsection
+            ambientKnowledgeSubsection
+        }
+    }
+
+    // MARK: - What's Working Subsection
+
+    @ViewBuilder
+    private var whatsWorkingSubsection: some View {
+        if let report = metaPatternReport {
+            whatsWorkingContent(report)
+        } else if isLoadingMetaPattern {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Analyzing patterns...")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+            }
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private func whatsWorkingContent(_ report: MetaPatternReport) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 8))
+                    .foregroundColor(Color(hex: "#34D399"))
+                Text("WHAT'S WORKING")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.textMuted)
+            }
+
+            whatsWorkingScopeRow(report)
+
+            if let topHook = report.dominantHooks.first {
+                whatsWorkingHookRow(topHook)
+            }
+
+            if let topFw = report.winningStructures.first {
+                whatsWorkingFrameworkRow(topFw)
+            }
+
+            if !report.trendingTopics.isEmpty {
+                whatsWorkingTrendingRow(report.trendingTopics)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(Color(hex: "#34D399").opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func whatsWorkingScopeRow(_ report: MetaPatternReport) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 8))
+                .foregroundColor(Color(hex: "#34D399"))
+            Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Color(hex: "#34D399"))
+                .lineLimit(1)
+            Spacer()
+            Text("\(report.sampleSize)")
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func whatsWorkingHookRow(_ topHook: HookPattern) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "text.quote")
+                .font(.system(size: 9))
+                .foregroundColor(DS.entityIdea)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(topHook.hookType)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.text)
+                Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content")
+                    .font(.system(size: 8))
+                    .foregroundColor(DS.textMuted)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func whatsWorkingFrameworkRow(_ topFw: StructurePattern) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "rectangle.3.group.fill")
+                .font(.system(size: 9))
+                .foregroundColor(Color(hex: "#FBBF24"))
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(topFw.framework)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.text)
+                Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption")
+                    .font(.system(size: 8))
+                    .foregroundColor(DS.textMuted)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func whatsWorkingTrendingRow(_ topics: [String]) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundColor(Color(hex: "#34D399"))
+                .frame(width: 14)
+            ForEach(topics.prefix(3), id: \.self) { item in
+                Text(item)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(Color(hex: "#34D399"))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: "#34D399").opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    // MARK: - Draft Intelligence Subsection
+
+    @ViewBuilder
+    private var draftIntelligenceSubsection: some View {
+        let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
+        let swipeUUIDs = metadata?.inheritedSwipeUUIDs ?? []
+
+        if !swipeUUIDs.isEmpty {
+            draftIntelligenceContent(metadata: metadata, swipeUUIDs: swipeUUIDs)
+        }
+    }
+
+    @ViewBuilder
+    private func draftIntelligenceContent(metadata: ContentAtomMetadata?, swipeUUIDs: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 8))
+                    .foregroundColor(DS.textMuted)
+                Text("DRAFT INTELLIGENCE")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.textMuted)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.entitySwipe)
+                Text("\(swipeUUIDs.count) matched swipe\(swipeUUIDs.count == 1 ? "" : "s")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+
+            if let draftPackageData = atom.structured,
+               let data = draftPackageData.data(using: .utf8),
+               let draftPackage = try? JSONDecoder().decode(ContentDraftPackage.self, from: data) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.accent)
+                    Text("Confidence: \(String(format: "%.0f%%", draftPackage.confidence * 100))")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Related Content Subsection
+
+    @ViewBuilder
+    private var relatedContentSubsection: some View {
+        if isLoadingRelated {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Finding related...")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.textMuted)
+            }
+            .padding(8)
+        } else if !relatedContent.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "link")
+                        .font(.system(size: 8))
+                        .foregroundColor(DS.textMuted)
+                    Text("RELATED")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundColor(DS.textMuted)
+                }
+
+                VStack(spacing: 3) {
+                    ForEach(relatedContent.prefix(6)) { ref in
+                        relatedContentCard(ref)
+                    }
+                }
+            }
+        }
+    }
+
+    private func relatedContentCard(_ ref: RelatedAtomRef) -> some View {
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": ref.atomUUID]
+            )
+        } label: {
+            relatedContentCardLabel(ref)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func relatedContentCardLabel(_ ref: RelatedAtomRef) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(ref.tier.accentColor)
+                .frame(width: 2, height: 24)
+
+            Image(systemName: iconForAtomType(ref.type))
+                .font(.system(size: 9))
+                .foregroundColor(colorForAtomType(ref.type))
+                .frame(width: 12)
+
+            Text(ref.title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.text)
+                .lineLimit(1)
+
+            Spacer()
+
+            Text(String(format: "%.0f%%", ref.relevanceScore * 100))
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundColor(DS.textMuted)
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .fill(DS.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Ambient Knowledge Subsection
+
+    @ViewBuilder
+    private var ambientKnowledgeSubsection: some View {
+        if !ambientEngine.ambientResults.isEmpty || ambientEngine.isLoading {
+            VStack(alignment: .leading, spacing: 6) {
+                ambientHeaderRow
+
+                if ambientEngine.isLoading {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(DS.accent)
+                        Text("Searching...")
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.textMuted)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                } else {
+                    ForEach(ambientEngine.ambientResults.prefix(5)) { result in
+                        AmbientResultCard(
+                            result: result,
+                            onPull: {
+                                ambientEngine.pullToCanvas(result: result, sourceBlockUUID: atom.uuid)
+                            },
+                            onDismiss: {
+                                withAnimation(ProMotionSprings.snappy) {
+                                    ambientEngine.dismiss(uuid: result.id)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var ambientHeaderRow: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 8))
+                .foregroundColor(DS.accent)
+            Text("AMBIENT")
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(DS.textMuted)
+
+            Spacer()
+
+            if !ambientEngine.ambientResults.isEmpty {
+                Text("\(ambientEngine.ambientResults.count)")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(DS.accent.opacity(0.15), in: Capsule())
+            }
+        }
+    }
+
+    // MARK: - Context Section Header
+
+    private func contextSectionHeader(title: String, icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+                .foregroundColor(DS.textMuted)
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.8)
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    // MARK: - Data Loading (ported from ContentContextPanel)
+
+    private func loadInheritedContext() async {
+        guard let metadata = atom.metadataValue(as: ContentAtomMetadata.self) else {
+            isLoadingContext = false
+            return
+        }
+
+        // Load source idea
+        if let ideaUUID = metadata.sourceIdeaUUID {
+            sourceIdea = try? await AtomRepository.shared.fetch(uuid: ideaUUID)
+        }
+
+        // Load matched swipes
+        if let swipeUUIDs = metadata.inheritedSwipeUUIDs {
+            for uuid in swipeUUIDs.prefix(5) {
+                if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    matchedSwipeAtoms.append(swipe)
+                }
+            }
+        }
+
+        // Load inherited connections
+        if let connectionUUIDs = metadata.inheritedConnectionIds {
+            for uuid in connectionUUIDs.prefix(5) {
+                if let conn = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    inheritedConnectionAtoms.append(conn)
+                }
+            }
+        }
+
+        selectedFramework = metadata.inheritedFramework
+        inheritedHooks = metadata.inheritedHooks ?? []
+
+        isLoadingContext = false
+
+        // Load meta-pattern report
+        await loadMetaPattern()
+
+        // Search related content
+        await refreshRelatedContent()
+    }
+
+    private func loadMetaPattern() async {
+        isLoadingMetaPattern = true
+        defer { isLoadingMetaPattern = false }
+        metaPatternReport = await MetaPatternEngine.shared.getRelevantReport(for: atom)
+    }
+
+    private func refreshRelatedContent() async {
+        let query = atom.title ?? ""
+        guard !query.isEmpty else { return }
+        isLoadingRelated = true
+        defer { isLoadingRelated = false }
+
+        var allRefs: [RelatedAtomRef] = []
+        var seenUUIDs: Set<String> = [atom.uuid]
+
+        let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
+        var niche: String?
+        if let clientUUID = metadata?.clientProfileUUID,
+           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID),
+           let clientMeta = client.metadataValue(as: ClientProfileMetadata.self) {
+            niche = clientMeta.niche
+        }
+
+        // Primary tier: Same format research swipes
+        do {
+            let primaryQuery = [query, niche].compactMap { $0 }.joined(separator: " ")
+            let primaryResults = try await HybridSearchEngine.shared.search(
+                query: primaryQuery,
+                limit: 6,
+                entityTypes: [.research]
+            )
+            for result in primaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
+                guard allRefs.filter({ $0.tier == .primary }).count < 3 else { break }
+                let uuid = result.entityUUID ?? ""
+                seenUUIDs.insert(uuid)
+                allRefs.append(RelatedAtomRef(
+                    atomUUID: uuid,
+                    title: result.title,
+                    type: AtomType(rawValue: result.entityType.rawValue) ?? .research,
+                    relevanceScore: result.combinedScore,
+                    preview: result.preview,
+                    tier: .primary
+                ))
+            }
+        } catch {
+            print("ContentSidebar: primary tier search failed: \(error)")
+        }
+
+        // Secondary tier: Same niche content atoms
+        do {
+            let secondaryQuery = niche ?? query
+            let secondaryResults = try await HybridSearchEngine.shared.search(
+                query: secondaryQuery,
+                limit: 6,
+                entityTypes: [.content]
+            )
+            for result in secondaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
+                guard allRefs.filter({ $0.tier == .secondary }).count < 3 else { break }
+                let uuid = result.entityUUID ?? ""
+                seenUUIDs.insert(uuid)
+                allRefs.append(RelatedAtomRef(
+                    atomUUID: uuid,
+                    title: result.title,
+                    type: AtomType(rawValue: result.entityType.rawValue) ?? .content,
+                    relevanceScore: result.combinedScore,
+                    preview: result.preview,
+                    tier: .secondary
+                ))
+            }
+        } catch {
+            print("ContentSidebar: secondary tier search failed: \(error)")
+        }
+
+        // Tertiary tier: Broad semantic search
+        do {
+            let tertiaryResults = try await HybridSearchEngine.shared.search(
+                query: query,
+                limit: 8
+            )
+            for result in tertiaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
+                guard allRefs.filter({ $0.tier == .tertiary }).count < 4 else { break }
+                let uuid = result.entityUUID ?? ""
+                seenUUIDs.insert(uuid)
+                allRefs.append(RelatedAtomRef(
+                    atomUUID: uuid,
+                    title: result.title,
+                    type: AtomType(rawValue: result.entityType.rawValue) ?? .idea,
+                    relevanceScore: result.combinedScore,
+                    preview: result.preview,
+                    tier: .tertiary
+                ))
+            }
+        } catch {
+            print("ContentSidebar: tertiary tier search failed: \(error)")
+        }
+
+        relatedContent = allRefs
+    }
+
+    // MARK: - Helpers
+
+    private func iconForAtomType(_ type: AtomType) -> String {
+        switch type {
+        case .idea: return "lightbulb.fill"
+        case .content: return "doc.text.fill"
+        case .research: return "magnifyingglass"
+        case .connection: return "link"
+        case .task: return "checkmark.circle.fill"
+        case .note: return "note.text"
+        default: return "doc.fill"
+        }
+    }
+
+    private func colorForAtomType(_ type: AtomType) -> Color {
+        switch type {
+        case .idea: return CosmoMentionColors.idea
+        case .content: return CosmoMentionColors.content
+        case .research: return CosmoMentionColors.research
+        case .connection: return CosmoMentionColors.connection
+        case .task: return CosmoMentionColors.task
+        case .note: return CosmoMentionColors.note
+        default: return CosmoMentionColors.defaultColor
         }
     }
 }

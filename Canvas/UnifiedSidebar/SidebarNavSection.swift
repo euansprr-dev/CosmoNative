@@ -19,6 +19,17 @@ struct SidebarNavSection: View {
                 destination: .commandCenter,
                 badge: nil
             )
+            .contextMenu {
+                Button {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openAsPane,
+                        object: nil,
+                        userInfo: ["commandCenter": true]
+                    )
+                } label: {
+                    Label("Open as Pane", systemImage: "rectangle.split.2x1")
+                }
+            }
 
             navRow(
                 id: "inbox",

@@ -10,6 +10,7 @@ import SwiftUI
 enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
     case thinkspace(thinkspaceId: String)
+    case commandCenter
 
     var id: String {
         switch self {
@@ -17,6 +18,8 @@ enum PaneContent: Identifiable, Equatable {
             return "entity_\(entity.type.rawValue)_\(entity.id)"
         case .thinkspace(let thinkspaceId):
             return "thinkspace_\(thinkspaceId)"
+        case .commandCenter:
+            return "commandCenter"
         }
     }
 
@@ -24,7 +27,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace: return nil
+        case .thinkspace, .commandCenter: return nil
         }
     }
 
@@ -32,14 +35,14 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace: return nil
+        case .thinkspace, .commandCenter: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity: return nil
+        case .entity, .commandCenter: return nil
         case .thinkspace(let id): return id
         }
     }
@@ -115,6 +118,13 @@ class PaneManager: ObservableObject {
     /// Check if a thinkspace can be opened as a pane.
     func canOpenThinkspace(thinkspaceId: String) -> Bool {
         guard !openThinkspaceIds.contains(thinkspaceId) else { return false }
+        guard panes.count < maxPanes else { return false }
+        return true
+    }
+
+    /// Check if Command Center can be opened as a pane.
+    func canOpenCommandCenter() -> Bool {
+        guard !panes.contains(where: { $0.id == PaneContent.commandCenter.id }) else { return false }
         guard panes.count < maxPanes else { return false }
         return true
     }

@@ -486,6 +486,37 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("a", modifiers: [.option])
         }
 
+        // Pasteboard commands (⌘C / ⌘X / ⌘V / ⌘A)
+        // When an NSTextView is first responder, route to the responder chain.
+        // Otherwise, Paste posts a notification so the canvas can handle image/URL paste.
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") {
+                NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+            }
+            .keyboardShortcut("x", modifiers: [.command])
+
+            Button("Copy") {
+                NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+            }
+            .keyboardShortcut("c", modifiers: [.command])
+
+            Button("Paste") {
+                if let window = NSApp.keyWindow,
+                   let firstResponder = window.firstResponder,
+                   firstResponder is NSTextView {
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+                } else {
+                    NotificationCenter.default.post(name: .performCanvasPaste, object: nil)
+                }
+            }
+            .keyboardShortcut("v", modifiers: [.command])
+
+            Button("Select All") {
+                NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+            }
+            .keyboardShortcut("a", modifiers: [.command])
+        }
+
         // Undo/Redo commands (⌘Z / ⌘⇧Z)
         // When an NSTextView is first responder, route to the responder chain
         // so the text view's built-in NSUndoManager handles character-level undo.
@@ -547,9 +578,10 @@ struct CosmoCommands: Commands {
     }
 }
 
-// MARK: - Undo/Redo Notification Names
+// MARK: - Undo/Redo/Paste Notification Names
 extension Notification.Name {
     static let performUndo = Notification.Name("com.cosmo.performUndo")
     static let performRedo = Notification.Name("com.cosmo.performRedo")
+    static let performCanvasPaste = Notification.Name("com.cosmo.performCanvasPaste")
     static let toggleCalendarWindow = Notification.Name("com.cosmo.toggleCalendarWindow")
 }

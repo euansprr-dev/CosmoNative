@@ -165,6 +165,8 @@ class AgentContextAssembler {
         then use search_ideas or search_swipes filtered to that client context.
         - When the user gives you feedback about your behavior, acknowledge it, adjust, and use \
         store_preference to remember it.
+        - When the user explicitly gives a writing rule, lesson, or creative principle to remember, \
+        use save_lessons. Do NOT store those in store_preference.
 
         IDEA CAPTURE vs BRAINSTORMING — IMPORTANT DISTINCTION:
         - When the user says "idea for [client]: [title]" or "save this idea: [description]", this is a \
@@ -1345,6 +1347,8 @@ class AgentContextAssembler {
         - For destructive actions (delete, remove), explain what you're about to do.
         - When the user asks about items "for [client name]", use search_by_client first.
         - When the user gives feedback about behavior, use store_preference to remember it.
+        - When the user gives an explicit writing rule, lesson, or creative principle to remember, use save_lessons.
+        - Use store_preference only for runtime behavior and operational preferences, not writing craft lessons.
         - NEVER expose raw JSON, UUIDs, or system internals. Refer to items by title/name.
         - NEVER mention internal tool names. The user doesn't know or care about these.
         - Be direct and concise. Match the user's energy.

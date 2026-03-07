@@ -4,6 +4,146 @@
 import Foundation
 import Combine
 
+struct ExplicitLessonSaveRequest: Equatable {
+    let rule: String
+    let evidence: String
+    let category: String
+}
+
+enum ExplicitLessonCaptureParser {
+    private static let queryPrefixes = [
+        "what lessons", "show my lessons", "show lessons", "list lessons",
+        "get lessons", "what have you learned", "what rules", "which lessons"
+    ]
+
+    private static let directivePatterns = [
+        #"(?i)\bplease\s+save\s+this\s+as\s+a\s+lesson(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bsave\s+this\s+as\s+a\s+lesson(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bsave\s+this\s+lesson(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bsave\s+as\s+a\s+lesson(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bsave\s+this\s+rule(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bremember\s+this\s+rule(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\blearn\s+this(?:\s+for\s+future\s+reference)?\b"#,
+        #"(?i)\bsave\s+this\s+for\s+future\s+reference\b"#,
+        #"(?i)\bremember\s+this\s+for\s+future\s+reference\b"#
+    ]
+
+    static func parse(_ text: String) -> ExplicitLessonSaveRequest? {
+        let normalized = normalize(text)
+        guard !normalized.isEmpty, !isLessonQuery(normalized) else { return nil }
+        guard let lessonBody = strippedLessonBody(from: normalized) else { return nil }
+
+        let paragraphs = splitParagraphs(lessonBody)
+        guard let rule = paragraphs.first, !rule.isEmpty else { return nil }
+
+        let evidence: String
+        if paragraphs.count > 1 {
+            evidence = paragraphs.dropFirst().joined(separator: "\n\n")
+        } else {
+            evidence = "Explicitly shared by user"
+        }
+
+        return ExplicitLessonSaveRequest(
+            rule: rule,
+            evidence: evidence,
+            category: inferredCategory(from: normalized)
+        )
+    }
+
+    static func shouldForceAgentFallback(_ text: String) -> Bool {
+        if parse(text) != nil {
+            return true
+        }
+
+        let normalized = normalize(text).lowercased()
+        guard !isLessonQuery(normalized) else { return false }
+
+        let hasDirectiveVerb = containsAny(normalized, ["save", "remember", "learn"])
+        let hasLessonNoun = containsAny(normalized, ["lesson", "rule", "future reference"])
+        return hasDirectiveVerb && hasLessonNoun
+    }
+
+    private static func strippedLessonBody(from text: String) -> String? {
+        for pattern in directivePatterns {
+            guard let range = text.range(of: pattern, options: .regularExpression) else { continue }
+            let suffix = String(text[range.upperBound...])
+            let trimmed = suffix.trimmingCharacters(
+                in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":-"))
+            )
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        return nil
+    }
+
+    private static func splitParagraphs(_ text: String) -> [String] {
+        var paragraphs: [String] = []
+        var currentLines: [String] = []
+
+        for rawLine in text.components(separatedBy: "\n") {
+            let trimmedLine = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedLine.isEmpty {
+                if !currentLines.isEmpty {
+                    paragraphs.append(currentLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+                    currentLines.removeAll()
+                }
+                continue
+            }
+            currentLines.append(trimmedLine)
+        }
+
+        if !currentLines.isEmpty {
+            paragraphs.append(currentLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return paragraphs.filter { !$0.isEmpty }
+    }
+
+    private static func inferredCategory(from text: String) -> String {
+        let lower = text.lowercased()
+
+        if containsAny(lower, ["hook", "opening line", "first line", "headline", "scroll stop", "open loop"]) {
+            return "hook_style"
+        }
+
+        if containsAny(lower, ["cta", "call to action", "comment ", "dm ", "reply with", "keyword", "book a call"]) {
+            return "cta"
+        }
+
+        if containsAny(lower, ["voice", "tone", "conversational", "cadence", "rhythm", "phrasing", "spoken", "sounds like", "sound like", "natural", "human"]) {
+            return "voice"
+        }
+
+        if containsAny(lower, ["structure", "sequence", "flow", "order", "logic", "causal", "transition", "outline", "beat", "framework"]) {
+            return "structure"
+        }
+
+        if containsAny(lower, ["format", "slide", "slides", "word count", "layout", "platform", "carousel", "thread", "tweet", "reel", "line break", "spacing", "density"]) {
+            return "format"
+        }
+
+        return "general"
+    }
+
+    private static func isLessonQuery(_ text: String) -> Bool {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return queryPrefixes.contains(where: { lower.hasPrefix($0) })
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func containsAny(_ text: String, _ keywords: [String]) -> Bool {
+        keywords.contains { text.contains($0) }
+    }
+}
+
 @MainActor
 class CosmoAgentService: ObservableObject {
     static let shared = CosmoAgentService()
@@ -46,15 +186,13 @@ class CosmoAgentService: ObservableObject {
     private var conversationTokenCounts: [String: Int] = [:]
     private let tokenWarningThreshold = 20_000
 
-    /// Tracks the last generation tool output so the NEXT user message can be classified
-    /// as acceptance or rejection feedback for the learning system.
-    private var pendingFeedbackGenerationId: UUID?
-    /// Stores the last agent response text for learning system feedback tracking
-    private var lastAgentResponse: String?
+    /// Per-conversation feedback tracking: conversationId → (generationId, agentResponse).
+    /// Scoped per conversation to prevent cross-topic contamination in Forum Topics.
+    private var pendingFeedback: [String: (generationId: UUID, response: String)] = [:]
 
-    /// Tracks active numbered items from the last tool result containing a results array,
-    /// so numbered references like "number one" can be resolved.
-    private var activeItemsContext: String?
+    /// Per-conversation active numbered items from the last tool result,
+    /// so numbered references like "number one" resolve within the correct conversation.
+    private var activeItemsContext: [String: String] = [:]
 
     // MARK: - Init
 
@@ -183,6 +321,11 @@ class CosmoAgentService: ObservableObject {
             return (fastResult, AgentContextTrace())
         }
 
+        // 0b. Fast-path explicit lesson saves so they never fall through to idea capture.
+        if let lessonResult = await tryExplicitLessonSave(text, conversationId: conversationId, source: source) {
+            return (lessonResult, AgentContextTrace())
+        }
+
         // 1. Check for active workflow interactions
         if let chatId = conversationId, let plan = workflowPlanner.activeWorkflows[chatId] {
             if plan.status == .proposed {
@@ -246,8 +389,8 @@ class CosmoAgentService: ObservableObject {
         tierOverride: AgentModelTier? = nil,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
-        // --- Feedback classification for previous generation ---
-        if let _ = pendingFeedbackGenerationId {
+        // --- Feedback classification for previous generation (scoped per conversation) ---
+        if let feedback = pendingFeedback[conversation.id] {
             let lower = text.lowercased()
             let rejectionSignals = ["try again", "redo", "change", "not quite", "wrong", "no,",
                                     "no.", "different", "rewrite", "too ", "less ", "more "]
@@ -257,7 +400,7 @@ class CosmoAgentService: ObservableObject {
             let isAcceptance = acceptanceSignals.contains { lower.contains($0) }
 
             let accepted = isAcceptance || !isRejection
-            let agentOutput = lastAgentResponse ?? ""
+            let agentOutput = feedback.response
             let userFeedback = text
 
             Task {
@@ -268,8 +411,7 @@ class CosmoAgentService: ObservableObject {
                     category: intent.rawValue
                 )
             }
-            pendingFeedbackGenerationId = nil
-            lastAgentResponse = nil
+            pendingFeedback.removeValue(forKey: conversation.id)
         }
 
         // Get preferences
@@ -284,7 +426,7 @@ class CosmoAgentService: ObservableObject {
             preferences: preferences,
             tools: tools,
             intent: intent,
-            activeItemsContext: activeItemsContext
+            activeItemsContext: activeItemsContext[conversation.id]
         )
 
         // Build message array for LLM (no system message — passed separately for caching)
@@ -319,17 +461,20 @@ class CosmoAgentService: ObservableObject {
             }
         }
 
-        // For draft intent with active content, inject a system message forcing tool use
+        // For draft intent, guide the agent to use writing tools (not inline text)
+        // but let it decide whether to continue existing content or create new
         if intent == .draft || intent == .brainstorm {
             let linkedUUIDs = conversation.linkedAtomUUIDs
-            if let activeUUID = linkedUUIDs.last {
-                let forceToolMsg = AgentMessage.system(
-                    "REMINDER: You MUST use generate_draft(contentUUID: \"\(activeUUID)\") or generate_outline(contentUUID: \"\(activeUUID)\") for ALL content creation. " +
-                    "Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
-                    "The writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
-                )
-                llmMessages.append(forceToolMsg)
+            var toolGuidance = "IMPORTANT: Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
+                "Use generate_draft() or generate_outline() — the writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
+
+            if let lastUUID = linkedUUIDs.last {
+                toolGuidance += "\n\nThe most recent content atom is \(lastUUID). " +
+                    "If the user is continuing work on that same piece, use it. " +
+                    "If the user is requesting NEW or DIFFERENT content, call create_content() first to create a fresh atom, then use the new UUID."
             }
+
+            llmMessages.append(AgentMessage.system(toolGuidance))
         }
 
         // Context trace — accumulates tool call summaries for transparency
@@ -469,12 +614,12 @@ class CosmoAgentService: ObservableObject {
                             let uuid = item["uuid"] as? String ?? ""
                             itemLines.append("\(i + 1). \(title) (uuid: \(uuid))")
                         }
-                        activeItemsContext = itemLines.joined(separator: "\n")
+                        activeItemsContext[conversation.id] = itemLines.joined(separator: "\n")
                     }
 
-                    // Flag generation tools for acceptance tracking on next user message
+                    // Flag generation tools for acceptance tracking on next user message (scoped per conversation)
                     if generationTools.contains(toolCall.name) {
-                        pendingFeedbackGenerationId = UUID()
+                        pendingFeedback[conversation.id] = (generationId: UUID(), response: "")
                     }
 
                     // Accumulate context trace
@@ -519,8 +664,10 @@ class CosmoAgentService: ObservableObject {
         conversation.append(.assistant(finalResponse))
         currentConversation = conversation
 
-        // Store response for learning feedback on next user message
-        lastAgentResponse = finalResponse
+        // Store response for learning feedback on next user message (scoped per conversation)
+        if pendingFeedback[conversation.id] != nil {
+            pendingFeedback[conversation.id]?.response = finalResponse
+        }
 
         // Persist conversation to memory
         await ConversationMemoryService.shared.saveConversation(conversation)
@@ -546,6 +693,10 @@ class CosmoAgentService: ObservableObject {
             let msg = "Cosmo Agent is not configured. Please set up an AI provider in Settings."
             lastError = msg
             return (msg, AgentContextTrace())
+        }
+
+        if let lessonResult = await tryExplicitLessonSave(text, conversationId: conversationId, source: source) {
+            return (lessonResult, AgentContextTrace())
         }
 
         // Load or create conversation
@@ -580,7 +731,7 @@ class CosmoAgentService: ObservableObject {
             preferences: preferences,
             tools: tools,
             intent: effectiveIntent,
-            activeItemsContext: activeItemsContext
+            activeItemsContext: activeItemsContext[conversation.id]
         )
 
         var llmMessages: [AgentMessage] = []
@@ -697,7 +848,7 @@ class CosmoAgentService: ObservableObject {
                     }
 
                     if generationTools.contains(toolCall.name) {
-                        pendingFeedbackGenerationId = UUID()
+                        pendingFeedback[conversation.id] = (generationId: UUID(), response: "")
                     }
 
                     contextTrace.append(
@@ -726,7 +877,9 @@ class CosmoAgentService: ObservableObject {
         compressOldToolResults(&conversation)
         conversation.append(.assistant(finalResponse))
         currentConversation = conversation
-        lastAgentResponse = finalResponse
+        if pendingFeedback[conversation.id] != nil {
+            pendingFeedback[conversation.id]?.response = finalResponse
+        }
         await ConversationMemoryService.shared.saveConversation(conversation)
 
         return (finalResponse, contextTrace)
@@ -761,6 +914,48 @@ class CosmoAgentService: ObservableObject {
     // MARK: - Intent Classification
 
     // MARK: - Fast Idea Capture
+
+    /// Save an explicit lesson/rule immediately, without running the LLM tool loop.
+    /// Used as a guardrail before Telegram/agent routing so lesson directives can't become idea captures.
+    func tryExplicitLessonSave(
+        _ text: String,
+        conversationId: String? = nil,
+        source: MessageSource = .inApp
+    ) async -> String? {
+        guard let lesson = ExplicitLessonCaptureParser.parse(text) else { return nil }
+
+        var arguments: [String: Any] = [
+            "lessons": [[
+                "rule": lesson.rule,
+                "category": lesson.category,
+                "evidence": lesson.evidence
+            ]]
+        ]
+
+        let resolvedClientName = await resolveExplicitLessonClientName(in: text)
+        if let resolvedClientName {
+            arguments["clientName"] = resolvedClientName
+        }
+
+        let responseText: String
+        do {
+            let result = try await toolExecutor.execute(toolName: "save_lessons", arguments: arguments)
+            let savedCount = extractSavedLessonCount(from: result)
+
+            if savedCount > 0 {
+                let moduleName = PromptTemplateStore.shared.moduleForCategory(lesson.category)?.title
+                let scopeNote = resolvedClientName.map { " for \($0)" } ?? ""
+                responseText = buildExplicitLessonSuccessMessage(moduleName: moduleName, scopeNote: scopeNote)
+            } else {
+                responseText = "I couldn't save that lesson right now."
+            }
+        } catch {
+            responseText = "I couldn't save that lesson right now."
+        }
+
+        await persistFastPathConversation(text: text, response: responseText, conversationId: conversationId, source: source)
+        return responseText
+    }
 
     /// Intercepts idea-capture patterns and creates the atom directly without the LLM.
     /// Returns nil if the message doesn't match any pattern (falls through to normal processing).
@@ -958,6 +1153,71 @@ class CosmoAgentService: ObservableObject {
         return (content, nil)
     }
 
+    private func resolveExplicitLessonClientName(in text: String) async -> String? {
+        let lower = text.lowercased()
+        guard let clients = try? await AtomRepository.shared.clientProfiles() else { return nil }
+
+        let sortedNames = clients
+            .compactMap { $0.title?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted { $0.count > $1.count }
+
+        for name in sortedNames {
+            let nameLower = name.lowercased()
+            if lower.contains("for \(nameLower)") || lower.contains("client \(nameLower)") || lower.contains("\(nameLower)'s") {
+                return name
+            }
+        }
+
+        return nil
+    }
+
+    private func extractSavedLessonCount(from result: String) -> Int {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return 0
+        }
+
+        if let savedCount = json["savedCount"] as? Int {
+            return savedCount
+        }
+        if let savedCount = json["savedCount"] as? NSNumber {
+            return savedCount.intValue
+        }
+        return 0
+    }
+
+    private func buildExplicitLessonSuccessMessage(moduleName: String?, scopeNote: String) -> String {
+        var parts = ["Saved lesson\(scopeNote)."]
+        if let moduleName, !moduleName.isEmpty {
+            parts.append("Added to \(moduleName).")
+        }
+        parts.append("This will be treated as a non-negotiable in future writing.")
+        return parts.joined(separator: " ")
+    }
+
+    private func persistFastPathConversation(
+        text: String,
+        response: String,
+        conversationId: String?,
+        source: MessageSource
+    ) async {
+        var conversation: AgentConversation
+        if let conversationId,
+           let existing = await ConversationMemoryService.shared.loadConversation(id: conversationId) {
+            conversation = existing
+        } else if let conversationId {
+            conversation = AgentConversation(id: conversationId, source: source)
+        } else {
+            conversation = AgentConversation(source: source)
+        }
+
+        conversation.append(.user(text))
+        conversation.append(.assistant(response))
+        currentConversation = conversation
+        await ConversationMemoryService.shared.saveConversation(conversation)
+    }
+
     /// Classify user message intent using keyword heuristics with complexity detection.
     func classifyIntent(_ text: String) -> AgentIntentClassification {
         let lower = text.lowercased()
@@ -991,6 +1251,14 @@ class CosmoAgentService: ObservableObject {
                     return .capture
                 }
             }
+        }
+
+        // Lesson / preference / rule — must be checked BEFORE capture,
+        // because "save this as a lesson" matches the capture pattern "save" + "this"/"as".
+        if containsAny(lower, ["lesson", "save lesson", "remember this rule", "learn this",
+                                "never have that", "never do that", "never use that",
+                                "rule for future", "for future reference"]) {
+            return .meta
         }
 
         // Check for capture patterns (most specific after idea prefix)
@@ -1244,7 +1512,7 @@ class CosmoAgentService: ObservableObject {
 
     func newConversation(source: MessageSource = .inApp) {
         currentConversation = AgentConversation(source: source)
-        activeItemsContext = nil
+        activeItemsContext.removeAll()
     }
 
     func loadConversation(id: String) async {
@@ -1315,9 +1583,10 @@ class CosmoAgentService: ObservableObject {
             }
         }
 
-        // Store summary and clear messages for fresh session
+        // Store summary and clear messages + linked atoms for fresh session
         conversation.summary = summary
         conversation.messages = []
+        conversation.linkedAtomUUIDs = []
 
         print("[CosmoAgent] Session rotated. Summary: \(summary.prefix(100))...")
     }

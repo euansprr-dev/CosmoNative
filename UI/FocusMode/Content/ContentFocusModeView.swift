@@ -337,24 +337,16 @@ struct ContentFocusModeView: View {
             // Creation phase — unified editor
             unifiedEditorContent
         } else {
-            // Post-creation phase — unchanged
-            HStack(spacing: 0) {
-                PostCreationPhaseView(
-                    phase: viewModel.displayPhase,
-                    atom: atom,
-                    state: $viewModel.state,
-                    onAdvancePhase: { phase in
-                        viewModel.goToPhase(phase)
-                    }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                ContentContextPanel(
-                    atom: atom,
-                    state: $viewModel.state,
-                    isVisible: viewModel.state.isContextPanelVisible
-                )
-            }
+            // Post-creation phase
+            PostCreationPhaseView(
+                phase: viewModel.displayPhase,
+                atom: atom,
+                state: $viewModel.state,
+                onAdvancePhase: { phase in
+                    viewModel.goToPhase(phase)
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -366,19 +358,12 @@ struct ContentFocusModeView: View {
             editorArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Right sidebar: Context panel OR Polish sidebar
+            // Right sidebar: Polish sidebar only (context moved to left sidebar)
             if isPolishModeActive {
                 ContentPolishSidebar(
                     state: $viewModel.state,
                     atom: atom,
                     analysis: polishAnalysis
-                )
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                ContentContextPanel(
-                    atom: atom,
-                    state: $viewModel.state,
-                    isVisible: viewModel.state.isContextPanelVisible
                 )
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -402,8 +387,8 @@ struct ContentFocusModeView: View {
             }
             .overlay(alignment: .topLeading) {
                 UniversalFocusSidebar(
-                    title: "Outline",
-                    icon: "list.bullet.indent",
+                    title: "Context",
+                    icon: "sidebar.left",
                     accentColor: CosmoMentionColors.content,
                     isVisible: $sidebarVisible,
                     isLocked: .constant(false)

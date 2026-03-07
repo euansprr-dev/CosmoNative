@@ -25,9 +25,189 @@ enum TelegramError: Error, LocalizedError {
     }
 }
 
+// MARK: - Writing Progress Tracker
+
+/// Sends progressive Telegram message edits showing writing pipeline milestones.
+/// Lazily activated — only sends a message when the first writing-related tool event fires.
+private actor TelegramWritingProgressTracker {
+
+    private let chatId: String
+    private weak var service: TelegramBridgeService?
+
+    private var messageId: Int?
+    private var completedLines: [String] = []
+    private var activeLine: String?
+    private var completedPhases: Set<String> = []
+    private var isActive = false
+    private var isFinalized = false
+
+    // Throttled flush state
+    private var isDirty = false
+    private var flushTask: Task<Void, Never>?
+    private var lastEditTime: Date = .distantPast
+    private let throttleInterval: TimeInterval = 1.5
+
+    // MARK: - Tool Filters
+
+    private static let milestoneTools: Set<String> = [
+        // Engine context-loading
+        "load_client_profile", "select_swipes", "load_preferences", "load_skill_modules",
+        // Agent-level writing tools
+        "generate_outline", "generate_draft", "generate_hooks", "revise_draft", "score_draft",
+        // Engine inner-loop writing tools
+        "update_outline", "write_draft", "add_hooks", "run_scorecard",
+    ]
+
+    // MARK: - Init
+
+    init(chatId: String, service: TelegramBridgeService) {
+        self.chatId = chatId
+        self.service = service
+    }
+
+    // MARK: - Event Handling
+
+    func handle(_ event: ToolActivityEvent) async {
+        guard !isFinalized else { return }
+
+        switch event {
+        case .started(let name, let displayLabel, _):
+            guard Self.milestoneTools.contains(name) else { return }
+            if !isActive { isActive = true }
+            activeLine = displayLabel
+            scheduleFlush()
+
+        case .completed(let name, _, let resultPreview):
+            guard Self.milestoneTools.contains(name) else { return }
+            if !isActive { isActive = true }
+
+            // Dedup: skip if this writing phase was already recorded
+            if let phase = Self.phaseFor(name), completedPhases.contains(phase) { return }
+            if let phase = Self.phaseFor(name) { completedPhases.insert(phase) }
+
+            completedLines.append(Self.buildCompletedLine(name: name, resultPreview: resultPreview))
+            activeLine = nil
+            scheduleFlush()
+
+        case .allDone:
+            break // handled by finalize()
+        }
+    }
+
+    /// Mark the progress message as complete after processMessage() returns.
+    func finalize() async {
+        guard isActive, !isFinalized else { return }
+        isFinalized = true
+        flushTask?.cancel()
+        flushTask = nil
+        activeLine = nil
+        await flush(isFinal: true)
+    }
+
+    // MARK: - Phase Deduplication
+
+    private static func phaseFor(_ toolName: String) -> String? {
+        switch toolName {
+        case "generate_outline", "update_outline": return "outline"
+        case "generate_draft", "write_draft": return "draft"
+        case "generate_hooks", "add_hooks": return "hooks"
+        case "score_draft", "run_scorecard": return "score"
+        case "revise_draft": return "revise"
+        default: return nil
+        }
+    }
+
+    // MARK: - Message Building
+
+    private static func buildCompletedLine(name: String, resultPreview: String?) -> String {
+        switch name {
+        case "load_client_profile":
+            if let preview = resultPreview, !preview.isEmpty { return "Loaded profile: \(preview)" }
+            return "Client profile loaded"
+        case "select_swipes":
+            if let preview = resultPreview, !preview.isEmpty { return "Selected swipes (\(String(preview.prefix(60))))" }
+            return "Reference swipes selected"
+        case "load_preferences":
+            if let preview = resultPreview, !preview.isEmpty { return "Preferences loaded (\(preview))" }
+            return "Preferences loaded"
+        case "load_skill_modules":
+            return "Skills & methodology loaded"
+        case "generate_outline", "update_outline":
+            if let preview = resultPreview, !preview.isEmpty { return "Outline complete (\(String(preview.prefix(50))))" }
+            return "Outline complete"
+        case "generate_draft", "write_draft":
+            if let preview = resultPreview {
+                if let range = preview.range(of: #"(\d[\d,]*)\s*words"#, options: .regularExpression) {
+                    return "Draft written (\(preview[range]))"
+                }
+            }
+            return "Draft written"
+        case "generate_hooks", "add_hooks":
+            return "Hooks generated"
+        case "revise_draft":
+            return "Draft revised"
+        case "score_draft", "run_scorecard":
+            if let preview = resultPreview, !preview.isEmpty { return "Scorecard: \(String(preview.prefix(60)))" }
+            return "Scorecard complete"
+        default:
+            return name.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func buildMessageText(isFinal: Bool) -> String {
+        var parts: [String] = []
+        parts.append(isFinal ? "✅ Writing complete" : "🔄 Writing pipeline active")
+        parts.append("")
+        for line in completedLines {
+            parts.append("  ✓ \(line)")
+        }
+        if !isFinal, let active = activeLine {
+            parts.append("  ⏳ \(active)...")
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Throttled Flush
+
+    private func scheduleFlush() {
+        isDirty = true
+        guard flushTask == nil else { return }
+
+        flushTask = Task {
+            while isDirty {
+                isDirty = false
+                let elapsed = Date().timeIntervalSince(lastEditTime)
+                if elapsed < throttleInterval {
+                    try? await Task.sleep(nanoseconds: UInt64((throttleInterval - elapsed) * 1_000_000_000))
+                }
+                guard !isFinalized else { break }
+                await flush(isFinal: false)
+            }
+            flushTask = nil
+        }
+    }
+
+    private func flush(isFinal: Bool) async {
+        guard isActive, let service else { return }
+        let text = buildMessageText(isFinal: isFinal)
+
+        if let existingId = messageId {
+            await service.editMessage(chatId: chatId, messageId: existingId, text: text)
+        } else {
+            let id = await service.sendMessageReturningId(chatId: chatId, text: text)
+            messageId = id
+        }
+        lastEditTime = Date()
+    }
+}
+
 @MainActor
 class TelegramBridgeService: ObservableObject {
     static let shared = TelegramBridgeService()
+
+    nonisolated static func shouldUseExplicitLessonFastPath(_ text: String) -> Bool {
+        ExplicitLessonCaptureParser.parse(text) != nil
+    }
 
     @Published var isConnected = false
     @Published var lastError: String?
@@ -40,6 +220,9 @@ class TelegramBridgeService: ObservableObject {
 
     /// Cached token — read from Keychain once on start(), not on every poll
     private var cachedToken: String?
+
+    /// Cached bot username (fetched once via getMe on start) for @mention detection in groups
+    private var botUsername: String?
 
     /// Concurrency guard — prevents overlapping message processing per chat
     private var processingChatIds: Set<String> = []
@@ -169,6 +352,9 @@ class TelegramBridgeService: ObservableObject {
             ? String(token.prefix(4)) + "..." + String(token.suffix(4))
             : "***"
         print("[Telegram] Using token: \(masked) (length: \(token.count))")
+
+        // Fetch bot username for @mention gating in group chats
+        await fetchBotUsername()
 
         pollingTask = Task { [weak self] in
             await self?.pollLoop()
@@ -326,6 +512,62 @@ class TelegramBridgeService: ObservableObject {
         return (compositeId, nil)
     }
 
+    // MARK: - Bot Username & Mention Detection
+
+    /// Fetch the bot's username once via the getMe API for @mention detection in groups.
+    private func fetchBotUsername() async {
+        guard !baseURL.isEmpty else { return }
+        guard let url = URL(string: "\(baseURL)/getMe") else { return }
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] as? [String: Any],
+              let username = result["username"] as? String else { return }
+        botUsername = username.lowercased()
+        print("[Telegram] Bot username: @\(botUsername ?? "unknown")")
+    }
+
+    /// Check if the bot is @mentioned in the message entities.
+    private func isBotMentioned(message: [String: Any], text: String) -> Bool {
+        guard let botName = botUsername else { return true } // if unknown, allow all
+        guard let entities = message["entities"] as? [[String: Any]] else { return false }
+        let lowerText = text.lowercased()
+        for entity in entities {
+            guard let type = entity["type"] as? String else { continue }
+            if type == "mention",
+               let offset = entity["offset"] as? Int,
+               let length = entity["length"] as? Int {
+                let start = lowerText.index(lowerText.startIndex, offsetBy: offset, limitedBy: lowerText.endIndex) ?? lowerText.startIndex
+                let end = lowerText.index(start, offsetBy: length, limitedBy: lowerText.endIndex) ?? lowerText.endIndex
+                let mention = String(lowerText[start..<end]).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+                if mention == botName { return true }
+            }
+            if type == "text_mention",
+               let user = entity["user"] as? [String: Any],
+               user["is_bot"] as? Bool == true {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Check if the message is a reply to one of the bot's own messages.
+    private func isReplyToBot(message: [String: Any]) -> Bool {
+        guard let reply = message["reply_to_message"] as? [String: Any],
+              let from = reply["from"] as? [String: Any] else { return false }
+        return from["is_bot"] as? Bool == true
+    }
+
+    /// Strip the bot's @mention from the text so it doesn't confuse the LLM.
+    private func stripBotMention(from text: String) -> String {
+        guard let botName = botUsername else { return text }
+        // Remove @botname (case-insensitive) and any trailing space
+        let pattern = "(?i)@\(NSRegularExpression.escapedPattern(for: botName))\\s?"
+        return text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - Message Handling
+
     private func handleMessage(_ message: [String: Any]) async {
         guard let chat = message["chat"] as? [String: Any],
               let chatId = chat["id"] as? Int else { return }
@@ -355,7 +597,20 @@ class TelegramBridgeService: ObservableObject {
             return
         }
 
-        guard let text = message["text"] as? String else { return }
+        guard let rawText = message["text"] as? String else { return }
+
+        // In groups/supergroups, only respond to @mentions or replies to the bot
+        let chatType = chat["type"] as? String ?? "private"
+        if chatType == "group" || chatType == "supergroup" {
+            let mentioned = isBotMentioned(message: message, text: rawText)
+            let replying = isReplyToBot(message: message)
+            guard mentioned || replying else { return }
+        }
+
+        // Strip bot @mention from text so it doesn't confuse the LLM
+        let text = (chatType == "group" || chatType == "supergroup")
+            ? stripBotMention(from: rawText)
+            : rawText
 
         // /start command bypasses debounce
         if text == "/start" {
@@ -385,6 +640,16 @@ class TelegramBridgeService: ObservableObject {
                 await sendLongMessage(chatId: chatIdStr, text: fastCaptureResult)
                 return
             }
+        }
+
+        if Self.shouldUseExplicitLessonFastPath(text),
+           let lessonResponse = await CosmoAgentService.shared.tryExplicitLessonSave(
+                text,
+                conversationId: chatIdStr,
+                source: .telegram
+           ) {
+            await sendLongMessage(chatId: chatIdStr, text: lessonResponse)
+            return
         }
 
         // Flash-Lite router bypasses debounce for single messages (no rapid-fire buffer)
@@ -546,6 +811,16 @@ class TelegramBridgeService: ObservableObject {
             return
         }
 
+        if Self.shouldUseExplicitLessonFastPath(text),
+           let lessonResponse = await CosmoAgentService.shared.tryExplicitLessonSave(
+                text,
+                conversationId: chatId,
+                source: .telegram
+           ) {
+            await sendLongMessage(chatId: chatId, text: lessonResponse)
+            return
+        }
+
         // Flash-Lite router for debounced messages (ideas, tasks, queries, etc.)
         // Skip FlashLiteRouter for follow-up messages about already-captured content
         let bypassFlash = await shouldBypassFlashRouter(text: text, chatId: chatId)
@@ -558,12 +833,22 @@ class TelegramBridgeService: ObservableObject {
         // Show typing indicator (refreshed every 4s while processing)
         let typingTask = Task { await self.keepTyping(chatId: chatId) }
 
-        // Process through agent
+        // Create progress tracker for writing pipeline visibility
+        let progressTracker = TelegramWritingProgressTracker(chatId: chatId, service: self)
+        let onProgress: @Sendable (ToolActivityEvent) -> Void = { event in
+            Task { await progressTracker.handle(event) }
+        }
+
+        // Process through agent with progress tracking
         let (response, trace) = await CosmoAgentService.shared.processMessage(
             text,
             conversationId: chatId,
-            source: .telegram
+            source: .telegram,
+            onToolActivity: onProgress
         )
+
+        // Finalize progress message (mark as complete)
+        await progressTracker.finalize()
         typingTask.cancel()
 
         // Send the response

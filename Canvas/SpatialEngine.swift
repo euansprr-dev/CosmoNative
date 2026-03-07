@@ -93,18 +93,18 @@ class SpatialEngine: ObservableObject {
                 loadedBlocks.append(block)
             }
 
-            // Enrich research blocks with atom metadata (URL, platform, isSwipeFile, etc.)
-            // This ensures hasMediaContent() routes them to MediaBlockView correctly
+            // Enrich research and image blocks with atom metadata (URL, platform, imagePath, etc.)
+            // This ensures hasMediaContent() routes correctly and images load after restart
             var enrichedBlocks: [CanvasBlock] = []
             for block in loadedBlocks {
-                if block.entityType == .research {
+                if block.entityType == .research || block.entityType == .image {
                     if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
-                        // Rebuild with proper metadata from atom, preserving DB position/id/pin state
+                        // Rebuild with proper metadata from atom, preserving DB position/id/pin state/size
                         let fromAtom = CanvasBlock.fromAtom(atom, position: block.position)
                         let enriched = CanvasBlock(
                             id: block.id,
                             position: block.position,
-                            size: fromAtom.size,
+                            size: block.size,
                             isPinned: block.isPinned,
                             zIndex: block.zIndex,
                             entityType: fromAtom.entityType,

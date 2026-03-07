@@ -176,6 +176,15 @@ struct CanvasView: View {
                         onBoardColumnDrop: { event in
                             clusterEngine.applyBoardDrop(event: event, blocks: &spatialEngine.blocks)
                         },
+                        onClusterViewDrop: { event in
+                            // Transfer block between clusters (grid/list drag-and-drop)
+                            if let sourceCluster = clusterEngine.allClusters.first(where: { $0.blockUUIDs.contains(event.blockUUID) }),
+                               sourceCluster.id != event.targetClusterId {
+                                clusterEngine.removeBlockFromCluster(blockUUID: event.blockUUID, clusterId: sourceCluster.id, blocks: spatialEngine.blocks)
+                            }
+                            clusterEngine.addBlockToCluster(blockUUID: event.blockUUID, clusterId: event.targetClusterId, blocks: spatialEngine.blocks)
+                            recomputeFilteredBlocks()
+                        },
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
                                block.entityId > 0 {
@@ -323,6 +332,9 @@ struct CanvasView: View {
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
                 recomputeFilteredBlocks()
+            }
+            .onChange(of: clusterConsumedBlockUUIDs) { _, newValue in
+                cachedConsumedUUIDs = newValue
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate(screenCenter: screenCenter)
@@ -665,6 +677,7 @@ struct CanvasView: View {
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
                     )
+                    recomputeFilteredBlocks()
                 }
 
                 // Load persisted inbox blocks
@@ -1112,6 +1125,16 @@ struct CanvasView: View {
                     }
                 }
 
+                // Listen for Cmd+V paste (routed via CosmoCommands pasteboard group)
+                NotificationCenter.default.addObserver(
+                    forName: .performCanvasPaste,
+                    object: nil,
+                    queue: .main
+                ) { [self] _ in
+                    guard !appState.isCommandKVisible else { return }
+                    Task { await handleCanvasPaste() }
+                }
+
                 // MARK: - Scroll Wheel Zoom (Mouse)
                 // Set up scroll wheel event monitor for smooth mouse zoom
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
@@ -1168,6 +1191,8 @@ struct CanvasView: View {
                         thinkspaceId: newId,
                         blocks: spatialEngine.blocks
                     )
+                    rebuildMediaContentCache()
+                    recomputeFilteredBlocks()
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
@@ -1231,16 +1256,8 @@ struct CanvasView: View {
                 }
                 return .handled
             }
-            // Cmd+V: Paste URL from clipboard to create a block
-            .onKeyPress(characters: .init(charactersIn: "vV")) { press in
-                guard press.modifiers.contains(.command),
-                      !press.modifiers.contains(.shift),
-                      !appState.isCommandKVisible else {
-                    return .ignored
-                }
-                Task { await handleCanvasPaste() }
-                return .handled
-            }
+            // Cmd+V paste is handled via .performCanvasPaste notification
+            // (routed from CosmoCommands pasteboard CommandGroup)
             // Synthesis workspace overlay
             .sheet(isPresented: $showSynthesisWorkspace) {
                 synthesisWorkspaceOverlay
@@ -1773,7 +1790,8 @@ struct CanvasView: View {
     // MARK: - Save Block Size Handler
     private func handleSaveBlockSize(notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let blockId = userInfo["blockId"] as? String else {
+              let blockId = userInfo["blockId"] as? String,
+              let newSize = userInfo["size"] as? CGSize else {
             return
         }
 
@@ -1784,13 +1802,15 @@ struct CanvasView: View {
 
         // Register undo action if old size was provided
         if let oldSize = userInfo["oldSize"] as? CGSize {
-            let newSize = spatialEngine.blocks[blockIndex].size
             if oldSize != newSize {
                 CosmoUndoManager.shared.register(
                     ResizeBlockAction(blockId: blockId, oldSize: oldSize, newSize: newSize, spatialEngine: spatialEngine)
                 )
             }
         }
+
+        // Update the spatial engine block with the new size before saving
+        spatialEngine.blocks[blockIndex].size = newSize
 
         Task {
             await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])

@@ -26,6 +26,11 @@ struct SidebarThinkspaceSection: View {
     @State private var hoveredThinkspaceId: String?
     @State private var hoveredChildDocId: String?
 
+    // Rename
+    @State private var renamingThinkspaceId: String?
+    @State private var renameText: String = ""
+    @FocusState private var isRenameFieldFocused: Bool
+
     // Child docs expand
     @State private var expandedThinkspaces: Set<String> = []
     @State private var childDocsLoading: Set<String> = []
@@ -303,14 +308,19 @@ struct SidebarThinkspaceSection: View {
         let isActive = activeThinkspaceId == thinkspace.id
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
+        let isRenaming = renamingThinkspaceId == thinkspace.id
 
         return VStack(alignment: .leading, spacing: 0) {
-            Button {
-                selectThinkspace(thinkspace)
-            } label: {
-                thinkspaceRowLabel(thinkspace, isActive: isActive, isExpanded: isExpanded)
+            if isRenaming && !isCollapsed {
+                thinkspaceRenameRow(thinkspace)
+            } else {
+                Button {
+                    selectThinkspace(thinkspace)
+                } label: {
+                    thinkspaceRowLabel(thinkspace, isActive: isActive, isExpanded: isExpanded)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Child docs
             if isExpanded && !isCollapsed {
@@ -416,6 +426,34 @@ struct SidebarThinkspaceSection: View {
         }
     }
 
+    // MARK: - Rename Row
+
+    private func thinkspaceRenameRow(_ thinkspace: Thinkspace) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(DS.accent)
+                .frame(width: 3, height: 16)
+
+            TextField("Name", text: $renameText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.text)
+                .focused($isRenameFieldFocused)
+                .onSubmit { commitRename(thinkspace) }
+                .onExitCommand { cancelRename() }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(DS.accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(DS.accent.opacity(0.25), lineWidth: 0.5)
+                )
+        )
+    }
+
     // MARK: - Child Docs
 
     @ViewBuilder
@@ -519,6 +557,16 @@ struct SidebarThinkspaceSection: View {
 
         Divider()
 
+        Button {
+            renameText = thinkspace.name
+            renamingThinkspaceId = thinkspace.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isRenameFieldFocused = true
+            }
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+
         if !projects.isEmpty {
             Menu("Assign to Project") {
                 ForEach(projects, id: \.uuid) { project in
@@ -580,6 +628,27 @@ struct SidebarThinkspaceSection: View {
         // Only set destination — MainView's onChange handles the actual switchTo()
         withAnimation(ProMotionSprings.snappy) {
             currentDestination = .thinkspace(id: thinkspace.id)
+        }
+    }
+
+    private func commitRename(_ thinkspace: Thinkspace) {
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != thinkspace.name else {
+            cancelRename()
+            return
+        }
+        Task {
+            await manager.rename(thinkspace, to: trimmed)
+        }
+        withAnimation(ProMotionSprings.snappy) {
+            renamingThinkspaceId = nil
+        }
+    }
+
+    private func cancelRename() {
+        withAnimation(ProMotionSprings.snappy) {
+            renamingThinkspaceId = nil
+            renameText = ""
         }
     }
 
@@ -682,7 +751,9 @@ struct SidebarThinkspaceSection: View {
     }
 
     private func handleKeyEscape() {
-        if isCreatingThinkspace {
+        if renamingThinkspaceId != nil {
+            cancelRename()
+        } else if isCreatingThinkspace {
             withAnimation(ProMotionSprings.snappy) {
                 isCreatingThinkspace = false
             }

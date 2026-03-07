@@ -92,6 +92,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Thinkspace (Infinite Canvas)
     case note                                           // Floating note blocks (orange)
     case thinkspace                                     // Saved Thinkspace configurations
+    case image                                          // Native image blocks on canvas
 
     // MARK: - Planning & Objectives
     case objective                                      // Quarter/annual objectives (goals)
@@ -110,7 +111,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .objective, .creator, .taxonomyValue:
+             .note, .objective, .creator, .taxonomyValue, .image:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
             return .leveling
@@ -247,6 +248,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .taxonomyValue: return "Taxonomy Value"
         // Agent Learning
         case .agentLearning: return "Agent Learning"
+        // Image
+        case .image: return "Image"
         }
     }
 
@@ -330,6 +333,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .taxonomyValue: return "Taxonomy Values"
         // Agent Learning
         case .agentLearning: return "Agent Learning"
+        // Image
+        case .image: return "Images"
         }
     }
 
@@ -413,6 +418,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .taxonomyValue: return "tag.fill"
         // Agent Learning
         case .agentLearning: return "brain"
+        // Image
+        case .image: return "photo.fill"
         }
     }
 }
@@ -1833,6 +1840,16 @@ struct IdeaMetadata: Codable, Sendable {
     // Hook + Description fields (Content Pipeline integration)
     var hooks: [String]?
     var ideaDescription: String?
+}
+
+// MARK: - Image Metadata
+
+struct ImageMetadata: Codable, Sendable {
+    var imagePath: String
+    var originalFilename: String?
+    var width: CGFloat?
+    var height: CGFloat?
+    var fileSize: Int?
 }
 
 // MARK: - Task Recommendation Types

@@ -22,6 +22,7 @@ struct CosmoApp: App {
 
     @State private var voicePillWindow: VoicePillWindowController?
     @State private var voicePillHideWorkItem: DispatchWorkItem?
+    @State private var cosmoWindowController: CosmoWindowPanelController?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
     var body: some Scene {
@@ -100,6 +101,15 @@ struct CosmoApp: App {
             NotificationCenter.default.post(name: .activateCommandBarTyping, object: nil)
         }
         print("⌨️ Option-C hotkey registered for command bar typing")
+
+        // Setup system-wide Cosmo Window (floating NSPanel, Option+A)
+        cosmoWindowController = CosmoWindowPanelController.shared
+        HotkeyManager.shared.registerCosmoWindowHotkey {
+            Task { @MainActor in
+                CosmoWindowPanelController.shared.toggle()
+            }
+        }
+        print("🪟 Cosmo Window panel initialized (⌥A hotkey registered)")
 
         // Observe voice engine state for recording indicator updates
         NotificationCenter.default.addObserver(
@@ -392,6 +402,7 @@ public enum EntityType: String, Codable, Sendable {
     case calendar
     case journal
     case swipeFile = "swipe_file"  // Curated content swipe file
+    case image                     // Native image blocks on canvas
 
     public var icon: String {
         switch self {
@@ -407,6 +418,7 @@ public enum EntityType: String, Codable, Sendable {
         case .calendar: return "calendar"
         case .journal: return "book.fill"
         case .swipeFile: return "bookmark.fill"
+        case .image: return "photo.fill"
         }
     }
 
@@ -425,6 +437,7 @@ public enum EntityType: String, Codable, Sendable {
         case .calendar: return DS.entityTask
         case .journal: return DS.entityNote
         case .swipeFile: return DS.entitySwipe
+        case .image: return DS.entityImage
         }
     }
 }

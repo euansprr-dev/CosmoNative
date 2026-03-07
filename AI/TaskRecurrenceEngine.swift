@@ -237,7 +237,8 @@ class TaskRecurrenceEngine {
         instanceMetadata.priority = metadata.priority
         instanceMetadata.color = metadata.color
         instanceMetadata.durationMinutes = metadata.durationMinutes
-        instanceMetadata.focusDate = ISO8601DateFormatter().string(from: date)
+        instanceMetadata.focusDate = PlannerumFormatters.iso8601.string(from: date)
+        instanceMetadata.dueDate = PlannerumFormatters.iso8601.string(from: date)
         instanceMetadata.isCompleted = false
         instanceMetadata.recurrenceParentUUID = template.uuid
         instanceMetadata.description = metadata.description

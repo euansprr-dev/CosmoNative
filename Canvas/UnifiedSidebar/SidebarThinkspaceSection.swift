@@ -11,6 +11,7 @@ struct SidebarThinkspaceSection: View {
     @ObservedObject var manager: ThinkspaceManager
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
+    @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
 
     // Data
     @State private var projects: [Atom] = []
@@ -126,6 +127,9 @@ struct SidebarThinkspaceSection: View {
                 await loadProjects()
                 await manager.refreshChildDocs(for: expandedThinkspaces)
             }
+        }
+        .onPreferenceChange(ThinkspaceRowFrameKey.self) { frames in
+            crossDragManager.thinkspaceRowFrames = frames
         }
     }
 
@@ -315,15 +319,38 @@ struct SidebarThinkspaceSection: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isActive
-                      ? DS.accent.opacity(0.10)
-                      : (isHovered ? DS.surfaceHover : Color.clear))
+                .fill(crossThinkspaceHighlight(for: thinkspace, isActive: isActive, isHovered: isHovered))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(
+                    crossDragManager.hoveredThinkspaceId == thinkspace.id
+                        ? DS.accent.opacity(0.5)
+                        : Color.clear,
+                    lineWidth: 1.5
+                )
+        )
+        .scaleEffect(crossDragManager.hoveredThinkspaceId == thinkspace.id
+                      ? 1.0 + 0.04 * blinkPulse(crossDragManager.hoverProgress)
+                      : 1.0)
+        .opacity(crossDragManager.hoveredThinkspaceId == thinkspace.id
+                 ? 1.0 - 0.4 * blinkPulse(crossDragManager.hoverProgress)
+                 : 1.0)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .preference(
+                        key: ThinkspaceRowFrameKey.self,
+                        value: [thinkspace.id: geo.frame(in: .global)]
+                    )
+            }
         )
         .onHover { hoveredThinkspaceId = $0 ? thinkspace.id : nil }
         .contextMenu {
             thinkspaceContextMenu(thinkspace)
         }
         .animation(.easeInOut(duration: 0.12), value: isHovered)
+        .animation(.linear(duration: 0.05), value: crossDragManager.hoverProgress)
     }
 
     @ViewBuilder
@@ -708,5 +735,29 @@ struct SidebarThinkspaceSection: View {
     private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
         guard let projectUuid = thinkspace.projectUuid else { return nil }
         return projects.first { $0.uuid == projectUuid }
+    }
+
+    // MARK: - Cross-Thinkspace Drag Helpers
+
+    /// Background fill for thinkspace rows, accounting for cross-thinkspace drag highlight
+    private func crossThinkspaceHighlight(for thinkspace: Thinkspace, isActive: Bool, isHovered: Bool) -> some ShapeStyle {
+        if crossDragManager.hoveredThinkspaceId == thinkspace.id {
+            return AnyShapeStyle(DS.accent.opacity(0.15))
+        } else if isActive {
+            return AnyShapeStyle(DS.accent.opacity(0.10))
+        } else if isHovered {
+            return AnyShapeStyle(DS.surfaceHover)
+        } else {
+            return AnyShapeStyle(Color.clear)
+        }
+    }
+
+    /// Generates a 3-pulse blink wave from progress 0→1
+    /// Returns 0→1→0 three times across the progress range
+    private func blinkPulse(_ progress: CGFloat) -> CGFloat {
+        guard progress > 0 && progress < 1 else { return 0 }
+        // 3 pulses: sin wave with 3 full cycles
+        let wave = sin(progress * .pi * 3)
+        return max(0, wave)
     }
 }

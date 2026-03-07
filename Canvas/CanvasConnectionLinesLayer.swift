@@ -32,6 +32,9 @@ struct CanvasConnectionLinesLayer: View {
     @State private var cachedVisibleEdges: [GraphEdge] = []
     @State private var cachedEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
 
+    // PERF: Throttle endpoint recomputation during drag to ~15fps
+    @State private var dragEndpointThrottleTask: Task<Void, Never>?
+
     // MARK: - Constants
 
     private enum Constants {
@@ -97,7 +100,7 @@ struct CanvasConnectionLinesLayer: View {
             recomputeEndpoints()
         }
         .onChange(of: blockDragOffsets) { _, _ in
-            recomputeEndpoints()
+            throttledRecomputeEndpoints()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.graphNodeUpdated)) { _ in
             fetchEdges()
@@ -174,6 +177,19 @@ struct CanvasConnectionLinesLayer: View {
             }
         }
         cachedEndpoints = endpoints
+    }
+
+    /// Throttled endpoint recomputation during drag — ~15fps (every 66ms).
+    /// Connection lines don't need pixel-perfect tracking during active drag;
+    /// they snap to final positions on drag end via the onChange(of: canvasOffset) path.
+    private func throttledRecomputeEndpoints() {
+        guard dragEndpointThrottleTask == nil else { return }
+        // Fire immediately for first frame, then throttle
+        recomputeEndpoints()
+        dragEndpointThrottleTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(66))
+            dragEndpointThrottleTask = nil
+        }
     }
 
     /// Compute endpoints for a single edge

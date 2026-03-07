@@ -67,6 +67,10 @@ extension Atom {
 // MARK: - Idea Atom Extensions
 
 extension Atom {
+    var imageMetadata: ImageMetadata? {
+        metadataValue(as: ImageMetadata.self)
+    }
+
     var ideaMetadata: IdeaMetadata? {
         metadataValue(as: IdeaMetadata.self)
     }

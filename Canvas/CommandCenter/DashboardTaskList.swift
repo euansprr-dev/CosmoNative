@@ -8,6 +8,7 @@ struct DashboardTaskList: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     @State var expandedTaskId: String?
+    @State private var selectedTaskUUIDs: Set<String> = []
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -28,6 +29,11 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private var todayView: some View {
+        // Batch action bar
+        if !selectedTaskUUIDs.isEmpty {
+            batchActionBar
+        }
+
         // Overdue section
         if !viewModel.overdueTasks.isEmpty {
             taskSection(
@@ -75,15 +81,34 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private var completedView: some View {
-        if viewModel.completedTodayTasks.isEmpty {
-            emptyState(message: "No tasks completed today", icon: "checkmark.circle")
+        if viewModel.completedTasksByDay.isEmpty {
+            emptyState(message: "No completed tasks yet", icon: "checkmark.circle")
         } else {
-            sectionHeader(title: "Completed Today", color: DS.green, trailing: "\(viewModel.completedTodayTasks.count)")
+            ForEach(viewModel.completedTasksByDay, id: \.date) { dayGroup in
+                sectionHeader(
+                    title: completedDayLabel(dayGroup.date),
+                    color: Calendar.current.isDateInToday(dayGroup.date) ? DS.green : DS.textSecondary,
+                    trailing: "\(dayGroup.tasks.count)"
+                )
 
-            ForEach(viewModel.completedTodayTasks) { task in
-                taskRow(task)
+                ForEach(dayGroup.tasks) { task in
+                    taskRow(task)
+                }
             }
         }
+    }
+
+    private func completedDayLabel(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        if calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
+            formatter.dateFormat = "EEEE, MMM d"
+        } else {
+            formatter.dateFormat = "EEEE, MMM d, yyyy"
+        }
+        return formatter.string(from: date)
     }
 
     // MARK: - Section Component
@@ -205,9 +230,10 @@ struct DashboardTaskList: View {
     private func taskRow(_ task: TaskViewModel) -> some View {
         let isActiveSession = viewModel.sessionEngine.activeSession?.taskUUID == task.uuid
             && viewModel.sessionEngine.isTimerRunning
-        let isSelected = viewModel.selectedTaskIndex != nil
+        let isKeyboardSelected = viewModel.selectedTaskIndex != nil
             && viewModel.currentVisibleTasks.indices.contains(viewModel.selectedTaskIndex!)
             && viewModel.currentVisibleTasks[viewModel.selectedTaskIndex!].uuid == task.uuid
+        let isMultiSelected = selectedTaskUUIDs.contains(task.uuid)
 
         HStack(spacing: 0) {
             // Priority color bar
@@ -224,8 +250,17 @@ struct DashboardTaskList: View {
                 taskContent(task)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(ProMotionSprings.snappy) {
-                            expandedTaskId = expandedTaskId == task.uuid ? nil : task.uuid
+                        if NSEvent.modifierFlags.contains(.shift) {
+                            if selectedTaskUUIDs.contains(task.uuid) {
+                                selectedTaskUUIDs.remove(task.uuid)
+                            } else {
+                                selectedTaskUUIDs.insert(task.uuid)
+                            }
+                        } else {
+                            selectedTaskUUIDs.removeAll()
+                            withAnimation(ProMotionSprings.snappy) {
+                                expandedTaskId = expandedTaskId == task.uuid ? nil : task.uuid
+                            }
                         }
                     }
 
@@ -254,7 +289,8 @@ struct DashboardTaskList: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(
                     isActiveSession ? DS.accent.opacity(0.06)
-                        : isSelected ? DS.accentSoft
+                        : isMultiSelected ? DS.accent.opacity(0.06)
+                        : isKeyboardSelected ? DS.accentSoft
                         : Color.clear
                 )
         )
@@ -262,12 +298,81 @@ struct DashboardTaskList: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
                     isActiveSession ? DS.accent.opacity(0.3)
-                        : isSelected ? DS.accent.opacity(0.2)
+                        : isMultiSelected ? DS.accent.opacity(0.4)
+                        : isKeyboardSelected ? DS.accent.opacity(0.2)
                         : Color.clear,
-                    lineWidth: 1
+                    lineWidth: isMultiSelected ? 2 : 1
                 )
         )
         .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                Task { await viewModel.toggleTaskCompletion(task) }
+            } label: {
+                Label(task.isCompleted ? "Mark Incomplete" : "Complete", systemImage: task.isCompleted ? "circle" : "checkmark.circle")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                if selectedTaskUUIDs.contains(task.uuid) {
+                    let toDelete = selectedTaskUUIDs
+                    selectedTaskUUIDs.removeAll()
+                    Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
+                } else {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                }
+            } label: {
+                if selectedTaskUUIDs.contains(task.uuid) && selectedTaskUUIDs.count > 1 {
+                    Label("Delete \(selectedTaskUUIDs.count) Tasks", systemImage: "trash")
+                } else {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    // MARK: - Batch Action Bar
+
+    private var batchActionBar: some View {
+        HStack(spacing: 12) {
+            Text("\(selectedTaskUUIDs.count) selected")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.text)
+
+            Spacer()
+
+            Button {
+                let toDelete = selectedTaskUUIDs
+                selectedTaskUUIDs.removeAll()
+                Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                    Text("Delete")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(PlannerumColors.overdue)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                selectedTaskUUIDs.removeAll()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+        )
     }
 
     // MARK: - Checkbox
@@ -279,6 +384,10 @@ struct DashboardTaskList: View {
         } label: {
             ZStack {
                 Circle()
+                    .fill(task.isCompleted ? DS.accent : Color.clear)
+                    .frame(width: 18, height: 18)
+
+                Circle()
                     .stroke(
                         task.isCompleted ? DS.accent : task.priority.color.opacity(0.5),
                         lineWidth: 1.5
@@ -286,15 +395,12 @@ struct DashboardTaskList: View {
                     .frame(width: 18, height: 18)
 
                 if task.isCompleted {
-                    Circle()
-                        .fill(DS.accent)
-                        .frame(width: 18, height: 18)
-
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white)
                 }
             }
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
     }

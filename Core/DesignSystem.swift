@@ -135,6 +135,9 @@ enum DS {
     static let entityReadwise = Color(hex: "A0785A")
     static let entityReadwiseSoft = Color(hex: "F2EBE0")
 
+    /// Images — muted teal
+    static let entityImage = Color(hex: "5A9BA0")
+
     // ═══════════════════════════════════════════════════════════════
     // CLIENT COLORS — Deterministic palette for content profiles
     // ═══════════════════════════════════════════════════════════════

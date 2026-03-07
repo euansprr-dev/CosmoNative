@@ -60,7 +60,7 @@ struct CanvasClusterLayer: View {
 
     @ViewBuilder
     private var inspectorPanelOverlay: some View {
-        if let selected = selectedUserCluster {
+        if let selected = selectedUserCluster, clusterDragOffset == nil {
             inspectorPanel(for: selected)
         }
     }
@@ -295,6 +295,15 @@ struct CanvasClusterLayer: View {
                         onBoardColumnDrop: { event in
                             onBoardColumnDrop?(event)
                         },
+                        onOpenFocusMode: { uuid in
+                            onOpenFocusMode?(uuid)
+                        }
+                    )
+                case .grid:
+                    ClusterGridContent(
+                        cluster: cluster,
+                        clusterColor: cluster.color,
+                        blocks: blocks,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
                         }

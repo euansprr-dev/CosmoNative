@@ -702,12 +702,8 @@ public enum PlannerumFormatters {
         return f
     }()
 
-    /// ISO 8601 for ATOM storage
-    public static let iso8601: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
+    /// ISO 8601 for ATOM storage — parses with and without fractional seconds
+    public static let iso8601 = LenientISO8601Formatter()
 
     /// Relative time formatter
     public static let relative: RelativeDateTimeFormatter = {
@@ -715,6 +711,37 @@ public enum PlannerumFormatters {
         f.unitsStyle = .abbreviated
         return f
     }()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - Lenient ISO8601 Formatter
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// ISO 8601 formatter that writes with fractional seconds and parses both formats.
+/// Fixes mismatch where some callers write without fractional seconds.
+public final class LenientISO8601Formatter: @unchecked Sendable {
+
+    private let withFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private let withoutFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// Parse date string — tries fractional seconds first, then without
+    public func date(from string: String) -> Date? {
+        withFractional.date(from: string) ?? withoutFractional.date(from: string)
+    }
+
+    /// Write date string — always includes fractional seconds for consistency
+    public func string(from date: Date) -> String {
+        withFractional.string(from: date)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

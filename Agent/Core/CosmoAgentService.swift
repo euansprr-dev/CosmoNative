@@ -1046,7 +1046,8 @@ class CosmoAgentService: ObservableObject {
                                 "what's a good hook", "what's a good opening", "what angle",
                                 "hook ideas", "hook options", "opening ideas",
                                 "punch up", "tighten this", "clean this up",
-                                "check the flow", "does this flow", "how does this read"]) {
+                                "check the flow", "does this flow", "how does this read",
+                                "make the hook", "using this as the swipe", "using the swipe", "using that as"]) {
             return .draft
         }
 
@@ -1079,7 +1080,8 @@ class CosmoAgentService: ObservableObject {
         // Execute / Advance
         if containsAny(lower, ["advance", "complete", "finish", "publish", "move to next", "mark done",
                                 "start session", "activate",
-                                "activate this idea", "promote this idea", "turn this into content"]) {
+                                "activate this idea", "promote this idea", "turn this into content",
+                                "take action", "action on this", "action this", "act on this", "act on the"]) {
             return .execute
         }
 

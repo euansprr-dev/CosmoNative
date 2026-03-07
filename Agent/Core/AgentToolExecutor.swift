@@ -1148,6 +1148,10 @@ class AgentToolExecutor {
         if let userTitle = userTitle, !userTitle.isEmpty {
             // User specified an explicit title — use it directly (no AI call, faster)
             ideaTitle = userTitle
+        } else if let ideaContext = ideaContext, !ideaContext.isEmpty,
+                  !ideaContext.contains("\n"), ideaContext.count <= 120 {
+            // ideaContext looks like a misrouted title (short, single-line) — use it directly
+            ideaTitle = ideaContext
         } else {
             do {
                 let titlePrompt = """

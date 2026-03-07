@@ -10,11 +10,18 @@ struct UpcomingBoardView: View {
     @State private var addingTaskInColumn: String?
     @State private var newTaskText = ""
     @State private var dropTargetDay: String?
+    @State private var selectedTaskUUIDs: Set<String> = []
     @FocusState private var addTaskFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             boardHeader
+
+            // Batch action bar
+            if !selectedTaskUUIDs.isEmpty {
+                batchActionBar
+            }
+
             boardContent
         }
     }
@@ -22,16 +29,10 @@ struct UpcomingBoardView: View {
     // MARK: - Header
 
     private var boardHeader: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Upcoming")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(DS.text)
-
-                Text(monthYearLabel)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-            }
+        HStack {
+            Text(monthYearLabel)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.textSecondary)
 
             Spacer()
 
@@ -147,7 +148,7 @@ struct UpcomingBoardView: View {
                     .draggable(task.uuid)
             }
         }
-        .frame(width: 280)
+        .frame(width: 220)
     }
 
     // MARK: - Day Column
@@ -173,7 +174,7 @@ struct UpcomingBoardView: View {
             // Add task
             addTaskButton(dayKey: dayKey, date: day.date)
         }
-        .frame(width: 280)
+        .frame(width: 220)
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -237,16 +238,23 @@ struct UpcomingBoardView: View {
     // MARK: - Task Card (Todoist style)
 
     private func boardTaskCard(_ task: TaskViewModel) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        let isSelected = selectedTaskUUIDs.contains(task.uuid)
+
+        return HStack(alignment: .top, spacing: 10) {
             // Checkbox
             Button {
                 Task { await viewModel.toggleTaskCompletion(task) }
             } label: {
                 Circle()
-                    .stroke(task.priority.color.opacity(0.5), lineWidth: 1.5)
+                    .fill(Color.clear)
                     .frame(width: 20, height: 20)
+                    .overlay(
+                        Circle()
+                            .stroke(task.priority.color.opacity(0.5), lineWidth: 1.5)
+                    )
             }
             .buttonStyle(.plain)
+            .contentShape(Circle())
             .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -282,10 +290,95 @@ struct UpcomingBoardView: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? DS.accent.opacity(0.06) : DS.surfaceElevated)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.borderSubtle, lineWidth: 1)
+                .stroke(isSelected ? DS.accent.opacity(0.4) : DS.borderSubtle, lineWidth: isSelected ? 2 : 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.shift) {
+                // Shift+click: toggle selection
+                if selectedTaskUUIDs.contains(task.uuid) {
+                    selectedTaskUUIDs.remove(task.uuid)
+                } else {
+                    selectedTaskUUIDs.insert(task.uuid)
+                }
+            } else {
+                selectedTaskUUIDs.removeAll()
+            }
+        }
+        .contextMenu {
+            Button {
+                Task { await viewModel.toggleTaskCompletion(task) }
+            } label: {
+                Label(task.isCompleted ? "Mark Incomplete" : "Complete", systemImage: task.isCompleted ? "circle" : "checkmark.circle")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                if selectedTaskUUIDs.contains(task.uuid) {
+                    // Delete all selected
+                    let toDelete = selectedTaskUUIDs
+                    selectedTaskUUIDs.removeAll()
+                    Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
+                } else {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                }
+            } label: {
+                if selectedTaskUUIDs.contains(task.uuid) && selectedTaskUUIDs.count > 1 {
+                    Label("Delete \(selectedTaskUUIDs.count) Tasks", systemImage: "trash")
+                } else {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    // MARK: - Batch Action Bar
+
+    private var batchActionBar: some View {
+        HStack(spacing: 12) {
+            Text("\(selectedTaskUUIDs.count) selected")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.text)
+
+            Spacer()
+
+            Button {
+                let toDelete = selectedTaskUUIDs
+                selectedTaskUUIDs.removeAll()
+                Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                    Text("Delete")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(PlannerumColors.overdue)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                selectedTaskUUIDs.removeAll()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DS.accent.opacity(0.2), lineWidth: 1)
         )
     }
 
@@ -324,20 +417,28 @@ struct UpcomingBoardView: View {
 
     private func inlineAddField(dayKey: String, date: Date) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("", text: $newTaskText, prompt: Text("Task name").foregroundColor(DS.textMuted))
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(DS.text)
-                .focused($addTaskFocused)
-                .onSubmit {
-                    submitInlineTask(date: date)
+            ZStack(alignment: .leading) {
+                if newTaskText.isEmpty {
+                    Text("Task name")
+                        .font(.system(size: 13))
+                        .foregroundColor(DS.textMuted)
+                        .allowsHitTesting(false)
                 }
-                .onExitCommand {
-                    withAnimation(ProMotionSprings.snappy) {
-                        addingTaskInColumn = nil
-                        newTaskText = ""
+                TextField("", text: $newTaskText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.text)
+                    .focused($addTaskFocused)
+                    .onSubmit {
+                        submitInlineTask(date: date)
                     }
-                }
+                    .onExitCommand {
+                        withAnimation(ProMotionSprings.snappy) {
+                            addingTaskInColumn = nil
+                            newTaskText = ""
+                        }
+                    }
+            }
 
             HStack(spacing: 8) {
                 Button {

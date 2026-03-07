@@ -40,8 +40,8 @@ struct MainView: View {
     // Deep work session engine (moved from PlannerumView to global)
     @StateObject private var sessionEngine = DeepWorkSessionEngine()
 
-    // Cosmo Window (global floating AI chat panel, Option+A)
-    @State private var showCosmoWindow = false
+    // Cross-thinkspace drag manager (sidebar spring-loaded folders)
+    @StateObject private var crossDragManager = CrossThinkspaceDragManager()
 
     // Activation loading overlay (shown during idea→content navigation)
     @State private var showActivationLoading = false
@@ -95,17 +95,6 @@ struct MainView: View {
                 CommandKView(initialTab: commandKReturnTab ?? .database)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(200)
-            }
-
-            // Cosmo Window — Global floating AI chat panel (Option+A)
-            // zIndex 260: above CommandK (200), below InstagramSwipeModal (275)
-            if showCosmoWindow {
-                CosmoWindowView(isVisible: $showCosmoWindow)
-                    .zIndex(260)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
             }
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
@@ -316,7 +305,6 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
-        .animation(ProMotionSprings.snappy, value: showCosmoWindow)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
@@ -339,9 +327,7 @@ struct MainView: View {
         }
         // Cosmo Window toggle (from menu bar, Telegram, or other sources)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
-            withAnimation(ProMotionSprings.snappy) {
-                showCosmoWindow.toggle()
-            }
+            CosmoWindowPanelController.shared.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
             // Settings — navigate to Command Center
@@ -409,20 +395,6 @@ struct MainView: View {
                 }
             }
         }
-        // Cosmo Window context tracking
-        .onChange(of: showCosmoWindow) { _, isOpen in
-            if isOpen {
-                let vm = CosmoWindowViewModel.shared
-                if appState.focusedEntity != nil {
-                    // Focus mode context is handled by the focus mode views themselves
-                } else if isThinkspaceActive {
-                    vm.updateContextManually(type: .thinkspaceCanvas)
-                } else {
-                    // Command Center or Inbox — use sanctuary context
-                    vm.updateContextManually(type: .sanctuary)
-                }
-            }
-        }
         .onChange(of: currentDestination) { _, newDest in
             // Track last-used thinkspace for T-key navigation
             if case .thinkspace(let id) = newDest {
@@ -439,15 +411,13 @@ struct MainView: View {
             case .inbox:
                 break
             }
-            // Update Cosmo Window context
-            if showCosmoWindow {
-                let vm = CosmoWindowViewModel.shared
-                switch newDest {
-                case .commandCenter, .inbox:
-                    vm.updateContextManually(type: .sanctuary)
-                case .thinkspace:
-                    vm.updateContextManually(type: .thinkspaceCanvas)
-                }
+            // Update Cosmo Window context (panel is now system-wide, always update)
+            let vm = CosmoWindowViewModel.shared
+            switch newDest {
+            case .commandCenter, .inbox:
+                vm.updateContextManually(type: .sanctuary)
+            case .thinkspace:
+                vm.updateContextManually(type: .thinkspaceCanvas)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
@@ -596,23 +566,88 @@ struct MainView: View {
 
     @ViewBuilder
     private var mainContentLayout: some View {
-        HStack(spacing: 0) {
-            UnifiedSidebar(
-                currentDestination: $currentDestination,
-                thinkspaceManager: thinkspaceManager
-            )
-            .zIndex(200)
+        ZStack {
+            HStack(spacing: 0) {
+                UnifiedSidebar(
+                    currentDestination: $currentDestination,
+                    thinkspaceManager: thinkspaceManager
+                )
+                .environmentObject(crossDragManager)
+                .zIndex(200)
 
-            SplitPaneContainer(paneManager: paneManager) {
-                ZStack {
-                    destinationContent
-                    focusModeOverlay
+                SplitPaneContainer(paneManager: paneManager) {
+                    ZStack {
+                        destinationContent
+                        focusModeOverlay
+                    }
                 }
+                .zIndex(appState.focusedEntity != nil ? 195 : 10)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
             }
-            .zIndex(appState.focusedEntity != nil ? 195 : 10)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+
+            // Cross-thinkspace floating drag preview
+            if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
+               let block = crossDragManager.draggedBlock {
+                CrossThinkspaceDragPreview(block: block)
+                    .position(crossDragManager.floatingPosition)
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                    .zIndex(10000)
+                    .allowsHitTesting(false)
+            }
         }
         .background(DS.surface)
+        .onAppear {
+            setupCrossThinkspaceDragCallbacks()
+        }
+    }
+
+    /// Wire up cross-thinkspace drag manager callbacks
+    private func setupCrossThinkspaceDragCallbacks() {
+        crossDragManager.onThinkspaceSwitch = { [weak crossDragManager] (targetId: String) in
+            guard let manager = crossDragManager else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                currentDestination = .thinkspace(id: targetId)
+            }
+            // After switch, block is no longer "over sidebar" visually
+            // but manager keeps tracking for final placement
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                manager.isOverSidebar = false
+            }
+        }
+
+        crossDragManager.onDropComplete = { (block: CanvasBlock, targetThinkspaceId: String, dropPosition: CGPoint) in
+            // Move the block in the database
+            let hasSwitched = crossDragManager.hasThinkspaceSwitched
+            Task {
+                let engine = SpatialEngine()
+                let finalPosition = hasSwitched ? dropPosition : .zero
+                await engine.moveBlockToThinkspace(
+                    block.id,
+                    newThinkspaceId: targetThinkspaceId,
+                    position: finalPosition
+                )
+
+                // Post notification so the target CanvasView can reload
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Canvas.crossThinkspaceDropBlock,
+                    object: nil,
+                    userInfo: [
+                        "blockId": block.id,
+                        "entityUuid": block.entityUuid,
+                        "thinkspaceId": targetThinkspaceId,
+                        "positionX": finalPosition.x,
+                        "positionY": finalPosition.y
+                    ]
+                )
+
+                // Navigate to the target thinkspace if not already there
+                if !hasSwitched {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        currentDestination = .thinkspace(id: targetThinkspaceId)
+                    }
+                }
+            }
+        }
     }
 
     /// The thinkspace ID for the current canvas destination (Command Center or a thinkspace)
@@ -645,6 +680,7 @@ struct MainView: View {
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
                 .environmentObject(blockFrameTracker)
+                .environmentObject(crossDragManager)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(appState.focusedEntity == nil ? 1.0 : 0)
                 .allowsHitTesting(appState.focusedEntity == nil)
@@ -759,15 +795,7 @@ struct MainView: View {
                     return nil
                 }
 
-                // 2. Cosmo Window
-                if showCosmoWindow {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showCosmoWindow = false
-                    }
-                    return nil
-                }
-
-                // 3. Creator Profile
+                // 2. Creator Profile
                 if showCreatorProfile {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                         showCreatorProfile = false
@@ -940,16 +968,7 @@ struct MainView: View {
                 return nil  // Consume event
             }
 
-            // Option+A - Toggle Cosmo Window (global AI chat panel)
-            if event.type == .keyDown,
-               event.modifierFlags.contains(.option),
-               event.charactersIgnoringModifiers == "a",
-               !isFirstResponderTextField() {
-                withAnimation(ProMotionSprings.snappy) {
-                    showCosmoWindow.toggle()
-                }
-                return nil  // Consume event
-            }
+            // Option+A - now handled by system-wide HotkeyManager → CosmoWindowPanelController
 
             // Ctrl+Z / Ctrl+Shift+Z for undo/redo (fallback when not in text field)
             // Only handle when not typing in a text field (check first responder)
@@ -1094,7 +1113,7 @@ struct MainView: View {
             )
 
             // Don't show menus when overlays are active or not on a thinkspace
-            guard isThinkspaceActive, !showCommandK, !showCosmoWindow, appState.focusedEntity == nil else {
+            guard isThinkspaceActive, !showCommandK, appState.focusedEntity == nil else {
                 return event
             }
 

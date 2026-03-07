@@ -1220,13 +1220,27 @@ struct DraftEditorTextView: NSViewRepresentable {
         }
 
         // Apply or clear Hemingway highlights
-        applyHighlighting(to: textView)
+        applyHighlighting(to: textView, coordinator: context.coordinator)
     }
 
     /// Apply Hemingway-style background highlighting to the text view.
     /// Colors match the polish sidebar legend.
-    private func applyHighlighting(to textView: NSTextView) {
+    private func applyHighlighting(to textView: NSTextView, coordinator: Coordinator) {
         guard let storage = textView.textStorage else { return }
+
+        // Skip textStorage editing entirely when no highlights to apply or clear —
+        // beginEditing()/endEditing() causes NSTextView to redraw, which flickers.
+        if polishHighlights == nil {
+            // Only clear once when transitioning from highlighted → unhighlighted
+            guard coordinator.hasAppliedHighlights else { return }
+            let fullRange = NSRange(location: 0, length: storage.length)
+            storage.beginEditing()
+            storage.removeAttribute(.backgroundColor, range: fullRange)
+            storage.endEditing()
+            coordinator.hasAppliedHighlights = false
+            return
+        }
+
         let fullRange = NSRange(location: 0, length: storage.length)
 
         // Clear all existing background colors
@@ -1262,6 +1276,7 @@ struct DraftEditorTextView: NSViewRepresentable {
         }
 
         storage.endEditing()
+        coordinator.hasAppliedHighlights = true
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1272,6 +1287,8 @@ struct DraftEditorTextView: NSViewRepresentable {
         var parent: DraftEditorTextView
         private var isUpdating = false
         private var layoutObserver: NSObjectProtocol?
+        /// Tracks whether polish highlights are currently rendered on the text view
+        var hasAppliedHighlights = false
 
         init(parent: DraftEditorTextView) {
             self.parent = parent

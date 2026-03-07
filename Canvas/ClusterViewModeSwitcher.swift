@@ -240,6 +240,7 @@ extension ClusterViewMode {
         case .canvas: return "square.grid.2x2"
         case .list:   return "list.bullet"
         case .board:  return "rectangle.split.3x1"
+        case .grid:   return "square.grid.3x3"
         }
     }
 
@@ -248,6 +249,7 @@ extension ClusterViewMode {
         case .canvas: return "Canvas"
         case .list:   return "List"
         case .board:  return "Board"
+        case .grid:   return "Grid"
         }
     }
 }

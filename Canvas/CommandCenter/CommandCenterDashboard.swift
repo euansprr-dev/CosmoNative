@@ -11,34 +11,13 @@ struct CommandCenterDashboard: View {
     @State private var isEditing = false
 
     var body: some View {
-        if viewModel.viewMode == .upcoming {
-            // Full-width layout for board view
-            VStack(alignment: .leading, spacing: 12) {
-                // Compact top bar: greeting + view mode tabs
-                HStack(alignment: .bottom) {
-                    greetingSection
-                    Spacer()
-                    DashboardViewModeBar(
-                        selectedMode: $viewModel.viewMode,
-                        todayCount: viewModel.todayActiveCount,
-                        upcomingCount: viewModel.upcomingTotalCount,
-                        completedCount: viewModel.completedTodayTasks.count
-                    )
-                }
-
-                DashboardTaskList(viewModel: viewModel)
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        } else {
-            HStack(alignment: .top, spacing: 0) {
-                leftColumn
-                centerColumn
-                rightColumn
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        HStack(alignment: .top, spacing: 0) {
+            leftColumn
+            centerColumn
+            rightColumn
         }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Left Column (260px) — Calendar + Timeline

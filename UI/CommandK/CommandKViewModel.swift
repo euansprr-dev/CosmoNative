@@ -36,20 +36,6 @@ enum SwipeViewMode: String, CaseIterable {
     }
 }
 
-// MARK: - IdeaViewMode
-
-enum IdeaViewMode: String, CaseIterable {
-    case grid
-    case list
-
-    var icon: String {
-        switch self {
-        case .grid: return "square.grid.2x2.fill"
-        case .list: return "list.bullet"
-        }
-    }
-}
-
 // MARK: - CommandKViewModel
 /// ViewModel for the Command-K overlay
 /// Manages query state, results, and constellation visualization
@@ -170,9 +156,6 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Whether idea gallery has been loaded
     private var ideaGalleryLoaded = false
-
-    /// View mode for idea gallery: grid (masonry cards) or list (grouped by client)
-    @Published var ideaViewMode: IdeaViewMode = .grid
 
     // MARK: - Configuration
 
@@ -952,6 +935,34 @@ public final class CommandKViewModel: ObservableObject {
             let _ = IdeaInsightEngine.shared.quickInsight(ideaText: ideaText)
             await loadIdeaGallery(forceReload: true)
         }
+    }
+
+    /// Create an idea pre-assigned to a client profile (used by board view inline add)
+    func createIdeaForClient(title: String, clientUUID: String?) async {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        var atom = Atom.new(type: .idea, title: trimmed, body: nil, metadata: nil)
+
+        if let clientUUID {
+            atom = atom.withUpdatedIdeaMetadata { meta in
+                meta.clientUUID = clientUUID
+            }
+            atom = atom.addingLink(.ideaToClient(clientUUID))
+        }
+
+        let _ = try? await AtomRepository.shared.create(atom)
+
+        // Add reciprocal link on client
+        if let clientUUID,
+           var client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
+            client = client.addingLink(.clientToIdea(atom.uuid))
+            client.updatedAt = ISO8601DateFormatter().string(from: Date())
+            client.localVersion += 1
+            _ = try? await AtomRepository.shared.update(client)
+        }
+
+        await loadIdeaGallery(forceReload: true)
     }
 
     // MARK: - Cleanup

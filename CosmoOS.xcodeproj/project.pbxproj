@@ -317,6 +317,8 @@
 		9AF0AADB43E4AA7939891FE0 /* ContentDraftView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBF99133E6018D63B8A3374 /* ContentDraftView.swift */; };
 		9C4229C2213C1DF64A36000F /* StatePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D27B0748EF6B964647C599E /* StatePersistence.swift */; };
 		9CA607325E141EE69F287355 /* NoteBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDE2C071AE42A0292720DB /* NoteBlockView.swift */; };
+		E1E096F67250133A726422EF /* ImageBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20B5E9D72E1F7F2EBC9D000A /* ImageBlockView.swift */; };
+		184028DA4BF04E35301CB1D8 /* ImageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD43D73601BC894467A1F01B /* ImageStore.swift */; };
 		9DB2F94A3C6E7AB521A4C7F9 /* LiveBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB0E83D2D7C89C63AF5B8E0 /* LiveBadge.swift */; };
 		9E2CB7A406466E4808F7D354 /* TodayModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C8FE8DFADC57A6ACAF4896 /* TodayModeView.swift */; };
 		9E3D4236BE222AAF40D51050 /* CompletionAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1A6292CA874A6E567D004C /* CompletionAnimation.swift */; };
@@ -486,6 +488,7 @@
 		DC840EE22B01053EF0F872E6 /* CreativePerformanceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150CF15FFDB83ED2D68B0EBA /* CreativePerformanceGraph.swift */; };
 		DCC5FA9AC374E21AC13A9635 /* ResearchFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C2F9E4B380B479874300E8 /* ResearchFocusModeView.swift */; };
 		DD1A2B3C4D5E6F708192A3B4 /* DragToConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F60718293A4B5 /* DragToConnectManager.swift */; };
+		F9A8B7C6D5E4F3A2B1C00002 /* CrossThinkspaceDragManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A8B7C6D5E4F3A2B1C00001 /* CrossThinkspaceDragManager.swift */; };
 		DD2A3B4C5D6E7F809213A4B5 /* DragToConnectOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2B3C4D5E6F70819304A5B6 /* DragToConnectOverlay.swift */; };
 		DDAC266AF8356B7C7BB8496F /* WritingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FBA36AE3AD666F31F9A8B48 /* WritingStatsView.swift */; };
 		DE64484F9AD9D674DD39831F /* JournalRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A445B35CB7A45722AB26C41 /* JournalRouter.swift */; };
@@ -586,6 +589,7 @@
 		B7C0DD6579CD070283AE9C1A /* CosmoWindowViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36B4886FFE0F3E2F7548B780 /* CosmoWindowViewModel.swift */; };
 		BF0E5182BE090C09408117B1 /* CosmoMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3766959CF44ED07B869FDE83 /* CosmoMessageBubble.swift */; };
 		C3A7145110FA9E54CF47ABDF /* CosmoWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA720321268ED26897C29B6 /* CosmoWindowView.swift */; };
+		F0E99A0BD62CA5D697D7FD90 /* CosmoWindowPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B52A26BDAD0CF62D6A062C5 /* CosmoWindowPanelController.swift */; };
 		F501CD5AB756E263FD1EC972 /* CosmoWindowSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EF07FFCDE38EA4ED7FEF0B9 /* CosmoWindowSettingsSection.swift */; };
 		E5F3C2D9AB803E6213BD7E82 /* ToolActivityStreamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */; };
 		A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */; };
@@ -609,6 +613,7 @@
 		E7F8019A2B3C4D5E6F708192 /* ClusterViewModeSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */; };
 		091A2B3C4D5E6F7081920314 /* ClusterListContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */; };
 		2B3C4D5E6F70819203142536 /* ClusterBoardContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */; };
+		BDDD615391A219964202C7FC /* ClusterGridContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C04A45CC0F89F894C641EC1D /* ClusterGridContent.swift */; };
 		C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */; };
 /* End PBXBuildFile section */
 
@@ -852,6 +857,8 @@
 		732C2C41E01A789BBAA80D6B /* SwipeStudyFocusModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwipeStudyFocusModeView.swift; path = UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift; sourceTree = SOURCE_ROOT; };
 		753876C9526B6CC6F980F8EA /* CognitiveDimensionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CognitiveDimensionView.swift; sourceTree = "<group>"; };
 		75DDE2C071AE42A0292720DB /* NoteBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteBlockView.swift; sourceTree = "<group>"; };
+		20B5E9D72E1F7F2EBC9D000A /* ImageBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageBlockView.swift; sourceTree = "<group>"; };
+		FD43D73601BC894467A1F01B /* ImageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageStore.swift; sourceTree = "<group>"; };
 		760A51EC02C350046F1BE200 /* MoodCheckInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoodCheckInView.swift; sourceTree = "<group>"; };
 		76505AA91C9E96989ED1AE4C /* ContentBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentBlockView.swift; sourceTree = "<group>"; };
 		76F6E7BB6967F997D7B7BE63 /* PhysiologicalVitalSigns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysiologicalVitalSigns.swift; sourceTree = "<group>"; };
@@ -955,6 +962,7 @@
 		A9D29278C0B16583ADA18727 /* AssignmentStatusGroupHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssignmentStatusGroupHeader.swift; sourceTree = "<group>"; };
 		AA04F1229D4A87C0C5F43475 /* MentionShimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionShimmer.swift; sourceTree = "<group>"; };
 		AA1B2C3D4E5F60718293A4B5 /* DragToConnectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragToConnectManager.swift; sourceTree = "<group>"; };
+		F9A8B7C6D5E4F3A2B1C00001 /* CrossThinkspaceDragManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossThinkspaceDragManager.swift; sourceTree = "<group>"; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* ResearchBlockDropdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchBlockDropdownView.swift; sourceTree = "<group>"; };
 		AA2B3C4D5E6F70819304A5B6 /* DragToConnectOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragToConnectOverlay.swift; sourceTree = "<group>"; };
 		964FAB4C26027C4D0D203814 /* CrystallizationIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrystallizationIndicator.swift; sourceTree = "<group>"; };
@@ -1188,6 +1196,7 @@
 		36B4886FFE0F3E2F7548B780 /* CosmoWindowViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWindowViewModel.swift; sourceTree = "<group>"; };
 		3766959CF44ED07B869FDE83 /* CosmoMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMessageBubble.swift; sourceTree = "<group>"; };
 		3CA720321268ED26897C29B6 /* CosmoWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWindowView.swift; sourceTree = "<group>"; };
+		8B52A26BDAD0CF62D6A062C5 /* CosmoWindowPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWindowPanelController.swift; sourceTree = "<group>"; };
 		7EF07FFCDE38EA4ED7FEF0B9 /* CosmoWindowSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoWindowSettingsSection.swift; sourceTree = "<group>"; };
 		D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityStreamView.swift; sourceTree = "<group>"; };
 		F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMentionOverlay.swift; sourceTree = "<group>"; };
@@ -1221,6 +1230,7 @@
 		F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterViewModeSwitcher.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterListContent.swift; sourceTree = "<group>"; };
 		3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterBoardContent.swift; sourceTree = "<group>"; };
+		C04A45CC0F89F894C641EC1D /* ClusterGridContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterGridContent.swift; sourceTree = "<group>"; };
 		D4E5F6A7B8C930415B26C7D8 /* CanvasMinimapOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasMinimapOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -1833,6 +1843,7 @@
 				36B4886FFE0F3E2F7548B780 /* CosmoWindowViewModel.swift */,
 				3766959CF44ED07B869FDE83 /* CosmoMessageBubble.swift */,
 				3CA720321268ED26897C29B6 /* CosmoWindowView.swift */,
+				8B52A26BDAD0CF62D6A062C5 /* CosmoWindowPanelController.swift */,
 				D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */,
 				F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */,
 			);
@@ -1922,6 +1933,7 @@
 			isa = PBXGroup;
 			children = (
 				608FF06118EAB164B022E805 /* ConnectionStore.swift */,
+				FD43D73601BC894467A1F01B /* ImageStore.swift */,
 				53A5972D81DE6163784A7E88 /* Database */,
 				A6312145329F7B02666E797F /* HealthKit */,
 				B1216FA34116C8BF01A7911B /* Models */,
@@ -2260,6 +2272,7 @@
 				F8091A2B3C4D5E6F70819203 /* ClusterViewModeSwitcher.swift */,
 				1A2B3C4D5E6F708192031425 /* ClusterListContent.swift */,
 				3C4D5E6F7081920314253647 /* ClusterBoardContent.swift */,
+				C04A45CC0F89F894C641EC1D /* ClusterGridContent.swift */,
 				BB3D4E5F6A7B8C9D0E1F2031 /* CanvasConnectionLinesLayer.swift */,
 				DC015AD19E281A8886EA2EF9 /* CanvasView.swift */,
 				F7B8C9D0E1F20A3B4C5D6E7F /* CanvasViewLayersToolbar.swift */,
@@ -2270,6 +2283,7 @@
 				56DBFB715A4310F488645544 /* CosmoAIBlockView.swift */,
 				F590BD4B19B9E6EF3417DA9E /* CosmoBlockWrapper.swift */,
 				1246DA39090B8363E7188AC4 /* DebouncedPositionSaver.swift */,
+				F9A8B7C6D5E4F3A2B1C00001 /* CrossThinkspaceDragManager.swift */,
 				AA1B2C3D4E5F60718293A4B5 /* DragToConnectManager.swift */,
 				AA2B3C4D5E6F70819304A5B6 /* DragToConnectOverlay.swift */,
 				C9D3E4F5A6B728193A04B5C6 /* ProvocationMarkerView.swift */,
@@ -2284,6 +2298,7 @@
 				897938E7427CB62C5338F6BB /* MetalBufferPool.swift */,
 				607BC00E208893D7211E2510 /* MetalCanvas.swift */,
 				75DDE2C071AE42A0292720DB /* NoteBlockView.swift */,
+				20B5E9D72E1F7F2EBC9D000A /* ImageBlockView.swift */,
 				61C90F47CDE826D1C79E0775 /* PositionResolver.swift */,
 				9B505CE1608CD3CB2A06E0D5 /* RadialMenuView.swift */,
 				AA1B2C3D4E5F6A7B8C9D0E1F /* ResearchBlockDropdownView.swift */,
@@ -2830,6 +2845,7 @@
 				EE7E3E7663C5ABA9B0C28F31 /* CanvasLevelOrbView.swift in Sources */,
 				25C86241C77E36FE057B4339 /* CanvasView.swift in Sources */,
 				F7A8B9C0D1E2F03A4B5C6D7E /* CanvasViewLayersToolbar.swift in Sources */,
+				F9A8B7C6D5E4F3A2B1C00002 /* CrossThinkspaceDragManager.swift in Sources */,
 				DD1A2B3C4D5E6F708192A3B4 /* DragToConnectManager.swift in Sources */,
 				DD2A3B4C5D6E7F809213A4B5 /* DragToConnectOverlay.swift in Sources */,
 				F3180EE4972465695008B242 /* CrystallizationIndicator.swift in Sources */,
@@ -3020,6 +3036,8 @@
 				CC714D92DE378490E8D5772C /* NetworkMonitor.swift in Sources */,
 				829C58AAE407C268D5C06035 /* NodeGraphEngine.swift in Sources */,
 				9CA607325E141EE69F287355 /* NoteBlockView.swift in Sources */,
+				E1E096F67250133A726422EF /* ImageBlockView.swift in Sources */,
+				184028DA4BF04E35301CB1D8 /* ImageStore.swift in Sources */,
 				CEC52C39B6EABD0913413C0D /* OrbitingBlocksEngine.swift in Sources */,
 				414C15F5B627D1B3B860CFBC /* ParsedAction.swift in Sources */,
 				C4B893D4E74605EA4AA27677 /* PatternMatcher.swift in Sources */,
@@ -3093,6 +3111,7 @@
 				E7F8019A2B3C4D5E6F708192 /* ClusterViewModeSwitcher.swift in Sources */,
 				091A2B3C4D5E6F7081920314 /* ClusterListContent.swift in Sources */,
 				2B3C4D5E6F70819203142536 /* ClusterBoardContent.swift in Sources */,
+				BDDD615391A219964202C7FC /* ClusterGridContent.swift in Sources */,
 				C3D4E5F6A7B829304A15B6C7 /* CanvasMinimapOverlay.swift in Sources */,
 				06DC1A2B3E4F5A6B7C8D9E0F /* ResearchBlockDropdownView.swift in Sources */,
 				06DE3C4D5F6A7B8C9D0E1F2B /* SelectableTranscriptText.swift in Sources */,
@@ -3323,6 +3342,7 @@
 				B7C0DD6579CD070283AE9C1A /* CosmoWindowViewModel.swift in Sources */,
 				BF0E5182BE090C09408117B1 /* CosmoMessageBubble.swift in Sources */,
 				C3A7145110FA9E54CF47ABDF /* CosmoWindowView.swift in Sources */,
+				F0E99A0BD62CA5D697D7FD90 /* CosmoWindowPanelController.swift in Sources */,
 				F501CD5AB756E263FD1EC972 /* CosmoWindowSettingsSection.swift in Sources */,
 				E5F3C2D9AB803E6213BD7E82 /* ToolActivityStreamView.swift in Sources */,
 				A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */,

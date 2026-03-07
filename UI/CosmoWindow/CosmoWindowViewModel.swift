@@ -74,10 +74,10 @@ final class CosmoWindowViewModel: ObservableObject {
         setupNotificationObservers()
     }
 
-    // MARK: - Send Message
+    // MARK: - Send Message (Unified Pipeline — matches Telegram routing)
 
-    /// Main entry point for user messages. Routes to writing engine or general
-    /// agent service based on current state.
+    /// Main entry point for user messages. Routes through the same pipeline as Telegram:
+    /// writing mode → inline capture → fast URL capture → FlashLiteRouter → full agent
     func sendMessage(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -122,30 +122,12 @@ final class CosmoWindowViewModel: ObservableObject {
 
         currentTask = Task {
             do {
-                // Determine if this is a writing request on a content atom
-                let isWritingRequest = isContentWritingRequest(trimmed)
-                let contentUUID = activeContext.data.currentAtomUUID
+                let response = await routeUnified(text: trimmed, assistantId: assistantId)
 
-                if isWritingRequest,
-                   activeContext.type == .contentFocusMode,
-                   let uuid = contentUUID {
-                    // Route to UnifiedWritingEngine for content-specific writing
-                    let response = await routeToWritingEngine(text: trimmed, atomUUID: uuid)
+                // If routeUnified returned a response, update the placeholder
+                if let response = response {
                     let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
                     updateAssistantMessage(id: assistantId, content: response, isStreaming: false, toolActivityGroups: frozenGroups)
-                    liveToolActivity = []
-                    activeToolLabel = nil
-                } else if isWritingRequest, activeContext.type != .contentFocusMode {
-                    // Writing request from outside Content Focus Mode —
-                    // auto-create a content atom, open focus mode, and route through writing engine
-                    await autoCreateContentAndRoute(text: trimmed, assistantId: assistantId)
-                } else {
-                    // Route to general CosmoAgentService
-                    let response = await routeToAgentService(text: trimmed)
-                    // Freeze live tool activity into the completed message
-                    let frozenGroups = liveToolActivity.isEmpty ? nil : liveToolActivity
-                    updateAssistantMessage(id: assistantId, content: response, isStreaming: false, toolActivityGroups: frozenGroups)
-                    // Clear live activity after freezing
                     liveToolActivity = []
                     activeToolLabel = nil
                 }
@@ -159,6 +141,165 @@ final class CosmoWindowViewModel: ObservableObject {
 
             isProcessing = false
         }
+    }
+
+    // MARK: - Unified Routing Pipeline
+
+    /// Routes a message through the same pipeline as Telegram's processBufferedMessage:
+    /// 1. Writing mode entry  2. Active writing session (exit/commit/inline-capture/route)
+    /// 3. Fast URL capture  4. FlashLiteRouter  5. Full agent
+    /// Returns nil if the response was already set on the assistant message (e.g. autoCreateContentAndRoute).
+    private func routeUnified(text: String, assistantId: UUID) async -> String? {
+        let writingManager = TelegramWritingSessionManager.shared
+
+        // 1. Writing mode entry ("opus mode", etc.)
+        if writingManager.isWritingTrigger(text) {
+            let response = await writingManager.startSession(chatId: conversationId, text: text)
+            return response
+        }
+
+        // 2. Active writing session
+        if writingManager.hasActiveSession(for: conversationId) {
+            // 2a. Exit command
+            if writingManager.isExitCommand(text) {
+                let response = await writingManager.endSession(chatId: conversationId)
+                return response
+            }
+            // 2b. Commit command
+            if writingManager.isCommitCommand(text) {
+                let response = await writingManager.commitSession(chatId: conversationId)
+                return response
+            }
+            // 2c. Inline capture escape (!idea:, !task:, !swipe:, bare URL)
+            if let captureResult = await tryInlineCaptureEscape(text: text) {
+                return captureResult + "\n\n_(back in writing mode)_"
+            }
+            // 2d. Route to writing engine
+            let response = await writingManager.routeMessage(chatId: conversationId, text: text)
+            return response
+        }
+
+        // 3. Fast URL capture
+        if text.range(of: "https?://[^\\s]+", options: .regularExpression) != nil {
+            if let captureResult = await tryFastURLCapture(text: text) {
+                await saveFlashRouterResult(text: text, response: captureResult, toolName: "capture_swipe")
+                return captureResult
+            }
+        }
+
+        // 4. FlashLiteRouter for quick single-shot operations
+        let bypassFlash = await shouldBypassFlashRouter(text: text)
+        if !bypassFlash, let (flashResponse, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
+            await saveFlashRouterResult(text: text, response: flashResponse, toolName: toolName)
+            return flashResponse
+        }
+
+        // 5. Full agent — route to CosmoAgentService (same as Telegram fallback)
+        let response = await routeToAgentService(text: text)
+        return response
+    }
+
+    // MARK: - Inline Capture Escape (WP4 — shared with Telegram)
+
+    /// Detects inline capture patterns during writing sessions: !idea:, !task:, !swipe:, bare URLs
+    private func tryInlineCaptureEscape(text: String) async -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // !idea: prefix
+        if trimmed.lowercased().hasPrefix("!idea:") {
+            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": content])) ?? "Created"
+            return "Captured idea: \(content)\n\(result)"
+        }
+
+        // !task: prefix
+        if trimmed.lowercased().hasPrefix("!task:") {
+            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: ["title": content])) ?? "Created"
+            return "Captured task: \(content)\n\(result)"
+        }
+
+        // !swipe: prefix
+        if trimmed.lowercased().hasPrefix("!swipe:") {
+            let content = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            if let captureResult = await tryFastURLCapture(text: content) {
+                return captureResult
+            }
+            return nil
+        }
+
+        // Bare URL (< 120 chars, in writing mode only)
+        if trimmed.count < 120,
+           trimmed.range(of: "^https?://[^\\s]+$", options: .regularExpression) != nil {
+            if let captureResult = await tryFastURLCapture(text: trimmed) {
+                return captureResult
+            }
+        }
+
+        return nil
+    }
+
+    // MARK: - Fast URL Capture (local version for CosmoWindow)
+
+    /// Attempts fast-path URL capture via FlashLiteRouter, bypassing the full agent.
+    private func tryFastURLCapture(text: String) async -> String? {
+        // Delegate to FlashLiteRouter which handles swipe capture for URLs
+        if let (response, _) = await FlashLiteRouter.shared.tryRoute(text) {
+            return response
+        }
+        return nil
+    }
+
+    // MARK: - FlashLiteRouter Follow-Up Detection
+
+    /// Check if a message is a follow-up about already-captured content (should bypass FlashLiteRouter).
+    private func shouldBypassFlashRouter(text: String) async -> Bool {
+        guard let conversation = await conversationMemory.loadConversation(id: conversationId) else {
+            return false
+        }
+        guard !conversation.messages.isEmpty else { return false }
+
+        let recentAssistant = conversation.messages
+            .filter { $0.role == .assistant }
+            .suffix(3)
+
+        let capturePatterns = ["captured", "saved idea", "saved research", "swipe",
+                               "idea:", "task created", "content created"]
+        let hasCaptureHistory = recentAssistant.contains { msg in
+            let lower = msg.content.lowercased()
+            return capturePatterns.contains(where: { lower.contains($0) })
+        }
+
+        guard hasCaptureHistory else { return false }
+
+        let lower = text.lowercased()
+        let followUpSignals = [
+            "this idea", "that idea", "the idea", "this swipe", "that swipe", "the swipe",
+            "take action", "action on", "action this", "act on this",
+            "using the", "using this as", "using that", "based on",
+            "make the hook", "make a hook", "make the content", "make content",
+            "similar to", "like the", "same style", "same hook", "same angle",
+            "let's do", "let's make", "let's create", "let's write", "let's draft",
+            "turn this into", "turn that into", "make this into"
+        ]
+
+        return followUpSignals.contains(where: { lower.contains($0) })
+    }
+
+    /// Save FlashLiteRouter-handled messages to conversation memory for follow-up context.
+    private func saveFlashRouterResult(text: String, response: String, toolName: String) async {
+        var conversation: AgentConversation
+        if let existing = await conversationMemory.loadConversation(id: conversationId) {
+            conversation = existing
+        } else {
+            conversation = AgentConversation(id: conversationId, source: .inApp)
+        }
+        conversation.append(.user(text))
+        conversation.append(.assistant(response))
+        await conversationMemory.saveConversation(conversation)
     }
 
     // MARK: - Mention Management (WP2)

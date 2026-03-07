@@ -53,9 +53,13 @@ final class FlashLiteRouter {
     - "Some ideas for [client]:" followed by a list → multi_create with clientName
     - Extract client names from context ("for josh" → clientName: "josh")
     - Extract format/platform mentions into metadata
-    - For idea+URL combos, use capture_swipe_with_idea
+    - For idea+URL combos, use capture_swipe_with_idea. When the user says "called", "named", or "titled" followed by a phrase, that phrase is the TITLE parameter — extract it verbatim into "title", not "ideaContext"
     - Dates: "tomorrow" → next day ISO, "today" → current date
     - If ambiguous, prefer "agent"
+    - capture_swipe and capture_swipe_with_idea REQUIRE a URL in the message. If no URL is present, do NOT use capture tools.
+    - If the message references taking action on, creating content from, or writing based on an existing idea or swipe, return {"action":"agent"}
+    - If the message gives creative direction (hook style, content adaptation, "make the hook like...", "similar to..."), return {"action":"agent"}
+    - If the message uses referential language ("this idea", "that swipe", "using the") about previously discussed items, return {"action":"agent"}
     """
 
     // MARK: - Route

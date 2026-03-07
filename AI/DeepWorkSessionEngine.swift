@@ -281,7 +281,7 @@ class DeepWorkSessionEngine: ObservableObject {
 
     private func startTimer() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.timerTick()
             }
@@ -430,7 +430,7 @@ class DeepWorkSessionEngine: ObservableObject {
             var taskMeta = taskAtom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
             taskMeta.totalFocusMinutes = (taskMeta.totalFocusMinutes ?? 0) + actualMinutes
             taskMeta.sessionCount = (taskMeta.sessionCount ?? 0) + 1
-            taskMeta.lastSessionAt = ISO8601DateFormatter().string(from: Date())
+            taskMeta.lastSessionAt = PlannerumFormatters.iso8601.string(from: Date())
 
             if let data = try? JSONEncoder().encode(taskMeta),
                let json = String(data: data, encoding: .utf8) {

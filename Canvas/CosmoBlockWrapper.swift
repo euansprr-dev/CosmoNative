@@ -140,13 +140,15 @@ struct CosmoBlockWrapper<Content: View>: View {
                     maxSize: CGSize(width: maxWidth, height: maxHeight)
                 )
             }
-            // PERF: Single shadow instead of 3 — reduces GPU shadow rendering cost
+            // PERF: Fixed shadow during drag — avoids GPU shadow recomputation per frame.
+            // Shadow params set once on drag start/end, not interpolated every frame.
             .shadow(
                 color: .black.opacity(isDragging ? 0.10 : (isSelected ? 0.06 : 0.04)),
                 radius: isDragging ? 20 : (isHovered ? 14 : 8),
                 x: 0,
                 y: isDragging ? 8 : (isHovered ? 4 : 2)
             )
+            .animation(isDragging ? nil : ProMotionSprings.hover, value: isDragging)
             // Per design language: card hover is depth change, not scale.
             .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
             .onTapGesture {

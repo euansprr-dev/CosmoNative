@@ -14,6 +14,7 @@ enum ClusterViewMode: String, Codable, CaseIterable, Sendable {
     case canvas   // Default — blocks float freely at canvas positions
     case list     // Compact scannable rows inside the cluster zone
     case board    // Kanban columns grouped by status/phase/type
+    case grid     // 4-column scrollable grid of compact block cells
 }
 
 /// Sort order for list mode rows

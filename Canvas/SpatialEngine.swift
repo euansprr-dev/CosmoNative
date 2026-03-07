@@ -213,6 +213,34 @@ class SpatialEngine: ObservableObject {
         }
     }
 
+    // MARK: - Move Block to Another Thinkspace
+    func moveBlockToThinkspace(_ blockId: String, newThinkspaceId: String, position: CGPoint) async {
+        // Remove from in-memory array (it belongs to the new thinkspace now)
+        withAnimation(.easeOut(duration: 0.15)) {
+            blocks.removeAll { $0.id == blockId }
+        }
+
+        // Update thinkspace_id and position in database
+        let db = database
+        Task.detached(priority: .background) {
+            do {
+                try await db.asyncWrite { database in
+                    try database.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET thinkspace_id = ?, position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        arguments: [newThinkspaceId, Int(position.x), Int(position.y), blockId]
+                    )
+                }
+                print("📦 Moved block \(blockId) to thinkspace \(newThinkspaceId)")
+            } catch {
+                print("❌ Failed to move block to thinkspace: \(error)")
+            }
+        }
+    }
+
     // MARK: - Remove Block
     func removeBlock(_ blockId: String) async {
         // Remove from memory FIRST (instant UI update)

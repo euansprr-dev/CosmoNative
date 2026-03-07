@@ -17,6 +17,7 @@ enum SidebarDestination: Equatable, Hashable {
 struct UnifiedSidebar: View {
     @Binding var currentDestination: SidebarDestination
     @ObservedObject var thinkspaceManager: ThinkspaceManager
+    @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
 
     @AppStorage("sidebarCollapsed") private var isCollapsed: Bool = false
     @State private var hoveredFooterItem: String?
@@ -76,6 +77,12 @@ struct UnifiedSidebar: View {
         }
         .clipped()
         .animation(ProMotionSprings.sidebar, value: isCollapsed)
+        .onChange(of: isCollapsed) { _, collapsed in
+            crossDragManager.sidebarWidth = collapsed ? collapsedWidth : expandedWidth
+        }
+        .onAppear {
+            crossDragManager.sidebarWidth = sidebarWidth
+        }
     }
 
     // MARK: - Header

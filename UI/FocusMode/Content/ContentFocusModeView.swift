@@ -25,6 +25,9 @@ struct ContentFocusModeView: View {
     @State private var editableTitle: String
     @StateObject private var writingEngine = UnifiedWritingEngine()
 
+    /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
+    @State private var localDraftContent: String = ""
+
     /// Tracks the last AI-generated draft content so we can detect user edits for lesson extraction
     @State private var lastAIGeneratedDraft: String?
 
@@ -190,6 +193,7 @@ struct ContentFocusModeView: View {
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .onAppear {
             viewModel.loadState()
+            localDraftContent = viewModel.state.draftContent
             viewModel.startObservingState()
             Task {
                 await viewModel.searchRelatedAtoms()
@@ -223,6 +227,8 @@ struct ContentFocusModeView: View {
             )
         }
         .onDisappear {
+            // Sync local draft to viewModel state before closing
+            viewModel.state.draftContent = localDraftContent
             // Sync engine conversation to state before saving (only when legacy AI Collaborator is active)
             if !cosmoWindowEnabled {
                 viewModel.state.conversationHistory = writingEngine.messages
@@ -236,6 +242,12 @@ struct ContentFocusModeView: View {
             // Capture AI-generated draft as the baseline for lesson extraction
             if let content = notification.userInfo?["content"] as? String, !content.isEmpty {
                 lastAIGeneratedDraft = content
+            }
+        }
+        .onChange(of: viewModel.state.draftContent) { _, newValue in
+            // Sync external draft updates (AI engine, tool executor) back to local state
+            if newValue != localDraftContent {
+                localDraftContent = newValue
             }
         }
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
@@ -290,7 +302,7 @@ struct ContentFocusModeView: View {
     private func extractLessonsIfEdited() {
         guard let previousDraft = lastAIGeneratedDraft,
               !previousDraft.isEmpty else { return }
-        let currentDraft = viewModel.state.draftContent
+        let currentDraft = localDraftContent
         guard !currentDraft.isEmpty, previousDraft != currentDraft else { return }
 
         // Resolve client UUID and content format from atom metadata
@@ -442,13 +454,13 @@ struct ContentFocusModeView: View {
                         .padding(.bottom, 24)
 
                         // AI Draft button — visible when draft is empty
-                        if viewModel.state.draftContent.isEmpty {
+                        if localDraftContent.isEmpty {
                             aiDraftButton
                         }
 
                         // Draft editor — NSTextView for selection tracking
                         DraftEditorTextView(
-                            text: $viewModel.state.draftContent,
+                            text: $localDraftContent,
                             contentHeight: $textContentHeight,
                             polishHighlights: isPolishModeActive ? polishAnalysis : nil,
                             onSelectionChanged: { info in
@@ -605,8 +617,8 @@ struct ContentFocusModeView: View {
                 .tracking(0.24)
 
             // Word count — selection-aware
-            if !viewModel.state.draftContent.isEmpty {
-                let textToCount = selectedText.isEmpty ? viewModel.state.draftContent : selectedText
+            if !localDraftContent.isEmpty {
+                let textToCount = selectedText.isEmpty ? localDraftContent : selectedText
                 let words = textToCount.split(whereSeparator: \.isWhitespace).count
                 Text("\(words) words")
                     .font(.system(size: 11, weight: .regular))
@@ -666,7 +678,7 @@ struct ContentFocusModeView: View {
     // MARK: - Polish Analysis
 
     private func updatePolishAnalysis() {
-        let text = viewModel.state.draftContent
+        let text = localDraftContent
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             polishAnalysis = nil
             return
@@ -1035,7 +1047,7 @@ struct ContentFocusModeView: View {
     }
 
     private func surroundingContext() -> String? {
-        let draft = viewModel.state.draftContent
+        let draft = localDraftContent
         guard draft.count > 200 else { return draft }
         let nsString = draft as NSString
         let selRange = selectionInfo.range
@@ -1054,14 +1066,14 @@ struct ContentFocusModeView: View {
         }
 
         if result.action == .continueWriting {
-            viewModel.state.draftContent = replacement
+            localDraftContent = replacement
         } else {
-            let nsString = viewModel.state.draftContent as NSString
+            let nsString = localDraftContent as NSString
             let range = selectionInfo.range
             if range.location + range.length <= nsString.length {
-                viewModel.state.draftContent = nsString.replacingCharacters(in: range, with: replacement)
+                localDraftContent = nsString.replacingCharacters(in: range, with: replacement)
             } else {
-                viewModel.state.draftContent = viewModel.state.draftContent.replacingOccurrences(
+                localDraftContent = localDraftContent.replacingOccurrences(
                     of: result.originalText, with: replacement
                 )
             }
@@ -1090,6 +1102,8 @@ struct ContentFocusModeView: View {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     withAnimation(ProMotionSprings.snappy) { saveState = .saving }
+                    // Sync local draft to viewModel state only at save time (avoids per-keystroke @Published churn)
+                    viewModel.state.draftContent = localDraftContent
                     viewModel.state.lastModified = Date()
                     viewModel.state.save()
                     withAnimation(ProMotionSprings.snappy) { saveState = .saved }
@@ -1146,8 +1160,8 @@ struct ContentFocusModeView: View {
             Spacer()
 
             // Word + character count pill — selection-aware
-            if !viewModel.state.draftContent.isEmpty {
-                let textToCount = selectedText.isEmpty ? viewModel.state.draftContent : selectedText
+            if !localDraftContent.isEmpty {
+                let textToCount = selectedText.isEmpty ? localDraftContent : selectedText
                 let words = textToCount.split(whereSeparator: \.isWhitespace).count
                 let chars = textToCount.count
                 Text("\(words) words · \(chars) chars")

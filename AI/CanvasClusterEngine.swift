@@ -445,12 +445,20 @@ class CanvasClusterEngine: ObservableObject {
                 return .init(minWidth: 360, minHeight: 280, maxWidth: 1100, maxHeight: 1200)
             case .board:
                 return .init(minWidth: 560, minHeight: 320, maxWidth: 1600, maxHeight: 1200)
+            case .grid:
+                return .init(minWidth: 600, minHeight: 400, maxWidth: 1600, maxHeight: 1200)
             }
         }()
 
         let memberCount = blocks.filter { cluster.blockUUIDs.contains($0.entityUuid) }.count
-        let baseHeight = mode == .board ? 320.0 : 280.0
-        let perItem = mode == .board ? 18.0 : 26.0
+        let baseHeight: Double
+        let perItem: Double
+        switch mode {
+        case .board:  baseHeight = 320; perItem = 18
+        case .grid:   baseHeight = 400; perItem = 50  // Full blocks scaled in 4-col grid
+        case .list:   baseHeight = 280; perItem = 26
+        case .canvas: baseHeight = 180; perItem = 0
+        }
         let adaptiveHeight = CGFloat(baseHeight + (Double(max(memberCount - 4, 0)) * perItem))
 
         var width = rect.width
@@ -498,7 +506,7 @@ class CanvasClusterEngine: ObservableObject {
                     taskMeta.status = canonical
                     if canonical == "completed" {
                         taskMeta.isCompleted = true
-                        taskMeta.completedAt = ISO8601DateFormatter().string(from: Date())
+                        taskMeta.completedAt = PlannerumFormatters.iso8601.string(from: Date())
                     } else {
                         taskMeta.isCompleted = false
                         taskMeta.completedAt = nil
@@ -871,7 +879,7 @@ class CanvasClusterEngine: ObservableObject {
                     taskMeta.status = canonical
                     taskMeta.isCompleted = canonical == "completed"
                     taskMeta.completedAt = canonical == "completed"
-                        ? ISO8601DateFormatter().string(from: Date())
+                        ? PlannerumFormatters.iso8601.string(from: Date())
                         : nil
                     atom = atom.withMetadata(taskMeta)
 

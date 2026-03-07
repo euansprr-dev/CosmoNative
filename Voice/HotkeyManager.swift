@@ -68,6 +68,14 @@ final class HotkeyManager {
         displayName: "⌘⇧C"
     )
 
+    // MARK: - Cosmo Window Hotkey (Option+A)
+    private var cosmoWindowCallback: (() -> Void)?
+    private let cosmoWindowHotkey = HotkeyConfig(
+        keyCode: 0,  // 'A' key
+        modifiers: CGEventFlags.maskAlternate.rawValue,
+        displayName: "⌥A"
+    )
+
     /// Whether the hotkey was successfully registered (for UI feedback)
     @Published var isRegistered = false
 
@@ -107,6 +115,14 @@ final class HotkeyManager {
     func registerCommandBarTypingHotkey(onTrigger: @escaping () -> Void) {
         self.commandBarTypingCallback = onTrigger
         print("⌨️ Command Bar Typing hotkey (⌥C) callback registered")
+    }
+
+    // MARK: - Cosmo Window Hotkey Registration (Option+A)
+
+    /// Register callback for Option+A to toggle the system-wide Cosmo Window
+    func registerCosmoWindowHotkey(onTrigger: @escaping () -> Void) {
+        self.cosmoWindowCallback = onTrigger
+        print("🪟 Cosmo Window hotkey (⌥A) callback registered")
     }
 
     // MARK: - Persistence
@@ -273,6 +289,27 @@ final class HotkeyManager {
             }
         }
 
+        // MARK: Check for Cosmo Window hotkey (Option+A)
+        // No isInTextField() guard — Option+A should always toggle the panel,
+        // including when the panel's own text field is focused (to close it)
+        // and when other apps are focused (to open it system-wide)
+        if type == .keyDown && keyCode == cosmoWindowHotkey.keyCode {
+            let cosmoMods = cosmoWindowHotkey.modifierFlags
+            let hasCosmoMods = flags.contains(cosmoMods)
+
+            // Ensure only Option is pressed (not Cmd, Shift, or Ctrl)
+            let hasOnlyCosmoMods = hasCosmoMods &&
+                !flags.contains(.maskCommand) &&
+                !flags.contains(.maskShift) &&
+                !flags.contains(.maskControl)
+
+            if hasOnlyCosmoMods {
+                print("🪟 Cosmo Window hotkey triggered (⌥A)")
+                cosmoWindowCallback?()
+                return nil // Consume event
+            }
+        }
+
         // Verbose logging for debugging hotkey issues
         if verboseLogging {
             let typeStr: String
@@ -422,9 +459,10 @@ final class HotkeyManager {
 
     // MARK: - Permissions
     private func checkAccessibilityPermission() -> Bool {
-        // Check without prompting first (non-intrusive)
-        let trusted = AXIsProcessTrusted()
-        return trusted
+        // Prompt the user to grant Accessibility permission if not already granted
+        let promptKey = "AXTrustedCheckOptionPrompt" as CFString
+        let options = [promptKey: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     nonisolated func requestAccessibilityPermission() {

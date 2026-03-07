@@ -3,6 +3,7 @@
 // Shows all atoms as browsable cards, smart collections, and folder navigation
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - LibraryTab
 
@@ -19,6 +20,7 @@ struct LibraryTab: View {
     @State private var clientLinkedUUIDs: Set<String> = []
     @State private var showResearchURLInput = false
     @State private var researchURLText = ""
+    @State private var showImageImporter = false
     @StateObject private var incubationEngine = IncubationEngine.shared
 
     // MARK: - Filtered Items (Search-Library Bridge)
@@ -185,6 +187,18 @@ struct LibraryTab: View {
 
             // Sort dropdown
             sortDropdown
+
+            filterSeparator
+
+            // Import image button
+            Button {
+                importImageFromFinder()
+            } label: {
+                Label("Import Image", systemImage: "photo.badge.plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
 
             Spacer()
         }
@@ -384,6 +398,14 @@ struct LibraryTab: View {
             showResearchURLInput = true
         } label: {
             Label("New Research", systemImage: "book.fill")
+        }
+
+        Divider()
+
+        Button {
+            importImageFromFinder()
+        } label: {
+            Label("Import Image", systemImage: "photo.badge.plus")
         }
     }
 
@@ -894,6 +916,50 @@ struct LibraryTab: View {
         }
         withAnimation(ProMotionSprings.snappy) {
             viewModel.clearSelection()
+        }
+    }
+
+    // MARK: - Import Image from Finder
+
+    private func importImageFromFinder() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Select images to import"
+
+        guard panel.runModal() == .OK else { return }
+
+        Task {
+            for url in panel.urls {
+                guard let data = try? Data(contentsOf: url) else { continue }
+                do {
+                    let result = try ImageStore.save(data, originalFilename: url.lastPathComponent)
+                    let imageMeta = ImageMetadata(
+                        imagePath: result.path,
+                        originalFilename: url.lastPathComponent,
+                        width: result.width,
+                        height: result.height,
+                        fileSize: data.count
+                    )
+                    let metadataJson = try? JSONEncoder().encode(imageMeta)
+                    let metadataString = metadataJson.flatMap { String(data: $0, encoding: .utf8) }
+                    let atom = Atom.new(
+                        type: .image,
+                        title: url.deletingPathExtension().lastPathComponent,
+                        body: result.path,
+                        metadata: metadataString
+                    )
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        var mutableAtom = atom
+                        try mutableAtom.insert(db)
+                    }
+                } catch {
+                    print("⚠️ [LibraryTab] Failed to import image: \(error)")
+                }
+            }
+            libraryViewModel.forceReload()
+            await libraryViewModel.loadLibrary()
         }
     }
 

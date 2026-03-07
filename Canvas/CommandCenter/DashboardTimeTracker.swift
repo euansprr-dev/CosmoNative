@@ -91,10 +91,12 @@ struct DashboardTimeTracker: View {
             }
 
             HStack(spacing: 12) {
-                // Timer display — large monospaced
-                Text(formattedElapsedTime)
-                    .font(.system(size: 28, weight: .light, design: .monospaced))
-                    .foregroundColor(DS.text)
+                // Timer display — updates every second via TimelineView (doesn't trigger parent re-renders)
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(formattedElapsedTime)
+                        .font(.system(size: 28, weight: .light, design: .monospaced))
+                        .foregroundColor(DS.text)
+                }
 
                 Spacer()
 
@@ -275,10 +277,18 @@ struct DashboardTimeTracker: View {
 
     private var addPresetForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("", text: $newPresetTitle, prompt: Text("Timer name...").foregroundColor(DS.textMuted))
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
+            ZStack(alignment: .leading) {
+                if newPresetTitle.isEmpty {
+                    Text("Timer name...")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "767685"))
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $newPresetTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color(hex: "1A1A1F"))
+            }
 
             HStack(spacing: 6) {
                 // Intent picker (compact)
@@ -295,21 +305,43 @@ struct DashboardTimeTracker: View {
                         Image(systemName: newPresetIntent.iconName)
                             .font(.system(size: 9))
                         Text(newPresetIntent.displayName)
-                            .font(.system(size: 10))
+                            .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(newPresetIntent.color)
+                    .foregroundColor(DS.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(newPresetIntent.color.opacity(0.1), in: Capsule())
+                    .background(newPresetIntent.color.opacity(0.15), in: Capsule())
                 }
 
-                // Duration stepper
-                Stepper(value: $newPresetMinutes, in: 5...240, step: 15) {
+                // Duration — manual buttons instead of Stepper for better styling control
+                HStack(spacing: 4) {
+                    Button {
+                        newPresetMinutes = max(5, newPresetMinutes - 15)
+                    } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(DS.textSecondary)
+                            .frame(width: 22, height: 22)
+                            .background(DS.surfaceHover, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
                     Text("\(newPresetMinutes)m")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.text)
+                        .frame(width: 36)
+
+                    Button {
+                        newPresetMinutes = min(240, newPresetMinutes + 15)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(DS.textSecondary)
+                            .frame(width: 22, height: 22)
+                            .background(DS.surfaceHover, in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .frame(width: 120)
 
                 Spacer()
 
@@ -321,13 +353,16 @@ struct DashboardTimeTracker: View {
                     newPresetIntent = .general
                     showAddPreset = false
                 }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.accent)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(DS.accent, in: RoundedRectangle(cornerRadius: 6))
                 .buttonStyle(.plain)
             }
         }
         .padding(10)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DS.borderSubtle, lineWidth: 1)
@@ -344,7 +379,14 @@ struct DashboardTimeTracker: View {
     }
 
     private var formattedElapsedTime: String {
-        let totalSeconds = viewModel.sessionEngine.elapsedSeconds
+        // Use session's live elapsed time (computed from Date()) instead of @Published elapsedSeconds
+        // This avoids triggering ViewModel re-renders — TimelineView handles per-second updates
+        let totalSeconds: Int
+        if let session = viewModel.sessionEngine.activeSession {
+            totalSeconds = Int(session.elapsedActiveSeconds)
+        } else {
+            totalSeconds = 0
+        }
         let hours = totalSeconds / 3600
         let mins = (totalSeconds % 3600) / 60
         let secs = totalSeconds % 60

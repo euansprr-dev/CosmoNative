@@ -330,7 +330,7 @@ public final class PlannerumViewModel: ObservableObject {
             // Update metadata
             var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
             metadata.isCompleted = true
-            metadata.completedAt = ISO8601DateFormatter().string(from: Date())
+            metadata.completedAt = PlannerumFormatters.iso8601.string(from: Date())
 
             if let data = try? JSONEncoder().encode(metadata),
                let json = String(data: data, encoding: .utf8) {
@@ -390,7 +390,7 @@ public final class PlannerumViewModel: ObservableObject {
 
             var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
             metadata.skipCount = (metadata.skipCount ?? 0) + 1
-            metadata.lastScheduledAt = ISO8601DateFormatter().string(from: Date())
+            metadata.lastScheduledAt = PlannerumFormatters.iso8601.string(from: Date())
 
             if let data = try? JSONEncoder().encode(metadata),
                let json = String(data: data, encoding: .utf8) {
@@ -639,8 +639,9 @@ public final class PlannerumViewModel: ObservableObject {
         var metadata = TaskMetadata(
             priority: priority.rawValue,
             isCompleted: false,
-            focusDate: ISO8601DateFormatter().string(from: Date())
+            focusDate: PlannerumFormatters.iso8601.string(from: Date())
         )
+        metadata.dueDate = PlannerumFormatters.iso8601.string(from: Date())
         metadata.intent = intent.rawValue
         metadata.linkedIdeaUUID = linkedIdeaUUID
         metadata.linkedContentUUID = linkedContentUUID

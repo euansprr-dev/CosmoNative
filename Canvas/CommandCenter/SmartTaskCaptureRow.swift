@@ -20,17 +20,25 @@ struct SmartTaskCaptureRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isFocused ? DS.accent : DS.textMuted)
 
-                TextField("", text: $viewModel.newTaskTitle, prompt: Text("Add task... (try \"Write reels p1 tomorrow 2pm 45m\")").foregroundColor(DS.textMuted))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.text)
-                    .focused($isFocused)
-                    .onSubmit {
-                        Task { await submitTask() }
+                ZStack(alignment: .leading) {
+                    if viewModel.newTaskTitle.isEmpty {
+                        Text("Add task... (try \"Write reels p1 tomorrow 2pm 45m\")")
+                            .font(.system(size: 13))
+                            .foregroundColor(Color(hex: "767685"))
+                            .allowsHitTesting(false)
                     }
-                    .onChange(of: viewModel.newTaskTitle) { _, newValue in
-                        debounceParseInput(newValue)
-                    }
+                    TextField("", text: $viewModel.newTaskTitle)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .foregroundColor(Color(hex: "1A1A1F"))
+                        .focused($isFocused)
+                        .onSubmit {
+                            Task { await submitTask() }
+                        }
+                        .onChange(of: viewModel.newTaskTitle) { _, newValue in
+                            debounceParseInput(newValue)
+                        }
+                }
 
                 if !viewModel.newTaskTitle.isEmpty {
                     Button {
@@ -165,6 +173,11 @@ struct SmartTaskCaptureRow: View {
 
         // Create task with parsed metadata
         await viewModel.smartAddTask(parsed)
+
+        // Re-focus the text field for rapid entry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isFocused = true
+        }
     }
 
     private func cyclePriority(from current: TaskPriority) -> TaskPriority {

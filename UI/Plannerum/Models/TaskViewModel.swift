@@ -83,10 +83,10 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         return Calendar.current.isDateInToday(due)
     }
 
-    /// Whether the task is overdue
+    /// Whether the task is overdue (compares at day level — a task due today is NOT overdue)
     public var isOverdue: Bool {
         guard let due = dueDate, !isCompleted else { return false }
-        return due < Date()
+        return due < Calendar.current.startOfDay(for: Date())
     }
 
     /// Whether the task is due tomorrow

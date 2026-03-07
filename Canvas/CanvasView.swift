@@ -3,6 +3,7 @@
 
 import SwiftUI
 import GRDB
+import UniformTypeIdentifiers
 
 struct CanvasView: View {
     /// The thinkspace ID this canvas displays — passed directly to avoid race conditions
@@ -16,6 +17,7 @@ struct CanvasView: View {
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
+    @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
 
     @State private var canvasSize: CGSize = .zero
     @State private var selectedBlockId: String?
@@ -37,6 +39,10 @@ struct CanvasView: View {
     @State private var blockDragOffsets: [String: CGSize] = [:]
     @State private var draggingBlockId: String? = nil
 
+    // PERFORMANCE: Dedicated cluster drag state — avoids N writes to blockDragOffsets per frame,
+    // preventing connection line recomputation and linear search cascades during drag.
+    @State private var clusterDragTranslation: CGSize = .zero
+
     // Inbox blocks state
     @State private var inboxBlocks: [InboxViewBlock] = []
 
@@ -54,6 +60,10 @@ struct CanvasView: View {
 
     // PERF: Debounced frame tracker update — only needed for right-click hit testing
     @State private var frameUpdateTask: Task<Void, Never>?
+
+    // PERF: Cached consumed UUIDs set — avoids iterating all clusters on every render pass.
+    // Only the set is cached; ForEach still reads live blocks from spatialEngine so selection/drag state propagates.
+    @State private var cachedConsumedUUIDs: Set<String> = []
 
     // Ambient knowledge panel
     @StateObject private var ambientEngine = AmbientFieldEngine()
@@ -122,7 +132,7 @@ struct CanvasView: View {
                         dropTargetClusterId: clusterEngine.dropTargetClusterId,
                         selectedClusterId: clusterEngine.selectedClusterId,
                         resizingClusterId: clusterEngine.resizingClusterId,
-                        clusterDragOffset: clusterDragOffsetForLayer(),
+                        clusterDragOffset: draggingClusterId != nil ? clusterDragTranslation : nil,
                         onRenameCluster: { id, newName in
                             clusterEngine.renameUserCluster(id: id, to: newName)
                         },
@@ -149,6 +159,7 @@ struct CanvasView: View {
                         },
                         onChangeViewMode: { id, mode in
                             clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
+                            recomputeFilteredBlocks()
                         },
                         onChangeBoardGrouping: { id, grouping in
                             clusterEngine.setBoardGrouping(for: id, grouping: grouping)
@@ -311,6 +322,7 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
+                recomputeFilteredBlocks()
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate(screenCenter: screenCenter)
@@ -427,8 +439,8 @@ struct CanvasView: View {
                 )
                     .ignoresSafeArea()
 
-                // Layer 4: Film grain overlay
-                ThinkspaceFilmGrain()
+                // Layer 4: Film grain overlay — static pre-rendered texture (zero per-frame cost)
+                FilmGrainOverlay(opacity: 0.025)
                     .ignoresSafeArea()
             }
             .drawingGroup() // GPU-accelerate visual background (no interactive elements)
@@ -438,10 +450,71 @@ struct CanvasView: View {
         }
     }
 
+    private func blockDragOffset(for block: CanvasBlock) -> CGSize {
+        if draggingClusterMemberUUIDs.contains(block.entityUuid) {
+            return clusterDragTranslation
+        }
+        return blockDragOffsets[block.id] ?? .zero
+    }
+
     private var blocksLayer: some View {
-        let consumed = clusterConsumedBlockUUIDs
-        return ForEach(spatialEngine.blocks.filter { !consumed.contains($0.entityUuid) }, id: \.id) { block in
-            blockView(for: block)
+        ForEach(spatialEngine.blocks.filter { !cachedConsumedUUIDs.contains($0.entityUuid) }, id: \.id) { block in
+            CanvasBlockContainer(
+                block: block,
+                canvasOffset: canvasOffset,
+                scaledPanOffset: scaledPanOffset,
+                dragOffset: blockDragOffset(for: block),
+                isDragTarget: draggingBlockId == block.id,
+                isMediaContent: mediaContentBlockIds.contains(block.id),
+                isHeartbeating: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid),
+                isClusterMember: selectedClusterMemberUUIDs.contains(block.entityUuid),
+                isDraggingClusterMember: draggingClusterMemberUUIDs.contains(block.entityUuid),
+                heatmapOpacity: heatmapOpacity(for: block),
+                expansionOpacity: expansionManager.opacity(for: block.id),
+                expansionZIndex: expansionManager.zIndex(for: block.id),
+                isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
+                onDragChanged: { translation in
+                    if NSEvent.modifierFlags.contains(.option) {
+                        let blockCanvasX = block.position.x + canvasOffset.width + scaledPanOffset.width
+                        let blockCanvasY = block.position.y + canvasOffset.height + scaledPanOffset.height
+                        if !connectManager.isActive {
+                            connectManager.beginConnection(from: block, center: CGPoint(x: blockCanvasX, y: blockCanvasY))
+                        }
+                        connectManager.updateDrag(to: CGPoint(
+                            x: blockCanvasX + translation.width,
+                            y: blockCanvasY + translation.height
+                        ))
+                        connectManager.checkTarget(
+                            blocks: spatialEngine.blocks,
+                            canvasOffset: canvasOffset,
+                            scaledPanOffset: scaledPanOffset
+                        )
+                    } else {
+                        handleDragOptimized(blockId: block.id, translation: translation)
+                    }
+                },
+                onDragEnded: { translation in
+                    if connectManager.isActive {
+                        if let targetId = connectManager.hoveredTargetBlockId,
+                           let targetBlock = spatialEngine.blocks.first(where: { $0.id == targetId }) {
+                            connectManager.completeConnection(targetBlock: targetBlock)
+                        } else {
+                            connectManager.cancel()
+                        }
+                    } else {
+                        handleDragEndOptimized(blockId: block.id, translation: translation)
+                    }
+                },
+                onDoubleTap: {
+                    if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
+                        NotificationCenter.default.post(
+                            name: .enterFocusMode,
+                            object: nil,
+                            userInfo: ["type": block.entityType, "id": block.entityId]
+                        )
+                    }
+                }
+            )
         }
     }
 
@@ -461,119 +534,13 @@ struct CanvasView: View {
         return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
     }
 
-    @ViewBuilder
-    private func blockView(for block: CanvasBlock) -> some View {
-        Group {
-            switch block.entityType {
-            case .cosmoAI:
-                CosmoAIBlockView(block: block)
-            case .note:
-                NoteBlockView(block: block)
-            case .calendar:
-                CalendarWindowView(block: block)
-            case .research:
-                // PERF: Use cached set instead of string operations per render
-                if mediaContentBlockIds.contains(block.id) {
-                    MediaBlockView(block: block)
-                } else {
-                    ResearchBlockView(block: block)
-                }
-            case .connection:
-                ConnectionBlockView(block: block)
-            case .idea:
-                IdeaBlockView(block: block)
-            case .content:
-                ContentBlockView(block: block)
-            case .task:
-                TaskBlockView(block: block)
-            default:
-                FloatingBlockView(block: block)
-            }
-        }
-        .expansionAware(blockId: block.id)
-        // Incubation heartbeat: gentle breathing for blocks due for review
-        .heartbeatAnimation(isActive: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid))
-        // Position in canvas space (zoom is applied to container)
-        .position(
-            x: block.position.x + canvasOffset.width + scaledPanOffset.width + (blockDragOffsets[block.id]?.width ?? 0),
-            y: block.position.y + canvasOffset.height + scaledPanOffset.height + (blockDragOffsets[block.id]?.height ?? 0)
-        )
-        // Block's own scale only (zoom is applied to container)
-        .scaleEffect(block.scale)
-        .rotationEffect(.degrees(block.rotation))
-        .opacity(block.opacity * expansionManager.opacity(for: block.id) * heatmapOpacity(for: block))
-        .zIndex(draggingBlockId == block.id ? 1000 : (expansionManager.zIndex(for: block.id) + Double(block.zIndex)))
-        .allowsHitTesting(!selectedClusterMemberUUIDs.contains(block.entityUuid))
-        .gesture(
-            DragGesture(minimumDistance: 2) // Small threshold to avoid accidental drags
-                .onChanged { gesture in
-                    if NSEvent.modifierFlags.contains(.option) {
-                        // Option+drag: connection mode (canvas coordinates — overlay is inside scaleEffect)
-                        let blockCanvasX = block.position.x + canvasOffset.width + scaledPanOffset.width
-                        let blockCanvasY = block.position.y + canvasOffset.height + scaledPanOffset.height
-                        if !connectManager.isActive {
-                            connectManager.beginConnection(from: block, center: CGPoint(x: blockCanvasX, y: blockCanvasY))
-                        }
-                        // gesture.translation is in the block's local space (canvas coordinates)
-                        connectManager.updateDrag(to: CGPoint(
-                            x: blockCanvasX + gesture.translation.width,
-                            y: blockCanvasY + gesture.translation.height
-                        ))
-                        connectManager.checkTarget(
-                            blocks: spatialEngine.blocks,
-                            canvasOffset: canvasOffset,
-                            scaledPanOffset: scaledPanOffset
-                        )
-                    } else {
-                        // Normal drag: move block
-                        handleDragOptimized(blockId: block.id, translation: gesture.translation)
-                    }
-                }
-                .onEnded { gesture in
-                    if connectManager.isActive {
-                        // Complete or cancel connection
-                        if let targetId = connectManager.hoveredTargetBlockId,
-                           let targetBlock = spatialEngine.blocks.first(where: { $0.id == targetId }) {
-                            connectManager.completeConnection(targetBlock: targetBlock)
-                        } else {
-                            connectManager.cancel()
-                        }
-                    } else {
-                        handleDragEndOptimized(blockId: block.id, translation: gesture.translation)
-                    }
-                }
-        )
-        // NOTE: Single tap is handled by CosmoBlockWrapper via notification
-        // Double tap for focus mode (only for entity types that support it)
-        .onTapGesture(count: 2) {
-            if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
-                NotificationCenter.default.post(
-                    name: .enterFocusMode,
-                    object: nil,
-                    userInfo: ["type": block.entityType, "id": block.entityId]
-                )
-            }
-        }
-        .transition(.asymmetric(
-            insertion: .scale(scale: 0.8).combined(with: .opacity),
-            removal: .scale(scale: 0.95).combined(with: .opacity)
-        ))
-        .transaction { tx in
-            if draggingClusterMemberUUIDs.contains(block.entityUuid) {
-                tx.animation = nil
-            }
-        }
-    }
+    // blockView(for:) has been extracted into CanvasBlockContainer (see bottom of file)
+    // for Equatable-based SwiftUI diffing — only changed blocks re-render.
 
-    /// Derive the cluster zone's drag offset from member block offsets (all members share the same translation)
-    private func clusterDragOffsetForLayer() -> CGSize? {
-        guard draggingClusterId != nil else { return nil }
-        for block in spatialEngine.blocks where draggingClusterMemberUUIDs.contains(block.entityUuid) {
-            if let offset = blockDragOffsets[block.id] {
-                return offset
-            }
-        }
-        return nil
+    /// PERF: Recompute cached consumed UUIDs — only when cluster membership changes.
+    /// The set lookup in ForEach is O(1) per block; caching avoids re-iterating all clusters per frame.
+    private func recomputeFilteredBlocks() {
+        cachedConsumedUUIDs = clusterConsumedBlockUUIDs
     }
 
     /// PERF: Rebuild the media content cache when blocks change
@@ -595,13 +562,11 @@ struct CanvasView: View {
             .contentShape(Rectangle())
             .allowsHitTesting(drawingState.toolMode == .select)
             .onTapGesture {
-                // Clear selection when tapping background (blur active blocks)
-                // CRITICAL: Batch update to avoid multiple @Published notifications
-                var updatedBlocks = spatialEngine.blocks
-                for index in updatedBlocks.indices {
-                    updatedBlocks[index].isSelected = false
+                // Only deselect the previously selected block (not the whole array)
+                if let prevId = selectedBlockId,
+                   let prevIndex = spatialEngine.blocks.firstIndex(where: { $0.id == prevId }) {
+                    spatialEngine.blocks[prevIndex].isSelected = false
                 }
-                spatialEngine.blocks = updatedBlocks
                 selectedBlockId = nil
                 clusterEngine.selectCluster(nil)
                 drawingState.clearSelection()
@@ -686,6 +651,7 @@ struct CanvasView: View {
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
                     rebuildMediaContentCache()
+                    recomputeFilteredBlocks()
 
                     // Restore persisted zoom/pan for current thinkspace
                     if let tsId = thinkspaceId,
@@ -1124,6 +1090,25 @@ struct CanvasView: View {
                                 await incubationEngine.recordInteraction(uuid: block.entityUuid)
                             }
                         }
+                    }
+                }
+
+                // Listen for cross-thinkspace block drop (block moved from another thinkspace)
+                NotificationCenter.default.addObserver(
+                    forName: CosmoNotification.Canvas.crossThinkspaceDropBlock,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        guard let targetThinkspaceId = notification.userInfo?["thinkspaceId"] as? String,
+                              targetThinkspaceId == thinkspaceId,
+                              let entityUuid = notification.userInfo?["entityUuid"] as? String else { return }
+
+                        // Reload blocks to pick up the transferred block
+                        await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                        rebuildMediaContentCache()
+                        recomputeFilteredBlocks()
                     }
                 }
 
@@ -1747,10 +1732,15 @@ struct CanvasView: View {
     // MARK: - Zoom/Pan Persistence
 
     private func debouncedSaveZoomPan() {
-        zoomPanSaveTask?.cancel()
+        // PERF: Skip Task allocation if a save is already pending — the trailing-edge
+        // debounce will capture the latest values when it fires.
+        if let existing = zoomPanSaveTask, !existing.isCancelled {
+            return
+        }
         zoomPanSaveTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.0))
             guard !Task.isCancelled else { return }
+            zoomPanSaveTask = nil
             let blockIds = spatialEngine.blocks.map(\.id)
             await thinkspaceManager.saveCurrentState(
                 zoomLevel: Double(canvasScale),
@@ -1973,6 +1963,11 @@ struct CanvasView: View {
             clusterEngine.selectCluster(nil)
         }
 
+        // Cross-thinkspace drag detection: check if cursor is over the sidebar
+        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            checkCrossThinkspaceDrag(block: block, translation: translation)
+        }
+
         // Check if dragged block is near a cluster zone (for drop highlight)
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
             let draggedPosition = CGPoint(
@@ -1983,19 +1978,72 @@ struct CanvasView: View {
         }
     }
 
+    /// Detect when a dragged block enters the sidebar zone for cross-thinkspace transfer
+    private func checkCrossThinkspaceDrag(block: CanvasBlock, translation: CGSize) {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+
+        // Convert screen coords to window coords
+        let windowPoint = window.convertPoint(fromScreen: mouseLocation)
+        let sidebarWidth = crossDragManager.sidebarWidth
+
+        if windowPoint.x < sidebarWidth {
+            // Cursor is over the sidebar
+            if !crossDragManager.isDragging {
+                crossDragManager.beginDrag(block: block, sourceThinkspaceId: thinkspaceId)
+            }
+            crossDragManager.enterSidebar()
+
+            // Update cursor position (flip Y for SwiftUI coords)
+            let flippedY = window.frame.height - windowPoint.y
+            crossDragManager.updateCursorPosition(CGPoint(x: windowPoint.x, y: flippedY))
+        } else if crossDragManager.isOverSidebar {
+            // Cursor left the sidebar, return to normal canvas drag
+            crossDragManager.exitSidebar()
+        } else if !crossDragManager.isDragging {
+            // Start tracking even when not over sidebar (so we have block info ready)
+            crossDragManager.beginDrag(block: block, sourceThinkspaceId: thinkspaceId)
+        }
+    }
+
     /// Optimized drag end - commits position to @Published array and database
     private func handleDragEndOptimized(blockId: String, translation: CGSize) {
+        // Cross-thinkspace drag: if block is over sidebar, handle transfer instead of normal drop
+        if crossDragManager.isDragging && crossDragManager.isOverSidebar {
+            blockDragOffsets.removeValue(forKey: blockId)
+            draggingBlockId = nil
+            // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
+            let mouseLocation = NSEvent.mouseLocation
+            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                let windowPoint = window.convertPoint(fromScreen: mouseLocation)
+                let flippedY = window.frame.height - windowPoint.y
+                crossDragManager.completeDrop(screenPosition: CGPoint(x: windowPoint.x, y: flippedY))
+            }
+            return
+        }
+
+        // If cross drag was active but cursor is back on canvas, just cancel it
+        if crossDragManager.isDragging {
+            crossDragManager.cancel()
+        }
+
         // Gesture translation is already in canvas space (scaleEffect transforms the
         // gesture coordinate space), so use it directly without dividing by effectiveScale.
 
-        // Commit final position to the @Published array (triggers one re-render)
+        // PERF: Batch all state mutations into a single transaction so SwiftUI
+        // coalesces them into one render pass instead of three separate evaluations.
+        var oldPosition: CGPoint = .zero
+        var newPosition: CGPoint = .zero
         if let index = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
-            let oldPosition = spatialEngine.blocks[index].position
-            let newPosition = CGPoint(
+            oldPosition = spatialEngine.blocks[index].position
+            newPosition = CGPoint(
                 x: oldPosition.x + translation.width,
                 y: oldPosition.y + translation.height
             )
+            // Batch: commit position + clear drag state in one pass
             spatialEngine.blocks[index].position = newPosition
+            blockDragOffsets.removeValue(forKey: blockId)
+            draggingBlockId = nil
 
             // Fire-and-forget position save to database
             spatialEngine.updateBlockPosition(blockId, position: newPosition)
@@ -2006,11 +2054,11 @@ struct CanvasView: View {
                     MoveBlockAction(blockId: blockId, oldPosition: oldPosition, newPosition: newPosition, spatialEngine: spatialEngine)
                 )
             }
+        } else {
+            // Block not found — still clear drag state
+            blockDragOffsets.removeValue(forKey: blockId)
+            draggingBlockId = nil
         }
-
-        // Clear local drag state
-        blockDragOffsets.removeValue(forKey: blockId)
-        draggingBlockId = nil
 
         // Update frame tracker after position change
         let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
@@ -2065,11 +2113,13 @@ struct CanvasView: View {
 
         // Recompute bounds so the zone visually expands to include the new block
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        // Recompute filtered blocks since cluster membership affects which blocks are visible
+        recomputeFilteredBlocks()
     }
 
     // MARK: - Cluster Drag Handlers
 
-    /// Handle live cluster drag — writes per-block offsets into blockDragOffsets for smooth movement
+    /// Handle live cluster drag — single state write instead of N per-block writes
     private func handleClusterDrag(clusterId: UUID, translation: CGSize) {
         // Don't drag while a resize gesture is active (handles fire both)
         guard clusterEngine.resizingClusterId == nil else { return }
@@ -2078,10 +2128,7 @@ struct CanvasView: View {
             draggingClusterId = clusterId
             draggingClusterMemberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
         }
-        // Write offsets into the per-block dictionary so only member blocks re-evaluate
-        for block in spatialEngine.blocks where draggingClusterMemberUUIDs.contains(block.entityUuid) {
-            blockDragOffsets[block.id] = translation
-        }
+        clusterDragTranslation = translation
     }
 
     /// Commit cluster drag — move all member blocks to their new positions
@@ -2096,7 +2143,7 @@ struct CanvasView: View {
             return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
         }()
 
-        // Commit final positions and clear per-block drag offsets
+        // Commit final positions
         for index in spatialEngine.blocks.indices {
             let block = spatialEngine.blocks[index]
             guard memberUUIDs.contains(block.entityUuid) else { continue }
@@ -2107,7 +2154,6 @@ struct CanvasView: View {
             )
             spatialEngine.blocks[index].position = newPosition
             spatialEngine.updateBlockPosition(block.id, position: newPosition)
-            blockDragOffsets.removeValue(forKey: block.id)
         }
 
         // Move the cluster zone rect itself. This prevents list/board clusters from snapping
@@ -2115,6 +2161,7 @@ struct CanvasView: View {
         clusterEngine.offsetClusterRect(id: clusterId, by: translation)
 
         // Clear cluster drag state
+        clusterDragTranslation = .zero
         draggingClusterId = nil
         draggingClusterMemberUUIDs = []
 
@@ -2122,17 +2169,9 @@ struct CanvasView: View {
         clusterEngine.persistAfterMove()
     }
 
-    /// Clears any live drag preview offsets for a specific cluster and its member blocks.
+    /// Clears any live drag preview offsets for a specific cluster.
     private func clearClusterDragPreview(clusterId: UUID) {
-        let memberUUIDs: Set<String>
-        if draggingClusterId == clusterId, !draggingClusterMemberUUIDs.isEmpty {
-            memberUUIDs = draggingClusterMemberUUIDs
-        } else {
-            memberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
-        }
-        for block in spatialEngine.blocks where memberUUIDs.contains(block.entityUuid) {
-            blockDragOffsets.removeValue(forKey: block.id)
-        }
+        clusterDragTranslation = .zero
         if draggingClusterId == clusterId {
             draggingClusterId = nil
             draggingClusterMemberUUIDs = []
@@ -2151,21 +2190,24 @@ struct CanvasView: View {
     }
 
     private func handleTap(blockId: String) {
-        // CRITICAL FIX: Batch the selection update to avoid multiple @Published notifications
-        // which can cause race conditions in Swift's type metadata system
-
-        // 1. Create updated blocks array in one operation
-        var updatedBlocks = spatialEngine.blocks
-        for index in updatedBlocks.indices {
-            updatedBlocks[index].isSelected = (updatedBlocks[index].id == blockId)
-        }
-
-        // 2. Single atomic assignment triggers only ONE objectWillChange
-        spatialEngine.blocks = updatedBlocks
+        // Only mutate the two blocks that actually changed (old selection + new selection)
+        // to avoid copying/reassigning the entire blocks array and triggering a full canvas re-render.
+        let previousId = selectedBlockId
         selectedBlockId = blockId
 
-        // 3. Update ambient knowledge context if panel is visible
-        if showAmbientPanel, let block = updatedBlocks.first(where: { $0.id == blockId }) {
+        // Deselect previous
+        if let prevId = previousId, prevId != blockId,
+           let prevIndex = spatialEngine.blocks.firstIndex(where: { $0.id == prevId }) {
+            spatialEngine.blocks[prevIndex].isSelected = false
+        }
+
+        // Select new
+        if let newIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
+            spatialEngine.blocks[newIndex].isSelected = true
+        }
+
+        // Update ambient knowledge context if panel is visible
+        if showAmbientPanel, let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
             let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
         }
@@ -3004,12 +3046,31 @@ struct CanvasView: View {
         print("🆕 Created \(entityType) floating block for entity ID \(entityId)")
     }
 
-    // MARK: - Cmd+V Paste URL to Canvas
+    // MARK: - Cmd+V Paste to Canvas (Images + URLs)
 
-    /// Handles Cmd+V paste: reads clipboard, classifies URL, creates atom + block, triggers background processing
+    /// Handles Cmd+V paste: checks for image data first, then falls back to URL classification
     private func handleCanvasPaste() async {
-        // Read clipboard
-        guard let clipboardString = NSPasteboard.general.string(forType: .string)?
+        // Check for image data on clipboard first
+        let pasteboard = NSPasteboard.general
+
+        // Try image data (screenshots, copied images)
+        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            await handleImagePaste(data: imageData, originalFilename: nil)
+            return
+        }
+
+        // Try file URL (copied image file from Finder)
+        if let fileURLData = pasteboard.data(forType: .fileURL),
+           let fileURL = URL(dataRepresentation: fileURLData, relativeTo: nil),
+           let uti = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
+           uti.conforms(to: .image),
+           let data = try? Data(contentsOf: fileURL) {
+            await handleImagePaste(data: data, originalFilename: fileURL.lastPathComponent)
+            return
+        }
+
+        // Fall through to URL handling
+        guard let clipboardString = pasteboard.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !clipboardString.isEmpty else { return }
 
@@ -3108,6 +3169,7 @@ struct CanvasView: View {
         await spatialEngine.addBlock(block, persist: true)
         selectedBlockId = block.id
         rebuildMediaContentCache()
+        recomputeFilteredBlocks()
 
         print("📋 Pasted \(classification.sourceType.rawValue) URL → canvas block (uuid: \(atom.uuid))")
 
@@ -3116,6 +3178,43 @@ struct CanvasView: View {
         let sourceType = classification.sourceType
         Task {
             await processCanvasPastedAtom(uuid: atomUUID, sourceType: sourceType, contentId: classification.contentId)
+        }
+    }
+
+    /// Handles pasting image data from clipboard — saves to disk, creates atom + block
+    private func handleImagePaste(data: Data, originalFilename: String?) async {
+        do {
+            let result = try ImageStore.save(data, originalFilename: originalFilename)
+            let imageMeta = ImageMetadata(
+                imagePath: result.path,
+                originalFilename: originalFilename,
+                width: result.width,
+                height: result.height,
+                fileSize: data.count
+            )
+            let metadataJson = try? JSONEncoder().encode(imageMeta)
+            let metadataString = metadataJson.flatMap { String(data: $0, encoding: .utf8) }
+            let atom = Atom.new(
+                type: .image,
+                title: originalFilename ?? "Image",
+                body: result.path,
+                metadata: metadataString
+            )
+            try await CosmoDatabase.shared.asyncWrite { db in
+                var mutableAtom = atom
+                try mutableAtom.insert(db)
+            }
+            let position = CGPoint(
+                x: canvasSize.width / 2 - canvasOffset.width,
+                y: canvasSize.height / 2 - canvasOffset.height
+            )
+            let block = CanvasBlock.fromAtom(atom, position: position)
+            await spatialEngine.addBlock(block, persist: true)
+            selectedBlockId = block.id
+            recomputeFilteredBlocks()
+            print("📋 Pasted image → canvas block (uuid: \(atom.uuid))")
+        } catch {
+            print("⚠️ [CanvasView] Failed to paste image: \(error)")
         }
     }
 
@@ -3524,25 +3623,117 @@ struct ThinkspaceAuroraView: View {
     }
 }
 
-// MARK: - Thinkspace Film Grain
-struct ThinkspaceFilmGrain: View {
-    var body: some View {
-        Canvas { context, size in
-            // Create subtle noise pattern
-            for _ in 0..<Int(size.width * size.height / 200) {
-                let x = CGFloat.random(in: 0...size.width)
-                let y = CGFloat.random(in: 0...size.height)
-                let grainSize = CGFloat.random(in: 0.5...1.5)
-                let opacity = Double.random(in: 0.01...0.03)
+// MARK: - Thinkspace Film Grain (REMOVED — replaced with static FilmGrainOverlay)
+// ThinkspaceFilmGrain was generating ~11,500 random ellipses per frame.
+// Now uses FilmGrainOverlay from Core/FilmGrainOverlay.swift which pre-generates
+// a tiled CGImage once and reuses it. Same visual effect, zero per-frame cost.
 
-                let rect = CGRect(x: x, y: y, width: grainSize, height: grainSize)
-                context.fill(
-                    Path(ellipseIn: rect),
-                    with: .color(Color.white.opacity(opacity))
-                )
+// MARK: - Per-Block Container (Equatable diffing)
+/// Extracted from blockView(for:) so SwiftUI can diff each block independently.
+/// When only one block's `isSelected` changes, SwiftUI skips re-evaluating all other
+/// CanvasBlockContainer instances whose inputs haven't changed.
+struct CanvasBlockContainer: View, Equatable {
+    let block: CanvasBlock
+    let canvasOffset: CGSize
+    let scaledPanOffset: CGSize
+    let dragOffset: CGSize
+    let isDragTarget: Bool
+    let isMediaContent: Bool
+    let isHeartbeating: Bool
+    let isClusterMember: Bool
+    let isDraggingClusterMember: Bool
+    let heatmapOpacity: CGFloat
+    let expansionOpacity: Double
+    let expansionZIndex: Double
+    let isCrossThinkspaceDragging: Bool
+
+    // Closures — excluded from Equatable comparison
+    var onDragChanged: ((CGSize) -> Void)?
+    var onDragEnded: ((CGSize) -> Void)?
+    var onDoubleTap: (() -> Void)?
+
+    @EnvironmentObject private var expansionManager: BlockExpansionManager
+
+    static func == (lhs: CanvasBlockContainer, rhs: CanvasBlockContainer) -> Bool {
+        lhs.block == rhs.block &&
+        lhs.canvasOffset == rhs.canvasOffset &&
+        lhs.scaledPanOffset == rhs.scaledPanOffset &&
+        lhs.dragOffset == rhs.dragOffset &&
+        lhs.isDragTarget == rhs.isDragTarget &&
+        lhs.isMediaContent == rhs.isMediaContent &&
+        lhs.isHeartbeating == rhs.isHeartbeating &&
+        lhs.isClusterMember == rhs.isClusterMember &&
+        lhs.isDraggingClusterMember == rhs.isDraggingClusterMember &&
+        lhs.heatmapOpacity == rhs.heatmapOpacity &&
+        lhs.expansionOpacity == rhs.expansionOpacity &&
+        lhs.expansionZIndex == rhs.expansionZIndex &&
+        lhs.isCrossThinkspaceDragging == rhs.isCrossThinkspaceDragging
+    }
+
+    var body: some View {
+        blockContent
+            .expansionAware(blockId: block.id)
+            .heartbeatAnimation(isActive: isHeartbeating)
+            .position(
+                x: block.position.x + canvasOffset.width + scaledPanOffset.width + dragOffset.width,
+                y: block.position.y + canvasOffset.height + scaledPanOffset.height + dragOffset.height
+            )
+            .scaleEffect(block.scale)
+            .rotationEffect(.degrees(block.rotation))
+            .opacity(isCrossThinkspaceDragging ? 0 : block.opacity * expansionOpacity * heatmapOpacity)
+            .zIndex(isDragTarget ? 1000 : (expansionZIndex + Double(block.zIndex)))
+            .allowsHitTesting(!isClusterMember)
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { gesture in
+                        onDragChanged?(gesture.translation)
+                    }
+                    .onEnded { gesture in
+                        onDragEnded?(gesture.translation)
+                    }
+            )
+            .onTapGesture(count: 2) {
+                onDoubleTap?()
             }
+            .transition(.asymmetric(
+                insertion: .scale(scale: 0.8).combined(with: .opacity),
+                removal: .scale(scale: 0.95).combined(with: .opacity)
+            ))
+            .transaction { tx in
+                if isDraggingClusterMember {
+                    tx.animation = nil
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var blockContent: some View {
+        switch block.entityType {
+        case .cosmoAI:
+            CosmoAIBlockView(block: block)
+        case .note:
+            NoteBlockView(block: block)
+        case .calendar:
+            CalendarWindowView(block: block)
+        case .research:
+            if isMediaContent {
+                MediaBlockView(block: block)
+            } else {
+                ResearchBlockView(block: block)
+            }
+        case .connection:
+            ConnectionBlockView(block: block)
+        case .idea:
+            IdeaBlockView(block: block)
+        case .content:
+            ContentBlockView(block: block)
+        case .task:
+            TaskBlockView(block: block)
+        case .image:
+            ImageBlockView(block: block)
+        default:
+            FloatingBlockView(block: block)
         }
-        .blendMode(.overlay)
     }
 }
 

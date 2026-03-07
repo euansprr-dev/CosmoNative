@@ -485,8 +485,10 @@ struct LibraryItem: Identifiable {
         self.preview = atom.body.flatMap { String($0.prefix(100)) }
         self.statusBadge = nil
 
-        // Populate thumbnail URL from research metadata or YouTube video ID
-        if let thumbUrl = atom.thumbnailUrl, !thumbUrl.isEmpty {
+        // Populate thumbnail URL from research metadata, YouTube video ID, or image path
+        if atom.type == .image, let imagePath = atom.imageMetadata?.imagePath {
+            self.thumbnailURL = imagePath
+        } else if let thumbUrl = atom.thumbnailUrl, !thumbUrl.isEmpty {
             self.thumbnailURL = thumbUrl
         } else if let videoId = atom.videoId, !videoId.isEmpty {
             self.thumbnailURL = "https://img.youtube.com/vi/\(videoId)/mqdefault.jpg"
@@ -520,6 +522,10 @@ struct LibraryItem: Identifiable {
             self.icon = "folder.fill"
             self.color = Color(hex: "#6366F1")
             self.typeName = "Project"
+        case .image:
+            self.icon = "photo.fill"
+            self.color = DS.entityImage
+            self.typeName = "Image"
         default:
             self.icon = "circle.fill"
             self.color = Color(hex: "#6366F1")
@@ -577,12 +583,16 @@ final class LibraryViewModel: ObservableObject {
 
     // MARK: - Load
 
+    func forceReload() {
+        libraryLoaded = false
+    }
+
     func loadLibrary() async {
         guard !libraryLoaded else { return }
         isLoading = true
         do {
             // Fetch all user-facing atoms (ideas excluded — they live in the Ideas tab)
-            let userTypes: [AtomType] = [.content, .research, .connection, .project]
+            let userTypes: [AtomType] = [.content, .research, .connection, .project, .image]
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
 
             // Compute project-owned atom UUIDs (atoms on project thinkspaces or with project links)

@@ -102,6 +102,9 @@ private struct LibraryCardView: View {
 
     /// Dynamic preview height based on content type
     private var previewHeight: CGFloat {
+        if item.atomType == .image {
+            return cardWidth * 3.0 / 4.0
+        }
         if item.thumbnailURL != nil {
             // YouTube/website thumbnails — 16:9 aspect ratio
             return cardWidth * 9.0 / 16.0
@@ -222,26 +225,37 @@ private struct LibraryCardView: View {
 
     @ViewBuilder
     private var previewContent: some View {
-        if let thumbnailURL = item.thumbnailURL,
-           let url = URL(string: thumbnailURL) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: previewHeight)
-                        .clipped()
-                case .failure:
-                    fallbackPreview
-                case .empty:
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .tint(DS.textMuted)
-                @unknown default:
-                    fallbackPreview
+        if let thumbnailURL = item.thumbnailURL {
+            if item.atomType == .image, let nsImage = NSImage(contentsOfFile: thumbnailURL) {
+                // Local image file — load directly
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: previewHeight)
+                    .clipped()
+            } else if let url = URL(string: thumbnailURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: previewHeight)
+                            .clipped()
+                    case .failure:
+                        fallbackPreview
+                    case .empty:
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(DS.textMuted)
+                    @unknown default:
+                        fallbackPreview
+                    }
                 }
+            } else {
+                fallbackPreview
             }
         } else {
             fallbackPreview

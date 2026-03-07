@@ -4,7 +4,7 @@
 import Foundation
 import SwiftUI
 
-struct CanvasBlock: Identifiable, Codable {
+struct CanvasBlock: Identifiable, Codable, Equatable {
     let id: String
     var position: CGPoint
     var size: CGSize
@@ -84,6 +84,7 @@ struct CanvasBlock: Identifiable, Codable {
         case .cosmoAI:    return CGSize(width: 320, height: 280)
         case .note:       return CGSize(width: 320, height: 280)
         case .calendar:   return CGSize(width: 400, height: 500)
+        case .image:      return CGSize(width: 320, height: 240)
         default:          return CGSize(width: 280, height: 200)
         }
     }
@@ -141,6 +142,16 @@ struct CanvasBlock: Identifiable, Codable {
             size = CGSize(width: 320, height: 340)
         case .connection:
             size = CGSize(width: 340, height: 400)
+        case .image:
+            // Use stored dimensions to compute aspect-ratio-correct size
+            if let meta = atom.imageMetadata,
+               let w = meta.width, let h = meta.height, w > 0 && h > 0 {
+                let maxWidth: CGFloat = 400
+                let scale = min(maxWidth / w, 1.0)
+                size = CGSize(width: w * scale, height: h * scale)
+            } else {
+                size = CGSize(width: 320, height: 240)
+            }
         default:
             size = CGSize(width: 280, height: 180)
         }
@@ -227,6 +238,10 @@ struct CanvasBlock: Identifiable, Codable {
             }
         case .connection:
             metadata["type"] = "connection"
+        case .image:
+            if let imageMeta = atom.imageMetadata {
+                metadata["imagePath"] = imageMeta.imagePath
+            }
         case .project:
             let projectWrapper = ProjectWrapper(atom: atom)
             metadata["status"] = projectWrapper.status

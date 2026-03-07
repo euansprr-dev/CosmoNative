@@ -38,6 +38,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     @Published var scheduledTasks: [TaskViewModel] = []
     @Published var unscheduledTasks: [TaskViewModel] = []
     @Published var completedTodayTasks: [TaskViewModel] = []
+    @Published var completedTasksByDay: [(date: Date, tasks: [TaskViewModel])] = []
 
     // MARK: - Upcoming (Upcoming view)
 
@@ -109,7 +110,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         case .upcoming:
             return upcomingDayGroups.flatMap { $0.tasks }
         case .completed:
-            return completedTodayTasks
+            return completedTasksByDay.flatMap { $0.tasks }
         }
     }
 
@@ -138,8 +139,19 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .removeDuplicates { Calendar.current.isDate($0, inSameDayAs: $1) }
             .sink { [weak self] _ in
                 Task { [weak self] in
-                    await self?.refreshTasks()
-                    self?.refreshCalendarEvents()
+                    guard let self else { return }
+                    if self.viewMode == .upcoming {
+                        // Navigate the board to the week containing selected date
+                        let calendar = Calendar.current
+                        let today = calendar.startOfDay(for: Date())
+                        let selected = calendar.startOfDay(for: self.selectedDate)
+                        let daysDiff = calendar.dateComponents([.day], from: today, to: selected).day ?? 0
+                        self.upcomingWeekOffset = daysDiff / 7
+                        await self.loadUpcomingTasks()
+                    } else {
+                        await self.refreshTasks()
+                    }
+                    self.refreshCalendarEvents()
                 }
             }
             .store(in: &cancellables)
@@ -162,8 +174,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // React to plannerum task changes
+        // React to plannerum task changes (debounced to prevent cascading fetches)
         plannerum.$todayTasks
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { [weak self] in
                     await self?.refreshTasks()
@@ -174,8 +187,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // React to quest state changes (for habits)
+        // React to quest state changes (for habits) — debounced
         plannerum.liveQuestEngine.$quests
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] quests in
                 self?.updateHabits(from: quests)
             }
@@ -195,8 +209,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Calendar events
+        // Calendar events (debounced — CalendarSyncService publishes on refresh)
         calendarService.$externalEvents
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshCalendarEvents()
             }
@@ -239,9 +254,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
                     let isDue = vm.dueDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
                     let isScheduled = vm.scheduledDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
-                    let isOverdue = vm.dueDate.map { $0 < dayStart && !vm.isCompleted } ?? false
 
-                    if isDue || isScheduled || isOverdue { return vm }
+                    // Only show tasks actually due/scheduled on this date (no overdue spillover for future dates)
+                    if isDue || isScheduled { return vm }
                     return nil
                 }
             } catch {
@@ -264,12 +279,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .filter { !$0.isOverdue && !$0.hasSpecificTime }
             .sorted { $0.priority.sortOrder < $1.priority.sortOrder }
 
-        // Also load completed for badge count
-        if isToday {
-            completedTodayTasks = allTasks
-                .filter { $0.isCompleted }
-                .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
-        }
+        // Load completed tasks independently (todayTasks excludes completed)
+        await loadCompletedTasks()
     }
 
     // MARK: - Upcoming Tasks
@@ -292,6 +303,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                     if vm.isCompleted { return nil }
                     if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
+
+                    // Exclude overdue tasks from day columns — they appear in the overdue column
+                    if vm.isOverdue { return nil }
 
                     let isDue = vm.dueDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
                     let isScheduled = vm.scheduledDate.map { $0 >= dayStart && $0 < dayEnd } ?? false
@@ -372,15 +386,34 @@ class CommandCenterDashboardViewModel: ObservableObject {
     func loadCompletedTasks() async {
         do {
             let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            let todayStart = Calendar.current.startOfDay(for: Date())
+            let calendar = Calendar.current
+            let todayStart = calendar.startOfDay(for: Date())
 
-            completedTodayTasks = atoms.compactMap { atom -> TaskViewModel? in
+            // Collect ALL completed tasks
+            let allCompleted = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard vm.isCompleted else { return nil }
-                guard let completedAt = vm.completedAt, completedAt >= todayStart else { return nil }
+                guard vm.completedAt != nil else { return nil }
                 return vm
             }
-            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+
+            // Today's completed (for badge count)
+            completedTodayTasks = allCompleted
+                .filter { ($0.completedAt ?? .distantPast) >= todayStart }
+                .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+
+            // Group by completion day
+            var grouped: [Date: [TaskViewModel]] = [:]
+            for task in allCompleted {
+                guard let completedAt = task.completedAt else { continue }
+                let dayKey = calendar.startOfDay(for: completedAt)
+                grouped[dayKey, default: []].append(task)
+            }
+
+            // Sort each day's tasks by completedAt descending, then sort days descending
+            completedTasksByDay = grouped
+                .map { (date: $0.key, tasks: $0.value.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }) }
+                .sorted { $0.date > $1.date }
         } catch {
             print("❌ Dashboard: Failed to load completed tasks: \(error)")
         }
@@ -452,9 +485,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await plannerum.completeTask(taskId: task.uuid)
         }
         await refreshTasks()
-        if viewMode == .completed {
-            await loadCompletedTasks()
-        }
     }
 
     func uncompleteTask(uuid: String) async {
@@ -501,6 +531,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     }
                     if let dueDate = parsed.dueDate ?? pendingTaskDate {
                         metadata.dueDate = PlannerumFormatters.iso8601.string(from: dueDate)
+                    } else if viewMode == .today {
+                        // Default to today when adding from the Today tab with no explicit date
+                        metadata.dueDate = PlannerumFormatters.iso8601.string(from: Date())
                     }
                     if let time = parsed.scheduledTime {
                         metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
@@ -567,8 +600,28 @@ class CommandCenterDashboardViewModel: ObservableObject {
         do {
             try await AtomRepository.shared.delete(uuid: uuid)
             await refreshTasks()
+            if viewMode == .upcoming {
+                await loadUpcomingTasks()
+            }
         } catch {
             print("❌ Dashboard: Failed to delete task: \(error)")
+        }
+    }
+
+    func deleteMultipleTasks(uuids: Set<String>) async {
+        for uuid in uuids {
+            do {
+                try await AtomRepository.shared.delete(uuid: uuid)
+            } catch {
+                print("❌ Dashboard: Failed to delete task \(uuid): \(error)")
+            }
+        }
+        await refreshTasks()
+        if viewMode == .upcoming {
+            await loadUpcomingTasks()
+        }
+        if viewMode == .completed {
+            await loadCompletedTasks()
         }
     }
 

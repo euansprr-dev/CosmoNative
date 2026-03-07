@@ -408,6 +408,8 @@ extension EntityType {
             return [1.0, 0.5, 0.4, 1.0]  // Coral
         case .thinkspace:
             return [0.55, 0.36, 0.96, 1.0]  // Thinkspace purple
+        case .image:
+            return [0.35, 0.61, 0.63, 1.0]  // Muted teal
         }
     }
 }

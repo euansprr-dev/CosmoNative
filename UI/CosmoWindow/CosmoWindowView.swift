@@ -8,8 +8,8 @@ import SwiftUI
 // MARK: - Cosmo Window View
 
 /// The main floating chat panel for the global Cosmo AI assistant.
-/// Rendered as a ZStack overlay in MainView, anchored to left or right edge.
-/// Width: 400px, full height minus 32px padding. Glass material background.
+/// When `cosmoWindowIsFloating` is true (NSPanel mode), fills the entire window with all corners rounded.
+/// When false (legacy overlay mode), anchored to left or right edge.
 struct CosmoWindowView: View {
 
     // MARK: - State
@@ -17,6 +17,7 @@ struct CosmoWindowView: View {
     @ObservedObject private var viewModel = CosmoWindowViewModel.shared
     @Binding var isVisible: Bool
     @AppStorage("cosmoWindowAnchor") private var anchor: CosmoWindowAnchor = .right
+    @Environment(\.cosmoWindowIsFloating) private var isFloating
     @FocusState private var isInputFocused: Bool
 
     @State private var inputText: String = ""
@@ -35,29 +36,46 @@ struct CosmoWindowView: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 0) {
-            if anchor == .right { Spacer(minLength: 0) }
-
+        if isFloating {
+            // NSPanel mode — fill entire window, all corners rounded
             panelContent
-                .frame(width: panelWidth)
-                .frame(maxHeight: .infinity)
-                .padding(.vertical, verticalPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(panelBackground)
-                .clipShape(innerEdgeShape)
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                 .overlay(
-                    innerEdgeShape.stroke(DS.border, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusLarge)
+                        .stroke(DS.border, lineWidth: 1)
                 )
-                .shadow(color: Color.black.opacity(0.3), radius: 24, x: anchor == .right ? -8 : 8, y: 0)
-                .transition(
-                    .move(edge: anchor == .right ? .trailing : .leading)
-                    .combined(with: .opacity)
-                )
+                .onAppear {
+                    isInputFocused = true
+                    Task { await viewModel.loadConversation() }
+                }
+        } else {
+            // Legacy overlay mode — anchored to left or right edge
+            HStack(spacing: 0) {
+                if anchor == .right { Spacer(minLength: 0) }
 
-            if anchor == .left { Spacer(minLength: 0) }
-        }
-        .onAppear {
-            isInputFocused = true
-            Task { await viewModel.loadConversation() }
+                panelContent
+                    .frame(width: panelWidth)
+                    .frame(maxHeight: .infinity)
+                    .padding(.vertical, verticalPadding)
+                    .background(panelBackground)
+                    .clipShape(innerEdgeShape)
+                    .overlay(
+                        innerEdgeShape.stroke(DS.border, lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 24, x: anchor == .right ? -8 : 8, y: 0)
+                    .transition(
+                        .move(edge: anchor == .right ? .trailing : .leading)
+                        .combined(with: .opacity)
+                    )
+
+                if anchor == .left { Spacer(minLength: 0) }
+            }
+            .onAppear {
+                isInputFocused = true
+                Task { await viewModel.loadConversation() }
+            }
         }
     }
 
@@ -146,9 +164,7 @@ struct CosmoWindowView: View {
 
             // Close button
             Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    isVisible = false
-                }
+                CosmoWindowPanelController.shared.hide()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
@@ -544,16 +560,21 @@ struct CosmoWindowView: View {
             Button("Sonnet (Balanced)") { viewModel.modelOverride = .strategist }
             Button("Opus (Best)") { viewModel.modelOverride = .writer }
         } label: {
-            Text(modelLabel)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(DS.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+            HStack(spacing: 2) {
+                Text(modelLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(DS.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .menuStyle(.borderlessButton)
-        .frame(width: 50)
+        .frame(width: 56)
     }
 
     private var modelLabel: String {

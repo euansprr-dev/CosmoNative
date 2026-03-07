@@ -314,11 +314,32 @@ class TelegramBridgeService: ObservableObject {
         }
     }
 
+    // MARK: - Forum Topic Thread ID Helpers
+
+    /// Parses a composite conversation ID back into its chat ID and optional thread ID.
+    /// Composite format: "chatId:threadId" (Forum Topics) or just "chatId" (DMs).
+    static func parseChatThread(_ compositeId: String) -> (chatId: String, threadId: Int?) {
+        let parts = compositeId.split(separator: ":", maxSplits: 1)
+        if parts.count == 2, let threadId = Int(parts[1]) {
+            return (String(parts[0]), threadId)
+        }
+        return (compositeId, nil)
+    }
+
     private func handleMessage(_ message: [String: Any]) async {
         guard let chat = message["chat"] as? [String: Any],
               let chatId = chat["id"] as? Int else { return }
 
-        let chatIdStr = "\(chatId)"
+        // Extract Forum Topic thread ID (present in Forum group messages)
+        let threadId = message["message_thread_id"] as? Int
+
+        // Composite conversation ID: "chatId:threadId" for Forum Topics, "chatId" for DMs
+        let chatIdStr: String
+        if let threadId = threadId {
+            chatIdStr = "\(chatId):\(threadId)"
+        } else {
+            chatIdStr = "\(chatId)"
+        }
         activeChatId = chatIdStr
         messageCount += 1
 
@@ -368,8 +389,11 @@ class TelegramBridgeService: ObservableObject {
 
         // Flash-Lite router bypasses debounce for single messages (no rapid-fire buffer)
         // Handles ideas, tasks, queries, and any single-shot tool call via cheap LLM classification
+        // Skip FlashLiteRouter for follow-up messages about already-captured content
         if !processingChatIds.contains(chatIdStr) && debounceBuffers[chatIdStr] == nil {
-            if let (response, _) = await FlashLiteRouter.shared.tryRoute(text) {
+            let bypassFlash = await shouldBypassFlashRouter(text: text, chatId: chatIdStr)
+            if !bypassFlash, let (response, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
+                await saveFlashRouterResult(text: text, response: response, toolName: toolName, chatId: chatIdStr)
                 await sendMessage(chatId: chatIdStr, text: response)
                 return
             }
@@ -505,6 +529,11 @@ class TelegramBridgeService: ObservableObject {
                 notifyDesktopContentCreated(title: "Writing session committed via Telegram")
                 return
             }
+            // 2c. Inline capture escape (!idea:, !task:, !swipe:, bare URL)
+            if let captureResult = await tryInlineCaptureEscape(text: text, chatId: chatId) {
+                await sendLongMessage(chatId: chatId, text: captureResult + "\n\n_(back in writing mode)_")
+                return
+            }
             await sendChatAction(chatId: chatId, action: "typing")
             let response = await TelegramWritingSessionManager.shared.routeMessage(chatId: chatId, text: text)
             await sendLongMessage(chatId: chatId, text: response)
@@ -518,7 +547,10 @@ class TelegramBridgeService: ObservableObject {
         }
 
         // Flash-Lite router for debounced messages (ideas, tasks, queries, etc.)
-        if let (flashResponse, _) = await FlashLiteRouter.shared.tryRoute(text) {
+        // Skip FlashLiteRouter for follow-up messages about already-captured content
+        let bypassFlash = await shouldBypassFlashRouter(text: text, chatId: chatId)
+        if !bypassFlash, let (flashResponse, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
+            await saveFlashRouterResult(text: text, response: flashResponse, toolName: toolName, chatId: chatId)
             await sendLongMessage(chatId: chatId, text: flashResponse)
             return
         }
@@ -601,6 +633,103 @@ class TelegramBridgeService: ObservableObject {
             ]]
             await sendMessage(chatId: chatId, text: text, parseMode: "Markdown", replyMarkup: buttons)
         }
+    }
+
+    // MARK: - FlashLiteRouter Conversation Memory
+
+    /// Save FlashLiteRouter-handled messages to conversation memory so follow-up messages have context.
+    private func saveFlashRouterResult(text: String, response: String, toolName: String, chatId: String) async {
+        var conversation: AgentConversation
+        if let existing = await ConversationMemoryService.shared.loadConversation(id: chatId) {
+            conversation = existing
+        } else {
+            conversation = AgentConversation(id: chatId, source: .telegram)
+        }
+        conversation.append(.user(text))
+        conversation.append(.assistant(response))
+        await ConversationMemoryService.shared.saveConversation(conversation)
+    }
+
+    /// Check if a message is a follow-up about already-captured content, meaning it should
+    /// bypass FlashLiteRouter and go to the full agent for multi-turn reasoning.
+    private func shouldBypassFlashRouter(text: String, chatId: String) async -> Bool {
+        guard let conversation = await ConversationMemoryService.shared.loadConversation(id: chatId) else {
+            return false
+        }
+        guard !conversation.messages.isEmpty else { return false }
+
+        // Check if recent assistant messages contain capture/creation results
+        let recentAssistant = conversation.messages
+            .filter { $0.role == .assistant }
+            .suffix(3)
+
+        let capturePatterns = ["captured", "saved idea", "saved research", "swipe",
+                               "idea:", "task created", "content created"]
+        let hasCaptureHistory = recentAssistant.contains { msg in
+            let lower = msg.content.lowercased()
+            return capturePatterns.contains(where: { lower.contains($0) })
+        }
+
+        guard hasCaptureHistory else { return false }
+
+        // Check if current message contains follow-up reference signals
+        let lower = text.lowercased()
+        let followUpSignals = [
+            "this idea", "that idea", "the idea", "this swipe", "that swipe", "the swipe",
+            "take action", "action on", "action this", "act on this",
+            "using the", "using this as", "using that", "based on",
+            "make the hook", "make a hook", "make the content", "make content",
+            "similar to", "like the", "same style", "same hook", "same angle",
+            "let's do", "let's make", "let's create", "let's write", "let's draft",
+            "turn this into", "turn that into", "make this into"
+        ]
+
+        return followUpSignals.contains(where: { lower.contains($0) })
+    }
+
+    // MARK: - Inline Capture Escape (During Writing Sessions)
+
+    /// Detects inline capture patterns while in a writing session:
+    /// !idea: [text], !task: [text], !swipe: [URL], or bare URL (< 120 chars).
+    /// Returns a short confirmation string, or nil if no escape pattern matched.
+    private func tryInlineCaptureEscape(text: String, chatId: String) async -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // !idea: prefix
+        if trimmed.lowercased().hasPrefix("!idea:") {
+            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_idea", arguments: ["title": content])) ?? "Created"
+            return "Captured idea: \(content)\n\(result)"
+        }
+
+        // !task: prefix
+        if trimmed.lowercased().hasPrefix("!task:") {
+            let content = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            let result = (try? await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: ["title": content])) ?? "Created"
+            return "Captured task: \(content)\n\(result)"
+        }
+
+        // !swipe: prefix
+        if trimmed.lowercased().hasPrefix("!swipe:") {
+            let content = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            if let captureResult = await tryFastCapture(text: content, chatId: chatId) {
+                return captureResult
+            }
+            return nil
+        }
+
+        // Bare URL (< 120 chars, in writing mode — quick capture without breaking session)
+        if trimmed.count < 120,
+           trimmed.range(of: "^https?://[^\\s]+$", options: .regularExpression) != nil {
+            if let captureResult = await tryFastCapture(text: trimmed, chatId: chatId) {
+                return captureResult
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Fast-Path URL Capture
@@ -886,6 +1015,8 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Send Message
 
     /// Send a message with automatic 429 rate limit retry and exponential backoff.
+    /// If `chatId` is a composite "chatId:threadId" string, the thread ID is automatically
+    /// extracted and included in the API call so replies land in the correct Forum Topic.
     @discardableResult
     func sendMessage(chatId: String, text: String, parseMode: String? = nil, replyMarkup: Any? = nil) async -> Bool {
         // Lazy-load token for proactive messages sent outside the polling loop
@@ -896,10 +1027,18 @@ class TelegramBridgeService: ObservableObject {
 
         let url = URL(string: "\(baseURL)/sendMessage")!
 
+        // Parse composite ID for Forum Topic support
+        let (rawChatId, threadId) = TelegramBridgeService.parseChatThread(chatId)
+
         var body: [String: Any] = [
-            "chat_id": chatId,
+            "chat_id": rawChatId,
             "text": text
         ]
+
+        // Include thread ID for Forum Topic replies
+        if let threadId = threadId {
+            body["message_thread_id"] = threadId
+        }
 
         if let parseMode = parseMode {
             body["parse_mode"] = parseMode
@@ -1007,6 +1146,7 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Chat Actions
 
     /// Send a chat action (e.g. "typing") to show activity indicator in Telegram.
+    /// Supports composite "chatId:threadId" format for Forum Topics.
     func sendChatAction(chatId: String, action: String = "typing") async {
         if cachedToken == nil {
             cachedToken = loadTokenFromKeychain()
@@ -1018,10 +1158,14 @@ class TelegramBridgeService: ObservableObject {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
-            "chat_id": chatId,
+        let (rawChatId, threadId) = TelegramBridgeService.parseChatThread(chatId)
+        var body: [String: Any] = [
+            "chat_id": rawChatId,
             "action": action
         ]
+        if let threadId = threadId {
+            body["message_thread_id"] = threadId
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         let _ = try? await URLSession.shared.data(for: request)
@@ -1052,8 +1196,9 @@ class TelegramBridgeService: ObservableObject {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        let (rawChatId, _) = TelegramBridgeService.parseChatThread(chatId)
         var body: [String: Any] = [
-            "chat_id": chatId,
+            "chat_id": rawChatId,
             "message_id": messageId,
             "text": text
         ]
@@ -1082,10 +1227,14 @@ class TelegramBridgeService: ObservableObject {
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
-            "chat_id": chatId,
+        let (rawChatId, threadId) = TelegramBridgeService.parseChatThread(chatId)
+        var body: [String: Any] = [
+            "chat_id": rawChatId,
             "text": text
         ]
+        if let threadId = threadId {
+            body["message_thread_id"] = threadId
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
@@ -1113,7 +1262,14 @@ class TelegramBridgeService: ObservableObject {
         // Answer the callback to remove loading indicator
         await answerCallbackQuery(callbackId: callbackId)
 
-        let chatIdStr = "\(chatId)"
+        // Build composite ID for Forum Topic support
+        let threadId = message["message_thread_id"] as? Int
+        let chatIdStr: String
+        if let threadId = threadId {
+            chatIdStr = "\(chatId):\(threadId)"
+        } else {
+            chatIdStr = "\(chatId)"
+        }
 
         // Handle confirmation responses
         if data.hasPrefix("confirm:") {

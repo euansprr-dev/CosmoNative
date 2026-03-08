@@ -118,7 +118,7 @@ struct LibraryTab: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(DS.bg)
+        .background(DS.surface)
         .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         .task {
             await libraryViewModel.loadLibrary()
@@ -157,7 +157,7 @@ struct LibraryTab: View {
     // MARK: - Toolbar Row
 
     private var toolbarRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CommandKMetrics.toolbarSpacing) {
             // Stats (pinned left)
             libraryStatsLabel
 
@@ -180,10 +180,7 @@ struct LibraryTab: View {
                 }
             }
             .padding(2)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(DS.surfaceElevated)
-            )
+            .commandKToolbarGroup()
 
             // Sort dropdown
             sortDropdown
@@ -197,28 +194,29 @@ struct LibraryTab: View {
                 Label("Import Image", systemImage: "photo.badge.plus")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.textSecondary)
+                    .commandKToolbarChip()
             }
             .buttonStyle(.plain)
 
             Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
+        .padding(.horizontal, CommandKMetrics.contentPadding)
+        .padding(.vertical, 12)
     }
 
     private var filterSeparator: some View {
         Rectangle()
-            .fill(DS.borderActive)
-            .frame(width: 1, height: 20)
+            .fill(DS.borderSubtle)
+            .frame(width: 1, height: 22)
     }
 
     private var libraryStatsLabel: some View {
         HStack(spacing: 6) {
             Text("\(filteredItems.count)")
-                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .font(.system(size: 14, weight: .bold).monospacedDigit())
                 .foregroundColor(DS.text)
             Text("items")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
         }
     }
@@ -233,10 +231,10 @@ struct LibraryTab: View {
             Image(systemName: mode.icon)
                 .font(.system(size: 13))
                 .foregroundColor(viewMode == mode ? DS.text : DS.textMuted)
-                .frame(width: 30, height: 28)
+                .frame(width: 32, height: 28)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(viewMode == mode ? DS.surfaceHover : Color.clear)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(viewMode == mode ? DS.surface : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -260,18 +258,10 @@ struct LibraryTab: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444") : DS.text)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444").opacity(0.15) : DS.surfaceElevated)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(
-                                libraryViewModel.showingRecentlyDeleted ? Color(hex: "#EF4444").opacity(0.3) : Color.clear,
-                                lineWidth: 1
-                            )
-                    )
+            .commandKToolbarChip(
+                isActive: libraryViewModel.showingRecentlyDeleted,
+                activeFill: Color(hex: "#EF4444").opacity(0.12),
+                activeBorder: Color(hex: "#EF4444").opacity(0.24)
             )
         }
         .buttonStyle(.plain)
@@ -299,12 +289,7 @@ struct LibraryTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surface)
-            )
+            .commandKToolbarChip()
         }
         .menuStyle(.borderlessButton)
         .tint(DS.text)
@@ -367,11 +352,10 @@ struct LibraryTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(typeFilter != nil ? DS.accent : DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(typeFilter != nil ? DS.accent.opacity(0.12) : DS.surface)
+            .commandKToolbarChip(
+                isActive: typeFilter != nil,
+                activeFill: DS.accentSoft,
+                activeBorder: DS.accent.opacity(0.18)
             )
         }
         .menuStyle(.borderlessButton)
@@ -541,9 +525,9 @@ struct LibraryTab: View {
 
             Spacer()
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, CommandKMetrics.contentPadding)
         .padding(.vertical, 8)
-        .background(DS.surfaceElevated)
+        .background(DS.surface)
     }
 
     // MARK: - Client Profile Filter
@@ -585,11 +569,10 @@ struct LibraryTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(clientFilter != nil ? DS.accent : DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(clientFilter != nil ? DS.accent.opacity(0.12) : DS.surface)
+            .commandKToolbarChip(
+                isActive: clientFilter != nil,
+                activeFill: DS.accentSoft,
+                activeBorder: DS.accent.opacity(0.18)
             )
         }
         .menuStyle(.borderlessButton)

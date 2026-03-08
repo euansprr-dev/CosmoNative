@@ -50,13 +50,13 @@ struct IdeasTab: View {
 
     var body: some View {
         ZStack {
-            DS.bg
+            DS.surface
 
             VStack(spacing: 0) {
                 // Library-style filter bar
                 filterBar
 
-                Divider().background(DS.borderActive)
+                Divider().background(DS.borderSubtle)
 
                 // Content area — grid or list
                 if filteredItems.isEmpty {
@@ -181,7 +181,7 @@ struct IdeasTab: View {
     // MARK: - Filter Bar (Library style)
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CommandKMetrics.toolbarSpacing) {
             // Stats (pinned left)
             statsLabel
 
@@ -199,14 +199,14 @@ struct IdeasTab: View {
 
             Spacer()
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, CommandKMetrics.contentPadding)
         .padding(.vertical, 12)
     }
 
     private var filterSeparator: some View {
         Rectangle()
-            .fill(DS.borderActive)
-            .frame(width: 1, height: 20)
+            .fill(DS.borderSubtle)
+            .frame(width: 1, height: 22)
     }
 
     // MARK: - Stats Label
@@ -214,10 +214,10 @@ struct IdeasTab: View {
     private var statsLabel: some View {
         HStack(spacing: 8) {
             Text("\(viewModel.ideaGalleryItems.count)")
-                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .font(.system(size: 14, weight: .bold).monospacedDigit())
                 .foregroundColor(DS.text)
             Text("ideas")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
             // Compact status breakdown
@@ -256,11 +256,10 @@ struct IdeasTab: View {
                 .font(.system(size: 10))
         }
         .foregroundColor(DS.text)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? indigo.opacity(0.15) : DS.surfaceElevated)
+        .commandKToolbarChip(
+            isActive: isActive,
+            activeFill: indigo.opacity(0.12),
+            activeBorder: indigo.opacity(0.18)
         )
     }
 
@@ -363,12 +362,7 @@ struct IdeasTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surfaceElevated)
-            )
+            .commandKToolbarChip()
         }
         .menuStyle(.borderlessButton)
         .tint(DS.text)
@@ -392,11 +386,10 @@ struct IdeasTab: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(indigo.opacity(0.8))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(indigo.opacity(0.1))
+            .commandKToolbarChip(
+                isActive: true,
+                activeFill: indigo.opacity(0.10),
+                activeBorder: indigo.opacity(0.18)
             )
         }
         .buttonStyle(.plain)
@@ -439,7 +432,7 @@ private struct IdeaBoardView: View {
     @State private var newIdeaTitle = ""
     @FocusState private var addIdeaFocused: Bool
 
-    private let columnWidth: CGFloat = 270
+    private let columnWidth: CGFloat = 282
     private let columnSpacing: CGFloat = 12
 
     // MARK: - Sections
@@ -491,7 +484,7 @@ private struct IdeaBoardView: View {
                     boardColumn(section)
                 }
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, CommandKMetrics.contentPadding)
             .padding(.vertical, 12)
             .padding(.bottom, viewModel?.isMultiSelectActive == true ? 84 : 16)
         }
@@ -538,16 +531,18 @@ private struct IdeaBoardView: View {
         }
         .frame(width: columnWidth)
         .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(isDropTarget ? section.color.opacity(0.06) : DS.surface.opacity(0.5))
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(isDropTarget ? section.color.opacity(0.05) : DS.surfaceElevated)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
                 .stroke(
-                    isDropTarget ? section.color.opacity(0.5) : DS.borderSubtle,
+                    isDropTarget ? section.color.opacity(0.45) : DS.border,
                     lineWidth: isDropTarget ? 2 : 1
                 )
         )
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .shadow(color: .black.opacity(0.02), radius: 2, y: 1)
         .animation(ProMotionSprings.snappy, value: isDropTarget)
         .dropDestination(for: String.self) { droppedItems, _ in
             guard let ideaUUID = droppedItems.first else { return false }
@@ -573,8 +568,8 @@ private struct IdeaBoardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(section.color.opacity(0.12))
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(section.color.opacity(0.10))
                 )
 
             // Count badge
@@ -600,10 +595,14 @@ private struct IdeaBoardView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(section.color)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 28, height: 28)
                     .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(section.color.opacity(0.1))
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(section.color.opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(section.color.opacity(0.16), lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)

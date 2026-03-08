@@ -12,18 +12,23 @@ struct CardSelectionOverlay: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(accentColor, lineWidth: isSelected ? 2 : 0)
-                    .animation(ProMotionSprings.snappy, value: isSelected)
-            )
             .overlay(alignment: .topTrailing) {
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.white, accentColor)
-                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
-                        .padding(6)
+                    ZStack {
+                        Circle()
+                            .fill(DS.surfaceElevated)
+                            .frame(width: 22, height: 22)
+
+                        Circle()
+                            .fill(accentColor)
+                            .frame(width: 18, height: 18)
+
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(DS.textOnAccent)
+                    }
+                    .shadow(color: .black.opacity(0.10), radius: 4, y: 2)
+                    .padding(8)
                         .transition(.scale.combined(with: .opacity))
                 }
             }

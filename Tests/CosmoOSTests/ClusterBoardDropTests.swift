@@ -3,6 +3,34 @@ import XCTest
 
 @MainActor
 final class ClusterBoardDropTests: XCTestCase {
+    func testBoardDropColumnValueCoversEntireClusterWidth() {
+        let clusterId = UUID()
+        let cluster = makeCluster(
+            id: clusterId,
+            blockUUIDs: ["task-a", "task-b", "task-c"],
+            rect: CGRect(x: 0, y: 0, width: 620, height: 420)
+        )
+
+        let blocks = [
+            makeBlock(uuid: "task-a", type: .task, metadata: ["status": "todo"]),
+            makeBlock(uuid: "task-b", type: .task, metadata: ["status": "in_progress"]),
+            makeBlock(uuid: "task-c", type: .task, metadata: ["status": "completed"])
+        ]
+
+        XCTAssertEqual(
+            cluster.boardDropColumnValue(for: 0, clusterWidth: 620, blocks: blocks),
+            "todo"
+        )
+        XCTAssertEqual(
+            cluster.boardDropColumnValue(for: 310, clusterWidth: 620, blocks: blocks),
+            "in_progress"
+        )
+        XCTAssertEqual(
+            cluster.boardDropColumnValue(for: 620, clusterWidth: 620, blocks: blocks),
+            "completed"
+        )
+    }
+
     func testSameClusterBoardDropUpdatesCanonicalStatus() {
         let clusterId = UUID()
         let blockUUID = "task-1"
@@ -111,6 +139,22 @@ final class ClusterBoardDropTests: XCTestCase {
 
         XCTAssertEqual(engine.userClusters.first(where: { $0.id == targetId })?.blockUUIDs, [blockUUID])
         XCTAssertEqual(blocks[0].metadata["ideaStatus"], "developing")
+    }
+
+    func testDefaultBoardDropColumnValueFallsBackToDraggedBlockState() {
+        var cluster = makeCluster(
+            id: UUID(),
+            blockUUIDs: [],
+            rect: CGRect(x: 0, y: 0, width: 620, height: 420)
+        )
+        cluster.boardGrouping = .pipeline
+
+        let block = makeBlock(uuid: "task-3", type: .task, metadata: ["status": "pending"])
+
+        XCTAssertEqual(
+            cluster.defaultBoardDropColumnValue(for: block, among: [block]),
+            "todo"
+        )
     }
 }
 

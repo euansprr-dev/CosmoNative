@@ -33,6 +33,7 @@ struct MainView: View {
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
+    @State private var previousNonDimensionDestination: SidebarDestination = .commandCenter
 
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
@@ -51,6 +52,7 @@ struct MainView: View {
     @State private var showCreatorDatabase = false
     @State private var showCreatorProfile = false
     @State private var creatorProfileAtom: Atom?
+    @State private var showSettings = false
 
     // Track last-used thinkspace for T-key shortcut
     @State private var lastThinkspaceId: String?
@@ -306,6 +308,10 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
+        .sheet(isPresented: $showSettings) {
+            SanctuarySettingsView()
+                .frame(width: 720, height: 540)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = true
@@ -330,8 +336,7 @@ struct MainView: View {
             CosmoWindowPanelController.shared.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
-            // Settings — navigate to Command Center
-            currentDestination = .commandCenter
+            showSettings = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .enterFocusMode)) { notification in
             if let type = notification.userInfo?["type"] as? EntityType,
@@ -370,6 +375,12 @@ struct MainView: View {
                 withAnimation(ProMotionSprings.snappy) {
                     paneManager.openPane(.thinkspace(thinkspaceId: thinkspaceId))
                 }
+            } else if let rawDimension = notification.userInfo?["dimensionId"] as? String,
+                      let dimension = LevelDimension(rawValue: rawDimension) {
+                guard paneManager.canOpenDimension(dimension) else { return }
+                withAnimation(ProMotionSprings.snappy) {
+                    paneManager.openPane(.dimension(dimension))
+                }
             } else if notification.userInfo?["commandCenter"] as? Bool == true {
                 guard paneManager.canOpenCommandCenter() else { return }
                 withAnimation(ProMotionSprings.snappy) {
@@ -405,6 +416,9 @@ struct MainView: View {
             if case .thinkspace(let id) = newDest {
                 lastThinkspaceId = id
             }
+            if !newDest.isDimension {
+                previousNonDimensionDestination = newDest
+            }
             // Switch thinkspace when destination changes
             switch newDest {
             case .commandCenter:
@@ -415,6 +429,8 @@ struct MainView: View {
                 }
             case .inbox:
                 break
+            case .dimension:
+                break
             }
             // Update Cosmo Window context (panel is now system-wide, always update)
             let vm = CosmoWindowViewModel.shared
@@ -423,6 +439,8 @@ struct MainView: View {
                 vm.updateContextManually(type: .sanctuary)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
+            case .dimension:
+                vm.updateContextManually(type: .sanctuary)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
@@ -537,6 +555,9 @@ struct MainView: View {
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
             configureProMotion()
+            Task {
+                await DimensionWorkspaceCoordinator.shared.start()
+            }
             // No thinkspace switch needed — Command Center is full-screen now
         }
         .onDisappear {
@@ -559,6 +580,27 @@ struct MainView: View {
         // Command Center navigation (from other systems)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
             currentDestination = .commandCenter
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToDimension)) { notification in
+            guard let payload = CosmoNotification.Navigation.DimensionPayload(from: notification) else { return }
+            currentDestination = .dimension(payload.dimension)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openDimensionAsPane)) { notification in
+            guard let payload = CosmoNotification.Navigation.DimensionPayload(from: notification) else { return }
+            guard paneManager.canOpenDimension(payload.dimension) else { return }
+            withAnimation(ProMotionSprings.snappy) {
+                paneManager.openPane(.dimension(payload.dimension))
+            }
+            if showCommandK {
+                withAnimation(.spring(response: 0.2)) {
+                    showCommandK = false
+                    commandKViewModel.clear()
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
+            guard let payload = CosmoNotification.Navigation.ThinkspacePayload(from: notification) else { return }
+            currentDestination = .thinkspace(id: payload.thinkspaceId)
         }
         // Open block in focus mode by UUID (used by promoteToContent, context panels, etc.)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
@@ -660,7 +702,7 @@ struct MainView: View {
         switch currentDestination {
         case .commandCenter: return ThinkspaceManager.commandCenterUUID
         case .thinkspace(let id): return id
-        case .inbox: return nil
+        case .inbox, .dimension: return nil
         }
     }
 
@@ -678,6 +720,14 @@ struct MainView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DS.bg)
                 .transition(.opacity)
+        } else if case .dimension(let dimension) = currentDestination {
+            DimensionWorkspaceView(
+                dimension: dimension,
+                onBack: restoreFromDimension
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DS.bg)
+            .transition(.opacity)
         } else {
             // Thinkspaces use CanvasView
             CanvasView(thinkspaceId: activeCanvasThinkspaceId)
@@ -711,6 +761,18 @@ struct MainView: View {
             currentDestination = .commandCenter
         case "thinkspace", "canvas":
             navigateToLastThinkspace()
+        case "cognitive":
+            currentDestination = .dimension(.cognitive)
+        case "creative":
+            currentDestination = .dimension(.creative)
+        case "physiological", "health":
+            currentDestination = .dimension(.physiological)
+        case "behavioral":
+            currentDestination = .dimension(.behavioral)
+        case "knowledge":
+            currentDestination = .dimension(.knowledge)
+        case "reflection", "journal":
+            currentDestination = .dimension(.reflection)
         default:
             break
         }
@@ -784,6 +846,11 @@ struct MainView: View {
             lastThinkspaceId = first.id
             currentDestination = .thinkspace(id: first.id)
         }
+    }
+
+    private func restoreFromDimension() {
+        guard currentDestination.isDimension else { return }
+        currentDestination = previousNonDimensionDestination
     }
 
     // MARK: - Global Keyboard Monitor
@@ -866,13 +933,19 @@ struct MainView: View {
                     return nil
                 }
 
-                // 11. Navigate from thinkspace back to Command Center
+                // 11. Navigate back out of a dimension workspace
+                if currentDestination.isDimension {
+                    restoreFromDimension()
+                    return nil
+                }
+
+                // 12. Navigate from thinkspace back to Command Center
                 if isThinkspaceActive {
                     currentDestination = .commandCenter
                     return nil
                 }
 
-                // 12. On Command Center — no action (home state)
+                // 13. On Command Center — no action (home state)
             }
 
             // P key — navigate to Command Center (from anywhere)

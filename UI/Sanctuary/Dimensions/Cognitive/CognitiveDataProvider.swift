@@ -7,12 +7,17 @@ import SwiftUI
 import GRDB
 
 // Shared ISO8601 formatter — avoids recreating per call
+@MainActor
 private let _cognitiveISOFormatter = ISO8601DateFormatter()
 
 @MainActor
-class CognitiveDataProvider: ObservableObject {
+class CognitiveDataProvider: ObservableObject, DimensionScoring {
+    nonisolated var dimensionId: String { "cognitive" }
+
     @Published var data: CognitiveDimensionData = CognitiveDimensionData()
     @Published var isLoading = false
+    @Published var lastRefreshDate: Date?
+    @Published var cognitiveIndex: DimensionIndex = .empty
 
     private let database: CosmoDatabase
     private let atomRepository: AtomRepository
@@ -20,6 +25,60 @@ class CognitiveDataProvider: ObservableObject {
     init(database: CosmoDatabase? = nil, atomRepository: AtomRepository? = nil) {
         self.database = database ?? CosmoDatabase.shared
         self.atomRepository = atomRepository ?? AtomRepository.shared
+    }
+
+    // MARK: - DimensionScoring
+
+    func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
+        let windowConfidence: Double = {
+            guard !data.predictedOptimalWindows.isEmpty else { return 40 }
+            return data.predictedOptimalWindows.reduce(0.0) { $0 + $1.confidence } / Double(data.predictedOptimalWindows.count)
+        }()
+
+        let interruptionResilience = max(0, 100 - Double(data.focusCostMinutes * 4))
+        let reflectionSupport = min(100, data.reflectionDepthScore)
+
+        let subScores: [String: Double] = [
+            "focusIndex": data.focusIndex,
+            "deepWorkToday": min(100, (data.totalDeepWorkToday / (4 * 3600)) * 100),
+            "windowConfidence": windowConfidence,
+            "interruptionResilience": interruptionResilience,
+            "reflectionSupport": reflectionSupport
+        ]
+
+        let confidence: Double = {
+            if !data.deepWorkSessions.isEmpty {
+                return min(1.0, 0.45 + Double(data.deepWorkSessions.count) * 0.12)
+            }
+            if data.journalInsightMarkersToday > 0 || data.reflectionDepthScore > 0 {
+                return 0.45
+            }
+            return 0.2
+        }()
+
+        let trend: DimensionTrend = {
+            if data.neloStatus == .balanced && data.averageQualityToday >= 75 {
+                return .rising
+            }
+            if data.neloStatus == .depleted || data.totalInterruptionsToday >= 5 {
+                return .falling
+            }
+            return .stable
+        }()
+
+        let index = DimensionIndex(
+            score: min(100, max(0, data.cognitiveIndex)),
+            confidence: confidence,
+            trend: trend,
+            subScores: subScores,
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
+        )
+        cognitiveIndex = index
+        return index
     }
 
     // MARK: - Refresh
@@ -104,6 +163,7 @@ class CognitiveDataProvider: ObservableObject {
             detectedThemes: journalData.themes,
             journalExcerpt: journalData.excerpt
         )
+        lastRefreshDate = Date()
     }
 
     // MARK: - Fetch Today's Sessions

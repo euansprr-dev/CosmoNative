@@ -326,7 +326,22 @@ class CanvasClusterEngine: ObservableObject {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return }
         guard !userClusters[index].blockUUIDs.contains(blockUUID) else { return }
         userClusters[index].blockUUIDs.append(blockUUID)
-        userClusters[index].updateBoundingRect(blocks: blocks)
+
+        // For non-canvas modes, use fitClusterRectForMode which respects
+        // grid/list/board sizing logic. updateBoundingRect computes from block
+        // canvas positions which are meaningless in alt-content modes.
+        if userClusters[index].viewMode != .canvas {
+            if let fitted = fitClusterRectForMode(
+                clusterId: clusterId,
+                mode: userClusters[index].viewMode,
+                blocks: blocks,
+                viewportInCanvas: nil
+            ) {
+                userClusters[index].boundingRect = fitted
+            }
+        } else {
+            userClusters[index].updateBoundingRect(blocks: blocks)
+        }
         persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
 
@@ -340,7 +355,18 @@ class CanvasClusterEngine: ObservableObject {
             userClusters.remove(at: index)
             persistUserClusters(thinkspaceId: thinkspaceId)
         } else {
-            userClusters[index].updateBoundingRect(blocks: blocks)
+            if userClusters[index].viewMode != .canvas {
+                if let fitted = fitClusterRectForMode(
+                    clusterId: clusterId,
+                    mode: userClusters[index].viewMode,
+                    blocks: blocks,
+                    viewportInCanvas: nil
+                ) {
+                    userClusters[index].boundingRect = fitted
+                }
+            } else {
+                userClusters[index].updateBoundingRect(blocks: blocks)
+            }
             persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
         }
     }
@@ -777,7 +803,7 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    static func canonicalTaskStatus(_ rawValue: String) -> String {
+    nonisolated static func canonicalTaskStatus(_ rawValue: String) -> String {
         let key = normalizedKey(rawValue)
         switch key {
         case "todo", "to_do", "pending":
@@ -791,7 +817,7 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    static func canonicalContentPhase(_ rawValue: String) -> String {
+    nonisolated static func canonicalContentPhase(_ rawValue: String) -> String {
         let key = normalizedKey(rawValue)
         switch key {
         case "ideation", "brainstorm":
@@ -807,7 +833,7 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    static func canonicalIdeaStatus(_ rawValue: String) -> String {
+    nonisolated static func canonicalIdeaStatus(_ rawValue: String) -> String {
         let key = normalizedKey(rawValue)
         switch key {
         case "spark":
@@ -823,7 +849,7 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    static func contentStepForPhase(_ phase: String) -> String {
+    nonisolated static func contentStepForPhase(_ phase: String) -> String {
         switch canonicalContentPhase(phase) {
         case "ideation": return "brainstorm"
         case "draft": return "draft"
@@ -833,7 +859,7 @@ class CanvasClusterEngine: ObservableObject {
         }
     }
 
-    private static func normalizedKey(_ rawValue: String) -> String {
+    nonisolated private static func normalizedKey(_ rawValue: String) -> String {
         rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -841,7 +867,7 @@ class CanvasClusterEngine: ObservableObject {
             .replacingOccurrences(of: " ", with: "_")
     }
 
-    private static func isTypeGroupingColumn(_ rawValue: String) -> Bool {
+    nonisolated private static func isTypeGroupingColumn(_ rawValue: String) -> Bool {
         let key = normalizedKey(rawValue)
         switch key {
         case "idea", "content", "connection", "research", "task", "project", "note", "cosmo_ai", "swipe_file":

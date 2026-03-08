@@ -9,15 +9,14 @@ struct ClusterListContent: View {
     let cluster: CanvasCluster
     let clusterColor: Color
     let blocks: [CanvasBlock]
+    let isDropTargeted: Bool
     let sortOrder: ClusterSortOrder
     let expandedBlockUUID: String?
     let onChangeSortOrder: (ClusterSortOrder) -> Void
     let onToggleExpand: (String) -> Void
     let onOpenFocusMode: (String) -> Void
-    var onDrop: ((ClusterTransferEvent) -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,14 +25,6 @@ struct ClusterListContent: View {
             rowsList
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onDrop(
-            of: [.text],
-            delegate: ClusterListDropDelegate(
-                targetClusterId: cluster.id,
-                isDropTargeted: $isDropTargeted,
-                onDrop: onDrop
-            )
-        )
     }
 
     private var separatorLine: some View {
@@ -405,58 +396,5 @@ struct ClusterListRow: View {
         case "completed": return "Done"
         default: return status.capitalized
         }
-    }
-}
-
-// MARK: - List Drop Delegate
-
-private struct ClusterListDropDelegate: DropDelegate {
-    let targetClusterId: UUID
-    @Binding var isDropTargeted: Bool
-    let onDrop: ((ClusterTransferEvent) -> Void)?
-
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
-    }
-
-    func dropEntered(info: DropInfo) {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = true
-        }
-    }
-
-    func dropExited(info: DropInfo) {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = false
-        }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = false
-        }
-        let providers = info.itemProviders(for: [.text])
-        for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in
-                let blockUUID: String?
-                if let data = item as? Data {
-                    blockUUID = String(data: data, encoding: .utf8)
-                } else if let text = item as? String {
-                    blockUUID = text
-                } else if let text = item as? NSString {
-                    blockUUID = text as String
-                } else {
-                    blockUUID = nil
-                }
-                guard let blockUUID else { return }
-                DispatchQueue.main.async {
-                    onDrop?(ClusterTransferEvent(
-                        blockUUID: blockUUID,
-                        targetClusterId: targetClusterId
-                    ))
-                }
-            }
-        }
-        return true
     }
 }

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct ResearchBlockView: View {
     let block: CanvasBlock
+    let isViewportActive: Bool
 
     @State private var isExpanded = false
     @State private var atom: Atom?
@@ -26,9 +27,15 @@ struct ResearchBlockView: View {
     @State private var isYouTubeContent: Bool = false
     @State private var videoId: String?
     @State private var resolvedThumbnailURL: String?
+    @State private var loadTask: Task<Void, Never>?
 
     // Green accent for research
     private let accentColor = DS.entityResearch
+
+    init(block: CanvasBlock, isViewportActive: Bool = true) {
+        self.block = block
+        self.isViewportActive = isViewportActive
+    }
 
     // MARK: - Body
 
@@ -44,12 +51,18 @@ struct ResearchBlockView: View {
             researchContent
         }
         .onAppear {
-            loadAtom()
+            syncViewportActivity()
+        }
+        .onChange(of: isViewportActive) { _, _ in
+            syncViewportActivity()
         }
         .onReceive(NotificationCenter.default.publisher(for: .canvasAtomProcessed)) { notification in
             guard let uuid = notification.userInfo?["atomUUID"] as? String,
-                  uuid == atom?.uuid else { return }
-            loadAtom()
+                  uuid == atom?.uuid || uuid == block.entityUuid else { return }
+            syncViewportActivity(forceReload: true)
+        }
+        .onDisappear {
+            deactivateViewportContent()
         }
     }
 
@@ -109,7 +122,11 @@ struct ResearchBlockView: View {
 
     @ViewBuilder
     private var videoArea: some View {
-        if isLoading {
+        if !isViewportActive {
+            CosmicShimmer(entityColor: accentColor, cornerRadius: 10)
+                .frame(height: 158)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        } else if isLoading {
             // Shimmer loading state
             CosmicShimmer(entityColor: accentColor, cornerRadius: 10)
                 .frame(height: 158)
@@ -307,7 +324,7 @@ struct ResearchBlockView: View {
             .buttonStyle(.plain)
 
             // Dropdown content
-            if isDropdownOpen {
+            if isDropdownOpen && isViewportActive {
                 if isProcessing && (atom?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     VStack(spacing: 6) {
                         CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
@@ -406,9 +423,40 @@ struct ResearchBlockView: View {
 
     // MARK: - Data Loading
 
-    private func loadAtom() {
-        Task {
+    private func syncViewportActivity(forceReload: Bool = false) {
+        guard isViewportActive else {
+            deactivateViewportContent()
+            return
+        }
+
+        if forceReload || atom == nil {
+            loadAtom(forceReload: forceReload)
+        }
+    }
+
+    private func deactivateViewportContent() {
+        loadTask?.cancel()
+        loadTask = nil
+        isPlayerActive = false
+    }
+
+    private func loadAtom(forceReload: Bool = false) {
+        guard isViewportActive else { return }
+        guard forceReload || atom == nil else { return }
+
+        loadTask?.cancel()
+        isLoading = true
+
+        loadTask = Task {
+            defer {
+                Task { @MainActor in
+                    loadTask = nil
+                }
+            }
+
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                guard !Task.isCancelled else { return }
+
                 // PERF: Parse structured JSON once, cache all derived metadata
                 let parsed = Self.parseMetadata(atom: loaded, block: block)
                 await MainActor.run {
@@ -426,6 +474,8 @@ struct ResearchBlockView: View {
                     isLoading = false
                 }
             } else {
+                guard !Task.isCancelled else { return }
+
                 // Fall back to block metadata when atom not found
                 let url = block.metadata["url"]
                 let urlLower = (url ?? "").lowercased()

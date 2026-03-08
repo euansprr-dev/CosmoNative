@@ -1,315 +1,175 @@
 // CosmoOS/UI/CosmoWindow/CosmoWindowView.swift
-// Global floating Cosmo chat panel — accessible from anywhere via Option+A
-// Native macOS sidebar chat aesthetic, iMessage/Telegram Desktop feel
-// February 2026
+// Premium floating Cosmo agent overlay
+// March 2026
 
 import SwiftUI
 
-// MARK: - Cosmo Window View
-
-/// The main floating chat panel for the global Cosmo AI assistant.
-/// When `cosmoWindowIsFloating` is true (NSPanel mode), fills the entire window with all corners rounded.
-/// When false (legacy overlay mode), anchored to left or right edge.
 struct CosmoWindowView: View {
-
-    // MARK: - State
-
     @ObservedObject private var viewModel = CosmoWindowViewModel.shared
     @Binding var isVisible: Bool
     @AppStorage("cosmoWindowAnchor") private var anchor: CosmoWindowAnchor = .right
     @Environment(\.cosmoWindowIsFloating) private var isFloating
     @FocusState private var isInputFocused: Bool
 
-    @State private var inputText: String = ""
-    @State private var isHoveringClose = false
-    @State private var isHoveringMinimize = false
-    @State private var isHoveringNewChat = false
-    @State private var isHoveringHistory = false
+    @State private var inputText = ""
     @State private var bottomAnchorID = "bottom"
     @State private var pendingScrollWorkItem: DispatchWorkItem?
 
-    // MARK: - Constants
-
-    private let panelWidth: CGFloat = 400
-    private let verticalPadding: CGFloat = 16
-
-    // MARK: - Body
-
     var body: some View {
         if isFloating {
-            // NSPanel mode — fill entire window, all corners rounded
-            panelContent
+            panelShell
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(panelBackground)
-                .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusLarge)
-                        .stroke(DS.border, lineWidth: 1)
-                )
-                .onAppear {
-                    isInputFocused = true
-                    Task { await viewModel.loadConversation() }
-                }
+                .onAppear(perform: handleAppear)
         } else {
-            // Legacy overlay mode — anchored to left or right edge
             HStack(spacing: 0) {
-                if anchor == .right { Spacer(minLength: 0) }
+                if anchor == .right {
+                    Spacer(minLength: 0)
+                }
 
-                panelContent
-                    .frame(width: panelWidth)
-                    .frame(maxHeight: .infinity)
-                    .padding(.vertical, verticalPadding)
-                    .background(panelBackground)
-                    .clipShape(innerEdgeShape)
-                    .overlay(
-                        innerEdgeShape.stroke(DS.border, lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 24, x: anchor == .right ? -8 : 8, y: 0)
-                    .transition(
-                        .move(edge: anchor == .right ? .trailing : .leading)
-                        .combined(with: .opacity)
-                    )
+                panelShell
+                    .frame(width: CosmoWindowMetrics.defaultWidth)
+                    .padding(.vertical, 18)
 
-                if anchor == .left { Spacer(minLength: 0) }
+                if anchor == .left {
+                    Spacer(minLength: 0)
+                }
             }
-            .onAppear {
-                isInputFocused = true
-                Task { await viewModel.loadConversation() }
-            }
+            .onAppear(perform: handleAppear)
         }
     }
 
-    // MARK: - Panel Content
-
-    private var panelContent: some View {
+    private var panelShell: some View {
         VStack(spacing: 0) {
             headerBar
-            contextChips
-            divider
-            messageList
-            inputBar
-        }
-    }
 
-    // MARK: - Header Bar
+            if viewModel.activeContext.type != .none {
+                contextSummarySection
+            }
+
+            messageStage
+            composerSection
+        }
+        .background(DS.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CosmoWindowMetrics.panelCornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: CosmoWindowMetrics.panelCornerRadius, style: .continuous)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsFloatingShadow()
+    }
 
     private var headerBar: some View {
-        HStack(spacing: 10) {
-            // Cosmo label
-            Text("Cosmo")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(DS.text)
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Cosmo")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(DS.text)
 
-            // Context indicator pill
-            if viewModel.activeContext.type != .none {
-                contextPill
-            }
-
-            Spacer()
-
-            // Error indicator
-            if viewModel.error != nil {
-                Image(systemName: "exclamationmark.triangle")
+                Text(headerSubtitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.orange)
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(1)
             }
 
-            // Processing indicator
-            if viewModel.isProcessing {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .frame(width: 16, height: 16)
-            }
+            Spacer(minLength: 0)
 
-            // New Chat button
-            Button {
-                Task { await viewModel.startNewChat() }
-            } label: {
-                Image(systemName: "plus.message")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isHoveringNewChat ? DS.text : DS.textMuted)
-                    .frame(width: 24, height: 24)
-                    .background(
-                        isHoveringNewChat ? DS.borderActive : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                isHoveringNewChat = hovering
-            }
-            .help("New Chat")
-
-            // Chat History button
-            Button {
-                viewModel.showChatHistory.toggle()
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isHoveringHistory ? DS.text : DS.textMuted)
-                    .frame(width: 24, height: 24)
-                    .background(
-                        isHoveringHistory ? DS.borderActive : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                isHoveringHistory = hovering
-            }
-            .help("Chat History")
-            .popover(isPresented: $viewModel.showChatHistory) {
-                chatHistoryPopover
-            }
-
-            // Close button
-            Button {
-                CosmoWindowPanelController.shared.hide()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isHoveringClose ? DS.text : DS.textMuted)
-                    .frame(width: 24, height: 24)
-                    .background(
-                        isHoveringClose ? DS.borderActive : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                isHoveringClose = hovering
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 48)
-    }
-
-    // MARK: - Context Indicator Pill
-
-    private var contextPill: some View {
-        HStack(spacing: 4) {
-            Image(systemName: viewModel.activeContext.type.icon)
-                .font(.system(size: 9, weight: .medium))
-
-            Text(viewModel.activeContext.type.displayName)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-        }
-        .foregroundColor(DS.accent)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(DS.accent.opacity(0.1))
-        .clipShape(Capsule())
-    }
-
-    // MARK: - Context Chips
-
-    @ViewBuilder
-    private var contextChips: some View {
-        if viewModel.activeContext.type != .none {
-            ScrollView(.horizontal, showsIndicators: false) {
+            if let error = viewModel.error {
                 HStack(spacing: 6) {
-                    contextChipItems
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(error)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 16)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.red)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .cosmoWindowChip(activeFill: DS.redSoft, activeBorder: DS.red.opacity(0.18))
+            } else if viewModel.isProcessing {
+                ProcessingStatusPill(
+                    startedAt: viewModel.processingStartedAt,
+                    label: viewModel.activeToolLabel ?? "Thinking"
+                )
             }
-            .frame(height: 32)
 
-            divider
-        }
-    }
+            HStack(spacing: 6) {
+                headerControlButton("plus.message") {
+                    Task { await viewModel.startNewChat() }
+                }
+                .help("New Chat")
 
-    @ViewBuilder
-    private var contextChipItems: some View {
-        let data = viewModel.activeContext.data
+                headerControlButton("clock.arrow.circlepath") {
+                    viewModel.showChatHistory.toggle()
+                }
+                .help("Chat History")
+                .popover(isPresented: $viewModel.showChatHistory) {
+                    chatHistoryPopover
+                }
 
-        // Current item chip
-        if let title = data.currentAtomTitle {
-            contextChip(title)
-        }
-
-        // Visible items chip
-        if let count = data.visibleItemCount {
-            contextChip("\(count) items")
-        }
-
-        // Active filters
-        if let filters = data.activeFilters {
-            ForEach(filters, id: \.self) { filter in
-                contextChip(filter)
+                headerControlButton("xmark") {
+                    CosmoWindowPanelController.shared.hide()
+                }
+                .help("Close")
             }
+            .padding(4)
+            .cosmoWindowGroupChrome(cornerRadius: 14)
         }
-
-        // View-specific data chips (show first 3)
-        let specificData = Array(data.viewSpecificData.prefix(3))
-        ForEach(specificData, id: \.key) { key, value in
-            contextChip("\(key): \(value)")
-        }
-
-        // Selected text indicator
-        if data.selectedText != nil {
-            contextChip("Selection active")
-        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+        .frame(height: CosmoWindowMetrics.headerHeight)
     }
 
-    private func contextChip(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(DS.textSecondary)
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+    private var contextSummarySection: some View {
+        CosmoContextSummaryCard(
+            context: viewModel.activeContext,
+            suggestions: promptSuggestions,
+            onSelectSuggestion: queuePrompt
+        )
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+        .padding(.bottom, 14)
     }
 
-    // MARK: - Divider
-
-    private var divider: some View {
-        Rectangle()
-            .fill(DS.border)
-            .frame(height: 1)
-    }
-
-    // MARK: - Message List
-
-    private var messageList: some View {
+    private var messageStage: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    // Empty state
+                LazyVStack(spacing: CosmoWindowMetrics.messageSpacing) {
                     if viewModel.messages.isEmpty {
-                        emptyState
-                    }
-
-                    // Messages
-                    ForEach(viewModel.messages) { message in
-                        CosmoMessageBubble(
-                            message: message,
-                            onEdit: message.type == .user ? { msg in
-                                viewModel.editAndResend(messageId: msg.id)
-                            } : nil
+                        CosmoEmptyStateCard(
+                            context: viewModel.activeContext,
+                            suggestions: promptSuggestions,
+                            onSelectSuggestion: queuePrompt
                         )
+                    } else {
+                        ForEach(viewModel.messages) { message in
+                            CosmoMessageBubble(
+                                message: message,
+                                onEdit: message.type == .user ? { msg in
+                                    viewModel.editAndResend(messageId: msg.id)
+                                    inputText = msg.content
+                                    isInputFocused = true
+                                } : nil
+                            )
+                        }
                     }
 
-                    // Live tool activity (shown during processing)
-                    if viewModel.isProcessing && (!viewModel.liveToolActivity.isEmpty || viewModel.activeToolLabel != nil) {
-                        ToolActivityStreamView(
+                    if viewModel.isProcessing {
+                        CosmoThinkingCard(
+                            activeLabel: viewModel.activeToolLabel ?? "Thinking",
+                            startedAt: viewModel.processingStartedAt,
                             groups: viewModel.liveToolActivity,
-                            activeLabel: viewModel.activeToolLabel
+                            onCancel: viewModel.cancelCurrentOperation
                         )
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
 
-                    // Bottom anchor for auto-scroll
                     Color.clear
                         .frame(height: 1)
                         .id(bottomAnchorID)
                 }
-                .padding(.vertical, 8)
+                .padding(.horizontal, 0)
+                .padding(.vertical, 20)
             }
+            .background(DS.bg)
             .onChange(of: viewModel.messages.count) { _ in
                 debouncedScrollToBottom(proxy: proxy)
             }
@@ -322,95 +182,44 @@ struct CosmoWindowView: View {
         }
     }
 
-    // MARK: - Auto-Scroll
-
-    /// Debounced scroll-to-bottom — coalesces rapid successive calls (tool activity,
-    /// message count, processing state) into a single scroll to prevent layout thrashing.
-    private func debouncedScrollToBottom(proxy: ScrollViewProxy) {
-        pendingScrollWorkItem?.cancel()
-        let workItem = DispatchWorkItem {
-            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-        }
-        pendingScrollWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
-    }
-
-    // MARK: - Empty State
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "sparkles")
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(DS.textMuted)
-
-            Text("Ask Cosmo anything")
-                .font(DS.cardTitle)
-                .foregroundColor(DS.textSecondary)
-
-            Text("Context-aware AI assistant.\nKnows what you're working on.")
-                .font(DS.cardMeta)
-                .foregroundColor(DS.textMuted)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-
-    // MARK: - Input Bar
-
-    private var inputBar: some View {
-        VStack(spacing: 0) {
-            divider
-
-            // Error banner
-            if let error = viewModel.error {
-                errorBanner(error)
-            }
-
-            // Edit indicator (above input)
+    private var composerSection: some View {
+        VStack(spacing: 10) {
             if viewModel.pendingEditIndex != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "pencil")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(DS.accent)
 
-                    Text("Editing message")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                    Text("Editing earlier message")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
 
-                    Spacer()
+                    Spacer(minLength: 0)
 
-                    Button {
+                    Button("Cancel") {
                         viewModel.pendingEditIndex = nil
                         inputText = ""
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
                     }
                     .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textSecondary)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(DS.accent.opacity(0.06))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .cosmoWindowSectionChrome(cornerRadius: 14, shadow: false)
             }
 
-            // Mention overlay (above input)
             if viewModel.showMentionOverlay {
                 CosmoMentionOverlay(
                     isVisible: $viewModel.showMentionOverlay,
                     searchText: $viewModel.mentionSearchText,
                     onSelect: { atom in
                         viewModel.addMention(atom)
-                        // Remove the @query text — the chip is the visual indicator
                         if let atIndex = inputText.lastIndex(of: "@") {
                             inputText = String(inputText[inputText.startIndex..<atIndex])
-                            if !inputText.isEmpty && !inputText.hasSuffix(" ") { inputText += " " }
+                            if !inputText.isEmpty && !inputText.hasSuffix(" ") {
+                                inputText += " "
+                            }
                         }
                     },
                     onDismiss: {
@@ -418,139 +227,94 @@ struct CosmoWindowView: View {
                         viewModel.mentionSearchText = ""
                     }
                 )
-                .frame(maxHeight: 300)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Mention context chips (above input)
-            if !viewModel.mentionedAtoms.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(viewModel.mentionedAtoms, id: \.uuid) { atom in
-                            mentionChip(atom)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
-            }
-
-            HStack(alignment: .bottom, spacing: 8) {
-                // @ mention button
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        viewModel.showMentionOverlay.toggle()
-                    }
-                } label: {
-                    Text("@")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(viewModel.showMentionOverlay ? DS.accent : DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .background(viewModel.showMentionOverlay ? DS.accent.opacity(0.1) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-
-                // Expanding text field (grows up to 5 lines, then scrolls)
-                TextField("Ask Cosmo anything...", text: $inputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(DS.body)
-                    .foregroundColor(DS.text)
-                    .lineLimit(1...5)
-                    .focused($isInputFocused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.surfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .stroke(
-                                isInputFocused ? DS.accent.opacity(0.4) : DS.border,
-                                lineWidth: 1
-                            )
-                    )
-                    .onSubmit {
-                        sendCurrentMessage()
-                    }
-                    .onChange(of: inputText) { newValue in
-                        // Detect @ trigger
-                        if newValue.hasSuffix("@") && !viewModel.showMentionOverlay {
-                            withAnimation(ProMotionSprings.snappy) {
-                                viewModel.showMentionOverlay = true
-                                viewModel.mentionSearchText = ""
+            VStack(spacing: 10) {
+                if !viewModel.mentionedAtoms.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(viewModel.mentionedAtoms, id: \.uuid) { atom in
+                                mentionChip(atom)
                             }
                         }
-                        // Update mention search text while overlay is open
-                        if viewModel.showMentionOverlay {
-                            if let atIndex = newValue.lastIndex(of: "@") {
+                        .padding(.horizontal, 2)
+                    }
+                }
+
+                HStack(alignment: .bottom, spacing: 10) {
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            viewModel.showMentionOverlay.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "at")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.showMentionOverlay ? DS.accent : DS.textSecondary)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(viewModel.showMentionOverlay ? DS.accentSoft : DS.bg)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    TextField("Ask Cosmo anything...", text: $inputText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(DS.body)
+                        .foregroundColor(DS.text)
+                        .lineLimit(1...6)
+                        .focused($isInputFocused)
+                        .onSubmit(sendCurrentMessage)
+                        .onChange(of: inputText) { newValue in
+                            if newValue.hasSuffix("@") && !viewModel.showMentionOverlay {
+                                withAnimation(ProMotionSprings.snappy) {
+                                    viewModel.showMentionOverlay = true
+                                    viewModel.mentionSearchText = ""
+                                }
+                            }
+                            if viewModel.showMentionOverlay, let atIndex = newValue.lastIndex(of: "@") {
                                 let afterAt = String(newValue[newValue.index(after: atIndex)...])
                                 viewModel.mentionSearchText = afterAt
                             }
                         }
-                    }
 
-                // Model selector
-                modelSelector
+                    modelSelector
 
-                // Send / Stop button
-                if viewModel.isProcessing {
                     Button {
-                        viewModel.cancelCurrentOperation()
+                        if viewModel.isProcessing {
+                            viewModel.cancelCurrentOperation()
+                        } else {
+                            sendCurrentMessage()
+                        }
                     } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(DS.red)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        sendCurrentMessage()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(
-                                canSend ? DS.accent : DS.textMuted
+                        Image(systemName: viewModel.isProcessing ? "stop.fill" : "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(sendButtonForeground)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                Circle()
+                                    .fill(sendButtonBackground)
                             )
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canSend)
+                    .disabled(!viewModel.isProcessing && !canSend)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.composerCornerRadius, style: .continuous)
+                    .fill(DS.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.composerCornerRadius, style: .continuous)
+                    .stroke(isInputFocused ? DS.accent.opacity(0.22) : DS.border, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.03), radius: 6, x: 0, y: 2)
         }
+        .padding(CosmoWindowMetrics.contentPadding)
+        .background(DS.surface)
     }
-
-    // MARK: - Mention Chip
-
-    @ViewBuilder
-    private func mentionChip(_ atom: Atom) -> some View {
-        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
-        HStack(spacing: 4) {
-            Circle()
-                .fill(CosmoMentionColors.color(for: entityType))
-                .frame(width: 6, height: 6)
-            Text(atom.title ?? "Untitled")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(CosmoMentionColors.color(for: entityType))
-                .lineLimit(1)
-            Button {
-                viewModel.removeMention(atom)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.6))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(CosmoMentionColors.pillBackground(for: entityType))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(CosmoMentionColors.color(for: entityType).opacity(0.3), lineWidth: 1))
-    }
-
-    // MARK: - Model Selector
 
     private var modelSelector: some View {
         Menu {
@@ -560,98 +324,136 @@ struct CosmoWindowView: View {
             Button("Sonnet (Balanced)") { viewModel.modelOverride = .strategist }
             Button("Opus (Best)") { viewModel.modelOverride = .writer }
         } label: {
-            HStack(spacing: 2) {
-                Text(modelLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+            HStack(spacing: 4) {
+                Text(viewModel.currentModelLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textSecondary)
+
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundColor(DS.textMuted)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(DS.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .cosmoWindowChip()
         }
         .menuStyle(.borderlessButton)
-        .frame(width: 56)
     }
 
-    private var modelLabel: String {
-        switch viewModel.modelOverride {
-        case nil: return "Auto"
-        case .sensor: return "Haiku"
-        case .strategist: return "Sonnet"
-        case .writer: return "Opus"
-        }
-    }
+    private func mentionChip(_ atom: Atom) -> some View {
+        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
 
-    // MARK: - Error Banner
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(CosmoMentionColors.color(for: entityType))
+                .frame(width: 6, height: 6)
 
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.red)
-
-            Text(message)
-                .font(DS.cardMeta)
-                .foregroundColor(DS.red)
-                .lineLimit(2)
-
-            Spacer()
+            Text(atom.title ?? "Untitled")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(CosmoMentionColors.color(for: entityType))
+                .lineLimit(1)
 
             Button {
-                viewModel.error = nil
+                viewModel.removeMention(atom)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(DS.textMuted)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.65))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(DS.red.opacity(0.08))
+        .background(CosmoMentionColors.pillBackground(for: entityType))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(CosmoMentionColors.color(for: entityType).opacity(0.22), lineWidth: 1)
+        )
     }
 
-    // MARK: - Chat History Popover
-
     private var chatHistoryPopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Chat History")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.text)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Chat History")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(DS.text)
 
-            Rectangle()
-                .fill(DS.border)
-                .frame(height: 1)
+                    Text("Recent in-app conversations")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
 
-            if viewModel.chatHistoryEntries.isEmpty {
+                Spacer(minLength: 0)
+
+                Button("New Chat") {
+                    Task { await viewModel.startNewChat() }
+                    viewModel.showChatHistory = false
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.accent)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .cosmoWindowChip(isActive: true)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+
+                TextField("Search chats", text: $viewModel.historySearchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.text)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(DS.bg)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
+
+            if viewModel.filteredChatHistoryEntries.isEmpty {
                 VStack(spacing: 8) {
-                    Text("No past chats")
-                        .font(DS.cardMeta)
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 18, weight: .regular))
                         .foregroundColor(DS.textMuted)
+
+                    Text(viewModel.historySearchText.isEmpty ? "No past chats yet" : "No matching chats")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
+                .padding(.vertical, 28)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(viewModel.chatHistoryEntries) { entry in
+                    LazyVStack(spacing: 8) {
+                        ForEach(viewModel.filteredChatHistoryEntries) { entry in
                             chatHistoryRow(entry)
                         }
                     }
                 }
-                .frame(maxHeight: 300)
+                .frame(maxHeight: 340)
             }
         }
-        .frame(width: 280)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(16)
+        .frame(width: 340)
+        .background(DS.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsFloatingShadow()
         .onAppear {
+            viewModel.historySearchText = ""
             Task { await viewModel.loadChatHistory() }
         }
     }
@@ -661,70 +463,132 @@ struct CosmoWindowView: View {
             Task { await viewModel.switchToChat(id: entry.id) }
             viewModel.showChatHistory = false
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.preview)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(entry.preview)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
+                        .lineLimit(2)
 
-                HStack(spacing: 6) {
-                    Text("\(entry.messageCount) messages")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                    Spacer(minLength: 0)
 
-                    Text("·")
-                        .foregroundColor(DS.textMuted)
-
-                    Text(entry.lastActivity, style: .relative)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                    if entry.isActive {
+                        Text("Active")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip(isActive: true)
+                    }
                 }
+
+                HStack(spacing: 8) {
+                    Text("\(entry.messageCount) messages")
+                    Text("·")
+                    Text(entry.lastActivity, style: .relative)
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.textMuted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(entry.isActive ? DS.accent.opacity(0.08) : Color.clear)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(entry.isActive ? DS.accentSoft : DS.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(entry.isActive ? DS.accent.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Panel Background
+    private var headerSubtitle: String {
+        if viewModel.activeContext.type == .none {
+            return "Global assistant"
+        }
+        return viewModel.activeContext.type.displayName
+    }
 
-    private var panelBackground: some View {
-        ZStack {
-            // Ultra-thin material for blur-through
-            Rectangle()
-                .fill(.ultraThinMaterial)
+    private var promptSuggestions: [String] {
+        let title = viewModel.activeContext.data.currentAtomTitle ?? "what I’m looking at"
 
-            // Semi-transparent surface overlay
-            DS.surface.opacity(0.85)
+        switch viewModel.activeContext.type {
+        case .contentFocusMode:
+            return [
+                "Tighten the angle for \(title)",
+                "Give me 3 stronger hooks",
+                "What should I rewrite first?"
+            ]
+        case .swipeGallery, .swipeStudy:
+            return [
+                "What pattern is showing up here?",
+                "Find the strongest hook angle",
+                "How would I adapt this swipe?"
+            ]
+        case .researchFocusMode:
+            return [
+                "Summarize the important takeaways",
+                "What contradictions should I examine?",
+                "Turn this into actionable notes"
+            ]
+        case .thinkspaceCanvas:
+            return [
+                "Summarize what I’m looking at",
+                "What should I focus on next?",
+                "Turn this into a plan"
+            ]
+        case .sanctuary:
+            return [
+                "What deserves attention today?",
+                "Summarize my current state",
+                "What should I improve first?"
+            ]
+        case .none:
+            return [
+                "What should I focus on next?",
+                "Help me turn a thought into a plan",
+                "Summarize what I’m working on"
+            ]
+        default:
+            return [
+                "Help me think through \(title)",
+                "What matters most here?",
+                "Give me the next best move"
+            ]
         }
     }
-
-    // MARK: - Panel Shape
-
-    /// Rounds only the inner edge — left corners when right-anchored, right corners when left-anchored.
-    private var innerEdgeShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: anchor == .right ? DS.radiusLarge : 0,
-            bottomLeadingRadius: anchor == .right ? DS.radiusLarge : 0,
-            bottomTrailingRadius: anchor == .left ? DS.radiusLarge : 0,
-            topTrailingRadius: anchor == .left ? DS.radiusLarge : 0
-        )
-    }
-
-    // MARK: - Helpers
 
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.isProcessing
     }
 
+    private var sendButtonBackground: Color {
+        if viewModel.isProcessing {
+            return DS.red
+        }
+        return canSend ? DS.accent : DS.borderSubtle
+    }
+
+    private var sendButtonForeground: Color {
+        if viewModel.isProcessing {
+            return DS.textOnAccent
+        }
+        return canSend ? DS.textOnAccent : DS.textMuted
+    }
+
+    private func queuePrompt(_ prompt: String) {
+        inputText = prompt
+        isInputFocused = true
+    }
+
     private func sendCurrentMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
         inputText = ""
 
-        // Dismiss mention overlay if open
         if viewModel.showMentionOverlay {
             viewModel.showMentionOverlay = false
             viewModel.mentionSearchText = ""
@@ -740,9 +604,434 @@ struct CosmoWindowView: View {
             }
         }
     }
+
+    private func headerControlButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.textSecondary)
+                .frame(width: CosmoWindowMetrics.controlSize, height: CosmoWindowMetrics.controlSize)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(DS.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func handleAppear() {
+        isInputFocused = true
+        inputText = viewModel.inputText
+        Task { await viewModel.loadConversation() }
+    }
+
+    private func debouncedScrollToBottom(proxy: ScrollViewProxy) {
+        pendingScrollWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            withAnimation(ProMotionSprings.snappy) {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+        }
+        pendingScrollWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+    }
 }
 
-// MARK: - Preview
+enum CosmoWindowMetrics {
+    static let defaultWidth: CGFloat = 468
+    static let defaultHeight: CGFloat = 680
+    static let minWidth: CGFloat = 420
+    static let minHeight: CGFloat = 540
+    static let maxWidth: CGFloat = 620
+    static let maxHeight: CGFloat = 900
+
+    static let panelCornerRadius: CGFloat = 20
+    static let headerHeight: CGFloat = 56
+    static let contentPadding: CGFloat = 18
+    static let messageSpacing: CGFloat = 12
+    static let controlSize: CGFloat = 32
+    static let cardCornerRadius: CGFloat = 14
+    static let composerCornerRadius: CGFloat = 16
+    static let maxMessageWidth: CGFloat = 332
+}
+
+struct CosmoWindowSectionChromeModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let shadow: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(DS.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .modifier(CosmoWindowConditionalShadowModifier(enabled: shadow))
+    }
+}
+
+struct CosmoWindowConditionalShadowModifier: ViewModifier {
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.dsRestingShadow()
+        } else {
+            content
+        }
+    }
+}
+
+struct CosmoWindowChipModifier: ViewModifier {
+    let isActive: Bool
+    let activeFill: Color
+    let activeBorder: Color
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Capsule()
+                    .fill(isActive ? activeFill : DS.surfaceElevated)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isActive ? activeBorder : DS.borderSubtle, lineWidth: 1)
+            )
+    }
+}
+
+struct CosmoWindowGroupChromeModifier: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(DS.bg)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func cosmoWindowSectionChrome(
+        cornerRadius: CGFloat = CosmoWindowMetrics.cardCornerRadius,
+        shadow: Bool = true
+    ) -> some View {
+        modifier(CosmoWindowSectionChromeModifier(cornerRadius: cornerRadius, shadow: shadow))
+    }
+
+    func cosmoWindowChip(
+        isActive: Bool = false,
+        activeFill: Color = DS.accentSoft,
+        activeBorder: Color = DS.accent.opacity(0.18)
+    ) -> some View {
+        modifier(
+            CosmoWindowChipModifier(
+                isActive: isActive,
+                activeFill: activeFill,
+                activeBorder: activeBorder
+            )
+        )
+    }
+
+    func cosmoWindowGroupChrome(cornerRadius: CGFloat = 14) -> some View {
+        modifier(CosmoWindowGroupChromeModifier(cornerRadius: cornerRadius))
+    }
+}
+
+private struct ProcessingStatusPill: View {
+    let startedAt: Date?
+    let label: String
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(DS.accent)
+                    .frame(width: 8, height: 8)
+
+                Text(label)
+                    .lineLimit(1)
+
+                if let elapsedText = elapsedText {
+                    Text(elapsedText)
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(DS.text)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .cosmoWindowChip(isActive: true)
+        }
+    }
+
+    private var elapsedText: String? {
+        guard let startedAt else { return nil }
+        let elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+        let minutes = elapsed / 60
+        let seconds = elapsed % 60
+        return String(format: "%01d:%02d", minutes, seconds)
+    }
+}
+
+private struct CosmoThinkingCard: View {
+    let activeLabel: String
+    let startedAt: Date?
+    let groups: [ToolActivityGroup]
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Cosmo is working")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text("Live context and tool activity")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+
+                ProcessingStatusPill(startedAt: startedAt, label: activeLabel)
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .cosmoWindowChip(activeFill: DS.redSoft, activeBorder: DS.red.opacity(0.18))
+            }
+
+            ToolActivityStreamView(groups: groups, activeLabel: activeLabel)
+        }
+        .padding(14)
+        .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+}
+
+private struct CosmoContextSummaryCard: View {
+    let context: CosmoActiveContext
+    let suggestions: [String]
+    let onSelectSuggestion: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(DS.accentSoft)
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: context.type.icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(DS.accent)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(context.type.displayName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text(summaryText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                if let count = context.data.visibleItemCount {
+                    Text("\(count) visible")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .cosmoWindowChip()
+                }
+            }
+
+            contextFacts
+
+            if !suggestions.isEmpty {
+                FlowSuggestionsView(items: Array(suggestions.prefix(3)), onSelect: onSelectSuggestion)
+            }
+        }
+        .padding(14)
+        .cosmoWindowSectionChrome(cornerRadius: 16)
+    }
+
+    @ViewBuilder
+    private var contextFacts: some View {
+        let facts = contextFactChips
+        if !facts.isEmpty {
+            FlexibleFactRow(items: facts)
+        }
+    }
+
+    private var contextFactChips: [String] {
+        var facts: [String] = []
+
+        if let title = context.data.currentAtomTitle, !title.isEmpty {
+            facts.append(title)
+        }
+        if let filters = context.data.activeFilters, !filters.isEmpty {
+            facts.append(contentsOf: filters.prefix(2))
+        }
+        if context.data.selectedText != nil {
+            facts.append("Selection active")
+        }
+        for (key, value) in context.data.viewSpecificData.sorted(by: { $0.key < $1.key }).prefix(2) {
+            facts.append("\(key): \(value)")
+        }
+
+        return facts
+    }
+
+    private var summaryText: String {
+        if let current = context.data.currentAtomTitle, !current.isEmpty {
+            return "Focused on \(current)"
+        }
+        if !context.summary.isEmpty {
+            return context.summary
+        }
+        return "Cosmo can use your current workspace as live context."
+    }
+}
+
+private struct CosmoEmptyStateCard: View {
+    let context: CosmoActiveContext
+    let suggestions: [String]
+    let onSelectSuggestion: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(context.type == .none ? "Ask Cosmo anything" : "Ready with your current context")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text(descriptionText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(DS.accentSoft)
+                        .frame(width: 52, height: 52)
+
+                    Image(systemName: context.type == .none ? "sparkles" : context.type.icon)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(DS.accent)
+                }
+            }
+
+            FlowSuggestionsView(items: suggestions, onSelect: onSelectSuggestion)
+
+            HStack(spacing: 10) {
+                Text("Option+A")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .cosmoWindowChip(isActive: true)
+
+                Text("Opens Cosmo from anywhere")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+        }
+        .padding(18)
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+        .cosmoWindowSectionChrome(cornerRadius: 18)
+    }
+
+    private var descriptionText: String {
+        if context.type == .none {
+            return "Cosmo can help you think, summarize, plan, and write. Add @ references or just start typing."
+        }
+
+        if let current = context.data.currentAtomTitle, !current.isEmpty {
+            return "Cosmo already sees \(current) and the surrounding workspace, so you can jump straight into the work."
+        }
+
+        return "Cosmo is reading your active workspace and can use that context immediately."
+    }
+}
+
+private struct FlowSuggestionsView: View {
+    let items: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Try asking")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.textMuted)
+                .textCase(.uppercase)
+                .tracking(0.7)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.self) { item in
+                    Button(item) {
+                        onSelect(item)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(DS.surfaceElevated)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct FlexibleFactRow: View {
+    let items: [String]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(items, id: \.self) { item in
+                Text(item)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .cosmoWindowChip()
+            }
+        }
+    }
+}
 
 #if DEBUG
 struct CosmoWindowView_Previews: PreviewProvider {
@@ -753,19 +1042,10 @@ struct CosmoWindowView_Previews: PreviewProvider {
             ZStack {
                 DS.bg.ignoresSafeArea()
 
-                // Simulated background content
-                VStack {
-                    Text("Main App Content")
-                        .font(DS.pageTitle)
-                        .foregroundColor(DS.textMuted)
-                }
-
                 if isVisible {
                     CosmoWindowView(isVisible: $isVisible)
-                        .transition(
-                            .move(edge: .trailing)
-                            .combined(with: .opacity)
-                        )
+                        .frame(width: CosmoWindowMetrics.defaultWidth, height: CosmoWindowMetrics.defaultHeight)
+                        .padding(30)
                 }
             }
         }
@@ -773,7 +1053,7 @@ struct CosmoWindowView_Previews: PreviewProvider {
 
     static var previews: some View {
         PreviewWrapper()
-            .frame(width: 1200, height: 800)
+            .frame(width: 1200, height: 900)
     }
 }
 #endif

@@ -19,20 +19,20 @@ struct SwipeGalleryTab: View {
 
     var body: some View {
         ZStack {
-            DS.bg
+            DS.surface
 
             VStack(spacing: 0) {
                 filterBar
 
-                Divider().background(DS.borderActive)
+                Divider().background(DS.borderSubtle)
 
                 let items = viewModel.cachedFilteredSwipes
                 if items.isEmpty {
                     emptyState
                 } else {
                     GeometryReader { geometry in
-                        let columnCount = max(2, Int(geometry.size.width / (220 + 16)))
-                        let totalSpacing = CGFloat(columnCount - 1) * 16 + 48
+                        let columnCount = max(2, Int(geometry.size.width / (236 + CommandKMetrics.cardSpacing)))
+                        let totalSpacing = CGFloat(columnCount - 1) * CommandKMetrics.cardSpacing + (CommandKMetrics.contentPadding * 2)
                         let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
 
                         let isSearching = !searchQuery.isEmpty
@@ -102,12 +102,13 @@ struct SwipeGalleryTab: View {
 
     @ViewBuilder
     private func flatLazyMasonryView(items: [SwipeGalleryItem], columnCount: Int, cardWidth: CGFloat) -> some View {
+        let allColumns = Self.distributeColumns(columnCount: columnCount, items: items, cardWidth: cardWidth)
         ScrollView {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: CommandKMetrics.cardSpacing) {
                 ForEach(0..<columnCount, id: \.self) { columnIndex in
-                    LazyVStack(spacing: 16) {
-                        let colItems = Self.columnItems(for: columnIndex, columnCount: columnCount, items: items, cardWidth: cardWidth)
-                        ForEach(Array(colItems.enumerated()), id: \.element.id) { itemIndex, item in
+                    LazyVStack(spacing: CommandKMetrics.cardSpacing) {
+                        let colItems = columnIndex < allColumns.count ? allColumns[columnIndex] : []
+                        ForEach(colItems, id: \.id) { item in
                             SwipeGalleryCard(item: item, cardWidth: cardWidth, viewModel: viewModel)
                                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
                         }
@@ -115,23 +116,23 @@ struct SwipeGalleryTab: View {
                     .frame(width: cardWidth)
                 }
             }
-            .padding(24)
+            .padding(CommandKMetrics.contentPadding)
             .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
         }
     }
 
-    /// Distribute items across columns by estimated height (masonry pattern)
-    private static func columnItems(for column: Int, columnCount: Int, items: [SwipeGalleryItem], cardWidth: CGFloat) -> [SwipeGalleryItem] {
+    /// Distribute items across all columns by estimated height (masonry pattern) — computed once
+    private static func distributeColumns(columnCount: Int, items: [SwipeGalleryItem], cardWidth: CGFloat) -> [[SwipeGalleryItem]] {
         var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
         var columns: [[SwipeGalleryItem]] = Array(repeating: [], count: columnCount)
 
         for item in items {
             let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
             columns[shortestColumn].append(item)
-            columnHeights[shortestColumn] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + 16
+            columnHeights[shortestColumn] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + CommandKMetrics.cardSpacing
         }
 
-        return column < columns.count ? columns[column] : []
+        return columns
     }
 
     // MARK: - Clustered Scroll View
@@ -139,20 +140,22 @@ struct SwipeGalleryTab: View {
     @ViewBuilder
     private func clusteredScrollView(columnCount: Int, cardWidth: CGFloat) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(viewModel.cachedClusteredSections) { section in
-                    Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        formatSectionHeader(section)
+
                         if viewModel.expandedFormatGroups.contains(section.id) {
                             ForEach(section.clusters) { cluster in
                                 clusterRow(cluster, columnCount: columnCount, cardWidth: cardWidth)
                             }
                         }
-                    } header: {
-                        formatSectionHeader(section)
                     }
+                    .padding(16)
+                    .commandKSectionChrome()
                 }
             }
-            .padding(24)
+            .padding(CommandKMetrics.contentPadding)
             .padding(.bottom, viewModel.isMultiSelectActive ? 60 : 0)
         }
     }
@@ -178,15 +181,18 @@ struct SwipeGalleryTab: View {
                     .foregroundColor(section.formatGroup.color)
 
                 Text(section.formatGroup.displayName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(DS.text)
 
                 Text("\(section.totalItemCount)")
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundColor(DS.textMuted)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(DS.surfaceElevated))
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .foregroundColor(section.formatGroup.color)
+                    .commandKToolbarChip(
+                        isActive: true,
+                        activeFill: section.formatGroup.color.opacity(0.10),
+                        activeBorder: section.formatGroup.color.opacity(0.18),
+                        cornerRadius: 8
+                    )
 
                 Spacer()
 
@@ -194,11 +200,9 @@ struct SwipeGalleryTab: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(DS.textMuted)
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
         .buttonStyle(.plain)
-        .background(DS.bg)
     }
 
     // MARK: - Cluster Row (Layer 2)
@@ -207,7 +211,7 @@ struct SwipeGalleryTab: View {
     private func clusterRow(_ cluster: SwipeCluster, columnCount: Int, cardWidth: CGFloat) -> some View {
         let isExpanded = viewModel.expandedClusters.contains(cluster.id)
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // Cluster header
             Button {
                 withAnimation(ProMotionSprings.snappy) {
@@ -231,7 +235,15 @@ struct SwipeGalleryTab: View {
                 clusterPreviewStrip(cluster)
             }
         }
-        .padding(.bottom, 12)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 
     @ViewBuilder
@@ -242,7 +254,7 @@ struct SwipeGalleryTab: View {
                 .foregroundColor(cluster.narrativeColor)
 
             Text(cluster.displayName)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(DS.text)
 
             Text("\(cluster.itemCount)")
@@ -255,8 +267,8 @@ struct SwipeGalleryTab: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textMuted)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
 
     // MARK: - Cluster Preview Strip (Collapsed)
@@ -264,11 +276,11 @@ struct SwipeGalleryTab: View {
     @ViewBuilder
     private func clusterPreviewStrip(_ cluster: SwipeCluster) -> some View {
         let previewItems = Array(cluster.items.prefix(4))
-        let thumbSize: CGFloat = 64
+        let thumbSize: CGFloat = 72
 
         HStack(spacing: 8) {
             ForEach(previewItems, id: \.id) { item in
-                swipeThumbnailMini(item: item, size: thumbSize)
+                SwipeThumbnailMini(item: item, size: thumbSize)
             }
 
             if cluster.items.count > 4 {
@@ -284,45 +296,7 @@ struct SwipeGalleryTab: View {
                     )
             }
         }
-        .padding(.horizontal, 8)
-    }
-
-    @ViewBuilder
-    private func swipeThumbnailMini(item: SwipeGalleryItem, size: CGFloat) -> some View {
-        Group {
-            if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    case .failure, .empty:
-                        miniPlaceholder(item: item)
-                    @unknown default:
-                        miniPlaceholder(item: item)
-                    }
-                }
-            } else {
-                miniPlaceholder(item: item)
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
-    }
-
-    @ViewBuilder
-    private func miniPlaceholder(item: SwipeGalleryItem) -> some View {
-        ZStack {
-            DS.surfaceElevated
-            Text(String(item.title.prefix(2)).uppercased())
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
-        }
+        .padding(.horizontal, 2)
     }
 
     /// Estimate total height for an expanded cluster to size the embedded scroll view
@@ -330,7 +304,7 @@ struct SwipeGalleryTab: View {
         var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
         for item in cluster.items {
             let shortest = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
-            columnHeights[shortest] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + 16
+            columnHeights[shortest] += SwipeGalleryCard.estimatedHeight(for: item, cardWidth: cardWidth) + CommandKMetrics.cardSpacing
         }
         return (columnHeights.max() ?? 200) + 48
     }
@@ -338,7 +312,7 @@ struct SwipeGalleryTab: View {
     // MARK: - Filter Bar (Library style)
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CommandKMetrics.toolbarSpacing) {
             statsLabel
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -369,14 +343,14 @@ struct SwipeGalleryTab: View {
 
             creatorsButton
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, CommandKMetrics.contentPadding)
         .padding(.vertical, 12)
     }
 
     private var filterSeparator: some View {
         Rectangle()
-            .fill(DS.borderActive)
-            .frame(width: 1, height: 20)
+            .fill(DS.borderSubtle)
+            .frame(width: 1, height: 22)
     }
 
     private var viewModeToggle: some View {
@@ -388,8 +362,15 @@ struct SwipeGalleryTab: View {
             Image(systemName: viewModel.swipeViewMode == .clustered ? "folder.fill" : "square.grid.2x2.fill")
                 .font(.system(size: 12))
                 .foregroundColor(DS.text)
-                .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 6).fill(DS.surfaceElevated))
+                .frame(width: 32, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(DS.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
         .help(viewModel.swipeViewMode == .clustered ? "Switch to flat grid" : "Switch to clustered view")
@@ -400,19 +381,25 @@ struct SwipeGalleryTab: View {
     private var statsLabel: some View {
         HStack(spacing: 6) {
             Text("\(viewModel.swipeGalleryItems.count)")
-                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .font(.system(size: 14, weight: .bold).monospacedDigit())
                 .foregroundColor(DS.text)
             Text("swipes")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
             if let avg = averageHookScore {
-                Rectangle().fill(DS.borderActive).frame(width: 1, height: 16)
                 Text(String(format: "%.1f", avg))
-                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundColor(averageScoreColor)
+                    .commandKToolbarChip(
+                        isActive: true,
+                        activeFill: averageScoreColor.opacity(0.10),
+                        activeBorder: averageScoreColor.opacity(0.18),
+                        cornerRadius: 8
+                    )
+
                 Text("avg")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(DS.textMuted)
             }
         }
@@ -442,12 +429,11 @@ struct SwipeGalleryTab: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 10))
         }
-        .foregroundColor(isActive ? DS.text : DS.text)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? gold.opacity(0.15) : DS.surfaceElevated)
+        .foregroundColor(DS.text)
+        .commandKToolbarChip(
+            isActive: isActive,
+            activeFill: gold.opacity(0.12),
+            activeBorder: gold.opacity(0.18)
         )
     }
 
@@ -722,12 +708,7 @@ struct SwipeGalleryTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surfaceElevated)
-            )
+            .commandKToolbarChip()
         }
         .menuStyle(.borderlessButton)
         .tint(DS.text)
@@ -760,11 +741,10 @@ struct SwipeGalleryTab: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(gold.opacity(0.8))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(gold.opacity(0.1))
+            .commandKToolbarChip(
+                isActive: true,
+                activeFill: gold.opacity(0.10),
+                activeBorder: gold.opacity(0.18)
             )
         }
         .buttonStyle(.plain)
@@ -790,15 +770,10 @@ struct SwipeGalleryTab: View {
                     .font(.system(size: 12, weight: .semibold))
             }
             .foregroundColor(gold)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(gold.opacity(0.12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(gold.opacity(0.3), lineWidth: 1)
-                    )
+            .commandKToolbarChip(
+                isActive: true,
+                activeFill: gold.opacity(0.10),
+                activeBorder: gold.opacity(0.18)
             )
         }
         .buttonStyle(.plain)
@@ -866,6 +841,72 @@ private struct SwipeMasonryLayout: Layout {
     }
 }
 
+// MARK: - SwipeThumbnailMini
+
+private struct SwipeThumbnailMini: View {
+    let item: SwipeGalleryItem
+    let size: CGFloat
+    @State private var localThumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            if let localThumb = localThumbnail {
+                Image(nsImage: localThumb)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    case .failure:
+                        miniPlaceholder
+                            .onAppear { generateLocalThumbnail() }
+                    case .empty:
+                        miniPlaceholder
+                    @unknown default:
+                        miniPlaceholder
+                    }
+                }
+            } else {
+                miniPlaceholder
+                    .onAppear { generateLocalThumbnail() }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(DS.border, lineWidth: 1)
+        )
+    }
+
+    private var miniPlaceholder: some View {
+        ZStack {
+            DS.surfaceElevated
+            Text(String(item.title.prefix(2)).uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    private func generateLocalThumbnail() {
+        guard localThumbnail == nil,
+              let shortcode = item.instagramId, !shortcode.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            if let image = await SwipeGalleryCard.thumbnailFromCache(shortcode: shortcode) {
+                await MainActor.run { localThumbnail = image }
+                return
+            }
+            if let image = await SwipeGalleryCard.extractAndCacheThumbnail(shortcode: shortcode) {
+                await MainActor.run { localThumbnail = image }
+            }
+        }
+    }
+}
+
 // MARK: - SwipeGalleryCard
 
 private struct SwipeGalleryCard: View {
@@ -911,7 +952,7 @@ private struct SwipeGalleryCard: View {
     // MARK: - Platform-Based Preview Height
 
     /// Height of the info section below the preview (title + subtitle + badge + padding)
-    private let infoSectionHeight: CGFloat = 90
+    private let infoSectionHeight: CGFloat = 96
 
     private var previewHeight: CGFloat {
         if hasThumbnail {
@@ -933,7 +974,7 @@ private struct SwipeGalleryCard: View {
             }
         } else {
             // No thumbnail — compact text card
-            return 80
+            return 92
         }
     }
 
@@ -944,7 +985,7 @@ private struct SwipeGalleryCard: View {
 
     /// Static height estimation for lazy column distribution (no instance needed)
     static func estimatedHeight(for item: SwipeGalleryItem, cardWidth: CGFloat) -> CGFloat {
-        let infoHeight: CGFloat = 90
+        let infoHeight: CGFloat = 96
         let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
         let previewHeight: CGFloat
         if hasThumbnail {
@@ -993,10 +1034,10 @@ private struct SwipeGalleryCard: View {
                 .clipped()
 
             // Info area — matches Library card structure
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 // Title (hook text)
                 Text(item.hookText ?? item.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(DS.text)
                     .lineLimit(2)
 
@@ -1006,19 +1047,18 @@ private struct SwipeGalleryCard: View {
                 // Bottom row: hook type badge + date
                 bottomRowLabel
             }
-            .padding(12)
+            .padding(14)
         }
         .frame(height: totalCardHeight)
         .clipped()
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
-        .shadow(
-            color: .black.opacity(isHovered ? 0.4 : 0.2),
-            radius: isHovered ? 16 : 8,
-            y: isHovered ? 8 : 4
+        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.cardCornerRadius, style: .continuous))
+        .commandKGalleryCardChrome(
+            isHovered: isHovered,
+            isSelected: isSelected,
+            accentColor: DS.entitySwipe
         )
-        .scaleEffect(isPressed ? 0.97 : (isHovered ? 1.02 : 1.0))
+        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
+        .scaleEffect(isPressed ? 0.985 : 1.0)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
         .animation(ProMotionSprings.press, value: isPressed)
         .onHover { hovering in isHovered = hovering }
@@ -1075,12 +1115,7 @@ private struct SwipeGalleryCard: View {
     @ViewBuilder
     private var previewArea: some View {
         ZStack {
-            // Gradient background (Library-style, using platform accent)
-            LinearGradient(
-                colors: [platformAccentColor.opacity(0.15), platformAccentColor.opacity(0.05)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            platformAccentColor.opacity(0.08)
 
             previewContent
 
@@ -1095,9 +1130,13 @@ private struct SwipeGalleryCard: View {
                             .font(.system(size: 9, weight: .medium))
                     }
                     .foregroundColor(DS.text)
-                    .padding(.horizontal, 7)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(DS.bg.opacity(0.75)))
+                    .background(Capsule().fill(DS.surfaceElevated))
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
 
                     Spacer()
 
@@ -1105,8 +1144,8 @@ private struct SwipeGalleryCard: View {
                     if let score = item.hookScore {
                         Text(String(format: "%.1f", score))
                             .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundColor(.white) // White on accent bg — exception
-                            .padding(.horizontal, 7)
+                            .foregroundColor(DS.textOnAccent)
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(item.scoreColor.opacity(0.85)))
                     }
@@ -1121,9 +1160,13 @@ private struct SwipeGalleryCard: View {
                         Text(formatDuration(duration))
                             .font(.system(size: 10, weight: .medium).monospacedDigit())
                             .foregroundColor(DS.text)
-                            .padding(.horizontal, 7)
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Capsule().fill(DS.bg.opacity(0.75)))
+                            .background(Capsule().fill(DS.surfaceElevated))
+                            .overlay(
+                                Capsule()
+                                    .stroke(DS.borderSubtle, lineWidth: 1)
+                            )
                     }
                 }
             }
@@ -1175,18 +1218,18 @@ private struct SwipeGalleryCard: View {
             if let hookText = item.hookText, !hookText.isEmpty {
                 // Text preview (like Library's idea card)
                 Text(hookText)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
                 Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 0)
                 Image(systemName: item.platformIcon)
-                    .font(.system(size: 32))
+                    .font(.system(size: 30))
                     .foregroundColor(platformAccentColor.opacity(0.5))
                 Spacer(minLength: 0)
             }
@@ -1223,7 +1266,7 @@ private struct SwipeGalleryCard: View {
                         .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundColor(Color(hex: "#64748B"))
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(Color(hex: "#64748B").opacity(0.12))
                 .clipShape(Capsule())
@@ -1232,7 +1275,7 @@ private struct SwipeGalleryCard: View {
             Spacer()
 
             Text(relativeDate)
-                .font(.system(size: 11))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.textMuted)
         }
     }
@@ -1246,7 +1289,7 @@ private struct SwipeGalleryCard: View {
                 .font(.system(size: 10, weight: .medium))
         }
         .foregroundColor(hookType.color)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(hookType.color.opacity(0.12))
         .clipShape(Capsule())
@@ -1344,31 +1387,26 @@ private struct SwipeGalleryCard: View {
         }
     }
 
-    // MARK: - Card Background
-
-    private var cardBackground: some View {
-        ZStack {
-            DS.surfaceElevated
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    isHovered ? DS.borderActive : DS.border,
-                    lineWidth: 1
-                )
-        }
-    }
-
     // MARK: - Helpers
 
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoFormatterBasic = ISO8601DateFormatter()
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private var relativeDate: String {
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = isoFormatter.date(from: item.createdAt)
-                ?? ISO8601DateFormatter().date(from: item.createdAt) else {
+        guard let date = Self.isoFormatter.date(from: item.createdAt)
+                ?? Self.isoFormatterBasic.date(from: item.createdAt) else {
             return item.createdAt
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func formatDuration(_ seconds: Int) -> String {
@@ -1398,7 +1436,7 @@ private struct SwipeGalleryCard: View {
     }
 
     /// Check disk cache, then try generating from cached video
-    private static func thumbnailFromCache(shortcode: String) async -> NSImage? {
+    fileprivate static func thumbnailFromCache(shortcode: String) async -> NSImage? {
         let thumbCache = thumbnailCacheDir()
         let thumbPath = thumbCache.appendingPathComponent("thumb-\(shortcode).jpg")
         if FileManager.default.fileExists(atPath: thumbPath.path),
@@ -1434,7 +1472,7 @@ private struct SwipeGalleryCard: View {
     }
 
     /// Re-extract media from Instagram to get fresh URLs, download first image, cache it
-    private static func extractAndCacheThumbnail(shortcode: String) async -> NSImage? {
+    fileprivate static func extractAndCacheThumbnail(shortcode: String) async -> NSImage? {
         let igURL = URL(string: "https://www.instagram.com/p/\(shortcode)/")!
 
         do {
@@ -1469,7 +1507,7 @@ private struct SwipeGalleryCard: View {
         }
     }
 
-    private static func thumbnailCacheDir() -> URL {
+    fileprivate static func thumbnailCacheDir() -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
     }

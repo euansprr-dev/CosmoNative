@@ -6,16 +6,64 @@ import SwiftUI
 import HealthKit
 
 @MainActor
-class PhysiologicalDataProvider: ObservableObject {
-    @Published var data: PhysiologicalDimensionData = .preview
+class PhysiologicalDataProvider: ObservableObject, DimensionScoring {
+    nonisolated var dimensionId: String { "physiological" }
+
+    @Published var data: PhysiologicalDimensionData = .empty
     @Published var healthTier: HealthTier = .none
     @Published var isLoading: Bool = false
     @Published var isConnected: Bool = false
+    @Published var lastRefreshDate: Date?
+    @Published var physiologicalIndex: DimensionIndex = .empty
 
     private let healthService: HealthKitQueryService
 
     init(healthService: HealthKitQueryService? = nil) {
         self.healthService = healthService ?? HealthKitQueryService.shared
+    }
+
+    // MARK: - DimensionScoring
+
+    func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
+        let sleepScore = Double(data.lastNightSleep.score)
+        let activityScore = data.dailyRings.moveGoal > 0
+            ? min(100, (Double(data.dailyRings.moveCalories) / Double(data.dailyRings.moveGoal)) * 100)
+            : min(100, Double(data.stepCount) / 10_000.0 * 100)
+
+        let subScores: [String: Double] = [
+            "recovery": data.recoveryScore,
+            "readiness": data.readinessScore,
+            "sleep": sleepScore,
+            "activity": activityScore
+        ]
+
+        let trend: DimensionTrend = {
+            let latestSleep = data.sleepTrend.last.map(Double.init) ?? 0
+            let baselineSleep = Double(data.sleepTrend.first ?? 0)
+            let delta = latestSleep - baselineSleep
+            if delta > 4 || data.recoveryScore >= 80 { return .rising }
+            if delta < -4 || data.recoveryScore <= 40 { return .falling }
+            return .stable
+        }()
+
+        let confidence = isConnected ? 0.95 : 0.1
+        let score = isConnected
+            ? (data.recoveryScore * 0.45 + data.readinessScore * 0.35 + sleepScore * 0.20)
+            : 0
+
+        let index = DimensionIndex(
+            score: min(100, max(0, score)),
+            confidence: confidence,
+            trend: trend,
+            subScores: subScores,
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
+        )
+        physiologicalIndex = index
+        return index
     }
 
     // MARK: - Connect
@@ -33,6 +81,8 @@ class PhysiologicalDataProvider: ObservableObject {
         guard healthService.hasAccess else {
             healthTier = .none
             isConnected = false
+            data = .empty
+            lastRefreshDate = Date()
             return
         }
 
@@ -224,6 +274,7 @@ class PhysiologicalDataProvider: ObservableObject {
             correlations: correlations,
             predictions: predictions
         )
+        lastRefreshDate = Date()
     }
 
     // MARK: - Helpers

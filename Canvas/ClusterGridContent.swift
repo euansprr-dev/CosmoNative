@@ -19,11 +19,10 @@ struct ClusterGridContent: View {
     let cluster: CanvasCluster
     let clusterColor: Color
     let blocks: [CanvasBlock]
+    let isDropTargeted: Bool
     let onOpenFocusMode: (String) -> Void
-    var onDrop: ((ClusterTransferEvent) -> Void)?
 
     @StateObject private var expansionManager = BlockExpansionManager()
-    @State private var isDropTargeted = false
 
     private let columnCount = 4
     private let gridSpacing: CGFloat = 12
@@ -53,14 +52,6 @@ struct ClusterGridContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environmentObject(expansionManager)
-        .onDrop(
-            of: [.text],
-            delegate: ClusterGridDropDelegate(
-                targetClusterId: cluster.id,
-                isDropTargeted: $isDropTargeted,
-                onDrop: onDrop
-            )
-        )
     }
 
     // MARK: - Drop Placeholder
@@ -139,58 +130,5 @@ struct ClusterGridContent: View {
     private var memberBlocks: [CanvasBlock] {
         let uuids = Set(cluster.blockUUIDs)
         return blocks.filter { uuids.contains($0.entityUuid) }
-    }
-}
-
-// MARK: - Grid Drop Delegate
-
-private struct ClusterGridDropDelegate: DropDelegate {
-    let targetClusterId: UUID
-    @Binding var isDropTargeted: Bool
-    let onDrop: ((ClusterTransferEvent) -> Void)?
-
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
-    }
-
-    func dropEntered(info: DropInfo) {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = true
-        }
-    }
-
-    func dropExited(info: DropInfo) {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = false
-        }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        withAnimation(ProMotionSprings.snappy) {
-            isDropTargeted = false
-        }
-        let providers = info.itemProviders(for: [.text])
-        for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in
-                let blockUUID: String?
-                if let data = item as? Data {
-                    blockUUID = String(data: data, encoding: .utf8)
-                } else if let text = item as? String {
-                    blockUUID = text
-                } else if let text = item as? NSString {
-                    blockUUID = text as String
-                } else {
-                    blockUUID = nil
-                }
-                guard let blockUUID else { return }
-                DispatchQueue.main.async {
-                    onDrop?(ClusterTransferEvent(
-                        blockUUID: blockUUID,
-                        targetClusterId: targetClusterId
-                    ))
-                }
-            }
-        }
-        return true
     }
 }

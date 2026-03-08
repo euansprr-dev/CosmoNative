@@ -5,11 +5,12 @@
 import SwiftUI
 
 struct SidebarDimensionSection: View {
+    @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
 
     @ObservedObject private var engine = DimensionIndexEngine.shared
+    @ObservedObject private var coordinator = DimensionWorkspaceCoordinator.shared
     @State private var hoveredDimension: LevelDimension?
-    @State private var presentedDimension: LevelDimension?
 
     // Cosmo Index = weighted average (sanctuaryLevel from engine)
     private var cosmoIndex: Int {
@@ -34,26 +35,26 @@ struct SidebarDimensionSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(item: $presentedDimension) { dimension in
-            DimensionDetailView(
-                dimension: dimension,
-                state: nil,
-                insights: [],
-                onDismiss: { presentedDimension = nil }
-            )
+        .task {
+            await coordinator.start()
         }
     }
 
     // MARK: - Section Header
 
     private var sectionHeader: some View {
-        HStack(spacing: 6) {
+        let hasActiveDimension = currentDestination.isDimension
+
+        return HStack(spacing: 6) {
             if isCollapsed {
                 Image(systemName: "chart.bar.xaxis")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(hasActiveDimension ? DS.accent : DS.textSecondary)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(
+                        hasActiveDimension ? DS.accentSoft : DS.surface,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Dimensions")
@@ -143,14 +144,19 @@ struct SidebarDimensionSection: View {
         let index = engine.dimensionIndices[dimension] ?? .empty
         let score = Int(index.score.rounded())
         let isHovered = hoveredDimension == dimension
+        let isActive = currentDestination.dimension == dimension
         let color = Color(hex: dimension.colorHex)
 
         return Button {
-            presentedDimension = dimension
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToDimension,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.DimensionPayload(dimension: dimension).userInfo
+            )
         } label: {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(color.opacity(0.14))
+                    .fill(isActive ? color.opacity(0.18) : color.opacity(0.14))
                     .frame(width: 24, height: 24)
                     .overlay(
                         Image(systemName: dimension.iconName)
@@ -160,7 +166,7 @@ struct SidebarDimensionSection: View {
 
                 Text(dimension.displayName)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundColor(isActive ? DS.text : DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer(minLength: 8)
@@ -185,17 +191,39 @@ struct SidebarDimensionSection: View {
             }
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.dimensionRowHeight, alignment: .leading)
-            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 9, hoverFill: DS.surfaceHover)
+            .unifiedSidebarRowChrome(
+                isActive: isActive,
+                isHovered: isHovered,
+                cornerRadius: 9,
+                activeFill: color.opacity(0.10),
+                hoverFill: DS.surfaceHover,
+                activeBorder: color.opacity(0.18)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hoveredDimension = $0 ? dimension : nil }
+        .contextMenu {
+            Button {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.navigateToDimension,
+                    object: nil,
+                    userInfo: CosmoNotification.Navigation.DimensionPayload(dimension: dimension).userInfo
+                )
+            } label: {
+                Label("Open", systemImage: "arrow.right.circle")
+            }
+
+            Button {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openDimensionAsPane,
+                    object: nil,
+                    userInfo: CosmoNotification.Navigation.DimensionPayload(dimension: dimension).userInfo
+                )
+            } label: {
+                Label("Open as Pane", systemImage: "rectangle.split.2x1")
+            }
+        }
         .help("\(dimension.displayName): \(score)/100")
     }
-}
-
-// MARK: - LevelDimension Identifiable conformance for sheet
-
-extension LevelDimension: Identifiable {
-    public var id: String { rawValue }
 }

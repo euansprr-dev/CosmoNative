@@ -67,12 +67,17 @@ struct PaneColumnView: View {
     @ObservedObject var paneManager: PaneManager
     let totalHeight: CGFloat
 
+    private let dividerThickness: CGFloat = 6
+
     var body: some View {
         GeometryReader { geo in
+            let dividerCount = CGFloat(max(paneManager.panes.count - 1, 0))
+            let availableHeight = geo.size.height - dividerCount * dividerThickness
+
             VStack(spacing: 0) {
                 ForEach(Array(paneManager.panes.enumerated()), id: \.element.id) { index, pane in
                     let isActive = paneManager.activePaneId == pane.id
-                    let paneHeight = geo.size.height * paneManager.paneSizes[safe: index, default: 1.0]
+                    let paneHeight = availableHeight * paneManager.paneSizes[safe: index, default: 1.0]
 
                     PaneContentView(
                         content: pane,
@@ -83,7 +88,7 @@ struct PaneColumnView: View {
                             }
                         }
                     )
-                    .frame(height: paneHeight)
+                    .frame(height: max(paneHeight, 0))
                     .contentShape(Rectangle())
                     .onTapGesture {
                         paneManager.activatePane(pane.id)

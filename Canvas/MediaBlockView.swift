@@ -11,6 +11,7 @@ import AVKit
 
 struct MediaBlockView: View {
     let block: CanvasBlock
+    let isViewportActive: Bool
 
     @State private var atom: Atom?
     @State private var isLoading = true
@@ -30,6 +31,7 @@ struct MediaBlockView: View {
     @State private var carouselIndex: Int = 0
     // Resizable block size
     @State private var blockSize: CGSize
+    @State private var loadTask: Task<Void, Never>?
 
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
@@ -53,8 +55,9 @@ struct MediaBlockView: View {
     // Text reserve below media area (title + separator + transcript toggle)
     private var textReserve: CGFloat { scaled(65) }
 
-    init(block: CanvasBlock) {
+    init(block: CanvasBlock, isViewportActive: Bool = true) {
         self.block = block
+        self.isViewportActive = isViewportActive
         self._blockSize = State(initialValue: block.size)
     }
 
@@ -198,12 +201,18 @@ struct MediaBlockView: View {
             .animation(ProMotionSprings.snappy, value: block.isSelected)
         }
         .onAppear {
-            loadAtom()
+            syncViewportActivity()
+        }
+        .onChange(of: isViewportActive) { _, _ in
+            syncViewportActivity()
         }
         .onReceive(NotificationCenter.default.publisher(for: .canvasAtomProcessed)) { notification in
             guard let uuid = notification.userInfo?["atomUUID"] as? String,
-                  uuid == atom?.uuid else { return }
-            loadAtom()
+                  uuid == atom?.uuid || uuid == block.entityUuid else { return }
+            syncViewportActivity(forceReload: true)
+        }
+        .onDisappear {
+            deactivateViewportContent()
         }
         // Enforce aspect ratio during resize for reel/carousel/youtube
         .onChange(of: blockSize) { _, newSize in
@@ -327,7 +336,9 @@ struct MediaBlockView: View {
 
     @ViewBuilder
     private var mediaArea: some View {
-        if isLoading {
+        if !isViewportActive {
+            loadingPlaceholder
+        } else if isLoading {
             loadingPlaceholder
         } else if isPlayerActive, isYouTubeContent, let vid = videoId {
             // YouTube inline player
@@ -676,8 +687,10 @@ struct MediaBlockView: View {
             .buttonStyle(.plain)
 
             if isDropdownOpen {
-                transcriptContent
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                if isViewportActive {
+                    transcriptContent
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
     }
@@ -771,22 +784,65 @@ struct MediaBlockView: View {
 
     // MARK: - Data Loading (same approach as SwipeStudyFocusModeView)
 
-    private func loadAtom() {
-        Task {
+    private func syncViewportActivity(forceReload: Bool = false) {
+        guard isViewportActive else {
+            deactivateViewportContent()
+            return
+        }
+
+        if forceReload || atom == nil {
+            loadAtom(forceReload: forceReload)
+        } else if let atom, loadTask == nil, carouselItems == nil, localVideoURL == nil, generatedThumbnail == nil {
+            loadTask = Task {
+                defer {
+                    Task { @MainActor in
+                        loadTask = nil
+                    }
+                }
+                await loadMedia(atom: atom)
+            }
+        }
+    }
+
+    private func deactivateViewportContent() {
+        loadTask?.cancel()
+        loadTask = nil
+        igPlayer?.pause()
+        igPlayer = nil
+        isPlayerActive = false
+    }
+
+    private func loadAtom(forceReload: Bool = false) {
+        guard isViewportActive else { return }
+        guard forceReload || atom == nil else { return }
+
+        loadTask?.cancel()
+        isLoading = true
+
+        loadTask = Task {
+            defer {
+                Task { @MainActor in
+                    loadTask = nil
+                }
+            }
+
             guard let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) else {
+                guard !Task.isCancelled else { return }
                 await MainActor.run { isLoading = false }
                 return
             }
 
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 atom = loaded
                 let status = loaded.processingStatus
                 isProcessing = status != nil && status != "complete"
             }
 
-            // Load media using the same approach as SwipeStudyFocusModeView
+            // Load media using the same approach as SwipeStudyFocusModeView.
             await loadMedia(atom: loaded)
 
+            guard !Task.isCancelled else { return }
             await MainActor.run { isLoading = false }
         }
     }
@@ -797,6 +853,7 @@ struct MediaBlockView: View {
         // 1. Carousel: load items from stored richContent (same as focus mode fast path)
         if let igData = richContent?.instagramData,
            let items = igData.carouselItems, !items.isEmpty {
+            guard !Task.isCancelled else { return }
             await MainActor.run { carouselItems = items }
             return
         }
@@ -808,6 +865,7 @@ struct MediaBlockView: View {
                 if let shortcode, let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
                     // Generate thumbnail from local video
                     let thumbnail = await generateVideoThumbnail(from: localURL)
+                    guard !Task.isCancelled else { return }
                     await MainActor.run {
                         localVideoURL = localURL
                         generatedThumbnail = thumbnail

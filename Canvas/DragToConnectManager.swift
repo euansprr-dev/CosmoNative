@@ -124,8 +124,7 @@ final class DragToConnectManager: ObservableObject {
     /// All coordinates are in canvas space (inside the scaleEffect container).
     func checkTarget(
         blocks: [CanvasBlock],
-        canvasOffset: CGSize,
-        scaledPanOffset: CGSize
+        transform: CanvasViewportTransform
     ) {
         guard isActive, let source = sourceBlock else { return }
 
@@ -137,8 +136,8 @@ final class DragToConnectManager: ObservableObject {
             guard block.id != source.id else { continue }
 
             // Block center in canvas space
-            let blockCenterX = block.position.x + canvasOffset.width + scaledPanOffset.width
-            let blockCenterY = block.position.y + canvasOffset.height + scaledPanOffset.height
+            let blockCenterX = block.position.x + transform.contentOffset.width
+            let blockCenterY = block.position.y + transform.contentOffset.height
             let blockCenter = CGPoint(x: blockCenterX, y: blockCenterY)
 
             // Use actual rendered size for accurate hit-testing on autoHeight blocks

@@ -214,8 +214,6 @@ struct CosmoBlockWrapper<Content: View>: View {
             .allowsHitTesting(isSelected)
             .animation(ProMotionSprings.snappy, value: isSelected)
         }
-        // Incubation heartbeat breathing animation
-        .heartbeatAnimation(isActive: isHeartbeating)
         // ProMotion-optimized animations
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition
         .animation(ProMotionSprings.hover, value: isHovered)

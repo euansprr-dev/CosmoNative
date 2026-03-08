@@ -19,6 +19,11 @@ struct SelectionBar: View {
             Text("\(viewModel.selectedUUIDs.count) selected")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(DS.text)
+                .commandKToolbarChip(
+                    isActive: true,
+                    activeFill: accentColor.opacity(0.10),
+                    activeBorder: accentColor.opacity(0.18)
+                )
 
             Spacer()
 
@@ -31,12 +36,7 @@ struct SelectionBar: View {
                 Text("Deselect All")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(DS.border)
-                    )
+                    .commandKToolbarChip()
             }
             .buttonStyle(.plain)
 
@@ -50,27 +50,18 @@ struct SelectionBar: View {
                     Text("Delete \(viewModel.selectedUUIDs.count)")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(hex: "#EF4444"))
+                .foregroundColor(DS.textOnAccent)
+                .commandKToolbarChip(
+                    isActive: true,
+                    activeFill: DS.red,
+                    activeBorder: DS.red
                 )
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(accentColor.opacity(0.4), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
-        )
+        .commandKSectionChrome(cornerRadius: 14)
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .alert(

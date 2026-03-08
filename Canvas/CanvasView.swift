@@ -31,13 +31,15 @@ struct CanvasView: View {
     @State private var canvasScale: CGFloat = 1.0
     @GestureState private var magnificationState: CGFloat = 1.0
     @State private var scrollWheelMonitor: Any?
+    @State private var keyMonitor: Any?
+    @State private var isSpaceHeld = false
+    @State private var spacePanOffset: CGSize = .zero
     private let minScale: CGFloat = 0.25
     private let maxScale: CGFloat = 3.0
     private let zoomSensitivity: CGFloat = 0.008  // For scroll wheel
 
-    // PERFORMANCE: Track drag offsets separately from @Published blocks to avoid full re-renders
-    @State private var blockDragOffsets: [String: CGSize] = [:]
-    @State private var draggingBlockId: String? = nil
+    // PERFORMANCE: Track the active drag without mutating the published block array.
+    @State private var blockDragState = ActiveCanvasDragState<String>()
 
     // PERFORMANCE: Dedicated cluster drag state — avoids N writes to blockDragOffsets per frame,
     // preventing connection line recomputation and linear search cascades during drag.
@@ -46,13 +48,11 @@ struct CanvasView: View {
     // Inbox blocks state
     @State private var inboxBlocks: [InboxViewBlock] = []
 
-    // PERFORMANCE: Drag offsets for inbox blocks - separate from array to avoid re-renders during drag
-    @State private var inboxBlockDragOffsets: [UUID: CGSize] = [:]
-    @State private var draggingInboxBlockId: UUID? = nil
+    // PERFORMANCE: Same drag model for inbox blocks.
+    @State private var inboxBlockDragState = ActiveCanvasDragState<UUID>()
 
     // Thinkspace sidebar state
     @State private var isSidebarVisible = false
-    @State private var showSettings = false
     @StateObject private var thinkspaceManager = ThinkspaceManager.shared
 
     // Zoom/pan persistence
@@ -100,9 +100,31 @@ struct CanvasView: View {
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
+    @State private var notificationObserverTokens: [NSObjectProtocol] = []
 
     // PERF: Cached set of block IDs with media content — avoids string ops per block per render
     @State private var mediaContentBlockIds: Set<String> = []
+
+    private var viewportTransform: CanvasViewportTransform {
+        // Combine regular pan gesture with space+drag pan
+        let combinedPan = CGSize(
+            width: panOffset.width + spacePanOffset.width,
+            height: panOffset.height + spacePanOffset.height
+        )
+        return CanvasViewportTransform(
+            viewportSize: canvasSize,
+            committedOffset: canvasOffset,
+            gesturePanOffset: combinedPan,
+            committedScale: canvasScale,
+            gestureMagnification: magnificationState,
+            minScale: minScale,
+            maxScale: maxScale
+        )
+    }
+
+    private var visibilityIndex: CanvasVisibilityIndex {
+        CanvasVisibilityIndex(transform: viewportTransform)
+    }
 
     // MARK: - Canvas Content (broken out for type-checking performance)
 
@@ -206,10 +228,8 @@ struct CanvasView: View {
                     // drawn behind them. allowsHitTesting(false) prevents interaction interference.
                     CanvasConnectionLinesLayer(
                         blocks: spatialEngine.blocks,
-                        canvasOffset: canvasOffset,
-                        scaledPanOffset: scaledPanOffset,
-                        effectiveScale: effectiveScale,
-                        blockDragOffsets: blockDragOffsets
+                        contentOffset: viewportTransform.contentOffset,
+                        activeBlockDrag: blockDragState
                     )
 
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
@@ -231,48 +251,60 @@ struct CanvasView: View {
                 // to prevent frame clipping at non-100% zoom levels)
                 CanvasDrawingsLayer(
                     drawingState: drawingState,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale,
-                    screenCenter: screenCenter
+                    transform: viewportTransform
                 )
 
                 // Drawing gesture capture (screen coordinates, outside scaled container)
                 CanvasDrawingGestureLayer(
                     drawingState: drawingState,
-                    canvasOffset: canvasOffset,
-                    scaledPanOffset: scaledPanOffset,
-                    effectiveScale: effectiveScale,
-                    screenCenter: screenCenter
+                    transform: viewportTransform
                 )
 
                 // Provocation markers overlay (screen coordinates, on top of blocks)
                 ProvocationOverlay(provocationEngine: provocationEngine)
+
+                // Space+drag pan overlay — sits above everything so dragging
+                // works even over blocks and clusters (like Figma hand tool)
+                if isSpaceHeld {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    spacePanOffset = value.translation
+                                }
+                                .onEnded { value in
+                                    canvasOffset.width += value.translation.width / effectiveScale
+                                    canvasOffset.height += value.translation.height / effectiveScale
+                                    spacePanOffset = .zero
+                                }
+                        )
+                        .onAppear { NSCursor.openHand.push() }
+                        .onDisappear {
+                            NSCursor.pop()
+                            spacePanOffset = .zero
+                        }
+                }
             }
             .environmentObject(expansionManager)
             .overlay(alignment: .bottomTrailing) {
                 // Zoom indicator
                 zoomIndicator
             }
+            .overlay(alignment: .bottomLeading) {
+                CanvasPerformanceOverlay(
+                    transform: viewportTransform,
+                    blockCount: spatialEngine.blocks.count,
+                    visibleBlockCount: spatialEngine.blocks.filter { visibilityIndex.isBlockVisible($0) }.count,
+                    activeDragLabel: blockDragState.activeId ?? draggingClusterId?.uuidString
+                )
+            }
             .overlay(alignment: .topTrailing) {
-                // Drawing tools + settings cog + view layers
+                // Drawing tools + view layers
                 VStack(alignment: .trailing, spacing: 0) {
-                    // Top row: drawing toolbar + cog
-                    HStack(spacing: 0) {
-                        CanvasDrawingToolbar(drawingState: drawingState)
+                    CanvasDrawingToolbar(drawingState: drawingState)
 
-                        // Settings cog
-                        Button(action: { showSettings = true }) {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundColor(DS.textMuted)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    // View layers toolbar (below cog, right-aligned)
+                    // View layers toolbar (below the drawing tools, right-aligned)
                     CanvasViewLayersToolbar(
                         showCrystallizationHeatmap: $showCrystallizationHeatmap,
                         provocationEngine: provocationEngine,
@@ -282,10 +314,6 @@ struct CanvasView: View {
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 16)
-            }
-            .sheet(isPresented: $showSettings) {
-                SanctuarySettingsView()
-                    .frame(width: 720, height: 540)
             }
             // Thinkspace sidebar trigger zone (left edge)
             .overlay(alignment: .leading) {
@@ -324,17 +352,17 @@ struct CanvasView: View {
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
             // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
             .onChange(of: spatialEngine.blocks.count) { _, _ in
-                scheduleFrameUpdate(screenCenter: screenCenter)
+                scheduleFrameUpdate()
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
             }
             .onChange(of: canvasOffset) { _, _ in
-                scheduleFrameUpdate(screenCenter: screenCenter)
+                scheduleFrameUpdate()
                 debouncedSaveZoomPan()
             }
             .onChange(of: canvasScale) { _, _ in
-                scheduleFrameUpdate(screenCenter: screenCenter)
+                scheduleFrameUpdate()
                 debouncedSaveZoomPan()
             }
         }
@@ -387,34 +415,32 @@ struct CanvasView: View {
             InboxViewBlockView(
                 block: block,
                 onDragStart: {
-                    draggingInboxBlockId = blockId
+                    inboxBlockDragState.begin(id: blockId, translation: .zero)
                 },
                 onDrag: { translation in
-                    // Store offset separately - don't mutate array during drag for smooth performance
-                    // Scale by inverse of zoom so dragging feels natural
-                    inboxBlockDragOffsets[blockId] = CGSize(
+                    inboxBlockDragState.begin(id: blockId, translation: CGSize(
                         width: translation.width / effectiveScale,
                         height: translation.height / effectiveScale
-                    )
+                    ))
                 },
                 onDragEnd: {
                     // Commit offset to actual position
                     if let index = inboxBlocks.firstIndex(where: { $0.id == blockId }),
-                       let offset = inboxBlockDragOffsets[blockId] {
+                       inboxBlockDragState.activeId == blockId {
+                        let offset = inboxBlockDragState.translation
                         inboxBlocks[index].x += offset.width
                         inboxBlocks[index].y += offset.height
                     }
                     // Clear drag state and persist
-                    inboxBlockDragOffsets.removeValue(forKey: blockId)
-                    draggingInboxBlockId = nil
+                    inboxBlockDragState.clear()
                     saveInboxBlockPositions()
                 }
             )
             .position(
-                x: block.x + canvasOffset.width + scaledPanOffset.width + (inboxBlockDragOffsets[blockId]?.width ?? 0),
-                y: block.y + canvasOffset.height + scaledPanOffset.height + (inboxBlockDragOffsets[blockId]?.height ?? 0)
+                x: block.x + viewportTransform.contentOffset.width + inboxBlockDragState.translation(for: blockId).width,
+                y: block.y + viewportTransform.contentOffset.height + inboxBlockDragState.translation(for: blockId).height
             )
-            .zIndex(draggingInboxBlockId == blockId ? 1000 : Double(block.zIndex))
+            .zIndex(inboxBlockDragState.activeId == blockId ? 1000 : Double(block.zIndex))
             .transition(.asymmetric(
                 insertion: .scale(scale: 0.95).combined(with: .opacity),
                 removal: .scale(scale: 0.98).combined(with: .opacity)
@@ -436,11 +462,7 @@ struct CanvasView: View {
 
                 // Layer 3: Infinite tiling grid — warm gray dots
                 GridPatternView(
-                    offset: CGSize(
-                        width: canvasOffset.width + scaledPanOffset.width,
-                        height: canvasOffset.height + scaledPanOffset.height
-                    ),
-                    scale: effectiveScale
+                    transform: viewportTransform
                 )
                     .ignoresSafeArea()
 
@@ -459,29 +481,32 @@ struct CanvasView: View {
         if draggingClusterMemberUUIDs.contains(block.entityUuid) {
             return clusterDragTranslation
         }
-        return blockDragOffsets[block.id] ?? .zero
+        return blockDragState.translation(for: block.id)
     }
 
     private var blocksLayer: some View {
         ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
-            CanvasBlockContainer(
+            CanvasBlockTransformHost(
                 block: block,
-                canvasOffset: canvasOffset,
-                scaledPanOffset: scaledPanOffset,
+                transform: viewportTransform,
                 dragOffset: blockDragOffset(for: block),
-                isDragTarget: draggingBlockId == block.id,
-                isMediaContent: mediaContentBlockIds.contains(block.id),
-                isHeartbeating: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid),
+                isDragTarget: blockDragState.activeId == block.id,
                 isClusterMember: selectedClusterMemberUUIDs.contains(block.entityUuid),
                 isDraggingClusterMember: draggingClusterMemberUUIDs.contains(block.entityUuid),
                 heatmapOpacity: heatmapOpacity(for: block),
                 expansionOpacity: expansionManager.opacity(for: block.id),
                 expansionZIndex: expansionManager.zIndex(for: block.id),
                 isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
+                isHeartbeating: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid),
+                staticContent: CanvasBlockStaticView(
+                    block: block,
+                    isMediaContent: mediaContentBlockIds.contains(block.id),
+                    isViewportActive: visibilityIndex.isBlockVisible(block)
+                ),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
-                        let blockCanvasX = block.position.x + canvasOffset.width + scaledPanOffset.width
-                        let blockCanvasY = block.position.y + canvasOffset.height + scaledPanOffset.height
+                        let blockCanvasX = block.position.x + viewportTransform.contentOffset.width
+                        let blockCanvasY = block.position.y + viewportTransform.contentOffset.height
                         if !connectManager.isActive {
                             connectManager.beginConnection(from: block, center: CGPoint(x: blockCanvasX, y: blockCanvasY))
                         }
@@ -491,8 +516,7 @@ struct CanvasView: View {
                         ))
                         connectManager.checkTarget(
                             blocks: spatialEngine.blocks,
-                            canvasOffset: canvasOffset,
-                            scaledPanOffset: scaledPanOffset
+                            transform: viewportTransform
                         )
                     } else {
                         handleDragOptimized(blockId: block.id, translation: translation)
@@ -510,15 +534,7 @@ struct CanvasView: View {
                         handleDragEndOptimized(blockId: block.id, translation: translation)
                     }
                 },
-                onDoubleTap: {
-                    if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: ["type": block.entityType, "id": block.entityId]
-                        )
-                    }
-                }
+                onDoubleTap: { openBlockInFocusMode(block) }
             )
         }
     }
@@ -587,8 +603,8 @@ struct CanvasView: View {
                     .onEnded { value in
                         // Scale by 1/effectiveScale so panning feels natural at any zoom level
                         // When zoomed out, a 100px drag should move the canvas 100px on screen
-                        canvasOffset.width += value.translation.width / effectiveScale
-                        canvasOffset.height += value.translation.height / effectiveScale
+                        canvasOffset.width += value.translation.width / viewportTransform.effectiveScale
+                        canvasOffset.height += value.translation.height / viewportTransform.effectiveScale
                     }
             )
             .simultaneousGesture(
@@ -609,28 +625,41 @@ struct CanvasView: View {
 
     // Computed property for effective zoom level during gesture
     private var effectiveScale: CGFloat {
-        let gestureScale = canvasScale * magnificationState
-        return min(max(gestureScale, minScale), maxScale)
+        viewportTransform.effectiveScale
     }
 
     // Scaled pan offset - divide by zoom so panning feels natural at any zoom level
     private var scaledPanOffset: CGSize {
-        CGSize(
-            width: panOffset.width / effectiveScale,
-            height: panOffset.height / effectiveScale
-        )
+        viewportTransform.scaledPanOffset
     }
 
     /// Convert screen coordinates to canvas coordinates (accounting for zoom and pan)
     /// Use this when creating blocks from screen positions (like right-click)
     private func screenToCanvasPosition(_ screenPos: CGPoint) -> CGPoint {
-        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        viewportTransform.screenToCanvas(screenPos)
+    }
 
-        // Reverse the container scale transform
-        let canvasX = (screenPos.x - screenCenter.x) / effectiveScale + screenCenter.x - canvasOffset.width - scaledPanOffset.width
-        let canvasY = (screenPos.y - screenCenter.y) / effectiveScale + screenCenter.y - canvasOffset.height - scaledPanOffset.height
+    private func addCanvasObserver(
+        forName name: Notification.Name,
+        object: Any? = nil,
+        queue: OperationQueue? = .main,
+        using block: @escaping (Notification) -> Void
+    ) {
+        let token = NotificationCenter.default.addObserver(
+            forName: name,
+            object: object,
+            queue: queue,
+            using: block
+        )
+        notificationObserverTokens.append(token)
+    }
 
-        return CGPoint(x: canvasX, y: canvasY)
+    private func removeCanvasObservers() {
+        for token in notificationObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        notificationObserverTokens.removeAll()
+        observersRegistered = false
     }
 
     // MARK: - Body
@@ -676,7 +705,7 @@ struct CanvasView: View {
                 observersRegistered = true
 
                 // Listen for voice-driven placement commands
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .placeBlocksOnCanvas,
                     object: nil,
                     queue: .main
@@ -686,7 +715,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for move commands
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .moveCanvasBlocks,
                     object: nil,
                     queue: .main
@@ -696,7 +725,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for arrangement commands (MAGICAL!)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .arrangeCanvasBlocks,
                     object: nil,
                     queue: .main
@@ -706,7 +735,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for Cosmo AI block creation
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.createCosmoAIBlock,
                     object: nil,
                     queue: .main
@@ -716,7 +745,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for Note block creation
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .createNoteBlock,
                     object: nil,
                     queue: .main
@@ -726,7 +755,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block selection (from CosmoBlockWrapper)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.blockSelected,
                     object: nil,
                     queue: .main
@@ -738,7 +767,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block removal
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .removeBlock,
                     object: nil,
                     queue: .main
@@ -748,7 +777,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for generic entity creation (from radial menu)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.createEntityAtPosition,
                     object: nil,
                     queue: .main
@@ -758,7 +787,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for calendar window opening
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .openCalendarWindow,
                     object: nil,
                     queue: .main
@@ -768,7 +797,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for inbox block creation
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.createInboxBlock,
                     object: nil,
                     queue: .main
@@ -778,7 +807,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for inbox block closure
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.closeInboxBlock,
                     object: nil,
                     queue: .main
@@ -788,7 +817,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for inbox block position updates (drag)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.updateInboxBlockPosition,
                     object: nil,
                     queue: .main
@@ -798,7 +827,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for inbox block size updates (resize)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.updateInboxBlockSize,
                     object: nil,
                     queue: .main
@@ -808,7 +837,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block content updates (saves to database)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .updateBlockContent,
                     object: nil,
                     queue: .main
@@ -818,7 +847,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block metadata updates (e.g., Note color)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .updateBlockMetadata,
                     object: nil,
                     queue: .main
@@ -828,7 +857,7 @@ struct CanvasView: View {
                 }
                 
                 // Listen for block size updates (e.g., Note resize)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .updateBlockSize,
                     object: nil,
                     queue: .main
@@ -838,7 +867,7 @@ struct CanvasView: View {
                 }
                 
                 // Listen for save block size (after resize ends)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .saveBlockSize,
                     object: nil,
                     queue: .main
@@ -848,7 +877,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for research block creation (from URL capture)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .createResearchBlock,
                     object: nil,
                     queue: .main
@@ -858,7 +887,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block expansion voice commands
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .expandSelectedBlock,
                     object: nil,
                     queue: .main
@@ -866,7 +895,7 @@ struct CanvasView: View {
                     handleExpandSelectedBlock()
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .collapseExpandedBlock,
                     object: nil,
                     queue: .main
@@ -878,7 +907,7 @@ struct CanvasView: View {
                     }
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .closeSelectedBlock,
                     object: nil,
                     queue: .main
@@ -890,7 +919,7 @@ struct CanvasView: View {
                     }
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .openBlockInFocusMode,
                     object: nil,
                     queue: .main
@@ -899,7 +928,7 @@ struct CanvasView: View {
                 }
 
                 // Smart block reference handlers (by ID)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .deleteSpecificBlock,
                     object: nil,
                     queue: .main
@@ -908,7 +937,7 @@ struct CanvasView: View {
                     handleDeleteSpecificBlock(notification: notification)
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .duplicateBlock,
                     object: nil,
                     queue: .main
@@ -917,7 +946,7 @@ struct CanvasView: View {
                     handleDuplicateBlock(notification: notification)
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .moveBlockToTime,
                     object: nil,
                     queue: .main
@@ -927,7 +956,7 @@ struct CanvasView: View {
                 }
 
                 // Smart block reference handlers (by content search)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .deleteBlockByContent,
                     object: nil,
                     queue: .main
@@ -936,7 +965,7 @@ struct CanvasView: View {
                     handleDeleteBlockByContent(notification: notification)
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .expandBlockByContent,
                     object: nil,
                     queue: .main
@@ -945,7 +974,7 @@ struct CanvasView: View {
                     handleExpandBlockByContent(notification: notification)
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .duplicateBlockByContent,
                     object: nil,
                     queue: .main
@@ -954,7 +983,7 @@ struct CanvasView: View {
                     handleDuplicateBlockByContent(notification: notification)
                 }
 
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .moveBlockByContentToTime,
                     object: nil,
                     queue: .main
@@ -964,7 +993,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for entity placement from voice commands (LLM-First)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .placeEntityOnCanvas,
                     object: nil,
                     queue: .main
@@ -974,7 +1003,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for block resize commands
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .resizeSelectedBlock,
                     object: nil,
                     queue: .main
@@ -984,7 +1013,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for opening entity on canvas (from Cmd+K)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .openEntityOnCanvas,
                     object: nil,
                     queue: .main
@@ -994,7 +1023,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for ambient pull-to-canvas
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.pullAmbientToCanvas,
                     object: nil,
                     queue: .main
@@ -1004,7 +1033,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for lasso-enclosed blocks — show choice popover (cluster vs synthesize)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.lassoEnclosedBlocks,
                     object: nil,
                     queue: .main
@@ -1016,16 +1045,10 @@ struct CanvasView: View {
                             let lassoBlocks = spatialEngine.blocks.filter { blockIds.contains($0.id) }
                             let avgX = lassoBlocks.map(\.position.x).reduce(0, +) / max(CGFloat(lassoBlocks.count), 1)
                             let avgY = lassoBlocks.map(\.position.y).reduce(0, +) / max(CGFloat(lassoBlocks.count), 1)
-
-                            // Convert to screen coords
-                            let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-                            let canvasX = avgX + canvasOffset.width + scaledPanOffset.width
-                            let canvasY = avgY + canvasOffset.height + scaledPanOffset.height
-                            let screenX = screenCenter.x + (canvasX - screenCenter.x) * effectiveScale
-                            let screenY = screenCenter.y + (canvasY - screenCenter.y) * effectiveScale
+                            let screenPoint = viewportTransform.canvasToScreen(CGPoint(x: avgX, y: avgY))
 
                             clusterPopoverBlockIds = blockIds
-                            clusterPopoverPosition = CGPoint(x: screenX, y: screenY - 60)
+                            clusterPopoverPosition = CGPoint(x: screenPoint.x, y: screenPoint.y - 60)
                             withAnimation(ProMotionSprings.snappy) {
                                 showClusterPopover = true
                             }
@@ -1035,7 +1058,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for zone drawn — show zone creation popover
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.zoneDrawn,
                     object: nil,
                     queue: .main
@@ -1060,7 +1083,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for cluster creation from context menu
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.createClusterFromSelection,
                     object: nil,
                     queue: .main
@@ -1079,7 +1102,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for focus mode entry to record incubation interactions
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .enterFocusMode,
                     object: nil,
                     queue: .main
@@ -1095,7 +1118,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for cross-thinkspace block drop (block moved from another thinkspace)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: CosmoNotification.Canvas.crossThinkspaceDropBlock,
                     object: nil,
                     queue: .main
@@ -1114,7 +1137,7 @@ struct CanvasView: View {
                 }
 
                 // Listen for Cmd+V paste (routed via CosmoCommands pasteboard group)
-                NotificationCenter.default.addObserver(
+                addCanvasObserver(
                     forName: .performCanvasPaste,
                     object: nil,
                     queue: .main
@@ -1149,13 +1172,32 @@ struct CanvasView: View {
                     }
                     return event
                 }
+
+                // MARK: - Space+Drag Pan (Hand Tool)
+                // Track space bar press to enable drag-to-pan over any element
+                keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
+                    if event.keyCode == 49 { // space bar
+                        let pressed = event.type == .keyDown
+                        if pressed != isSpaceHeld {
+                            isSpaceHeld = pressed
+                        }
+                        // Don't consume — allow space for text fields etc.
+                    }
+                    return event
+                }
             }
             .onDisappear {
-                // Clean up scroll wheel event monitor
+                // Clean up event monitors
                 if let monitor = scrollWheelMonitor {
                     NSEvent.removeMonitor(monitor)
                     scrollWheelMonitor = nil
                 }
+                if let monitor = keyMonitor {
+                    NSEvent.removeMonitor(monitor)
+                    keyMonitor = nil
+                }
+                isSpaceHeld = false
+                removeCanvasObservers()
             }
             .onChange(of: thinkspaceId) { _, newId in
                 // Reload canvas content when switching between Command Center ↔ thinkspaces
@@ -1409,16 +1451,7 @@ struct CanvasView: View {
 
     /// Compute current viewport rect in canvas coordinates
     private func computeCurrentViewport() -> CGRect {
-        let viewWidth = canvasSize.width / effectiveScale
-        let viewHeight = canvasSize.height / effectiveScale
-        let centerX = canvasSize.width / 2 - canvasOffset.width
-        let centerY = canvasSize.height / 2 - canvasOffset.height
-        return CGRect(
-            x: centerX - viewWidth / 2,
-            y: centerY - viewHeight / 2,
-            width: viewWidth,
-            height: viewHeight
-        )
+        viewportTransform.visibleCanvasRect
     }
 
     /// Move viewport to center on a canvas position, optionally animated
@@ -1759,19 +1792,14 @@ struct CanvasView: View {
 
     /// Schedule a frame tracker update with 100ms debounce.
     /// The frame tracker is only used for right-click hit testing, so slight delay is fine.
-    private func scheduleFrameUpdate(screenCenter: CGPoint) {
+    private func scheduleFrameUpdate() {
         frameUpdateTask?.cancel()
-        let capturedCenter = screenCenter
         frameUpdateTask = Task { @MainActor in
+            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("frame-tracker-update")
             try? await Task.sleep(for: .milliseconds(100))
             guard !Task.isCancelled else { return }
-            blockFrameTracker.updateFrames(
-                blocks: spatialEngine.blocks,
-                canvasOffset: canvasOffset,
-                scaledPanOffset: scaledPanOffset,
-                effectiveScale: effectiveScale,
-                screenCenter: capturedCenter
-            )
+            blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+            CanvasPerformanceInstrumentation.signposter.endInterval("frame-tracker-update", signpost)
         }
     }
 
@@ -1962,8 +1990,7 @@ struct CanvasView: View {
         // inside the scaled container), so use it directly — no scale division needed.
         // Dividing by effectiveScale would double-scale since scaleEffect already transforms
         // the gesture coordinate space.
-        blockDragOffsets[blockId] = translation
-        draggingBlockId = blockId
+        blockDragState.begin(id: blockId, translation: translation)
 
         // Mark selected (one-time update)
         if selectedBlockId != blockId {
@@ -2019,8 +2046,7 @@ struct CanvasView: View {
     private func handleDragEndOptimized(blockId: String, translation: CGSize) {
         // Cross-thinkspace drag: if block is over sidebar, handle transfer instead of normal drop
         if crossDragManager.isDragging && crossDragManager.isOverSidebar {
-            blockDragOffsets.removeValue(forKey: blockId)
-            draggingBlockId = nil
+            blockDragState.clear()
             // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
             let mouseLocation = NSEvent.mouseLocation
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
@@ -2052,8 +2078,7 @@ struct CanvasView: View {
             )
             // Batch: commit position + clear drag state in one pass
             spatialEngine.blocks[index].position = newPosition
-            blockDragOffsets.removeValue(forKey: blockId)
-            draggingBlockId = nil
+            blockDragState.clear()
 
             // Fire-and-forget position save to database
             spatialEngine.updateBlockPosition(blockId, position: newPosition)
@@ -2066,19 +2091,11 @@ struct CanvasView: View {
             }
         } else {
             // Block not found — still clear drag state
-            blockDragOffsets.removeValue(forKey: blockId)
-            draggingBlockId = nil
+            blockDragState.clear()
         }
 
         // Update frame tracker after position change
-        let screenCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-        blockFrameTracker.updateFrames(
-            blocks: spatialEngine.blocks,
-            canvasOffset: canvasOffset,
-            scaledPanOffset: scaledPanOffset,
-            effectiveScale: effectiveScale,
-            screenCenter: screenCenter
-        )
+        blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
 
         // Check cluster zone membership after drag
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
@@ -2194,8 +2211,8 @@ struct CanvasView: View {
     }
 
     private func handleDragEnd(blockId: String) {
-        if let offset = blockDragOffsets[blockId] {
-            handleDragEndOptimized(blockId: blockId, translation: offset)
+        if blockDragState.activeId == blockId {
+            handleDragEndOptimized(blockId: blockId, translation: blockDragState.translation)
         }
     }
 
@@ -2221,6 +2238,17 @@ struct CanvasView: View {
             let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
             ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
         }
+    }
+
+    private func openBlockInFocusMode(_ block: CanvasBlock) {
+        guard [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) else {
+            return
+        }
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: ["type": block.entityType, "id": block.entityId]
+        )
     }
 
     // MARK: - Voice Command Handlers
@@ -3556,39 +3584,36 @@ struct CanvasControls: View {
 
 // MARK: - Grid Pattern View (Infinite Tiling — Greenhouse Light Mode)
 struct GridPatternView: View {
-    var offset: CGSize = .zero  // Canvas pan offset for infinite tiling
-    var scale: CGFloat = 1.0    // Zoom scale for infinite canvas effect
+    let transform: CanvasViewportTransform
 
     var body: some View {
+        let baseSpacing: CGFloat = 40
+        let spacing = max(baseSpacing * transform.effectiveScale, 1)
+        let dotSize = max(1.5, 2.5 * transform.effectiveScale)
+        let tileMultiplier = CanvasGridPatternCache.shared.tileMultiplier(for: spacing)
+        let tileSize = spacing * CGFloat(tileMultiplier)
+        let tileImage = CanvasGridPatternCache.shared.image(
+            spacing: spacing,
+            dotSize: dotSize,
+            tileMultiplier: tileMultiplier
+        )
+
         Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
-            // Base spacing adjusted by scale - when zoomed out, dots appear closer together
-            let baseSpacing: CGFloat = 40
-            let spacing = baseSpacing * scale
+            let resolved = context.resolve(Image(nsImage: tileImage))
+            let offsetX = transform.contentOffset.width.truncatingRemainder(dividingBy: tileSize)
+            let offsetY = transform.contentOffset.height.truncatingRemainder(dividingBy: tileSize)
+            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("grid-pattern")
 
-            // Dot size also scales (but with a minimum to stay visible)
-            let dotSize = max(1.5, 2.5 * scale)
-
-            // Calculate offset modulo spacing for seamless tiling
-            let offsetX = offset.width.truncatingRemainder(dividingBy: spacing)
-            let offsetY = offset.height.truncatingRemainder(dividingBy: spacing)
-
-            // Draw grid dots with offset - extends beyond visible area for smooth panning
-            let startX = offsetX - spacing
-            let startY = offsetY - spacing
-            let endX = size.width + spacing
-            let endY = size.height + spacing
-
-            for x in stride(from: startX, to: endX, by: spacing) {
-                for y in stride(from: startY, to: endY, by: spacing) {
-                    let halfDot = dotSize / 2
-                    let rect = CGRect(x: x - halfDot, y: y - halfDot, width: dotSize, height: dotSize)
-                    // Warm gray dots visible on parchment canvas
-                    context.fill(
-                        Path(ellipseIn: rect),
-                        with: .color(Color(hex: "D8D7D3").opacity(0.5))
+            for x in stride(from: offsetX - tileSize, through: size.width + tileSize, by: tileSize) {
+                for y in stride(from: offsetY - tileSize, through: size.height + tileSize, by: tileSize) {
+                    context.draw(
+                        resolved,
+                        in: CGRect(x: x, y: y, width: tileSize, height: tileSize)
                     )
                 }
             }
+
+            CanvasPerformanceInstrumentation.signposter.endInterval("grid-pattern", signpost)
         }
     }
 }
@@ -3638,55 +3663,69 @@ struct ThinkspaceAuroraView: View {
 // Now uses FilmGrainOverlay from Core/FilmGrainOverlay.swift which pre-generates
 // a tiled CGImage once and reuses it. Same visual effect, zero per-frame cost.
 
-// MARK: - Per-Block Container (Equatable diffing)
-/// Extracted from blockView(for:) so SwiftUI can diff each block independently.
-/// When only one block's `isSelected` changes, SwiftUI skips re-evaluating all other
-/// CanvasBlockContainer instances whose inputs haven't changed.
-struct CanvasBlockContainer: View, Equatable {
+// MARK: - Per-Block Content
+struct CanvasBlockStaticView: View {
     let block: CanvasBlock
-    let canvasOffset: CGSize
-    let scaledPanOffset: CGSize
+    let isMediaContent: Bool
+    let isViewportActive: Bool
+
+    var body: some View {
+        switch block.entityType {
+        case .cosmoAI:
+            CosmoAIBlockView(block: block)
+        case .note:
+            NoteBlockView(block: block)
+        case .calendar:
+            CalendarWindowView(block: block)
+        case .research:
+            if isMediaContent {
+                MediaBlockView(block: block, isViewportActive: isViewportActive)
+            } else {
+                ResearchBlockView(block: block, isViewportActive: isViewportActive)
+            }
+        case .connection:
+            ConnectionBlockView(block: block)
+        case .idea:
+            IdeaBlockView(block: block)
+        case .content:
+            ContentBlockView(block: block)
+        case .task:
+            TaskBlockView(block: block)
+        case .image:
+            ImageBlockView(block: block)
+        default:
+            FloatingBlockView(block: block)
+        }
+    }
+}
+
+// MARK: - Per-Block Transform Host
+struct CanvasBlockTransformHost<StaticContent: View>: View {
+    let block: CanvasBlock
+    let transform: CanvasViewportTransform
     let dragOffset: CGSize
     let isDragTarget: Bool
-    let isMediaContent: Bool
-    let isHeartbeating: Bool
     let isClusterMember: Bool
     let isDraggingClusterMember: Bool
     let heatmapOpacity: CGFloat
     let expansionOpacity: Double
     let expansionZIndex: Double
     let isCrossThinkspaceDragging: Bool
+    let isHeartbeating: Bool
+    let staticContent: StaticContent
 
     // Closures — excluded from Equatable comparison
     var onDragChanged: ((CGSize) -> Void)?
     var onDragEnded: ((CGSize) -> Void)?
     var onDoubleTap: (() -> Void)?
 
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
-    static func == (lhs: CanvasBlockContainer, rhs: CanvasBlockContainer) -> Bool {
-        lhs.block == rhs.block &&
-        lhs.canvasOffset == rhs.canvasOffset &&
-        lhs.scaledPanOffset == rhs.scaledPanOffset &&
-        lhs.dragOffset == rhs.dragOffset &&
-        lhs.isDragTarget == rhs.isDragTarget &&
-        lhs.isMediaContent == rhs.isMediaContent &&
-        lhs.isHeartbeating == rhs.isHeartbeating &&
-        lhs.isClusterMember == rhs.isClusterMember &&
-        lhs.isDraggingClusterMember == rhs.isDraggingClusterMember &&
-        lhs.heatmapOpacity == rhs.heatmapOpacity &&
-        lhs.expansionOpacity == rhs.expansionOpacity &&
-        lhs.expansionZIndex == rhs.expansionZIndex &&
-        lhs.isCrossThinkspaceDragging == rhs.isCrossThinkspaceDragging
-    }
-
     var body: some View {
-        blockContent
+        staticContent
             .expansionAware(blockId: block.id)
             .heartbeatAnimation(isActive: isHeartbeating)
             .position(
-                x: block.position.x + canvasOffset.width + scaledPanOffset.width + dragOffset.width,
-                y: block.position.y + canvasOffset.height + scaledPanOffset.height + dragOffset.height
+                x: block.position.x + transform.contentOffset.width + dragOffset.width,
+                y: block.position.y + transform.contentOffset.height + dragOffset.height
             )
             .scaleEffect(block.scale)
             .rotationEffect(.degrees(block.rotation))
@@ -3714,36 +3753,6 @@ struct CanvasBlockContainer: View, Equatable {
                     tx.animation = nil
                 }
             }
-    }
-
-    @ViewBuilder
-    private var blockContent: some View {
-        switch block.entityType {
-        case .cosmoAI:
-            CosmoAIBlockView(block: block)
-        case .note:
-            NoteBlockView(block: block)
-        case .calendar:
-            CalendarWindowView(block: block)
-        case .research:
-            if isMediaContent {
-                MediaBlockView(block: block)
-            } else {
-                ResearchBlockView(block: block)
-            }
-        case .connection:
-            ConnectionBlockView(block: block)
-        case .idea:
-            IdeaBlockView(block: block)
-        case .content:
-            ContentBlockView(block: block)
-        case .task:
-            TaskBlockView(block: block)
-        case .image:
-            ImageBlockView(block: block)
-        default:
-            FloatingBlockView(block: block)
-        }
     }
 }
 

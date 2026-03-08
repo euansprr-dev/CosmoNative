@@ -199,6 +199,7 @@
 		A7F3B8C9D0E1F26384A5B6C8 /* WritingEngineSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F3B8C9D0E1F26384A5B6C7 /* WritingEngineSettingsTab.swift */; };
 		C3D9E7F1A2B40568394E6B02 /* SkillsAndPromptsSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */; };
 		606A87324C6E2D9723F9E65A /* com.cosmo.voicedaemon.plist in Resources */ = {isa = PBXBuildFile; fileRef = BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */; };
+		A5CFE227D016B7EC526E6EDC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 21022F5E11B156F7DCBB8A7E /* Assets.xcassets */; };
 		6076FD17359BE19581122CC6 /* VoiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AF9ABBFDF6601F3D43015B /* VoiceTypes.swift */; };
 		60B6911E36F2C6598CE794D7 /* ContentScorecardEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B6073A503A3B115DB224454 /* ContentScorecardEngine.swift */; };
 		F63CC2CAF54CB93C5FE14F3C /* LessonExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFDAFEF41801971464EFCB1 /* LessonExtractor.swift */; };
@@ -490,6 +491,12 @@
 		DC840EE22B01053EF0F872E6 /* CreativePerformanceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150CF15FFDB83ED2D68B0EBA /* CreativePerformanceGraph.swift */; };
 		DCC5FA9AC374E21AC13A9635 /* ResearchFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C2F9E4B380B479874300E8 /* ResearchFocusModeView.swift */; };
 		DD1A2B3C4D5E6F708192A3B4 /* DragToConnectManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F60718293A4B5 /* DragToConnectManager.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F101 /* ActiveCanvasDragState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F102 /* ActiveCanvasDragState.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F103 /* CanvasGridPatternCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F104 /* CanvasGridPatternCache.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F105 /* CanvasPerformanceOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F106 /* CanvasPerformanceOverlay.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F107 /* CanvasViewportTransform.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F108 /* CanvasViewportTransform.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F109 /* CanvasVisibilityIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F110 /* CanvasVisibilityIndex.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F111 /* CanvasDrawingStrokeCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6B7C8D9E0F112 /* CanvasDrawingStrokeCache.swift */; };
 		F9A8B7C6D5E4F3A2B1C00002 /* CrossThinkspaceDragManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A8B7C6D5E4F3A2B1C00001 /* CrossThinkspaceDragManager.swift */; };
 		DD2A3B4C5D6E7F809213A4B5 /* DragToConnectOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2B3C4D5E6F70819304A5B6 /* DragToConnectOverlay.swift */; };
 		DDAC266AF8356B7C7BB8496F /* WritingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FBA36AE3AD666F31F9A8B48 /* WritingStatsView.swift */; };
@@ -597,6 +604,8 @@
 		A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */; };
 		B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */; };
 		D1A83F4B2E9D5C67B2F53A19 /* SelectionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */; };
+		F4C29D8A3B7E1F06D5A8E472 /* CommandKPremiumChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */; };
+		7F3A8E1B9C4D5026E8B71FA3 /* UnifiedSearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */; };
 		8CFF85A6A9C558362F60F208 /* UndoableAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E28407D5C8F3C38135000D /* UndoableAction.swift */; };
 		D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */; };
 		305E03B2CD4B83BD55CC347D /* MoveBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5578FEFDBF7B6973F8C6C38 /* MoveBlockAction.swift */; };
@@ -964,6 +973,12 @@
 		A9D29278C0B16583ADA18727 /* AssignmentStatusGroupHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssignmentStatusGroupHeader.swift; sourceTree = "<group>"; };
 		AA04F1229D4A87C0C5F43475 /* MentionShimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionShimmer.swift; sourceTree = "<group>"; };
 		AA1B2C3D4E5F60718293A4B5 /* DragToConnectManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragToConnectManager.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F102 /* ActiveCanvasDragState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveCanvasDragState.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F104 /* CanvasGridPatternCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasGridPatternCache.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F106 /* CanvasPerformanceOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasPerformanceOverlay.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F108 /* CanvasViewportTransform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewportTransform.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F110 /* CanvasVisibilityIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasVisibilityIndex.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A6B7C8D9E0F112 /* CanvasDrawingStrokeCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingStrokeCache.swift; sourceTree = "<group>"; };
 		F9A8B7C6D5E4F3A2B1C00001 /* CrossThinkspaceDragManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossThinkspaceDragManager.swift; sourceTree = "<group>"; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* ResearchBlockDropdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchBlockDropdownView.swift; sourceTree = "<group>"; };
 		AA2B3C4D5E6F70819304A5B6 /* DragToConnectOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragToConnectOverlay.swift; sourceTree = "<group>"; };
@@ -1026,6 +1041,7 @@
 		FA09E7E1D94CEA40AB25C449 /* PaneCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneCanvasView.swift; sourceTree = "<group>"; };
 		63DFF3AF67E1584DD589C179 /* SplitPaneContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitPaneContainer.swift; sourceTree = "<group>"; };
 		BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = com.cosmo.voicedaemon.plist; sourceTree = "<group>"; };
+		21022F5E11B156F7DCBB8A7E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmicHaptics.swift; sourceTree = "<group>"; };
 		C0E6975753D2BFF55035158A /* PhysiologicalSleepAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysiologicalSleepAnalysis.swift; sourceTree = "<group>"; };
 		C12AA7602A1DF318E80265B8 /* EditingContextTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingContextTracker.swift; sourceTree = "<group>"; };
@@ -1206,6 +1222,8 @@
 		F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMentionOverlay.swift; sourceTree = "<group>"; };
 		C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSelectionOverlay.swift; sourceTree = "<group>"; };
 		E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionBar.swift; sourceTree = "<group>"; };
+		A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKPremiumChrome.swift; sourceTree = "<group>"; };
+		2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedSearchResultsView.swift; sourceTree = "<group>"; };
 		5A1B2C3D4E5F6A7B8C9D0E01 /* LassoGestureDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LassoGestureDetector.swift; sourceTree = "<group>"; };
 		5A2B3C4D5E6F7A8B9C0D1E01 /* SynthesisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisEngine.swift; sourceTree = "<group>"; };
 		5A3B4C5D6E7F8A9B0C1D2E01 /* SynthesisResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisResult.swift; sourceTree = "<group>"; };
@@ -2021,6 +2039,7 @@
 		A059784B455596C505C8D8D1 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				21022F5E11B156F7DCBB8A7E /* Assets.xcassets */,
 				BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */,
 			);
 			path = Resources;
@@ -2322,6 +2341,11 @@
 				5A1B2C3D4E5F6A7B8C9D0E01 /* LassoGestureDetector.swift */,
 				6B6F708090A12BC3E304F5A6 /* CollisionCardView.swift */,
 				6B8192A0AB34CDE5F30627C8 /* CollisionTray.swift */,
+				B1C2D3E4F5A6B7C8D9E0F102 /* ActiveCanvasDragState.swift */,
+				B1C2D3E4F5A6B7C8D9E0F104 /* CanvasGridPatternCache.swift */,
+				B1C2D3E4F5A6B7C8D9E0F106 /* CanvasPerformanceOverlay.swift */,
+				B1C2D3E4F5A6B7C8D9E0F108 /* CanvasViewportTransform.swift */,
+				B1C2D3E4F5A6B7C8D9E0F110 /* CanvasVisibilityIndex.swift */,
 				89F002198CC682E794FD8227 /* CommandCenter */,
 				40744DA0A664703900C8514A /* UnifiedSidebar */,
 			);
@@ -2337,6 +2361,7 @@
 				CD14A2B3C4D5E6F708192A3B /* CanvasDrawingsLayer.swift */,
 				CD12A2B3C4D5E6F708192A3B /* CanvasToolMode.swift */,
 				CD13A2B3C4D5E6F708192A3B /* DrawingStateManager.swift */,
+				B1C2D3E4F5A6B7C8D9E0F112 /* CanvasDrawingStrokeCache.swift */,
 			);
 			path = Drawing;
 			sourceTree = "<group>";
@@ -2423,6 +2448,8 @@
 				937BA1B849A1DB1A13D6ECC0 /* ReadwiseLibraryTab.swift */,
 				C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */,
 				E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */,
+				A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */,
+				2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */,
 			);
 			path = CommandK;
 			sourceTree = "<group>";
@@ -2772,6 +2799,7 @@
 				DB7A871D26644F7E88E2CDB8 /* adapter_config.json in Resources */,
 				F45B0001E5CD2C735940FDFE /* adapters.safetensors in Resources */,
 				606A87324C6E2D9723F9E65A /* com.cosmo.voicedaemon.plist in Resources */,
+				A5CFE227D016B7EC526E6EDC /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2854,6 +2882,12 @@
 				F9A8B7C6D5E4F3A2B1C00002 /* CrossThinkspaceDragManager.swift in Sources */,
 				DD1A2B3C4D5E6F708192A3B4 /* DragToConnectManager.swift in Sources */,
 				DD2A3B4C5D6E7F809213A4B5 /* DragToConnectOverlay.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F101 /* ActiveCanvasDragState.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F103 /* CanvasGridPatternCache.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F105 /* CanvasPerformanceOverlay.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F107 /* CanvasViewportTransform.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F109 /* CanvasVisibilityIndex.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F111 /* CanvasDrawingStrokeCache.swift in Sources */,
 				F3180EE4972465695008B242 /* CrystallizationIndicator.swift in Sources */,
 				98500668604BF46808D53B45 /* CausalityEngine.swift in Sources */,
 				04C8F8973F6F9DA315E0AB3F /* CelebrationEngine.swift in Sources */,
@@ -3292,6 +3326,8 @@
 				E7A2B3C4D5E6F708A1B20001 /* LibraryTab.swift in Sources */,
 				B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */,
 				D1A83F4B2E9D5C67B2F53A19 /* SelectionBar.swift in Sources */,
+				F4C29D8A3B7E1F06D5A8E472 /* CommandKPremiumChrome.swift in Sources */,
+				7F3A8E1B9C4D5026E8B71FA3 /* UnifiedSearchResultsView.swift in Sources */,
 				A4B5C6D7E8F9A0B1C2D3E4F5 /* IdeaFocusModeView.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* IdeaFocusModeViewModel.swift in Sources */,
 				A6B7C8D9E0F1A2B3C4D5E6F7 /* IdeaFocusModeState.swift in Sources */,

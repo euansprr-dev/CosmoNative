@@ -8,6 +8,7 @@ import GRDB
 import NaturalLanguage
 
 // Shared ISO8601 formatter — avoids recreating per call
+@MainActor
 private let _reflectionISOFormatter = ISO8601DateFormatter()
 
 @MainActor
@@ -16,6 +17,7 @@ class ReflectionDataProvider: ObservableObject, DimensionScoring {
 
     @Published var data: ReflectionDimensionData = .empty
     @Published var isLoading = false
+    @Published var lastRefreshDate: Date?
     @Published var reflectionIndex: DimensionIndex = .empty
 
     // Cache NLTagger results — only recompute when journal count changes
@@ -31,6 +33,10 @@ class ReflectionDataProvider: ObservableObject, DimensionScoring {
     // MARK: - DimensionScoring
 
     func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
         let journalConsistency = await computeJournalConsistency()
         let journalDepth = await computeJournalDepth()
         let meditationScore = await computeMeditationScore()
@@ -60,7 +66,7 @@ class ReflectionDataProvider: ObservableObject, DimensionScoring {
             confidence: confidence,
             trend: trend,
             subScores: subScores,
-            dataAge: 0
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
         )
         reflectionIndex = index
         return index
@@ -222,6 +228,7 @@ class ReflectionDataProvider: ObservableObject, DimensionScoring {
             predictions: [],
             insightPatterns: []
         )
+        lastRefreshDate = Date()
     }
 
     // MARK: - Create Journal Entry

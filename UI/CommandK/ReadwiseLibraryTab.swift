@@ -50,7 +50,7 @@ struct ReadwiseLibraryTab: View {
 
     var body: some View {
         ZStack {
-            DS.bg
+            DS.surface
 
             if !ReadwiseService.shared.isConnected {
                 setupPrompt
@@ -80,7 +80,7 @@ struct ReadwiseLibraryTab: View {
         VStack(spacing: 0) {
             filterBar
 
-            Divider().background(DS.borderActive)
+            Divider().background(DS.borderSubtle)
 
             if bookStore.isLoading && bookStore.books.isEmpty {
                 loadingView
@@ -95,7 +95,7 @@ struct ReadwiseLibraryTab: View {
     // MARK: - Filter Bar
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CommandKMetrics.toolbarSpacing) {
             statsLabel
 
             Spacer()
@@ -116,14 +116,14 @@ struct ReadwiseLibraryTab: View {
                     .tint(DS.textMuted)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
+        .padding(.horizontal, CommandKMetrics.contentPadding)
+        .padding(.vertical, 12)
     }
 
     private var statsLabel: some View {
         HStack(spacing: 6) {
             Text("\(filteredBooks.count) \(filteredBooks.count == 1 ? "book" : "books")")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
             Text("·")
@@ -131,7 +131,7 @@ struct ReadwiseLibraryTab: View {
 
             let totalHighlights = filteredBooks.reduce(0) { $0 + $1.numHighlights }
             Text("\(totalHighlights) highlights")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
         }
     }
@@ -181,18 +181,10 @@ struct ReadwiseLibraryTab: View {
                 .font(.system(size: 10))
         }
         .foregroundColor(categoryFilter != nil ? cognac : DS.text)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(categoryFilter != nil ? cognac.opacity(0.12) : DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(
-                            categoryFilter != nil ? cognac.opacity(0.3) : DS.borderSubtle,
-                            lineWidth: 1
-                        )
-                )
+        .commandKToolbarChip(
+            isActive: categoryFilter != nil,
+            activeFill: cognac.opacity(0.12),
+            activeBorder: cognac.opacity(0.18)
         )
     }
 
@@ -218,12 +210,7 @@ struct ReadwiseLibraryTab: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(DS.text)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surfaceElevated)
-            )
+            .commandKToolbarChip()
         }
         .menuStyle(.borderlessButton)
         .tint(DS.text)
@@ -232,7 +219,7 @@ struct ReadwiseLibraryTab: View {
     private var filterSeparator: some View {
         Rectangle()
             .fill(DS.border)
-            .frame(width: 1, height: 20)
+            .frame(width: 1, height: 22)
     }
 
     private var clearButton: some View {
@@ -248,11 +235,10 @@ struct ReadwiseLibraryTab: View {
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(DS.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(DS.surfaceElevated)
+            .commandKToolbarChip(
+                isActive: true,
+                activeFill: cognac.opacity(0.10),
+                activeBorder: cognac.opacity(0.18)
             )
         }
         .buttonStyle(.plain)

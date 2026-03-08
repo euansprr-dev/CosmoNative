@@ -115,10 +115,15 @@ enum CosmoNotification {
 
         // Thinkspace
         static let switchToThinkspace = Notification.Name("com.cosmo.nav.switchToThinkspace")
+        static let navigateToThinkspaceById = Notification.Name("com.cosmo.nav.navigateToThinkspaceById")
 
         // Command Center
         static let navigateToCommandCenter = Notification.Name("com.cosmo.navigation.commandCenter")
         static let exitDrillIn = Notification.Name("com.cosmo.navigation.exitDrillIn")
+
+        // Dimensions
+        static let navigateToDimension = Notification.Name("com.cosmo.navigation.dimension")
+        static let openDimensionAsPane = Notification.Name("com.cosmo.navigation.dimensionPane")
 
         // Panes
         static let openAsPane = Notification.Name("com.cosmo.nav.openAsPane")
@@ -128,6 +133,47 @@ enum CosmoNotification {
         static let showCommandPalette = Notification.Name("com.cosmo.nav.showCommandPalette")
         static let openCalendarWindow = Notification.Name("com.cosmo.nav.openCalendarWindow")
         static let toggleCalendarWindow = Notification.Name("com.cosmo.nav.toggleCalendarWindow")
+
+        struct DimensionPayload {
+            let dimension: LevelDimension
+
+            init(dimension: LevelDimension) {
+                self.dimension = dimension
+            }
+
+            init?(from notification: Notification) {
+                guard
+                    let rawValue = notification.userInfo?["dimensionId"] as? String,
+                    let dimension = LevelDimension(rawValue: rawValue)
+                else {
+                    return nil
+                }
+                self.dimension = dimension
+            }
+
+            var userInfo: [AnyHashable: Any] {
+                ["dimensionId": dimension.rawValue]
+            }
+        }
+
+        struct ThinkspacePayload {
+            let thinkspaceId: String
+
+            init(thinkspaceId: String) {
+                self.thinkspaceId = thinkspaceId
+            }
+
+            init?(from notification: Notification) {
+                guard let thinkspaceId = notification.userInfo?["thinkspaceId"] as? String else {
+                    return nil
+                }
+                self.thinkspaceId = thinkspaceId
+            }
+
+            var userInfo: [AnyHashable: Any] {
+                ["thinkspaceId": thinkspaceId]
+            }
+        }
     }
 
     // MARK: - Voice Notifications

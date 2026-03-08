@@ -1,32 +1,14 @@
 // CosmoOS/UI/CosmoWindow/CosmoMentionOverlay.swift
-// @mention overlay for injecting atoms as context into Cosmo AI chat
-// Appears above the input bar when user types "@"
-// February 2026
+// Premium @mention overlay for injecting atoms as context into Cosmo chat
+// March 2026
 
 import SwiftUI
 
-// MARK: - Cosmo Mention Overlay
-
-/// An overlay that appears above the Cosmo chat input bar when the user types `@`.
-/// Shows category capsules for filtering, then live search results from the atom database.
-///
-/// Flow:
-/// 1. User types `@` -> overlay slides up
-/// 2. Before typing: horizontal row of category capsules (Content, Research, Idea, etc.)
-/// 3. While typing after `@`: live search via AtomRepository with 200ms debounce
-/// 4. Category selected first: filters results to that AtomType
-/// 5. User taps a result -> atom added as context chip, `@query` text removed
-/// 6. Escape dismisses the overlay
 struct CosmoMentionOverlay: View {
-
-    // MARK: - Bindings
-
     @Binding var isVisible: Bool
     @Binding var searchText: String
     var onSelect: (Atom) -> Void
     var onDismiss: () -> Void
-
-    // MARK: - Internal State
 
     @State private var selectedCategory: AtomType? = nil
     @State private var results: [Atom] = []
@@ -34,10 +16,7 @@ struct CosmoMentionOverlay: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var hoveredResultId: String? = nil
 
-    // MARK: - Category Definitions
-
-    /// Sentinel value used to represent the Swipe filter (swipe files are `.research` in the DB).
-    private static let swipeFilterTag = AtomType.creator  // Unused type repurposed as filter tag
+    private static let swipeFilterTag = AtomType.creator
 
     private let categories: [(type: AtomType, label: String, icon: String)] = [
         (.content, "Content", "doc.richtext"),
@@ -45,40 +24,36 @@ struct CosmoMentionOverlay: View {
         (swipeFilterTag, "Swipe", "bookmark.fill"),
         (.idea, "Idea", "lightbulb"),
         (.connection, "Connection", "link"),
-        (.task, "Task", "checkmark.circle"),
+        (.task, "Task", "checkmark.circle")
     ]
-
-    // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
-            // Category capsules row
+            header
+
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
+
             categoryRow
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
 
-            Divider()
-                .background(DS.border)
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
 
-            // Results area
-            if results.isEmpty && !searchText.isEmpty && !isSearching {
-                emptyState
-            } else if results.isEmpty && searchText.isEmpty {
-                promptState
-            } else {
-                resultsList
-            }
+            resultsSection
         }
-        .frame(maxHeight: 300)
-        .background(DS.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(maxHeight: 340)
+        .background(DS.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.3), radius: 16, y: -4)
-        .padding(.horizontal, 16)
+        .dsFloatingShadow()
+        .padding(.horizontal, 2)
         .padding(.bottom, 4)
         .onChange(of: searchText) { newValue in
             performSearch(newValue)
@@ -86,16 +61,58 @@ struct CosmoMentionOverlay: View {
         .onChange(of: selectedCategory) { _ in
             performSearch(searchText)
         }
+        .onDisappear {
+            searchTask?.cancel()
+        }
         .onExitCommand {
             onDismiss()
         }
     }
 
-    // MARK: - Category Row
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Add Context")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(DS.text)
+
+                Text(headerSubtitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 8) {
+                if isSearching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DS.accent)
+                } else if !searchText.isEmpty {
+                    Text("\(results.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .cosmoWindowChip(isActive: true)
+                }
+
+                Text("Esc")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .cosmoWindowChip()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
 
     private var categoryRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(categories, id: \.type) { category in
                     categoryCapsule(category)
                 }
@@ -105,47 +122,61 @@ struct CosmoMentionOverlay: View {
 
     private func categoryCapsule(_ category: (type: AtomType, label: String, icon: String)) -> some View {
         let isSwipeCategory = category.type == Self.swipeFilterTag
-        let entityType = isSwipeCategory ? .swipeFile : (EntityType(rawValue: category.type.rawValue) ?? .idea)
+        let entityType = isSwipeCategory ? EntityType.swipeFile : (EntityType(rawValue: category.type.rawValue) ?? .idea)
         let isSelected = selectedCategory == category.type
         let pillColor = CosmoMentionColors.color(for: entityType)
         let pillBg = CosmoMentionColors.pillBackground(for: entityType)
 
         return Button {
             withAnimation(ProMotionSprings.snappy) {
-                if selectedCategory == category.type {
-                    selectedCategory = nil
-                } else {
-                    selectedCategory = category.type
-                }
+                selectedCategory = selectedCategory == category.type ? nil : category.type
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: category.icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
+
                 Text(category.label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .semibold))
             }
             .foregroundColor(isSelected ? DS.surfaceElevated : pillColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isSelected ? pillColor : pillBg)
-            .clipShape(Capsule())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(isSelected ? pillColor : pillBg)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? pillColor.opacity(0.06) : pillColor.opacity(0.16), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Results List
+    @ViewBuilder
+    private var resultsSection: some View {
+        if results.isEmpty && !searchText.isEmpty && !isSearching {
+            emptyState
+        } else if results.isEmpty && searchText.isEmpty {
+            promptState
+        } else {
+            resultsList
+        }
+    }
 
     private var resultsList: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 10) {
                 ForEach(results, id: \.uuid) { atom in
                     resultRow(atom: atom)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
         }
-        .frame(maxHeight: 240)
+        .frame(maxHeight: 248)
+        .background(DS.bg)
     }
 
     private func resultRow(atom: Atom) -> some View {
@@ -153,47 +184,85 @@ struct CosmoMentionOverlay: View {
         let entityType: EntityType = isSwipe ? .swipeFile : (EntityType(rawValue: atom.type.rawValue) ?? .idea)
         let displayLabel = isSwipe ? "Swipe" : atom.type.displayName
         let displayIcon = isSwipe ? "bookmark.fill" : atom.type.iconName
+        let accent = CosmoMentionColors.color(for: entityType)
+        let accentFill = CosmoMentionColors.pillBackground(for: entityType)
         let isHovered = hoveredResultId == atom.uuid
+        let title = atom.title ?? "Untitled"
+        let detail = atom.body.flatMap { body in
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(92))
+        }
 
         return Button {
             onSelect(atom)
         } label: {
-            HStack(spacing: 10) {
-                // Type icon with color
-                Image(systemName: displayIcon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(CosmoMentionColors.color(for: entityType))
-                    .frame(width: 20)
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(accentFill)
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        Image(systemName: displayIcon)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(accent)
+                    )
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(atom.title ?? "Untitled")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(DS.text)
+                            .lineLimit(1)
 
-                    if let body = atom.body, !body.isEmpty {
-                        Text(String(body.prefix(60)))
-                            .font(.system(size: 10))
+                        if let updatedAt = relativeDate(for: atom) {
+                            Text(updatedAt, style: .relative)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(DS.textMuted)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.textSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Add this item as live context for the next message.")
+                            .font(.system(size: 11))
                             .foregroundColor(DS.textMuted)
                             .lineLimit(1)
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
-                // Type badge
-                Text(displayLabel)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(CosmoMentionColors.color(for: entityType))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(CosmoMentionColors.pillBackground(for: entityType))
-                    .clipShape(Capsule())
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text(displayLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(accentFill)
+                        )
+
+                    Image(systemName: "arrow.up.left")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(isHovered ? accent : DS.textMuted)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(isHovered ? DS.border : Color.clear)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isHovered ? DS.surface : DS.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isHovered ? accent.opacity(0.18) : DS.borderSubtle, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -201,45 +270,95 @@ struct CosmoMentionOverlay: View {
         }
     }
 
-    // MARK: - Empty & Prompt States
-
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .light))
-                .foregroundColor(DS.textMuted)
+        VStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(DS.surfaceElevated)
+                .frame(width: 46, height: 46)
+                .overlay(
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(DS.textSecondary)
+                )
 
-            Text("No results")
-                .font(.system(size: 12, weight: .medium))
+            Text("No matching context")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.text)
+
+            Text("Try a different search term or switch the category.")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.textSecondary)
-
-            Text("Try a different search term")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 30)
+        .background(DS.bg)
     }
 
     private var promptState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "at")
-                .font(.system(size: 16, weight: .light))
-                .foregroundColor(DS.textMuted)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(DS.accentSoft)
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Image(systemName: "at")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(DS.accent)
+                    )
 
-            Text("Type to search...")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Search your library")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.text)
 
-            Text("Search your ideas, content, research, and more")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                    Text("Type after `@` to attach ideas, swipes, research, tasks, or content as live context.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Try searching for")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+
+                FlexibleFactRow(items: ["@Josh", "@Airbnb", "@hooks", "@research"])
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.bg)
     }
 
-    // MARK: - Search Logic
+    private var headerSubtitle: String {
+        if isSearching {
+            return "Searching your library"
+        }
+        if let selectedCategory {
+            return "Filtered to \(label(for: selectedCategory))"
+        }
+        if searchText.isEmpty {
+            return "Choose a category or start typing after @"
+        }
+        return "\(results.count) results ready to add"
+    }
+
+    private func label(for category: AtomType) -> String {
+        categories.first(where: { $0.type == category })?.label ?? "Category"
+    }
+
+    private func relativeDate(for atom: Atom) -> Date? {
+        let formatter = ISO8601DateFormatter()
+
+        if !atom.updatedAt.isEmpty, let date = formatter.date(from: atom.updatedAt) {
+            return date
+        }
+        if !atom.createdAt.isEmpty, let date = formatter.date(from: atom.createdAt) {
+            return date
+        }
+        return nil
+    }
 
     private func performSearch(_ query: String) {
         searchTask?.cancel()
@@ -253,18 +372,15 @@ struct CosmoMentionOverlay: View {
         isSearching = true
 
         searchTask = Task {
-            // 200ms debounce
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
 
             var atoms: [Atom]
             if let category = selectedCategory {
                 if category == Self.swipeFilterTag {
-                    // Swipe filter: search research atoms, then keep only swipe files
                     atoms = (try? await AtomRepository.shared.search(query: query, types: [.research])) ?? []
-                    atoms = atoms.filter { $0.isSwipeFileAtom }
+                    atoms = atoms.filter(\.isSwipeFileAtom)
                 } else if category == .research {
-                    // Research filter: exclude swipe files so the two categories are distinct
                     atoms = (try? await AtomRepository.shared.search(query: query, types: [.research])) ?? []
                     atoms = atoms.filter { !$0.isSwipeFileAtom }
                 } else {
@@ -277,20 +393,18 @@ struct CosmoMentionOverlay: View {
             guard !Task.isCancelled else { return }
 
             await MainActor.run {
-                self.results = Array(atoms.prefix(15))
-                self.isSearching = false
+                results = Array(atoms.prefix(15))
+                isSearching = false
             }
         }
     }
 }
 
-// MARK: - Preview
-
 #if DEBUG
 struct CosmoMentionOverlay_Previews: PreviewProvider {
     struct PreviewWrapper: View {
         @State private var isVisible = true
-        @State private var searchText = ""
+        @State private var searchText = "airbnb"
 
         var body: some View {
             ZStack {
@@ -302,16 +416,18 @@ struct CosmoMentionOverlay_Previews: PreviewProvider {
                         isVisible: $isVisible,
                         searchText: $searchText,
                         onSelect: { _ in },
-                        onDismiss: { }
+                        onDismiss: {}
                     )
+                    .frame(width: 420)
                 }
+                .padding()
             }
         }
     }
 
     static var previews: some View {
         PreviewWrapper()
-            .frame(width: 400, height: 500)
+            .frame(width: 480, height: 540)
     }
 }
 #endif

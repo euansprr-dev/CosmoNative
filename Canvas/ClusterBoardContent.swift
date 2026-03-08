@@ -14,11 +14,10 @@ struct ClusterBoardContent: View {
     let cluster: CanvasCluster
     let clusterColor: Color
     let blocks: [CanvasBlock]
-    let onBoardColumnDrop: (BoardDropEvent) -> Void
+    let highlightedColumnValue: String?
     let onOpenFocusMode: (String) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var highlightedColumnValue: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -32,107 +31,8 @@ struct ClusterBoardContent: View {
 
     // MARK: - Column Determination
 
-    private var memberBlocks: [CanvasBlock] {
-        let uuids = Set(cluster.blockUUIDs)
-        return blocks.filter { uuids.contains($0.entityUuid) }
-    }
-
-    private var groupingStrategy: GroupingStrategy {
-        switch cluster.boardGrouping {
-        case .type:
-            return .byType
-        case .pipeline:
-            return pipelineStrategyForDominantType()
-        case .auto:
-            let members = memberBlocks
-            guard !members.isEmpty else { return .byType }
-            let typeCounts = Dictionary(grouping: members, by: \.entityType)
-            let dominant = typeCounts.max(by: { $0.value.count < $1.value.count })
-            guard let dominantType = dominant?.key, let dominantCount = dominant?.value.count else {
-                return .byType
-            }
-            let ratio = Double(dominantCount) / Double(members.count)
-            return ratio > 0.5 ? pipelineStrategy(for: dominantType) : .byType
-        }
-    }
-
-    private func pipelineStrategyForDominantType() -> GroupingStrategy {
-        let members = memberBlocks
-        guard !members.isEmpty else { return .byType }
-        let typeCounts = Dictionary(grouping: members, by: \.entityType)
-        guard let dominantType = typeCounts.max(by: { $0.value.count < $1.value.count })?.key else {
-            return .byType
-        }
-        return pipelineStrategy(for: dominantType)
-    }
-
-    private func pipelineStrategy(for type: EntityType) -> GroupingStrategy {
-        switch type {
-        case .task: return .byTaskStatus
-        case .content: return .byContentPhase
-        case .idea: return .byIdeaStatus
-        default: return .byType
-        }
-    }
-
     private var columns: [BoardColumn] {
-        let members = memberBlocks
-        let strategy = groupingStrategy
-
-        switch strategy {
-        case .byTaskStatus:
-            return buildColumns(
-                blocks: members,
-                columnDefs: [("TODO", "todo"), ("IN PROGRESS", "in_progress"), ("DONE", "completed")],
-                keyPath: { block in
-                    CanvasClusterEngine.canonicalTaskStatus(block.metadata["status"] ?? "todo")
-                }
-            )
-        case .byContentPhase:
-            return buildColumns(
-                blocks: members,
-                columnDefs: [("IDEATION", "ideation"), ("DRAFT", "draft"), ("POLISH", "polish"), ("ARCHIVED", "archived")],
-                keyPath: { block in
-                    let raw = block.metadata["currentStep"] ?? block.metadata["status"] ?? "ideation"
-                    return CanvasClusterEngine.canonicalContentPhase(raw)
-                }
-            )
-        case .byIdeaStatus:
-            return buildColumns(
-                blocks: members,
-                columnDefs: [("SPARK", "spark"), ("DEVELOPING", "developing"), ("READY", "ready"), ("ARCHIVED", "archived")],
-                keyPath: { block in
-                    CanvasClusterEngine.canonicalIdeaStatus(block.metadata["ideaStatus"] ?? "spark")
-                }
-            )
-        case .byType:
-            return buildTypeColumns(blocks: members)
-        }
-    }
-
-    private func buildColumns(
-        blocks: [CanvasBlock],
-        columnDefs: [(title: String, value: String)],
-        keyPath: (CanvasBlock) -> String
-    ) -> [BoardColumn] {
-        var grouped: [String: [CanvasBlock]] = [:]
-        for block in blocks {
-            let key = keyPath(block)
-            let matchedValue = columnDefs.first(where: { $0.value == key })?.value ?? columnDefs.first?.value ?? key
-            grouped[matchedValue, default: []].append(block)
-        }
-        return columnDefs.map { def in
-            BoardColumn(title: def.title, value: def.value, blocks: grouped[def.value] ?? [])
-        }
-    }
-
-    private func buildTypeColumns(blocks: [CanvasBlock]) -> [BoardColumn] {
-        let typeOrder: [EntityType] = [.research, .idea, .content, .task, .connection, .project, .note]
-        let grouped = Dictionary(grouping: blocks, by: \.entityType)
-        return typeOrder.compactMap { type in
-            guard let group = grouped[type], !group.isEmpty else { return nil }
-            return BoardColumn(title: type.rawValue.uppercased(), value: type.rawValue, blocks: group)
-        }
+        cluster.boardColumns(from: blocks)
     }
 
     // MARK: - Column View
@@ -162,15 +62,6 @@ struct ClusterBoardContent: View {
                 )
         )
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: highlightedColumnValue == column.value)
-        .onDrop(
-            of: [.text],
-            delegate: ClusterBoardColumnDropDelegate(
-                targetColumnValue: column.value,
-                targetClusterId: cluster.id,
-                highlightedColumnValue: $highlightedColumnValue,
-                onDrop: onBoardColumnDrop
-            )
-        )
     }
 
     @ViewBuilder
@@ -206,57 +97,6 @@ struct ClusterBoardContent: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-    }
-}
-
-private struct ClusterBoardColumnDropDelegate: DropDelegate {
-    let targetColumnValue: String
-    let targetClusterId: UUID
-    @Binding var highlightedColumnValue: String?
-    let onDrop: (BoardDropEvent) -> Void
-
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
-    }
-
-    func dropEntered(info: DropInfo) {
-        highlightedColumnValue = targetColumnValue
-    }
-
-    func dropExited(info: DropInfo) {
-        if highlightedColumnValue == targetColumnValue {
-            highlightedColumnValue = nil
-        }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        highlightedColumnValue = nil
-        let providers = info.itemProviders(for: [.text])
-        for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in
-                let blockUUID: String?
-                if let data = item as? Data {
-                    blockUUID = String(data: data, encoding: .utf8)
-                } else if let text = item as? String {
-                    blockUUID = text
-                } else if let text = item as? NSString {
-                    blockUUID = text as String
-                } else {
-                    blockUUID = nil
-                }
-                guard let blockUUID else { return }
-                DispatchQueue.main.async {
-                    onDrop(
-                        BoardDropEvent(
-                            blockUUID: blockUUID,
-                            targetClusterId: targetClusterId,
-                            targetColumnValue: targetColumnValue
-                        )
-                    )
-                }
-            }
-        }
-        return true
     }
 }
 
@@ -328,4 +168,136 @@ enum GroupingStrategy {
     case byContentPhase
     case byIdeaStatus
     case byType
+}
+
+extension CanvasCluster {
+    func boardColumns(from blocks: [CanvasBlock]) -> [BoardColumn] {
+        let members = boardMemberBlocks(from: blocks)
+        let strategy = boardGroupingStrategy(memberBlocks: members)
+
+        switch strategy {
+        case .byTaskStatus:
+            return buildColumns(
+                blocks: members,
+                columnDefs: [("TODO", "todo"), ("IN PROGRESS", "in_progress"), ("DONE", "completed")],
+                keyPath: { block in
+                    CanvasClusterEngine.canonicalTaskStatus(block.metadata["status"] ?? "todo")
+                }
+            )
+        case .byContentPhase:
+            return buildColumns(
+                blocks: members,
+                columnDefs: [("IDEATION", "ideation"), ("DRAFT", "draft"), ("POLISH", "polish"), ("ARCHIVED", "archived")],
+                keyPath: { block in
+                    let raw = block.metadata["currentStep"] ?? block.metadata["status"] ?? "ideation"
+                    return CanvasClusterEngine.canonicalContentPhase(raw)
+                }
+            )
+        case .byIdeaStatus:
+            return buildColumns(
+                blocks: members,
+                columnDefs: [("SPARK", "spark"), ("DEVELOPING", "developing"), ("READY", "ready"), ("ARCHIVED", "archived")],
+                keyPath: { block in
+                    CanvasClusterEngine.canonicalIdeaStatus(block.metadata["ideaStatus"] ?? "spark")
+                }
+            )
+        case .byType:
+            return buildTypeColumns(blocks: members)
+        }
+    }
+
+    func boardDropColumnValue(for localX: CGFloat, clusterWidth: CGFloat, blocks: [CanvasBlock]) -> String? {
+        let columns = boardColumns(from: blocks)
+        guard !columns.isEmpty else { return nil }
+
+        // Match the visible board columns more closely by discounting the outer content padding.
+        let horizontalInset: CGFloat = 16
+        let usableWidth = max(clusterWidth - (horizontalInset * 2), 1)
+        let clampedX = min(max(localX - horizontalInset, 0), usableWidth)
+        let fraction = clampedX / usableWidth
+        let index = min(Int(fraction * CGFloat(columns.count)), columns.count - 1)
+        return columns[index].value
+    }
+
+    func defaultBoardDropColumnValue(for block: CanvasBlock, among blocks: [CanvasBlock]) -> String {
+        switch boardGroupingStrategy(memberBlocks: boardMemberBlocks(from: blocks)) {
+        case .byTaskStatus:
+            return CanvasClusterEngine.canonicalTaskStatus(block.metadata["status"] ?? "todo")
+        case .byContentPhase:
+            let raw = block.metadata["currentStep"] ?? block.metadata["status"] ?? "ideation"
+            return CanvasClusterEngine.canonicalContentPhase(raw)
+        case .byIdeaStatus:
+            return CanvasClusterEngine.canonicalIdeaStatus(block.metadata["ideaStatus"] ?? "spark")
+        case .byType:
+            return block.entityType.rawValue
+        }
+    }
+}
+
+private extension CanvasCluster {
+    func boardMemberBlocks(from blocks: [CanvasBlock]) -> [CanvasBlock] {
+        let uuids = Set(blockUUIDs)
+        return blocks.filter { uuids.contains($0.entityUuid) }
+    }
+
+    func boardGroupingStrategy(memberBlocks: [CanvasBlock]) -> GroupingStrategy {
+        switch boardGrouping {
+        case .type:
+            return .byType
+        case .pipeline:
+            return pipelineStrategyForDominantType(memberBlocks: memberBlocks)
+        case .auto:
+            guard !memberBlocks.isEmpty else { return .byType }
+            let typeCounts = Dictionary(grouping: memberBlocks, by: \.entityType)
+            let dominant = typeCounts.max(by: { $0.value.count < $1.value.count })
+            guard let dominantType = dominant?.key, let dominantCount = dominant?.value.count else {
+                return .byType
+            }
+            let ratio = Double(dominantCount) / Double(memberBlocks.count)
+            return ratio > 0.5 ? pipelineStrategy(for: dominantType) : .byType
+        }
+    }
+
+    func pipelineStrategyForDominantType(memberBlocks: [CanvasBlock]) -> GroupingStrategy {
+        guard !memberBlocks.isEmpty else { return .byType }
+        let typeCounts = Dictionary(grouping: memberBlocks, by: \.entityType)
+        guard let dominantType = typeCounts.max(by: { $0.value.count < $1.value.count })?.key else {
+            return .byType
+        }
+        return pipelineStrategy(for: dominantType)
+    }
+
+    func pipelineStrategy(for type: EntityType) -> GroupingStrategy {
+        switch type {
+        case .task: return .byTaskStatus
+        case .content: return .byContentPhase
+        case .idea: return .byIdeaStatus
+        default: return .byType
+        }
+    }
+
+    func buildColumns(
+        blocks: [CanvasBlock],
+        columnDefs: [(title: String, value: String)],
+        keyPath: (CanvasBlock) -> String
+    ) -> [BoardColumn] {
+        var grouped: [String: [CanvasBlock]] = [:]
+        for block in blocks {
+            let key = keyPath(block)
+            let matchedValue = columnDefs.first(where: { $0.value == key })?.value ?? columnDefs.first?.value ?? key
+            grouped[matchedValue, default: []].append(block)
+        }
+        return columnDefs.map { def in
+            BoardColumn(title: def.title, value: def.value, blocks: grouped[def.value] ?? [])
+        }
+    }
+
+    func buildTypeColumns(blocks: [CanvasBlock]) -> [BoardColumn] {
+        let typeOrder: [EntityType] = [.research, .idea, .content, .task, .connection, .project, .note]
+        let grouped = Dictionary(grouping: blocks, by: \.entityType)
+        return typeOrder.compactMap { type in
+            guard let group = grouped[type], !group.isEmpty else { return nil }
+            return BoardColumn(title: type.rawValue.uppercased(), value: type.rawValue, blocks: group)
+        }
+    }
 }

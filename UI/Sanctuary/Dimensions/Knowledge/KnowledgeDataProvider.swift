@@ -12,6 +12,7 @@ class KnowledgeDataProvider: ObservableObject, DimensionScoring {
 
     @Published var data: KnowledgeDimensionData = KnowledgeDimensionData.empty
     @Published var isLoading = false
+    @Published var lastRefreshDate: Date?
     @Published var knowledgeIndex: DimensionIndex = .empty
 
     private let atomRepository: AtomRepository
@@ -27,6 +28,10 @@ class KnowledgeDataProvider: ObservableObject, DimensionScoring {
     // MARK: - DimensionScoring
 
     func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
         let captureRate = await computeCaptureRate()
         let processingDepth = await computeProcessingDepth()
         let connectionDensity = await computeConnectionDensity()
@@ -55,7 +60,7 @@ class KnowledgeDataProvider: ObservableObject, DimensionScoring {
             confidence: confidence,
             trend: trend,
             subScores: subScores,
-            dataAge: 0
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
         )
         knowledgeIndex = index
         return index
@@ -108,6 +113,7 @@ class KnowledgeDataProvider: ObservableObject, DimensionScoring {
             emergingLinks: clusters.emerging,
             predictions: clusters.predictions
         )
+        lastRefreshDate = Date()
     }
 
     // MARK: - Capture Metrics

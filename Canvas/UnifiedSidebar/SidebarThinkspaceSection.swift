@@ -235,7 +235,7 @@ struct SidebarThinkspaceSection: View {
                         .foregroundColor(DS.accent)
                 )
 
-            TextField("Name", text: $newName)
+            TextField("Name", text: $newName, prompt: Text("Name").foregroundColor(DS.textMuted))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)

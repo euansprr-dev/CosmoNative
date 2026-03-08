@@ -6,14 +6,57 @@ import Foundation
 import SwiftUI
 
 @MainActor
-class BehavioralDataProvider: ObservableObject {
-    @Published var data: BehavioralDimensionData = .preview
+class BehavioralDataProvider: ObservableObject, DimensionScoring {
+    nonisolated var dimensionId: String { "behavioral" }
+
+    @Published var data: BehavioralDimensionData = .empty
     @Published var isLoading = false
+    @Published var lastRefreshDate: Date?
+    @Published var behavioralIndex: DimensionIndex = .empty
 
     private let atomRepository: AtomRepository
 
     init(atomRepository: AtomRepository? = nil) {
         self.atomRepository = atomRepository ?? AtomRepository.shared
+    }
+
+    // MARK: - DimensionScoring
+
+    func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
+        let subScores: [String: Double] = [
+            "morning": data.morningScore.currentScore,
+            "deepWork": data.deepWorkScore.currentScore,
+            "sleep": data.sleepScore.currentScore,
+            "movement": data.movementScore.currentScore,
+            "screen": data.screenScore.currentScore,
+            "tasks": data.taskScore.currentScore
+        ]
+
+        let confidence: Double = {
+            if data.isEmpty { return 0.25 }
+            let evidenceCount = Double(data.todayEvents.count + data.activeStreaks.count)
+            return min(1.0, 0.45 + evidenceCount * 0.03)
+        }()
+
+        let trend: DimensionTrend = {
+            if data.disciplineChange > 2 { return .rising }
+            if data.disciplineChange < -2 { return .falling }
+            return .stable
+        }()
+
+        let index = DimensionIndex(
+            score: min(100, max(0, data.disciplineIndex)),
+            confidence: confidence,
+            trend: trend,
+            subScores: subScores,
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
+        )
+        behavioralIndex = index
+        return index
     }
 
     // MARK: - Main Refresh
@@ -148,6 +191,7 @@ class BehavioralDataProvider: ObservableObject {
             levelUpPath: levelUpPath,
             predictions: predictions
         )
+        lastRefreshDate = Date()
     }
 
     // MARK: - Sub-Score Computations

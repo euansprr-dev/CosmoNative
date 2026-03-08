@@ -22,14 +22,6 @@ final class CosmoWindowPanelController: NSWindowController {
     private var panel: CosmoKeyablePanel!
     private(set) var isShown = false
 
-    // Size constraints
-    private let defaultWidth: CGFloat = 420
-    private let defaultHeight: CGFloat = 600
-    private let minWidth: CGFloat = 360
-    private let minHeight: CGFloat = 400
-    private let maxWidth: CGFloat = 500
-    private let maxHeight: CGFloat = 800
-
     // UserDefaults keys for position persistence
     private let posXKey = "cosmoWindowPosX"
     private let posYKey = "cosmoWindowPosY"
@@ -75,8 +67,14 @@ final class CosmoWindowPanelController: NSWindowController {
         panel.titlebarAppearsTransparent = true
 
         // Size constraints
-        panel.minSize = NSSize(width: minWidth, height: minHeight)
-        panel.maxSize = NSSize(width: maxWidth, height: maxHeight)
+        panel.minSize = NSSize(
+            width: CosmoWindowMetrics.minWidth,
+            height: CosmoWindowMetrics.minHeight
+        )
+        panel.maxSize = NSSize(
+            width: CosmoWindowMetrics.maxWidth,
+            height: CosmoWindowMetrics.maxHeight
+        )
 
         // Allow keyboard input (text field in chat)
         panel.becomesKeyOnlyIfNeeded = false
@@ -210,8 +208,9 @@ final class CosmoWindowPanelController: NSWindowController {
         let y = defaults.double(forKey: "cosmoWindowPosY")
         let w = defaults.double(forKey: "cosmoWindowWidth")
         let h = defaults.double(forKey: "cosmoWindowHeight")
-
-        let frame = NSRect(x: x, y: y, width: w, height: h)
+        let clampedWidth = min(max(w, CosmoWindowMetrics.minWidth), CosmoWindowMetrics.maxWidth)
+        let clampedHeight = min(max(h, CosmoWindowMetrics.minHeight), CosmoWindowMetrics.maxHeight)
+        let frame = NSRect(x: x, y: y, width: clampedWidth, height: clampedHeight)
 
         // Validate the saved frame is on a visible screen
         let isOnScreen = NSScreen.screens.contains { screen in
@@ -222,9 +221,8 @@ final class CosmoWindowPanelController: NSWindowController {
 
     private static func defaultFrame() -> NSRect {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        // Position at right side of screen, vertically centered
-        let w: CGFloat = 420
-        let h: CGFloat = 600
+        let w = CosmoWindowMetrics.defaultWidth
+        let h = CosmoWindowMetrics.defaultHeight
         let x = screen.maxX - w - 20
         let y = screen.midY - h / 2
         return NSRect(x: x, y: y, width: w, height: h)

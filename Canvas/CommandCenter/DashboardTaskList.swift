@@ -701,7 +701,10 @@ struct CommandCenterAnimatedTaskTitle: View {
                         Rectangle()
                             .fill(completedColor)
                             .frame(width: geo.size.width * strikeProgress, height: 1.4)
-                            .offset(y: 0.5)
+                            .position(
+                                x: (geo.size.width * strikeProgress) / 2,
+                                y: geo.size.height * 0.54
+                            )
                     }
                     .allowsHitTesting(false)
                 }

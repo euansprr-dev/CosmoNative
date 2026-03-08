@@ -6,12 +6,7 @@ import SwiftUI
 
 struct CanvasDrawingGestureLayer: View {
     @ObservedObject var drawingState: DrawingStateManager
-
-    // Coordinate conversion params (passed from CanvasView)
-    var canvasOffset: CGSize = .zero
-    var scaledPanOffset: CGSize = .zero
-    var effectiveScale: CGFloat = 1.0
-    var screenCenter: CGPoint = .zero
+    let transform: CanvasViewportTransform
 
     // Block frame tracker for lasso hit testing
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
@@ -23,6 +18,10 @@ struct CanvasDrawingGestureLayer: View {
 
     // Lasso state
     @State private var lassoPoints: [CGPoint] = []
+
+    private var effectiveScale: CGFloat {
+        transform.effectiveScale
+    }
 
     var body: some View {
         ZStack {
@@ -112,24 +111,14 @@ struct CanvasDrawingGestureLayer: View {
     // MARK: - Canvas → Screen Coordinate Conversion
 
     private func canvasToScreen(_ point: CGPoint) -> CGPoint {
-        let offsetX = point.x + canvasOffset.width + scaledPanOffset.width
-        let offsetY = point.y + canvasOffset.height + scaledPanOffset.height
-        return CGPoint(
-            x: screenCenter.x + (offsetX - screenCenter.x) * effectiveScale,
-            y: screenCenter.y + (offsetY - screenCenter.y) * effectiveScale
-        )
+        transform.canvasToScreen(point)
     }
 
     // MARK: - Screen → Canvas Coordinate Conversion
 
     /// Reverses the scale+offset transform to convert screen-space points to canvas-space
     private func screenToCanvas(_ point: CGPoint) -> CGPoint {
-        let unscaledX = screenCenter.x + (point.x - screenCenter.x) / effectiveScale
-        let unscaledY = screenCenter.y + (point.y - screenCenter.y) / effectiveScale
-        return CGPoint(
-            x: unscaledX - canvasOffset.width - scaledPanOffset.width,
-            y: unscaledY - canvasOffset.height - scaledPanOffset.height
-        )
+        transform.screenToCanvas(point)
     }
 
     // MARK: - Drawing Gesture
@@ -208,10 +197,7 @@ struct CanvasDrawingGestureLayer: View {
         // Force-refresh block frames to capture any blocks dragged since last pan/zoom change
         blockFrameTracker.updateFrames(
             blocks: blockFrameTracker.trackedBlocks,
-            canvasOffset: canvasOffset,
-            scaledPanOffset: scaledPanOffset,
-            effectiveScale: effectiveScale,
-            screenCenter: screenCenter
+            transform: transform
         )
 
         // Check which blocks have any point inside the lasso polygon (screen space)

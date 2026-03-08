@@ -10,6 +10,20 @@ enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
     case thinkspace(id: String)
+    case dimension(LevelDimension)
+}
+
+extension SidebarDestination {
+    var dimension: LevelDimension? {
+        if case .dimension(let dimension) = self {
+            return dimension
+        }
+        return nil
+    }
+
+    var isDimension: Bool {
+        dimension != nil
+    }
 }
 
 // MARK: - Sidebar Metrics
@@ -26,7 +40,7 @@ enum UnifiedSidebarMetrics {
     static let expandedOuterPadding: CGFloat = 12
     static let collapsedOuterPadding: CGFloat = 8
     static let contentVerticalPadding: CGFloat = 12
-    static let moduleSpacing: CGFloat = 24
+    static let moduleSpacing: CGFloat = 16
     static let modulePaddingExpanded: CGFloat = 12
     static let modulePaddingCollapsed: CGFloat = 6
 
@@ -177,6 +191,7 @@ struct UnifiedSidebar: View {
 
                     UnifiedSidebarSectionCard(isCollapsed: isCollapsed) {
                         SidebarDimensionSection(
+                            currentDestination: $currentDestination,
                             isCollapsed: isCollapsed
                         )
                     }
@@ -235,38 +250,18 @@ struct UnifiedSidebar: View {
                         isCollapsed = false
                     }
                 } label: {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(DS.accentSoft)
+                    Image("CosmoLogo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                        .overlay(
-                            Text("C")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundColor(DS.accent)
-                        )
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .help("Expand sidebar (Cmd+\\)")
             } else {
                 HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(DS.accentSoft)
-                            .frame(width: 30, height: 30)
-                            .overlay(
-                                Text("C")
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                    .foregroundColor(DS.accent)
-                            )
-
-                        Text("CosmoOS")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(DS.text)
-                    }
-                    .frame(minWidth: 92, alignment: .leading)
-
                     Button {
-                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openCommandK, object: nil)
+                        NotificationCenter.default.post(name: .showCommandPalette, object: nil)
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
@@ -299,6 +294,7 @@ struct UnifiedSidebar: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                     .onHover { hoveredHeaderItem = $0 ? "search" : nil }
                     .help("Search (Cmd+K)")
 
@@ -334,7 +330,7 @@ struct UnifiedSidebar: View {
             if isCollapsed {
                 Button {
                     NotificationCenter.default.post(
-                        name: Notification.Name("openSettings"),
+                        name: .showSettings,
                         object: nil
                     )
                 } label: {
@@ -371,7 +367,7 @@ struct UnifiedSidebar: View {
 
                     Button {
                         NotificationCenter.default.post(
-                            name: Notification.Name("openSettings"),
+                            name: .showSettings,
                             object: nil
                         )
                     } label: {

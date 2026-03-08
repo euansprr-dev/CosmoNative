@@ -36,6 +36,58 @@ enum SwipeViewMode: String, CaseIterable {
     }
 }
 
+// MARK: - Unified Search Types
+
+/// Source category for unified cross-library search results
+enum UnifiedSearchSource: String, CaseIterable {
+    case atoms       // HybridSearchEngine results (all atom types)
+    case swipes      // Swipe gallery matches
+    case ideas       // Idea gallery matches
+    case readwise    // ReadwiseBookStore matches
+
+    var displayName: String {
+        switch self {
+        case .atoms: return "Database"
+        case .swipes: return "Swipe Gallery"
+        case .ideas: return "Ideas"
+        case .readwise: return "Readwise"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .atoms: return "tray.full.fill"
+        case .swipes: return "bolt.fill"
+        case .ideas: return "lightbulb.fill"
+        case .readwise: return "books.vertical.fill"
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .atoms: return DS.accent
+        case .swipes: return DS.entitySwipe
+        case .ideas: return DS.entityIdea
+        case .readwise: return DS.entityReadwise
+        }
+    }
+}
+
+/// A single result in the unified cross-library search
+struct UnifiedSearchResult: Identifiable {
+    let id: String
+    let source: UnifiedSearchSource
+    let title: String
+    let subtitle: String?
+    let snippet: String?
+    let icon: String
+    let accentColor: Color
+    let relevance: Double
+    let atomUUID: String?
+    let atomType: AtomType?
+    let readwiseBookId: Int?
+}
+
 // MARK: - CommandKViewModel
 /// ViewModel for the Command-K overlay
 /// Manages query state, results, and constellation visualization
@@ -148,6 +200,20 @@ public final class CommandKViewModel: ObservableObject {
     func clearSelection() {
         selectedUUIDs.removeAll()
     }
+
+    // MARK: - Unified Search State
+
+    /// Whether unified cross-library search is active (query is non-empty)
+    @Published var isUnifiedSearchActive: Bool = false
+
+    /// Grouped unified results by source
+    @Published var unifiedGroupedResults: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = []
+
+    /// Flat ordered list for keyboard navigation across all unified groups
+    @Published var unifiedFlatResults: [UnifiedSearchResult] = []
+
+    /// Selected Readwise book ID for navigation from unified results
+    @Published var selectedReadwiseBookId: Int?
 
     // MARK: - Idea Gallery State
 
@@ -267,6 +333,9 @@ public final class CommandKViewModel: ObservableObject {
 
         // Handle empty query - show recents
         if searchQuery.isEmpty && prefixType == nil {
+            isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
             await showRecents()
             return
         }
@@ -296,6 +365,7 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = cached
             computeFilterCounts()
             applyFiltersToResults()
+            performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
             currentPhase = .instant
             return
         }
@@ -352,6 +422,7 @@ public final class CommandKViewModel: ObservableObject {
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
+                    performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
                     currentPhase = .complete
 
                     // Cache unfiltered results
@@ -394,6 +465,7 @@ public final class CommandKViewModel: ObservableObject {
                             }
                             unfilteredResults = reRankedResults.sorted()
                             applyFiltersToResults()
+                            performUnifiedSearch(query: queryForReRank)
                             isAIRanked = true
                         }
                     }
@@ -658,6 +730,26 @@ public final class CommandKViewModel: ObservableObject {
             return
         }
 
+        // Unified search mode
+        if isUnifiedSearchActive, selectedResultIndex >= 0,
+           selectedResultIndex < unifiedFlatResults.count {
+            let result = unifiedFlatResults[selectedResultIndex]
+            if let atomUUID = result.atomUUID {
+                Task {
+                    try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
+                }
+                NotificationCenter.default.post(
+                    name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                    object: nil,
+                    userInfo: ["atomUUID": atomUUID]
+                )
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            } else if let bookId = result.readwiseBookId {
+                selectedReadwiseBookId = bookId
+            }
+            return
+        }
+
         guard let uuid = selectedNodeId else { return }
 
         // Record access
@@ -678,6 +770,18 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Navigate selection up
     public func selectPrevious() {
+        if isUnifiedSearchActive {
+            guard !unifiedFlatResults.isEmpty else { return }
+            if selectedResultIndex > 0 {
+                selectedResultIndex -= 1
+            } else {
+                selectedResultIndex = unifiedFlatResults.count - 1
+            }
+            let result = unifiedFlatResults[selectedResultIndex]
+            selectedNodeId = result.atomUUID ?? result.id
+            return
+        }
+
         guard !flatNavigableResults.isEmpty else { return }
 
         if selectedResultIndex > 0 {
@@ -690,6 +794,18 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Navigate selection down
     public func selectNext() {
+        if isUnifiedSearchActive {
+            guard !unifiedFlatResults.isEmpty else { return }
+            if selectedResultIndex < unifiedFlatResults.count - 1 {
+                selectedResultIndex += 1
+            } else {
+                selectedResultIndex = 0
+            }
+            let result = unifiedFlatResults[selectedResultIndex]
+            selectedNodeId = result.atomUUID ?? result.id
+            return
+        }
+
         guard !flatNavigableResults.isEmpty else { return }
 
         if selectedResultIndex < flatNavigableResults.count - 1 {
@@ -807,7 +923,7 @@ public final class CommandKViewModel: ObservableObject {
             )
         )
         .combineLatest($swipeSearchQuery)
-        .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+        .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
         .sink { [weak self] _ in
             self?.recomputeFilteredSwipes()
         }
@@ -816,60 +932,71 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Recompute cached filtered swipes and clustered sections from current filter state.
     func recomputeFilteredSwipes() {
-        var items = swipeGalleryItems
+        // Capture filter state for background work
+        let sourceItems = swipeGalleryItems
+        let query = swipeSearchQuery
+        let platformFilter = swipePlatformFilter
+        let hookFilter = swipeHookTypeFilter
+        let narrativeFilters = swipeNarrativeFilters
+        let formatFilters = swipeContentFormatFilters
+        let nicheFilter = swipeNicheFilter
+        let creatorFilter = swipeCreatorFilter
+        let sortMode = swipeSortMode
 
-        if !swipeSearchQuery.isEmpty {
-            let q = swipeSearchQuery.lowercased()
-            items = items.filter { item in
-                item.title.lowercased().contains(q) ||
-                (item.hookText?.lowercased().contains(q) ?? false) ||
-                (item.author?.lowercased().contains(q) ?? false) ||
-                (item.niche?.lowercased().contains(q) ?? false) ||
-                (item.creatorName?.lowercased().contains(q) ?? false)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var items = sourceItems
+
+            if !query.isEmpty {
+                let q = query.lowercased()
+                items = items.filter { $0.searchableText.contains(q) }
+            }
+
+            if let platformFilter {
+                items = items.filter { $0.platformName == platformFilter }
+            }
+
+            if let hookFilter {
+                items = items.filter { $0.hookType == hookFilter }
+            }
+
+            if !narrativeFilters.isEmpty {
+                items = items.filter { item in
+                    guard let narrative = item.primaryNarrative else { return false }
+                    return narrativeFilters.contains(narrative)
+                }
+            }
+
+            if !formatFilters.isEmpty {
+                items = items.filter { item in
+                    guard let format = item.swipeContentFormat else { return false }
+                    return formatFilters.contains(format)
+                }
+            }
+
+            if let nicheFilter {
+                items = items.filter { $0.niche == nicheFilter }
+            }
+
+            if let creatorFilter {
+                items = items.filter { $0.creatorName == creatorFilter }
+            }
+
+            switch sortMode {
+            case .score:
+                items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
+            case .recent:
+                items.sort { $0.createdAt > $1.createdAt }
+            case .oldest:
+                items.sort { $0.createdAt < $1.createdAt }
+            }
+
+            let sections = buildClusteredSections(from: items)
+
+            await MainActor.run {
+                self?.cachedFilteredSwipes = items
+                self?.cachedClusteredSections = sections
             }
         }
-
-        if let platformFilter = swipePlatformFilter {
-            items = items.filter { $0.platformName == platformFilter }
-        }
-
-        if let hookFilter = swipeHookTypeFilter {
-            items = items.filter { $0.hookType == hookFilter }
-        }
-
-        if !swipeNarrativeFilters.isEmpty {
-            items = items.filter { item in
-                guard let narrative = item.primaryNarrative else { return false }
-                return swipeNarrativeFilters.contains(narrative)
-            }
-        }
-
-        if !swipeContentFormatFilters.isEmpty {
-            items = items.filter { item in
-                guard let format = item.swipeContentFormat else { return false }
-                return swipeContentFormatFilters.contains(format)
-            }
-        }
-
-        if let nicheFilter = swipeNicheFilter {
-            items = items.filter { $0.niche == nicheFilter }
-        }
-
-        if let creatorFilter = swipeCreatorFilter {
-            items = items.filter { $0.creatorName == creatorFilter }
-        }
-
-        switch swipeSortMode {
-        case .score:
-            items.sort { ($0.hookScore ?? 0) > ($1.hookScore ?? 0) }
-        case .recent:
-            items.sort { $0.createdAt > $1.createdAt }
-        case .oldest:
-            items.sort { $0.createdAt < $1.createdAt }
-        }
-
-        cachedFilteredSwipes = items
-        cachedClusteredSections = buildClusteredSections(from: items)
     }
 
     /// Listen for new swipe creation to auto-refresh gallery
@@ -965,6 +1092,189 @@ public final class CommandKViewModel: ObservableObject {
         await loadIdeaGallery(forceReload: true)
     }
 
+    // MARK: - Unified Search
+
+    /// Ensure swipe and idea galleries are loaded for unified search
+    private func ensureGalleriesLoaded() {
+        if !swipeGalleryLoaded {
+            Task { await loadSwipeGallery() }
+        }
+        if !ideaGalleryLoaded {
+            Task { await loadIdeaGallery() }
+        }
+    }
+
+    /// Perform unified search across all libraries
+    func performUnifiedSearch(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+
+        guard !trimmed.isEmpty, !isTaskCreationMode else {
+            isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
+            return
+        }
+
+        // If #prefix is active, don't show unified — let the existing tab filter handle it
+        if activeTypePrefix != nil {
+            isUnifiedSearchActive = false
+            return
+        }
+
+        isUnifiedSearchActive = true
+        ensureGalleriesLoaded()
+
+        let lowerQuery = trimmed.lowercased()
+
+        // Collect atomUUIDs already in hybrid results to avoid duplicates
+        let hybridUUIDs = Set(unfilteredResults.map(\.atomUUID))
+
+        var allResults: [UnifiedSearchResult] = []
+
+        // 1. Atom results from HybridSearchEngine (already computed in performSearch)
+        for result in unfilteredResults.prefix(15) {
+            allResults.append(UnifiedSearchResult(
+                id: "atom-\(result.atomUUID)",
+                source: .atoms,
+                title: result.title,
+                subtitle: result.atomType.displayName,
+                snippet: result.snippet,
+                icon: iconForAtomType(result.atomType),
+                accentColor: colorForAtomType(result.atomType),
+                relevance: result.relevance,
+                atomUUID: result.atomUUID,
+                atomType: result.atomType,
+                readwiseBookId: nil
+            ))
+        }
+
+        // 2. Swipe gallery matches (deduplicated)
+        let matchingSwipes = swipeGalleryItems.filter { item in
+            guard !hybridUUIDs.contains(item.atomUUID) else { return false }
+            return item.title.lowercased().contains(lowerQuery) ||
+                (item.hookText?.lowercased().contains(lowerQuery) ?? false) ||
+                (item.author?.lowercased().contains(lowerQuery) ?? false) ||
+                (item.niche?.lowercased().contains(lowerQuery) ?? false) ||
+                (item.creatorName?.lowercased().contains(lowerQuery) ?? false)
+        }
+        for item in matchingSwipes.prefix(8) {
+            let scoreText = item.hookScore.map { "Score: \(Int($0))" }
+            allResults.append(UnifiedSearchResult(
+                id: "swipe-\(item.atomUUID)",
+                source: .swipes,
+                title: item.title,
+                subtitle: [item.platformName, scoreText].compactMap { $0 }.joined(separator: " · "),
+                snippet: item.hookText,
+                icon: "bolt.fill",
+                accentColor: DS.entitySwipe,
+                relevance: (item.hookScore ?? 50) / 100.0,
+                atomUUID: item.atomUUID,
+                atomType: .research,
+                readwiseBookId: nil
+            ))
+        }
+
+        // 3. Idea gallery matches (deduplicated)
+        let matchingIdeas = ideaGalleryItems.filter { item in
+            guard !hybridUUIDs.contains(item.atomUUID) else { return false }
+            return item.title.lowercased().contains(lowerQuery) ||
+                (item.body?.lowercased().contains(lowerQuery) ?? false)
+        }
+        for item in matchingIdeas.prefix(8) {
+            allResults.append(UnifiedSearchResult(
+                id: "idea-\(item.atomUUID)",
+                source: .ideas,
+                title: item.title,
+                subtitle: [item.status.displayName, item.contentFormat?.displayName].compactMap { $0 }.joined(separator: " · "),
+                snippet: item.body?.prefix(120).description,
+                icon: "lightbulb.fill",
+                accentColor: DS.entityIdea,
+                relevance: item.insightScore ?? 0.4,
+                atomUUID: item.atomUUID,
+                atomType: .idea,
+                readwiseBookId: nil
+            ))
+        }
+
+        // 4. Readwise book matches
+        let matchingBooks = ReadwiseBookStore.shared.search(query: trimmed)
+        for book in matchingBooks.prefix(8) {
+            let matchingHighlight = book.highlights.first { h in
+                h.text.localizedCaseInsensitiveContains(trimmed)
+            }
+            let snippet = matchingHighlight?.text.prefix(120).description
+                ?? "\(book.numHighlights) highlight\(book.numHighlights == 1 ? "" : "s")"
+
+            allResults.append(UnifiedSearchResult(
+                id: "readwise-\(book.id)",
+                source: .readwise,
+                title: "\(book.title)\(book.author.map { " — \($0)" } ?? "")",
+                subtitle: book.category.displayName,
+                snippet: snippet,
+                icon: book.category.icon,
+                accentColor: DS.entityReadwise,
+                relevance: matchingHighlight != nil ? 0.5 : 0.35,
+                atomUUID: nil,
+                atomType: nil,
+                readwiseBookId: book.id
+            ))
+        }
+
+        // Group by source, ordered by best relevance in each group
+        var grouped: [UnifiedSearchSource: [UnifiedSearchResult]] = [:]
+        for result in allResults {
+            grouped[result.source, default: []].append(result)
+        }
+
+        // Sort each group by relevance
+        for key in grouped.keys {
+            grouped[key]?.sort { $0.relevance > $1.relevance }
+        }
+
+        // Order sections by best score
+        let sortedGroups = grouped.sorted { lhs, rhs in
+            let lhsBest = lhs.value.first?.relevance ?? 0
+            let rhsBest = rhs.value.first?.relevance ?? 0
+            return lhsBest > rhsBest
+        }
+
+        unifiedGroupedResults = sortedGroups.map { (source: $0.key, results: $0.value) }
+        unifiedFlatResults = sortedGroups.flatMap(\.value)
+
+        // Reset keyboard selection to first result
+        if let first = unifiedFlatResults.first {
+            selectedResultIndex = 0
+            selectedNodeId = first.atomUUID ?? first.id
+        }
+    }
+
+    /// Helper: SF Symbol for atom type
+    private func iconForAtomType(_ type: AtomType) -> String {
+        switch type {
+        case .idea: return "lightbulb.fill"
+        case .task: return "checkmark.circle.fill"
+        case .research: return "book.fill"
+        case .content: return "doc.text.fill"
+        case .connection: return "link"
+        case .project: return "folder.fill"
+        case .image: return "photo.fill"
+        case .note: return "note.text"
+        default: return "circle.fill"
+        }
+    }
+
+    /// Helper: accent color for atom type
+    private func colorForAtomType(_ type: AtomType) -> Color {
+        switch type {
+        case .idea: return DS.entityIdea
+        case .task: return DS.entityTask
+        case .research: return DS.entityResearch
+        case .content: return DS.entityContent
+        case .connection: return DS.entityConnection
+        default: return DS.textSecondary
+        }
+    }
+
     // MARK: - Cleanup
 
     /// Clear search state
@@ -994,6 +1304,10 @@ public final class CommandKViewModel: ObservableObject {
         flatNavigableResults = []
         selectedResultIndex = -1
         activeTypePrefix = nil
+        isUnifiedSearchActive = false
+        unifiedGroupedResults = []
+        unifiedFlatResults = []
+        selectedReadwiseBookId = nil
     }
 }
 

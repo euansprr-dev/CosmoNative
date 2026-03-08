@@ -1,368 +1,287 @@
 // CosmoOS/UI/CosmoWindow/ToolActivityStreamView.swift
-// Live tool activity visualization — Claude Code style
-// Shows shimmer on active tool, collapsible groups, connection lines, done checkmarks
-// February 2026
+// Live and recap tool activity rendering for the premium Cosmo window
+// March 2026
 
 import SwiftUI
 
-// MARK: - Tool Activity Stream View
-
-/// Renders live tool execution activity inline in the Cosmo chat window.
-/// Shows a shimmer animation on the active tool, expandable "Viewed N files"
-/// groups, vertical connection lines, and "Done" checkmarks.
-struct ToolActivityStreamView: View {
-
-    let groups: [ToolActivityGroup]
-    var activeLabel: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Active tool shimmer label
-            if let label = activeLabel {
-                ActiveToolLabel(label: label)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
-            // Grouped tool activity
-            ForEach(groups) { group in
-                ToolActivityGroupView(group: group)
-            }
-        }
-    }
+enum ToolActivityStreamMode {
+    case live
+    case recap
 }
 
-// MARK: - Active Tool Label (Shimmer)
-
-/// Shows the currently executing tool with a sliding shimmer gradient animation.
-/// Uses onAppear/onDisappear to stop the TimelineView when not visible,
-/// preventing render load when scrolled offscreen.
-private struct ActiveToolLabel: View {
-
+private struct ToolActivityDisplayItem: Identifiable {
+    let id: UUID
+    let icon: String
     let label: String
-    @State private var isVisible = false
-
-    var body: some View {
-        Group {
-            if isVisible {
-                TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { context in
-                    let phase = context.date.timeIntervalSinceReferenceDate
-                    let offset = CGFloat(phase.truncatingRemainder(dividingBy: 2.0)) / 2.0
-                    shimmerContent(offset: offset)
-                }
-            } else {
-                shimmerContent(offset: 0)
-            }
-        }
-        .onAppear { isVisible = true }
-        .onDisappear { isVisible = false }
-    }
-
-    private func shimmerContent(offset: CGFloat) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.accent)
-
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textSecondary)
-                .lineLimit(1)
-
-            ShimmerChevrons(phase: offset)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(shimmerBackground(offset: offset))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func shimmerBackground(offset: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        DS.accent.opacity(0.03),
-                        DS.accent.opacity(0.08),
-                        DS.accent.opacity(0.03)
-                    ],
-                    startPoint: UnitPoint(x: offset - 0.3, y: 0.5),
-                    endPoint: UnitPoint(x: offset + 0.3, y: 0.5)
-                )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(DS.accent.opacity(0.1), lineWidth: 1)
-            )
-    }
+    let detail: String?
+    let isDone: Bool
 }
 
-// MARK: - Shimmer Chevrons
-
-/// Animated ">>>" chevrons that pulse to indicate active processing.
-private struct ShimmerChevrons: View {
-
-    let phase: CGFloat
-
-    var body: some View {
-        HStack(spacing: 1) {
-            ForEach(0..<3, id: \.self) { index in
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(DS.accent.opacity(chevronOpacity(index: index)))
-            }
-        }
-    }
-
-    private func chevronOpacity(index: Int) -> Double {
-        let normalizedPhase = phase * 3.0
-        let distance = abs(normalizedPhase - Double(index))
-        return max(0.2, 1.0 - distance * 0.4)
-    }
+private struct ToolActivityDisplayGroup: Identifiable {
+    let id: UUID
+    let category: String
+    let items: [ToolActivityDisplayItem]
+    let isComplete: Bool
 }
 
-// MARK: - Tool Activity Group View
+struct ToolActivityStreamView: View {
+    let groups: [ToolActivityDisplayGroup]
+    let activeLabel: String?
+    let mode: ToolActivityStreamMode
 
-/// A collapsible group of related tool calls (e.g. "Viewed 7 files").
-private struct ToolActivityGroupView: View {
+    init(
+        groups: [ToolActivityGroup],
+        activeLabel: String? = nil,
+        mode: ToolActivityStreamMode = .live
+    ) {
+        self.groups = groups.map { group in
+            ToolActivityDisplayGroup(
+                id: group.id,
+                category: group.category,
+                items: group.items.map { item in
+                    ToolActivityDisplayItem(
+                        id: item.id,
+                        icon: item.icon,
+                        label: item.label,
+                        detail: item.detail,
+                        isDone: item.status == .done
+                    )
+                },
+                isComplete: group.isComplete
+            )
+        }
+        self.activeLabel = activeLabel
+        self.mode = mode
+    }
 
-    let group: ToolActivityGroup
-    @State private var isExpanded: Bool = true
-
-    private let maxVisibleItems = 5
+    init(
+        recapGroups: [CosmoToolRecapGroup],
+        mode: ToolActivityStreamMode = .recap
+    ) {
+        self.groups = recapGroups.map { group in
+            ToolActivityDisplayGroup(
+                id: group.id,
+                category: group.category,
+                items: group.items.map { item in
+                    ToolActivityDisplayItem(
+                        id: item.id,
+                        icon: item.icon,
+                        label: item.label,
+                        detail: item.detail,
+                        isDone: item.status == .done
+                    )
+                },
+                isComplete: group.isComplete
+            )
+        }
+        self.activeLabel = nil
+        self.mode = mode
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Group header
-            groupHeader
-
-            // Expanded items with connection line
-            if isExpanded {
-                expandedItems
+        VStack(alignment: .leading, spacing: mode == .live ? 10 : 8) {
+            if mode == .live, let activeLabel {
+                ActiveToolLabel(label: activeLabel)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Done indicator
-            if group.isComplete {
-                doneIndicator
+            ForEach(groups) { group in
+                ToolActivityGroupView(group: group, mode: mode)
             }
         }
-        .animation(ProMotionSprings.snappy, value: isExpanded)
-        .animation(ProMotionSprings.snappy, value: group.isComplete)
-    }
-
-    // MARK: - Group Header
-
-    private var groupHeader: some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(DS.textMuted)
-                    .frame(width: 10)
-
-                Text("\(group.category) \(group.items.count) file\(group.items.count == 1 ? "" : "s")")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
-
-                Spacer()
-
-                // Active count badge
-                let activeCount = group.items.filter { $0.status == .active }.count
-                if activeCount > 0 {
-                    Text("\(activeCount) active")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.accent)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.accent.opacity(0.1))
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Expanded Items
-
-    private var expandedItems: some View {
-        let visibleItems = Array(group.items.prefix(maxVisibleItems))
-        let overflowCount = max(0, group.items.count - maxVisibleItems)
-
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                ToolActivityItemRow(
-                    item: item,
-                    isLast: index == visibleItems.count - 1 && overflowCount == 0
-                )
-            }
-
-            if overflowCount > 0 {
-                overflowRow(count: overflowCount)
-            }
-        }
-    }
-
-    // MARK: - Overflow Row
-
-    private func overflowRow(count: Int) -> some View {
-        HStack(spacing: 0) {
-            // Connection line segment
-            connectionLineSegment(isLast: true)
-
-            Text("and \(count) more...")
-                .font(.system(size: 10, weight: .regular))
-                .foregroundColor(DS.textMuted)
-                .italic()
-                .padding(.leading, 4)
-        }
-        .padding(.vertical, 2)
-    }
-
-    // MARK: - Done Indicator
-
-    private var doneIndicator: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.green)
-
-            Text("Done")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.green)
-        }
-        .padding(.top, 4)
-        .padding(.leading, 2)
-        .transition(.opacity.combined(with: .scale(scale: 0.8)))
     }
 }
 
-// MARK: - Tool Activity Item Row
+private struct ActiveToolLabel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-/// A single tool call item with a vertical dotted connection line.
-private struct ToolActivityItemRow: View {
-
-    let item: ToolActivityItem
-    let isLast: Bool
+    let label: String
+    @State private var glow = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Vertical connection line
-            connectionLineSegment(isLast: isLast)
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(DS.accent.opacity(glow ? 0.18 : 0.10))
+                    .frame(width: 18, height: 18)
 
-            // Item icon
-            Group {
-                if item.status == .done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.green)
-                } else {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 10, weight: .medium))
+                Circle()
+                    .fill(DS.accent)
+                    .frame(width: 7, height: 7)
+            }
+
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.text)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            Text("Working")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .cosmoWindowChip(isActive: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .cosmoWindowSectionChrome(cornerRadius: 14, shadow: false)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                glow = true
+            }
+        }
+    }
+}
+
+private struct ToolActivityGroupView: View {
+    let group: ToolActivityDisplayGroup
+    let mode: ToolActivityStreamMode
+
+    @State private var isExpanded: Bool
+
+    init(group: ToolActivityDisplayGroup, mode: ToolActivityStreamMode) {
+        self.group = group
+        self.mode = mode
+        _isExpanded = State(initialValue: mode == .live)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(DS.textMuted)
+                        .frame(width: 10)
+
+                    Text(group.category)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text("\(group.items.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.textSecondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .cosmoWindowChip()
+
+                    Spacer(minLength: 0)
+
+                    if mode == .live && activeCount > 0 {
+                        Text("\(activeCount) active")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip(isActive: true)
+                    } else if mode == .recap && group.isComplete {
+                        Text("Completed")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.green)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip(activeFill: DS.greenSoft, activeBorder: DS.green.opacity(0.18))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(group.items) { item in
+                        ToolActivityItemRow(item: item, mode: mode)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .cosmoWindowGroupChrome(cornerRadius: 14)
+    }
+
+    private var activeCount: Int {
+        group.items.filter { !$0.isDone }.count
+    }
+}
+
+private struct ToolActivityItemRow: View {
+    let item: ToolActivityDisplayItem
+    let mode: ToolActivityStreamMode
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(item.isDone ? DS.greenSoft : DS.accentSoft)
+                    .frame(width: 28, height: 28)
+
+                Image(systemName: item.isDone ? "checkmark" : item.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(item.isDone ? DS.green : DS.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let detail = item.detail, mode == .recap {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(width: 14)
 
-            // Item label
-            Text(truncatedLabel)
-                .font(.system(size: 11, weight: .regular))
-                .foregroundColor(item.status == .done ? DS.textMuted : DS.textSecondary)
-                .lineLimit(1)
-                .padding(.leading, 4)
-
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
     }
-
-    private var truncatedLabel: String {
-        if item.label.count > 40 {
-            return String(item.label.prefix(37)) + "..."
-        }
-        return item.label
-    }
 }
-
-// MARK: - Connection Line Segment
-
-/// Vertical dashed connection line used between grouped tool activity items.
-private func connectionLineSegment(isLast: Bool) -> some View {
-    VStack(spacing: 0) {
-        if isLast {
-            // Short end segment with dot
-            DashedVerticalLine()
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                .foregroundColor(DS.border)
-                .frame(width: 1, height: 10)
-        } else {
-            // Full-height segment
-            DashedVerticalLine()
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                .foregroundColor(DS.border)
-                .frame(width: 1)
-        }
-    }
-    .frame(width: 20, alignment: .center)
-}
-
-// MARK: - Dashed Vertical Line Shape
-
-/// A vertical line shape used for connection lines between tool activity items.
-private struct DashedVerticalLine: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        return path
-    }
-}
-
-// MARK: - Preview
 
 #if DEBUG
 struct ToolActivityStreamView_Previews: PreviewProvider {
-    struct PreviewWrapper: View {
-        @State private var groups: [ToolActivityGroup] = [
-            ToolActivityGroup(
-                category: "Viewed",
-                items: [
-                    ToolActivityItem(icon: "doc.text", label: "Reading burnt out reel", status: .done),
-                    ToolActivityItem(icon: "doc.text", label: "Reading Act broke post", status: .done),
-                    ToolActivityItem(icon: "doc.text", label: "Reading buying home at 25", status: .done),
-                    ToolActivityItem(icon: "doc.text", label: "Loading client profile \"Michael\"", status: .active),
-                ],
-                isComplete: false
-            ),
-            ToolActivityGroup(
-                category: "Generated",
-                items: [
-                    ToolActivityItem(icon: "sparkles", label: "Generating outline", status: .active),
-                ],
-                isComplete: false
-            ),
-        ]
-        @State private var activeLabel: String? = "Searching swipes for \"trust\""
-
-        var body: some View {
-            VStack(alignment: .leading) {
-                ToolActivityStreamView(
-                    groups: groups,
-                    activeLabel: activeLabel
-                )
-                .padding(16)
-            }
-            .frame(width: 380, height: 400)
-            .background(DS.surface)
-        }
-    }
-
     static var previews: some View {
-        PreviewWrapper()
+        VStack(spacing: 16) {
+            ToolActivityStreamView(
+                groups: [
+                    ToolActivityGroup(
+                        category: "Viewed",
+                        items: [
+                            ToolActivityItem(icon: "doc.text", label: "Reading Josh swipe", status: .done),
+                            ToolActivityItem(icon: "doc.text", label: "Loading client profile", status: .active),
+                        ]
+                    )
+                ],
+                activeLabel: "Searching reference swipes"
+            )
+
+            ToolActivityStreamView(
+                recapGroups: [
+                    CosmoToolRecapGroup(
+                        category: "Generated",
+                        items: [
+                            CosmoToolRecapItem(icon: "sparkles", label: "Drafted answer", detail: "Used current context and swipe references", status: .done)
+                        ],
+                        isComplete: true
+                    )
+                ]
+            )
+        }
+        .padding(20)
+        .frame(width: 420)
+        .background(DS.bg)
     }
 }
 #endif

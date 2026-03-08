@@ -1,5 +1,5 @@
 // CosmoOS/Canvas/CanvasViewLayersToolbar.swift
-// Vertical toolbar for canvas view layer toggles — sits below the settings cog
+// Vertical toolbar for canvas view layer toggles — sits below the drawing tools
 // Mirrors CanvasDrawingToolbar pattern with vertical orientation
 
 import SwiftUI

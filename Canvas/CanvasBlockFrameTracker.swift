@@ -101,4 +101,14 @@ final class CanvasBlockFrameTracker: ObservableObject {
         }
         blockFrames = newFrames
     }
+
+    func updateFrames(blocks: [CanvasBlock], transform: CanvasViewportTransform) {
+        updateFrames(
+            blocks: blocks,
+            canvasOffset: transform.committedOffset,
+            scaledPanOffset: transform.scaledPanOffset,
+            effectiveScale: transform.effectiveScale,
+            screenCenter: transform.screenCenter
+        )
+    }
 }

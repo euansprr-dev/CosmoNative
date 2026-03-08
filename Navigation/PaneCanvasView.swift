@@ -3,11 +3,13 @@
 // Does NOT register NotificationCenter observers — avoids collision with main CanvasView.
 
 import SwiftUI
+import AppKit
 
 struct PaneCanvasView: View {
     let thinkspaceId: String
 
     @StateObject private var spatialEngine = SpatialEngine()
+    @StateObject private var clusterEngine = CanvasClusterEngine()
     @StateObject private var frameTracker = CanvasBlockFrameTracker()
 
     // Canvas panning
@@ -25,6 +27,11 @@ struct PaneCanvasView: View {
     @State private var blockDragOffsets: [String: CGSize] = [:]
     @State private var draggingBlockId: String?
 
+    // Space+drag pan (hand tool)
+    @State private var keyMonitor: Any?
+    @State private var isSpaceHeld = false
+    @State private var spacePanOffset: CGSize = .zero
+
     // MARK: - Computed Properties
 
     private var effectiveScale: CGFloat {
@@ -33,10 +40,23 @@ struct PaneCanvasView: View {
     }
 
     private var scaledPanOffset: CGSize {
-        CGSize(
-            width: panOffset.width / effectiveScale,
-            height: panOffset.height / effectiveScale
+        let combinedPan = CGSize(
+            width: panOffset.width + spacePanOffset.width,
+            height: panOffset.height + spacePanOffset.height
         )
+        return CGSize(
+            width: combinedPan.width / effectiveScale,
+            height: combinedPan.height / effectiveScale
+        )
+    }
+
+    /// Blocks consumed by clusters in list/board/grid mode (rendered inside cluster, not individually)
+    private var clusterConsumedBlockUUIDs: Set<String> {
+        var s = Set<String>()
+        for c in clusterEngine.userClusters where c.viewMode != .canvas {
+            s.formUnion(c.blockUUIDs)
+        }
+        return s
     }
 
     // MARK: - Body
@@ -51,19 +71,84 @@ struct PaneCanvasView: View {
 
                 // Blocks container — scaled as a unit around screen center
                 ZStack {
+                    // Cluster zones (behind blocks)
+                    CanvasClusterLayer(
+                        clusters: clusterEngine.allClusters,
+                        blocks: spatialEngine.blocks,
+                        canvasSize: geo.size,
+                        canvasOffset: canvasOffset,
+                        scaledPanOffset: scaledPanOffset,
+                        effectiveScale: effectiveScale,
+                        onOpenFocusMode: { uuid in
+                            if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
+                               block.entityId > 0 {
+                                NotificationCenter.default.post(
+                                    name: .enterFocusMode,
+                                    object: nil,
+                                    userInfo: ["type": block.entityType, "id": block.entityId]
+                                )
+                            }
+                        }
+                    )
+
                     blocksLayer(screenCenter: screenCenter)
                 }
                 .scaleEffect(effectiveScale, anchor: UnitPoint(
                     x: screenCenter.x / max(geo.size.width, 1),
                     y: screenCenter.y / max(geo.size.height, 1)
                 ))
+
+                // Space+drag pan overlay (hand tool)
+                if isSpaceHeld {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    spacePanOffset = value.translation
+                                }
+                                .onEnded { value in
+                                    canvasOffset.width += value.translation.width / effectiveScale
+                                    canvasOffset.height += value.translation.height / effectiveScale
+                                    spacePanOffset = .zero
+                                }
+                        )
+                        .onAppear { NSCursor.openHand.push() }
+                        .onDisappear {
+                            NSCursor.pop()
+                            spacePanOffset = .zero
+                        }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 zoomIndicator
             }
         }
+        .onAppear {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
+                if event.keyCode == 49 { // space bar
+                    let pressed = event.type == .keyDown
+                    if pressed != isSpaceHeld {
+                        isSpaceHeld = pressed
+                    }
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor = keyMonitor {
+                NSEvent.removeMonitor(monitor)
+                keyMonitor = nil
+            }
+            isSpaceHeld = false
+        }
         .task {
             await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+            await clusterEngine.loadUserClusters(
+                thinkspaceId: thinkspaceId,
+                blocks: spatialEngine.blocks
+            )
+            clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
         }
     }
 
@@ -77,11 +162,15 @@ struct PaneCanvasView: View {
                     .ignoresSafeArea()
 
                 GridPatternView(
-                    offset: CGSize(
-                        width: canvasOffset.width + scaledPanOffset.width,
-                        height: canvasOffset.height + scaledPanOffset.height
-                    ),
-                    scale: effectiveScale
+                    transform: CanvasViewportTransform(
+                        viewportSize: .zero,
+                        committedOffset: canvasOffset,
+                        gesturePanOffset: panOffset,
+                        committedScale: canvasScale,
+                        gestureMagnification: magnificationState,
+                        minScale: minScale,
+                        maxScale: maxScale
+                    )
                 )
                 .ignoresSafeArea()
             }
@@ -120,7 +209,7 @@ struct PaneCanvasView: View {
 
     @ViewBuilder
     private func blocksLayer(screenCenter: CGPoint) -> some View {
-        ForEach(spatialEngine.blocks, id: \.id) { block in
+        ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
             blockView(for: block)
                 .position(
                     x: block.position.x + canvasOffset.width + scaledPanOffset.width + (blockDragOffsets[block.id]?.width ?? 0),

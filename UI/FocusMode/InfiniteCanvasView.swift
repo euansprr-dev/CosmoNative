@@ -284,37 +284,28 @@ struct CanvasGridView: View {
     private let gridSpacing: CGFloat = 40
 
     var body: some View {
-        Canvas { context, size in
-            let scaledSpacing = gridSpacing * zoom
+        let spacing = max(gridSpacing * zoom, 1)
+        let dotSize = max(1.5, 2 * zoom)
+        let tileMultiplier = CanvasGridPatternCache.shared.tileMultiplier(for: spacing)
+        let tileSize = spacing * CGFloat(tileMultiplier)
+        let tileImage = CanvasGridPatternCache.shared.image(
+            spacing: spacing,
+            dotSize: dotSize,
+            tileMultiplier: tileMultiplier
+        )
 
-            // Don't draw grid if too zoomed out (performance)
-            guard scaledSpacing >= 15 else { return }
+        Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
+            let resolved = context.resolve(Image(nsImage: tileImage))
+            let startX = -offset.x.truncatingRemainder(dividingBy: tileSize)
+            let startY = -offset.y.truncatingRemainder(dividingBy: tileSize)
 
-            // Calculate visible grid range
-            let startX = -offset.x.truncatingRemainder(dividingBy: scaledSpacing)
-            let startY = -offset.y.truncatingRemainder(dividingBy: scaledSpacing)
-
-            // Draw dots
-            var x = startX
-            while x < size.width + scaledSpacing {
-                var y = startY
-                while y < size.height + scaledSpacing {
-                    let point = CGPoint(x: x, y: y)
-                    let dotSize = max(1.5, 2 * zoom)
-
-                    context.fill(
-                        Path(ellipseIn: CGRect(
-                            x: point.x - dotSize/2,
-                            y: point.y - dotSize/2,
-                            width: dotSize,
-                            height: dotSize
-                        )),
-                        with: .color(DS.border.opacity(0.15))
+            for x in stride(from: startX - tileSize, through: size.width + tileSize, by: tileSize) {
+                for y in stride(from: startY - tileSize, through: size.height + tileSize, by: tileSize) {
+                    context.draw(
+                        resolved,
+                        in: CGRect(x: x, y: y, width: tileSize, height: tileSize)
                     )
-
-                    y += scaledSpacing
                 }
-                x += scaledSpacing
             }
         }
     }

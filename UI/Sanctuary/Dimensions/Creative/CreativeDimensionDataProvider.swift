@@ -8,6 +8,7 @@ import SwiftUI
 import GRDB
 
 // Shared ISO8601 formatter — creating these is expensive, reuse one instance
+@MainActor
 private let _creativeISOFormatter = ISO8601DateFormatter()
 
 @MainActor
@@ -16,6 +17,7 @@ class CreativeDimensionDataProvider: ObservableObject, DimensionScoring {
 
     @Published var data: CreativeDimensionData = .empty
     @Published var isLoading = false
+    @Published var lastRefreshDate: Date?
     @Published var funnelData: [(phase: ContentPhase, count: Int)] = []
     @Published var selectedProfileUUID: String?
     @Published var clientProfiles: [(uuid: String, name: String)] = []
@@ -30,6 +32,10 @@ class CreativeDimensionDataProvider: ObservableObject, DimensionScoring {
     // MARK: - DimensionScoring
 
     func computeIndex() async -> DimensionIndex {
+        if lastRefreshDate.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            await refreshData()
+        }
+
         let velocity = await computePublishingVelocity()
         let pipeline = await computePipelineHealth()
         let sessionQuality = await computeCreativeSessionQuality()
@@ -66,7 +72,7 @@ class CreativeDimensionDataProvider: ObservableObject, DimensionScoring {
             confidence: confidence,
             trend: trend,
             subScores: subScores,
-            dataAge: 0
+            dataAge: Date().timeIntervalSince(lastRefreshDate ?? Date())
         )
         creativeIndex = index
         return index
@@ -194,6 +200,7 @@ class CreativeDimensionDataProvider: ObservableObject, DimensionScoring {
             platformMetrics: mergedPlatformMetrics
         )
         funnelData = funnel
+        lastRefreshDate = Date()
     }
 
     // MARK: - Query Methods

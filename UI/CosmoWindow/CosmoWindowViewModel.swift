@@ -17,6 +17,7 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var activeContext: CosmoActiveContext = .none
     @Published var inputText: String = ""
     @Published var error: String? = nil
+    @Published var processingStartedAt: Date?
 
     // MARK: - Live Tool Activity (WP5)
 
@@ -48,11 +49,13 @@ final class CosmoWindowViewModel: ObservableObject {
 
     @Published var showChatHistory = false
     @Published var chatHistoryEntries: [ChatHistoryEntry] = []
+    @Published var historySearchText = ""
 
     // MARK: - Conversation Persistence
 
     private var conversationId: String = "cosmo-global-window"
     private var linkedAtomUUIDs: Set<String> = []
+    private let messageArchiveKeyPrefix = "cosmoWindow.messageArchive."
 
     // MARK: - Context Tracking
 
@@ -67,6 +70,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
     private var currentTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
+    private var pendingContextTraceSections: [ContextTraceSection] = []
 
     // MARK: - Init
 
@@ -97,6 +101,8 @@ final class CosmoWindowViewModel: ObservableObject {
         liveToolActivity = []
         activeToolLabel = nil
         toolActivityScrollTick = 0
+        pendingContextTraceSections = []
+        processingStartedAt = Date()
 
         // Capture mention info for the user message before clearing
         let mentionInfo: [MentionedAtomInfo]? = mentionedAtoms.isEmpty ? nil : mentionedAtoms.map {
@@ -140,6 +146,8 @@ final class CosmoWindowViewModel: ObservableObject {
             }
 
             isProcessing = false
+            processingStartedAt = nil
+            currentTask = nil
         }
     }
 
@@ -342,14 +350,7 @@ final class CosmoWindowViewModel: ObservableObject {
             actions: provider.availableActions
         )
 
-        // Insert a context change message if type actually changed (not on initial load)
-        if oldType != .none && oldType != newType {
-            let changeMessage = CosmoWindowMessage.contextChange(
-                from: oldType.displayName,
-                to: newType.displayName
-            )
-            messages.append(changeMessage)
-        }
+        appendContextChangeIfNeeded(from: oldType, to: newType)
 
         previousContextType = newType
 
@@ -378,9 +379,7 @@ final class CosmoWindowViewModel: ObservableObject {
             actions: []
         )
 
-        if oldType != .none && oldType != type {
-            messages.append(.contextChange(from: oldType.displayName, to: type.displayName))
-        }
+        appendContextChangeIfNeeded(from: oldType, to: type)
         previousContextType = type
     }
 
@@ -399,24 +398,34 @@ final class CosmoWindowViewModel: ObservableObject {
 
     /// Loads the persisted global conversation on app launch.
     func loadConversation() async {
+        let storedMessages = loadStoredMessages(for: conversationId)
+
         if let conversation = await conversationMemory.loadConversation(id: conversationId) {
-            // Convert AgentMessages to CosmoWindowMessages
-            messages = conversation.messages.compactMap { agentMsg in
-                switch agentMsg.role {
-                case .user:
-                    return CosmoWindowMessage.user(agentMsg.content)
-                case .assistant:
-                    return CosmoWindowMessage.assistant(agentMsg.content)
-                case .system:
-                    return CosmoWindowMessage.system(agentMsg.content)
-                case .tool:
-                    return CosmoWindowMessage.toolResult(
-                        name: "tool",
-                        summary: String(agentMsg.content.prefix(120))
-                    )
+            linkedAtomUUIDs = Set(conversation.linkedAtomUUIDs)
+
+            if let storedMessages {
+                messages = storedMessages
+            } else {
+                messages = conversation.messages.compactMap { agentMsg in
+                    switch agentMsg.role {
+                    case .user:
+                        return CosmoWindowMessage.user(agentMsg.content)
+                    case .assistant:
+                        return CosmoWindowMessage.assistant(agentMsg.content)
+                    case .system:
+                        return CosmoWindowMessage.system(agentMsg.content)
+                    case .tool:
+                        return CosmoWindowMessage.toolResult(
+                            name: "tool",
+                            summary: String(agentMsg.content.prefix(120))
+                        )
+                    }
                 }
             }
-            linkedAtomUUIDs = Set(conversation.linkedAtomUUIDs)
+        } else if let storedMessages {
+            messages = storedMessages
+        } else {
+            messages = []
         }
     }
 
@@ -426,6 +435,8 @@ final class CosmoWindowViewModel: ObservableObject {
         linkedAtomUUIDs.removeAll()
         error = nil
         writingEngineSessions.removeAll()
+        processingStartedAt = nil
+        pendingContextTraceSections = []
 
         // Persist the empty state
         await persistConversation()
@@ -436,6 +447,10 @@ final class CosmoWindowViewModel: ObservableObject {
         currentTask?.cancel()
         currentTask = nil
         isProcessing = false
+        processingStartedAt = nil
+        pendingContextTraceSections = []
+        liveToolActivity = []
+        activeToolLabel = nil
         messages.append(.system("Operation cancelled."))
     }
 
@@ -467,6 +482,23 @@ final class CosmoWindowViewModel: ObservableObject {
         messages.reduce(0) { $0 + ($1.content.count / 4) }
     }
 
+    var currentModelLabel: String {
+        switch modelOverride {
+        case nil: return "Auto"
+        case .sensor: return "Haiku"
+        case .strategist: return "Sonnet"
+        case .writer: return "Opus"
+        }
+    }
+
+    var filteredChatHistoryEntries: [ChatHistoryEntry] {
+        let query = historySearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return chatHistoryEntries }
+        return chatHistoryEntries.filter { entry in
+            entry.preview.lowercased().contains(query)
+        }
+    }
+
     // MARK: - Session Management
 
     /// Starts a new chat session, preserving the current conversation in history.
@@ -484,6 +516,9 @@ final class CosmoWindowViewModel: ObservableObject {
         linkedAtomUUIDs.removeAll()
         writingEngineSessions.removeAll()
         error = nil
+        historySearchText = ""
+        processingStartedAt = nil
+        pendingContextTraceSections = []
 
         // Persist the fresh empty conversation (establishes the atom)
         await persistConversation()
@@ -578,10 +613,7 @@ final class CosmoWindowViewModel: ObservableObject {
         // Clear the action buttons callback after processing
         toolExecutor.onActionButtons = nil
 
-        // Insert context trace card before the assistant response if tools were used
-        if trace.hasContent {
-            messages.append(.contextTrace(from: trace))
-        }
+        pendingContextTraceSections = trace.hasContent ? CosmoWindowMessage.contextTraceSections(from: trace) : []
 
         return response
     }
@@ -835,14 +867,19 @@ final class CosmoWindowViewModel: ObservableObject {
     /// Updates an existing assistant message in the messages array (for streaming).
     private func updateAssistantMessage(id: UUID, content: String, isStreaming: Bool, toolActivityGroups: [ToolActivityGroup]? = nil) {
         if let index = messages.firstIndex(where: { $0.id == id }) {
+            let responseMeta = isStreaming ? nil : buildResponseMeta(toolActivityGroups: toolActivityGroups)
             messages[index] = CosmoWindowMessage(
                 id: id,
                 type: .assistant,
                 content: content,
                 timestamp: messages[index].timestamp,
                 isStreaming: isStreaming,
-                toolActivityGroups: toolActivityGroups
+                toolActivityGroups: toolActivityGroups,
+                responseMeta: responseMeta
             )
+        }
+        if !isStreaming {
+            pendingContextTraceSections = []
         }
     }
 
@@ -876,6 +913,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         conversation.linkedAtomUUIDs = Array(linkedAtomUUIDs)
         await conversationMemory.saveConversation(conversation)
+        saveStoredMessages(messages, for: conversationId)
     }
 
     // MARK: - Notification Observers
@@ -889,6 +927,79 @@ final class CosmoWindowViewModel: ObservableObject {
                 _ = self
             }
             .store(in: &cancellables)
+    }
+
+    private func buildResponseMeta(toolActivityGroups: [ToolActivityGroup]?) -> CosmoResponseMeta? {
+        let elapsedSeconds: Int?
+        if let processingStartedAt {
+            elapsedSeconds = max(1, Int(Date().timeIntervalSince(processingStartedAt).rounded()))
+        } else {
+            elapsedSeconds = nil
+        }
+
+        let meta = CosmoResponseMeta(
+            elapsedSeconds: elapsedSeconds,
+            toolGroups: toolActivityGroups,
+            contextTraceSections: pendingContextTraceSections,
+            modelLabel: currentModelLabel
+        )
+        return meta.hasVisibleContent ? meta : nil
+    }
+
+    private func messageArchiveKey(for conversationId: String) -> String {
+        messageArchiveKeyPrefix + conversationId
+    }
+
+    private func loadStoredMessages(for conversationId: String) -> [CosmoWindowMessage]? {
+        let key = messageArchiveKey(for: conversationId)
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        guard let decoded = try? decoder.decode([CosmoWindowMessage].self, from: data) else {
+            return nil
+        }
+
+        return decoded.map { message in
+            var normalized = message
+            normalized.isStreaming = false
+            normalized.toolActivityGroups = nil
+            return normalized
+        }
+    }
+
+    private func saveStoredMessages(_ messages: [CosmoWindowMessage], for conversationId: String) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+
+        guard let data = try? encoder.encode(messages) else { return }
+        UserDefaults.standard.set(data, forKey: messageArchiveKey(for: conversationId))
+    }
+
+    private func appendContextChangeIfNeeded(from oldType: CosmoContextType, to newType: CosmoContextType) {
+        guard shouldSurfaceContextChange(from: oldType, to: newType) else { return }
+        messages.append(.contextChange(from: oldType.displayName, to: newType.displayName))
+    }
+
+    private func shouldSurfaceContextChange(from oldType: CosmoContextType, to newType: CosmoContextType) -> Bool {
+        guard oldType != newType, oldType != .none, newType != .none else { return false }
+
+        let hasConversation = messages.contains { message in
+            switch message.type {
+            case .user, .assistant, .actionButtons:
+                return true
+            default:
+                return false
+            }
+        }
+        guard hasConversation else { return false }
+
+        if case .contextChange(_, let lastTo)? = messages.last?.type, lastTo == newType.displayName {
+            return false
+        }
+
+        return true
     }
 }
 

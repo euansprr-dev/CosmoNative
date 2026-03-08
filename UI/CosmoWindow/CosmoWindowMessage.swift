@@ -99,6 +99,114 @@ struct MentionedAtomInfo: Codable, Sendable {
         self.type = type
         self.title = title
     }
+
+    var stableID: String {
+        [uuid ?? "no-uuid", type, title].joined(separator: "::")
+    }
+}
+
+// MARK: - Response Meta
+
+struct CosmoToolRecapItem: Codable, Sendable, Identifiable, Hashable {
+    enum Status: String, Codable, Sendable {
+        case active
+        case done
+    }
+
+    let id: UUID
+    let icon: String
+    let label: String
+    let detail: String?
+    let status: Status
+
+    init(
+        id: UUID = UUID(),
+        icon: String,
+        label: String,
+        detail: String? = nil,
+        status: Status
+    ) {
+        self.id = id
+        self.icon = icon
+        self.label = label
+        self.detail = detail
+        self.status = status
+    }
+
+    init(_ item: ToolActivityItem) {
+        self.init(
+            id: item.id,
+            icon: item.icon,
+            label: item.label,
+            detail: item.detail,
+            status: item.status == .done ? .done : .active
+        )
+    }
+}
+
+struct CosmoToolRecapGroup: Codable, Sendable, Identifiable, Hashable {
+    let id: UUID
+    let category: String
+    let items: [CosmoToolRecapItem]
+    let isComplete: Bool
+
+    init(
+        id: UUID = UUID(),
+        category: String,
+        items: [CosmoToolRecapItem],
+        isComplete: Bool
+    ) {
+        self.id = id
+        self.category = category
+        self.items = items
+        self.isComplete = isComplete
+    }
+
+    init(_ group: ToolActivityGroup) {
+        self.init(
+            id: group.id,
+            category: group.category,
+            items: group.items.map(CosmoToolRecapItem.init),
+            isComplete: group.isComplete
+        )
+    }
+}
+
+struct CosmoResponseMeta: Codable, Sendable {
+    let elapsedSeconds: Int?
+    let toolRecapGroups: [CosmoToolRecapGroup]
+    let contextTraceSections: [ContextTraceSection]
+    let modelLabel: String?
+
+    init(
+        elapsedSeconds: Int? = nil,
+        toolRecapGroups: [CosmoToolRecapGroup] = [],
+        contextTraceSections: [ContextTraceSection] = [],
+        modelLabel: String? = nil
+    ) {
+        self.elapsedSeconds = elapsedSeconds
+        self.toolRecapGroups = toolRecapGroups
+        self.contextTraceSections = contextTraceSections
+        self.modelLabel = modelLabel
+    }
+
+    init(
+        elapsedSeconds: Int? = nil,
+        toolGroups: [ToolActivityGroup]?,
+        contextTraceSections: [ContextTraceSection] = [],
+        modelLabel: String? = nil
+    ) {
+        self.init(
+            elapsedSeconds: elapsedSeconds,
+            toolRecapGroups: (toolGroups ?? []).map(CosmoToolRecapGroup.init),
+            contextTraceSections: contextTraceSections,
+            modelLabel: modelLabel
+        )
+    }
+
+    var hasVisibleContent: Bool {
+        elapsedSeconds != nil || modelLabel != nil || !toolRecapGroups.isEmpty || !contextTraceSections.isEmpty
+    }
 }
 
 // MARK: - Mention Context Helper
@@ -172,6 +280,9 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
     /// Atoms that were @-mentioned as context for this user message.
     var mentionedAtomInfo: [MentionedAtomInfo]?
 
+    /// Persisted presentation metadata for completed assistant responses.
+    var responseMeta: CosmoResponseMeta?
+
     init(
         id: UUID = UUID(),
         type: CosmoWindowMessageType,
@@ -179,7 +290,8 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
         timestamp: Date = Date(),
         isStreaming: Bool = false,
         toolActivityGroups: [ToolActivityGroup]? = nil,
-        mentionedAtomInfo: [MentionedAtomInfo]? = nil
+        mentionedAtomInfo: [MentionedAtomInfo]? = nil,
+        responseMeta: CosmoResponseMeta? = nil
     ) {
         self.id = id
         self.type = type
@@ -188,12 +300,13 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
         self.isStreaming = isStreaming
         self.toolActivityGroups = toolActivityGroups
         self.mentionedAtomInfo = mentionedAtomInfo
+        self.responseMeta = responseMeta
     }
 
     // MARK: - Codable (exclude toolActivityGroups)
 
     enum CodingKeys: String, CodingKey {
-        case id, type, content, timestamp, isStreaming, mentionedAtomInfo
+        case id, type, content, timestamp, isStreaming, mentionedAtomInfo, responseMeta
     }
 
     init(from decoder: Decoder) throws {
@@ -204,6 +317,7 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         isStreaming = try container.decode(Bool.self, forKey: .isStreaming)
         mentionedAtomInfo = try container.decodeIfPresent([MentionedAtomInfo].self, forKey: .mentionedAtomInfo)
+        responseMeta = try container.decodeIfPresent(CosmoResponseMeta.self, forKey: .responseMeta)
         toolActivityGroups = nil
     }
 
@@ -215,6 +329,7 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isStreaming, forKey: .isStreaming)
         try container.encodeIfPresent(mentionedAtomInfo, forKey: .mentionedAtomInfo)
+        try container.encodeIfPresent(responseMeta, forKey: .responseMeta)
     }
 
     // MARK: - Factory Methods
@@ -223,8 +338,17 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
         CosmoWindowMessage(type: .user, content: content, mentionedAtomInfo: mentionedAtoms)
     }
 
-    static func assistant(_ content: String, isStreaming: Bool = false) -> CosmoWindowMessage {
-        CosmoWindowMessage(type: .assistant, content: content, isStreaming: isStreaming)
+    static func assistant(
+        _ content: String,
+        isStreaming: Bool = false,
+        responseMeta: CosmoResponseMeta? = nil
+    ) -> CosmoWindowMessage {
+        CosmoWindowMessage(
+            type: .assistant,
+            content: content,
+            isStreaming: isStreaming,
+            responseMeta: responseMeta
+        )
     }
 
     static func system(_ content: String) -> CosmoWindowMessage {
@@ -254,29 +378,55 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
 
     /// Build a context trace message from an AgentContextTrace
     static func contextTrace(from trace: AgentContextTrace) -> CosmoWindowMessage {
+        let sections = contextTraceSections(from: trace)
+
+        return CosmoWindowMessage(
+            type: .contextTrace(lookups: trace.lookupCount, sections: sections),
+            content: "Context Used"
+        )
+    }
+
+    static func contextTraceSections(from trace: AgentContextTrace) -> [ContextTraceSection] {
         var sections: [ContextTraceSection] = []
 
         if let client = trace.clientProfileName {
             sections.append(ContextTraceSection(icon: "person.fill", label: "Client", detail: client))
         }
 
-        // Merge swipes from direct tool calls (search_swipes, etc.) and writing engine internals
         let directSwipes = trace.swipesReferenced
         let engineSwipes = trace.writingEngineSwipes
         let allSwipes = Array(Set(directSwipes + engineSwipes)).filter { !$0.isEmpty && !$0.hasPrefix("0 ") }
         if !allSwipes.isEmpty {
-            sections.append(ContextTraceSection(icon: "doc.text", label: "Swipes", detail: allSwipes.prefix(4).joined(separator: ", ")))
+            sections.append(
+                ContextTraceSection(
+                    icon: "doc.text",
+                    label: "Swipes",
+                    detail: allSwipes.prefix(4).joined(separator: ", ")
+                )
+            )
         }
 
         let beats = trace.beatPatternsUsed.filter { !$0.isEmpty }
         if !beats.isEmpty {
-            sections.append(ContextTraceSection(icon: "waveform", label: "Beat Patterns", detail: beats.prefix(3).joined(separator: ", ")))
+            sections.append(
+                ContextTraceSection(
+                    icon: "waveform",
+                    label: "Beat Patterns",
+                    detail: beats.prefix(3).joined(separator: ", ")
+                )
+            )
         }
 
         let writing = trace.writingToolsUsed
         if !writing.isEmpty {
             let names = writing.map { $0.replacingOccurrences(of: "_", with: " ").capitalized }
-            sections.append(ContextTraceSection(icon: "pencil.line", label: "Writing Engine", detail: names.joined(separator: ", ")))
+            sections.append(
+                ContextTraceSection(
+                    icon: "pencil.line",
+                    label: "Writing Engine",
+                    detail: names.joined(separator: ", ")
+                )
+            )
         }
 
         let scorecards = trace.toolCalls.filter { $0.name.contains("score") }
@@ -286,18 +436,23 @@ struct CosmoWindowMessage: Identifiable, Codable, Sendable {
             }
         }
 
-        return CosmoWindowMessage(
-            type: .contextTrace(lookups: trace.lookupCount, sections: sections),
-            content: "Context Used"
-        )
+        return sections
     }
 }
 
 // MARK: - Context Trace Section
 
 /// A single row in a context trace card (icon + label + detail)
-struct ContextTraceSection: Codable, Sendable {
+struct ContextTraceSection: Codable, Sendable, Identifiable, Hashable {
+    let id: UUID
     let icon: String
     let label: String
     let detail: String
+
+    init(id: UUID = UUID(), icon: String, label: String, detail: String) {
+        self.id = id
+        self.icon = icon
+        self.label = label
+        self.detail = detail
+    }
 }

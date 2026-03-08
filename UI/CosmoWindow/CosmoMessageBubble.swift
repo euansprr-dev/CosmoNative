@@ -1,14 +1,9 @@
 // CosmoOS/UI/CosmoWindow/CosmoMessageBubble.swift
-// Individual message rendering for the global Cosmo chat window
-// Native macOS chat aesthetic — iMessage/Telegram Desktop feel
-// February 2026
+// Premium message rendering for the floating Cosmo overlay
+// March 2026
 
 import SwiftUI
 
-// MARK: - Message Bubble
-
-/// Renders a single message in the Cosmo window conversation.
-/// Dispatches to the appropriate layout based on `CosmoWindowMessageType`.
 struct CosmoMessageBubble: View {
     let message: CosmoWindowMessage
     var onEdit: ((CosmoWindowMessage) -> Void)? = nil
@@ -22,31 +17,34 @@ struct CosmoMessageBubble: View {
         case .assistant:
             assistantBubble
         case .system:
-            systemBubble
+            timelineMarker(
+                icon: "sparkles",
+                title: message.content,
+                tint: DS.textSecondary
+            )
         case .toolResult(let name, let summary, let isError):
             toolResultRow(name: name, summary: summary, isError: isError)
         case .contextTrace(let lookups, let sections):
-            ContextTraceCard(lookups: lookups, sections: sections)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 2)
+            legacyContextTraceCard(lookups: lookups, sections: sections)
         case .contextChange(_, let to):
-            contextChangeDivider(to: to)
+            timelineMarker(
+                icon: "arrow.triangle.branch",
+                title: "Context moved to \(to)",
+                tint: DS.accent
+            )
         case .actionButtons(let buttons):
             actionButtonsBubble(buttons: buttons)
         }
     }
 
-    // MARK: - User Bubble
-
     private var userBubble: some View {
         HStack {
-            Spacer(minLength: 60)
+            Spacer(minLength: 72)
 
-            VStack(alignment: .trailing, spacing: 4) {
-                // Mention context pills
+            VStack(alignment: .trailing, spacing: 10) {
                 if let mentions = message.mentionedAtomInfo, !mentions.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(mentions, id: \.uuid) { mention in
+                    HStack(spacing: 6) {
+                        ForEach(mentions, id: \.stableID) { mention in
                             mentionPill(mention)
                         }
                     }
@@ -54,33 +52,45 @@ struct CosmoMessageBubble: View {
 
                 inlineContentText(message.content, mentions: message.mentionedAtomInfo)
                     .font(DS.body)
+                    .foregroundColor(DS.text)
+                    .lineSpacing(5)
                     .textSelection(.enabled)
-                    .lineSpacing(4)
 
-                Text(formattedTime)
-                    .font(DS.timestamp)
-                    .foregroundColor(DS.textMuted)
+                HStack(spacing: 8) {
+                    Text("You")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.accent)
+
+                    Text(formattedTime)
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(DS.accent.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+            .frame(maxWidth: messageMaxWidth, alignment: .trailing)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
+                    .fill(DS.accentSoft)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
+                    .stroke(DS.accent.opacity(0.18), lineWidth: 1)
+            )
             .overlay(alignment: .topTrailing) {
-                if isHovering, let onEdit = onEdit {
+                if isHovering, let onEdit {
                     Button {
                         onEdit(message)
                     } label: {
                         Image(systemName: "pencil")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textMuted)
-                            .frame(width: 22, height: 22)
-                            .background(DS.surfaceElevated)
-                            .clipShape(Circle())
-                            .shadow(color: Color.black.opacity(0.15), radius: 3, y: 1)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.textSecondary)
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(DS.surfaceElevated))
+                            .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
-                    .offset(x: 8, y: -8)
-                    .transition(.opacity)
+                    .offset(x: 10, y: -10)
                 }
             }
             .onHover { hovering in
@@ -89,55 +99,270 @@ struct CosmoMessageBubble: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 2)
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
     }
 
-    // MARK: - Mention Pill (sent message)
+    private var assistantBubble: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(DS.accentSoft)
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(DS.accent)
+                            )
+
+                        Text("Cosmo")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(DS.text)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let modelLabel = message.responseMeta?.modelLabel {
+                        Text(modelLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip()
+                    }
+
+                    Text(formattedTime)
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                }
+
+                assistantContent
+
+                if let responseMeta = message.responseMeta, responseMeta.hasVisibleContent {
+                    ResponseProvenanceCard(meta: responseMeta)
+                }
+            }
+            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .cosmoWindowSectionChrome(cornerRadius: CosmoWindowMetrics.cardCornerRadius)
+
+            Spacer(minLength: 72)
+        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+    }
+
+    @ViewBuilder
+    private var assistantContent: some View {
+        if message.content.isEmpty && message.isStreaming {
+            HStack(spacing: 8) {
+                StreamingIndicator()
+                Text("Thinking through the answer")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                CosmoMarkdownRenderer(content: message.content)
+
+                if message.isStreaming {
+                    HStack(spacing: 8) {
+                        StreamingIndicator()
+                        Text("Responding")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(DS.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func actionButtonsBubble(buttons: [CosmoActionButton]) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !message.content.isEmpty {
+                    CosmoMarkdownRenderer(content: message.content)
+                }
+
+                let rows = stride(from: 0, to: buttons.count, by: 3).map { start in
+                    Array(buttons[start..<min(start + 3, buttons.count)])
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        HStack(spacing: 8) {
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, button in
+                                Button(button.label) {
+                                    Task {
+                                        await CosmoWindowViewModel.shared.sendMessage(button.action)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(DS.accent)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .cosmoWindowChip(isActive: true)
+                            }
+                        }
+                    }
+                }
+
+                Text(formattedTime)
+                    .font(DS.timestamp)
+                    .foregroundColor(DS.textMuted)
+            }
+            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .cosmoWindowSectionChrome(cornerRadius: CosmoWindowMetrics.cardCornerRadius)
+
+            Spacer(minLength: 72)
+        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+    }
+
+    private func toolResultRow(name: String, summary: String, isError: Bool) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isError ? DS.red : DS.green)
+
+                    Text(name.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Spacer(minLength: 0)
+
+                    Text(formattedTime)
+                        .font(DS.timestamp)
+                        .foregroundColor(DS.textMuted)
+                }
+
+                Text(summary)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
+                    .fill(isError ? DS.redSoft.opacity(0.7) : DS.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CosmoWindowMetrics.cardCornerRadius, style: .continuous)
+                    .stroke(isError ? DS.red.opacity(0.18) : DS.border, lineWidth: 1)
+            )
+
+            Spacer(minLength: 72)
+        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+    }
+
+    private func legacyContextTraceCard(lookups: Int, sections: [ContextTraceSection]) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "eye")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.accent)
+
+                    Text("Context Used")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
+
+                    Text("\(lookups) lookups")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .cosmoWindowChip()
+                }
+
+                ContextTraceSectionsView(sections: sections)
+            }
+            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .cosmoWindowSectionChrome(cornerRadius: CosmoWindowMetrics.cardCornerRadius)
+
+            Spacer(minLength: 72)
+        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+    }
+
+    private func timelineMarker(icon: String, title: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
+
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(tint)
+
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(DS.surfaceElevated)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
+
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
+        }
+        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+    }
 
     @ViewBuilder
     private func mentionPill(_ mention: MentionedAtomInfo) -> some View {
         let entityType = EntityType(rawValue: mention.type) ?? .note
-        HStack(spacing: 3) {
+
+        HStack(spacing: 4) {
             Circle()
                 .fill(CosmoMentionColors.color(for: entityType))
-                .frame(width: 5, height: 5)
+                .frame(width: 6, height: 6)
+
             Text(mention.title)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(CosmoMentionColors.color(for: entityType))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(CosmoMentionColors.pillBackground(for: entityType))
         .clipShape(Capsule())
     }
 
-    // MARK: - Inline Mention Rendering
-
-    /// Renders message content with `@Title` substrings highlighted in entity-type colors.
-    /// Falls back to plain text if no mentions or no inline `@Title` patterns found.
     private func inlineContentText(_ content: String, mentions: [MentionedAtomInfo]?) -> Text {
-        guard let mentions = mentions, !mentions.isEmpty else {
-            return Text(content).foregroundColor(DS.text)
+        guard let mentions, !mentions.isEmpty else {
+            return Text(content)
         }
 
-        // Check if any @Title patterns exist in content (inline style)
         let hasInlineMentions = mentions.contains { mention in
             content.contains("@\(mention.title)")
         }
 
         guard hasInlineMentions else {
-            // Legacy messages — no inline @Title in content, show plain text
-            return Text(content).foregroundColor(DS.text)
+            return Text(content)
         }
 
-        return buildMentionHighlightedText(content, mentions: mentions)
-    }
-
-    /// Parses content for `@Title` substrings and builds rich Text with colored mention spans
-    /// using AttributedString for per-range styling.
-    private func buildMentionHighlightedText(_ content: String, mentions: [MentionedAtomInfo]) -> Text {
         struct MentionMatch {
             let range: Range<String.Index>
             let mention: MentionedAtomInfo
@@ -155,205 +380,38 @@ struct CosmoMessageBubble: View {
 
         matches.sort { $0.range.lowerBound < $1.range.lowerBound }
 
-        // Build AttributedString with per-range styling
         var attributed = AttributedString(content)
         attributed.foregroundColor = DS.text
 
         for match in matches {
             let entityType = EntityType(rawValue: match.mention.type) ?? .idea
-            if let attrRange = Range(match.range, in: attributed) {
-                attributed[attrRange].foregroundColor = CosmoMentionColors.color(for: entityType)
-                attributed[attrRange].font = .body.bold()
+            if let range = Range(match.range, in: attributed) {
+                attributed[range].foregroundColor = CosmoMentionColors.color(for: entityType)
+                attributed[range].font = .body.bold()
             }
         }
 
         return Text(attributed)
     }
 
-    // MARK: - Assistant Bubble
-
-    private var assistantBubble: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                if message.isStreaming {
-                    HStack(spacing: 0) {
-                        Text(message.content)
-                            .font(DS.body)
-                            .foregroundColor(DS.text)
-                            .textSelection(.enabled)
-                            .lineSpacing(4)
-
-                        StreamingIndicator()
-                    }
-                } else {
-                    Text(message.content)
-                        .font(DS.body)
-                        .foregroundColor(DS.text)
-                        .textSelection(.enabled)
-                        .lineSpacing(4)
-                }
-
-                Text(formattedTime)
-                    .font(DS.timestamp)
-                    .foregroundColor(DS.textMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(DS.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(DS.accent)
-                    .frame(width: 2)
-                    .padding(.vertical, 6)
-            }
-
-            Spacer(minLength: 60)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 2)
-    }
-
-    // MARK: - Action Buttons Bubble
-
-    private func actionButtonsBubble(buttons: [CosmoActionButton]) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Message text (same style as assistant)
-                if !message.content.isEmpty {
-                    Text(message.content)
-                        .font(DS.body)
-                        .foregroundColor(DS.text)
-                        .textSelection(.enabled)
-                        .lineSpacing(4)
-                }
-
-                // Button pills — rows of max 3
-                actionButtonRows(buttons)
-
-                Text(formattedTime)
-                    .font(DS.timestamp)
-                    .foregroundColor(DS.textMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(DS.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(DS.accent)
-                    .frame(width: 2)
-                    .padding(.vertical, 6)
-            }
-
-            Spacer(minLength: 60)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 2)
-    }
-
-    @ViewBuilder
-    private func actionButtonRows(_ buttons: [CosmoActionButton]) -> some View {
-        let rows = stride(from: 0, to: buttons.count, by: 3).map { start in
-            Array(buttons[start..<min(start + 3, buttons.count)])
-        }
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 6) {
-                    ForEach(Array(row.enumerated()), id: \.offset) { _, button in
-                        actionPillButton(button)
-                    }
-                }
-            }
-        }
-    }
-
-    private func actionPillButton(_ button: CosmoActionButton) -> some View {
-        Button {
-            Task {
-                await CosmoWindowViewModel.shared.sendMessage(button.action)
-            }
-        } label: {
-            Text(button.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.text)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(DS.accent.opacity(0.15))
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - System Bubble
-
-    private var systemBubble: some View {
-        HStack {
-            Spacer()
-
-            Text(message.content)
-                .font(DS.cardMeta)
-                .italic()
-                .foregroundColor(DS.textMuted)
-                .multilineTextAlignment(.center)
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-    }
-
-    // MARK: - Tool Result
-
-    private func toolResultRow(name: String, summary: String, isError: Bool) -> some View {
-        ToolResultBubble(name: name, summary: summary, isError: isError, timestamp: formattedTime)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 2)
-    }
-
-    // MARK: - Context Change
-
-    private func contextChangeDivider(to: String) -> some View {
-        HStack(spacing: 8) {
-            Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(height: 1)
-
-            Text("Context: \(to)")
-                .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
-                .lineLimit(1)
-
-            Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(height: 1)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
-    }
-
-    // MARK: - Helpers
-
     private var formattedTime: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: message.timestamp)
     }
+
+    private var messageMaxWidth: CGFloat {
+        CosmoWindowMetrics.maxMessageWidth
+    }
 }
 
-// MARK: - Tool Result Bubble (Collapsible)
-
-/// A collapsible row showing a tool execution result.
-private struct ToolResultBubble: View {
-    let name: String
-    let summary: String
-    let isError: Bool
-    let timestamp: String
+private struct ResponseProvenanceCard: View {
+    let meta: CosmoResponseMeta
 
     @State private var isExpanded = false
 
     var body: some View {
-        HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     isExpanded.toggle()
@@ -361,199 +419,388 @@ private struct ToolResultBubble: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(DS.textMuted)
-                        .frame(width: 12)
 
-                    // Tool name badge
-                    Text(name)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isError ? DS.red : DS.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            (isError ? DS.red : DS.accent).opacity(0.1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Text("How Cosmo got here")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.text)
 
-                    if !isExpanded {
-                        Text(summary)
-                            .font(DS.cardMeta)
+                    Spacer(minLength: 0)
+
+                    if let elapsedSeconds = meta.elapsedSeconds {
+                        Text("\(elapsedSeconds)s")
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(DS.textSecondary)
-                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip()
                     }
 
-                    Spacer()
-
-                    Text(timestamp)
-                        .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                    if !meta.toolRecapGroups.isEmpty {
+                        Text("\(meta.toolRecapGroups.count) groups")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .cosmoWindowChip()
+                    }
                 }
             }
             .buttonStyle(.plain)
 
-            Spacer(minLength: 0)
-        }
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !meta.toolRecapGroups.isEmpty {
+                        ToolActivityStreamView(recapGroups: meta.toolRecapGroups)
+                    }
 
-        if isExpanded {
-            Text(summary)
-                .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
-                .padding(.leading, 20)
-                .padding(.top, 4)
-                .textSelection(.enabled)
+                    if !meta.contextTraceSections.isEmpty {
+                        ContextTraceSectionsView(sections: meta.contextTraceSections)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .cosmoWindowGroupChrome(cornerRadius: 14)
     }
 }
 
-// MARK: - Context Trace Card (Collapsible)
-
-/// A collapsible card showing what context the AI looked at during a response.
-private struct ContextTraceCard: View {
-    let lookups: Int
+private struct ContextTraceSectionsView: View {
     let sections: [ContextTraceSection]
 
-    @State private var isExpanded = false
-
-    private let iconMap: [String: String] = [
-        "person.fill": "person.fill",
-        "doc.text": "doc.text",
-        "waveform": "waveform",
-        "pencil.line": "pencil.line",
-        "chart.bar": "chart.bar"
-    ]
-
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        isExpanded.toggle()
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(sections) { section in
+                HStack(alignment: .top, spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(DS.accentSoft)
+                            .frame(width: 26, height: 26)
+
+                        Image(systemName: section.icon)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.accent)
                     }
-                } label: {
-                    collapsedHeader
-                }
-                .buttonStyle(.plain)
 
-                if isExpanded {
-                    expandedContent
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(DS.accent.opacity(0.05))
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .stroke(DS.accent.opacity(0.12), lineWidth: 1)
-            )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(section.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.text)
 
-            Spacer(minLength: 80)
-        }
-    }
+                        Text(section.detail)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-    private var collapsedHeader: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(DS.textMuted)
-                .frame(width: 12)
-
-            Image(systemName: "eye")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.accent)
-
-            Text("Context Used")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.accent)
-
-            Text("\(lookups) lookup\(lookups == 1 ? "" : "s")")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(DS.accent.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-
-            Spacer()
-        }
-    }
-
-    private var expandedContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                HStack(spacing: 8) {
-                    Image(systemName: section.icon)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.accent.opacity(0.7))
-                        .frame(width: 16)
-
-                    Text(section.label)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.textSecondary)
-                        .frame(width: 80, alignment: .leading)
-
-                    Text(section.detail)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(DS.text)
-                        .lineLimit(2)
+                    Spacer(minLength: 0)
                 }
             }
         }
-        .padding(.top, 8)
-        .padding(.leading, 20)
     }
 }
 
-// MARK: - Streaming Indicator
+private struct CosmoMarkdownRenderer: View {
+    let content: String
 
-/// Animated three-dot indicator for messages currently being streamed.
-/// Uses TimelineView for ProMotion-friendly rendering.
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(CosmoMarkdownParser.parse(content).enumerated()), id: \.offset) { _, block in
+                CosmoMarkdownBlockView(block: block)
+            }
+        }
+        .textSelection(.enabled)
+    }
+}
+
+private enum CosmoMarkdownBlock {
+    case heading(level: Int, text: String)
+    case paragraph(String)
+    case bullet([String])
+    case ordered([String])
+    case quote(String)
+    case code(String)
+}
+
+private enum CosmoMarkdownParser {
+    static func parse(_ content: String) -> [CosmoMarkdownBlock] {
+        let lines = content.components(separatedBy: .newlines)
+        var blocks: [CosmoMarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("```") {
+                index += 1
+                var codeLines: [String] = []
+                while index < lines.count && !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    codeLines.append(lines[index])
+                    index += 1
+                }
+                if index < lines.count {
+                    index += 1
+                }
+                blocks.append(.code(codeLines.joined(separator: "\n")))
+                continue
+            }
+
+            if let heading = heading(from: trimmed) {
+                blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix(">") {
+                var quoteLines: [String] = []
+                while index < lines.count {
+                    let quoteLine = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard quoteLine.hasPrefix(">") else { break }
+                    quoteLines.append(String(quoteLine.dropFirst()).trimmingCharacters(in: .whitespaces))
+                    index += 1
+                }
+                blocks.append(.quote(quoteLines.joined(separator: "\n")))
+                continue
+            }
+
+            if let firstItem = bulletItem(from: trimmed) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = bulletItem(from: lines[index].trimmingCharacters(in: .whitespaces)) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.bullet(items))
+                continue
+            }
+
+            if let firstItem = orderedItem(from: trimmed) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = orderedItem(from: lines[index].trimmingCharacters(in: .whitespaces)) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.ordered(items))
+                continue
+            }
+
+            var paragraphLines = [line]
+            index += 1
+            while index < lines.count {
+                let next = lines[index]
+                let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
+                if nextTrimmed.isEmpty || isSpecialLine(nextTrimmed) {
+                    break
+                }
+                paragraphLines.append(next)
+                index += 1
+            }
+            blocks.append(.paragraph(paragraphLines.joined(separator: "\n")))
+        }
+
+        return blocks
+    }
+
+    private static func heading(from line: String) -> (level: Int, text: String)? {
+        if line.hasPrefix("### ") {
+            return (3, String(line.dropFirst(4)))
+        }
+        if line.hasPrefix("## ") {
+            return (2, String(line.dropFirst(3)))
+        }
+        if line.hasPrefix("# ") {
+            return (1, String(line.dropFirst(2)))
+        }
+        return nil
+    }
+
+    private static func bulletItem(from line: String) -> String? {
+        if line.hasPrefix("- ") || line.hasPrefix("* ") {
+            return String(line.dropFirst(2))
+        }
+        return nil
+    }
+
+    private static func orderedItem(from line: String) -> String? {
+        guard let dotIndex = line.firstIndex(of: ".") else { return nil }
+        let numberPart = line[..<dotIndex]
+        guard !numberPart.isEmpty, numberPart.allSatisfy(\.isNumber) else { return nil }
+        let remainder = line[line.index(after: dotIndex)...]
+        guard remainder.first == " " else { return nil }
+        return String(remainder.dropFirst())
+    }
+
+    private static func isSpecialLine(_ line: String) -> Bool {
+        line.hasPrefix("```")
+            || heading(from: line) != nil
+            || line.hasPrefix(">")
+            || bulletItem(from: line) != nil
+            || orderedItem(from: line) != nil
+    }
+}
+
+private struct CosmoMarkdownBlockView: View {
+    let block: CosmoMarkdownBlock
+
+    var body: some View {
+        switch block {
+        case .heading(let level, let text):
+            Text(text)
+                .font(headingFont(level: level))
+                .foregroundColor(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+        case .paragraph(let text):
+            Text(.init(text))
+                .font(DS.body)
+                .foregroundColor(DS.text)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+        case .bullet(let items):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(DS.accent)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 7)
+
+                        Text(.init(item))
+                            .font(DS.body)
+                            .foregroundColor(DS.text)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .ordered(let items):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(index + 1).")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(DS.accent)
+                            .frame(width: 20, alignment: .trailing)
+
+                        Text(.init(item))
+                            .font(DS.body)
+                            .foregroundColor(DS.text)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(DS.accent)
+                    .frame(width: 3)
+
+                Text(.init(text))
+                    .font(.system(size: 14))
+                    .foregroundColor(DS.textSecondary)
+                    .italic()
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(DS.bg)
+            )
+        case .code(let code):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code.isEmpty ? " " : code)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundColor(DS.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(DS.bg)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
+        }
+    }
+
+    private func headingFont(level: Int) -> Font {
+        switch level {
+        case 1:
+            return .system(size: 21, weight: .semibold)
+        case 2:
+            return .system(size: 18, weight: .semibold)
+        default:
+            return .system(size: 16, weight: .semibold)
+        }
+    }
+}
+
 struct StreamingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.35)) { context in
             let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { index in
                     Circle()
                         .fill(DS.accent)
-                        .frame(width: 4, height: 4)
-                        .opacity(phase == index ? 1.0 : 0.3)
+                        .frame(width: 5, height: 5)
+                        .opacity(reduceMotion ? 0.65 : (phase == index ? 1.0 : 0.25))
                 }
             }
-            .padding(.leading, 4)
-            .animation(ProMotionSprings.snappy, value: phase)
         }
     }
 }
-
-// MARK: - Preview
 
 #if DEBUG
 struct CosmoMessageBubble_Previews: PreviewProvider {
     static var previews: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                CosmoMessageBubble(message: .user("How could I adapt this swipe for Ben's brand?"))
-                CosmoMessageBubble(message: .assistant("Based on the swipe analysis, here's how I'd adapt this for Ben's casual tone..."))
-                CosmoMessageBubble(message: .assistant("Still thinking...", isStreaming: true))
-                CosmoMessageBubble(message: .system("Cosmo connected"))
-                CosmoMessageBubble(message: .toolResult(name: "search_swipes", summary: "Found 3 matching swipes for 'trust building'"))
-                CosmoMessageBubble(message: CosmoWindowMessage(
-                    type: .contextTrace(lookups: 4, sections: [
-                        ContextTraceSection(icon: "person.fill", label: "Client", detail: "Michael"),
-                        ContextTraceSection(icon: "doc.text", label: "Swipes", detail: "Tax tips thread, Trust carousel"),
-                        ContextTraceSection(icon: "waveform", label: "Beat Patterns", detail: "Problem-Solution"),
-                    ]),
-                    content: "Context Used"
-                ))
-                CosmoMessageBubble(message: .contextChange(from: "Thinkspace", to: "Content Focus Mode"))
+            VStack(spacing: 16) {
+                CosmoMessageBubble(message: .user("Use @Josh to turn this into a cleaner script."))
+                CosmoMessageBubble(
+                    message: CosmoWindowMessage.assistant(
+                        "# Draft direction\n\n- Lead with the problem\n- Anchor it in the Midwest angle\n\n> You can win with a better guest experience.\n\n```swift\nprint(\"hello\")\n```",
+                        responseMeta: CosmoResponseMeta(
+                            elapsedSeconds: 19,
+                            toolRecapGroups: [
+                                CosmoToolRecapGroup(
+                                    category: "Viewed",
+                                    items: [
+                                        CosmoToolRecapItem(icon: "doc.text", label: "Read Ben location breakdown swipe", detail: "Used structure and hook pacing", status: .done)
+                                    ],
+                                    isComplete: true
+                                )
+                            ],
+                            contextTraceSections: [
+                                ContextTraceSection(icon: "person.fill", label: "Client", detail: "Michael"),
+                                ContextTraceSection(icon: "waveform", label: "Beat Pattern", detail: "Problem → proof → payoff")
+                            ],
+                            modelLabel: "Sonnet"
+                        )
+                    )
+                )
+                CosmoMessageBubble(message: .contextChange(from: "Thinkspace", to: "Content"))
             }
-            .padding(.vertical, 16)
+            .padding(.vertical, 20)
         }
-        .frame(width: 400, height: 600)
-        .background(DS.surface)
+        .frame(width: 520, height: 720)
+        .background(DS.bg)
     }
 }
 #endif

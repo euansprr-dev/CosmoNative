@@ -688,6 +688,9 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let clientName: String?
     public let instagramId: String?
 
+    /// Pre-lowercased concatenation of searchable fields for fast filtering
+    public let searchableText: String
+
     public init(
         atomUUID: String,
         title: String,
@@ -733,6 +736,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.clientUUID = clientUUID
         self.clientName = clientName
         self.instagramId = instagramId
+        self.searchableText = [title, hookText, author, niche, creatorName]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
     }
 
     /// Platform display icon

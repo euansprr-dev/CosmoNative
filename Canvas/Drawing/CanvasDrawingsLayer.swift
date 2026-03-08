@@ -7,10 +7,8 @@ import AppKit
 
 struct CanvasDrawingsLayer: View {
     @ObservedObject var drawingState: DrawingStateManager
-    var canvasOffset: CGSize = .zero
-    var scaledPanOffset: CGSize = .zero
-    var effectiveScale: CGFloat = 1.0
-    var screenCenter: CGPoint = .zero
+    let transform: CanvasViewportTransform
+    @StateObject private var strokeCache = CanvasDrawingStrokeCache()
 
     // MARK: - Constants
 
@@ -29,17 +27,16 @@ struct CanvasDrawingsLayer: View {
 
     /// Convert a canvas-space point to screen-space for rendering
     private func canvasToScreen(_ p: CGPoint) -> CGPoint {
-        let ox = p.x + canvasOffset.width + scaledPanOffset.width
-        let oy = p.y + canvasOffset.height + scaledPanOffset.height
-        return CGPoint(
-            x: screenCenter.x + (ox - screenCenter.x) * effectiveScale,
-            y: screenCenter.y + (oy - screenCenter.y) * effectiveScale
-        )
+        transform.canvasToScreen(p)
     }
 
     /// Scale a canvas-space size to screen-space
     private func scaleSize(_ s: CGSize) -> CGSize {
-        CGSize(width: s.width * effectiveScale, height: s.height * effectiveScale)
+        CGSize(width: s.width * transform.effectiveScale, height: s.height * transform.effectiveScale)
+    }
+
+    private var effectiveScale: CGFloat {
+        transform.effectiveScale
     }
 
     /// Returns the drag offset for a drawing being dragged (in canvas space)
@@ -74,7 +71,7 @@ struct CanvasDrawingsLayer: View {
 
     var body: some View {
         ZStack {
-            // 1. Freehand strokes — individual Path views (not Canvas, to avoid frame clipping)
+            // 1. Freehand strokes — cached canvas-space paths rendered through one Canvas.
             freehandLayer
                 .allowsHitTesting(false)
 
@@ -98,40 +95,52 @@ struct CanvasDrawingsLayer: View {
             deleteButtonLayer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: drawingState.drawings.map(\.id)) { _, ids in
+            strokeCache.retain(ids: Set(ids))
+        }
+        .onDisappear {
+            strokeCache.invalidateAll()
+        }
     }
 
     // MARK: - Freehand Layer (Path views — no frame clipping)
 
     private var freehandLayer: some View {
-        ForEach(drawingState.drawings.filter { $0.drawingType == .freehand }) { drawing in
-            if let points = drawing.pathPoints, points.count > 1 {
-                freehandStroke(for: drawing, points: points)
-            }
-        }
-    }
+        Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, _ in
+            let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("drawing-strokes")
+            let screenTransform = transform.canvasToScreenAffineTransform()
 
-    @ViewBuilder
-    private func freehandStroke(for drawing: CanvasDrawing, points: [CGPoint]) -> some View {
-        let screenPoints = points.map { canvasToScreenDragged($0, drawingId: drawing.id) }
-        let widths = drawing.pathWidths ?? Array(repeating: drawing.strokeWidth, count: points.count)
+            for drawing in drawingState.drawings where drawing.drawingType == .freehand {
+                guard let rendering = strokeCache.rendering(for: drawing) else { continue }
 
-        if widths.count == screenPoints.count && screenPoints.count >= 2 {
-            // Variable-width stroke rendered as a filled outline
-            variableWidthStrokePath(points: screenPoints, widths: widths)
-                .fill(CanvasDrawing.colorFromHex(drawing.strokeColor))
-                .opacity(drawing.opacity)
-        } else {
-            // Fallback: smooth bezier stroke with constant width
-            smoothBezierPath(through: screenPoints)
-                .stroke(
-                    CanvasDrawing.colorFromHex(drawing.strokeColor),
-                    style: StrokeStyle(
-                        lineWidth: drawing.strokeWidth * effectiveScale,
-                        lineCap: .round,
-                        lineJoin: .round
+                var drawingContext = context
+                drawingContext.concatenate(screenTransform)
+                drawingContext.opacity = drawing.opacity
+
+                let translatedPath = rendering.path.applying(
+                    CGAffineTransform(
+                        translationX: dragOffset(for: drawing.id).width,
+                        y: dragOffset(for: drawing.id).height
                     )
                 )
-                .opacity(drawing.opacity)
+
+                switch rendering {
+                case .fill:
+                    drawingContext.fill(translatedPath, with: .color(CanvasDrawing.colorFromHex(drawing.strokeColor)))
+                case .stroke(_, let lineWidth):
+                    drawingContext.stroke(
+                        translatedPath,
+                        with: .color(CanvasDrawing.colorFromHex(drawing.strokeColor)),
+                        style: StrokeStyle(
+                            lineWidth: lineWidth,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
+                    )
+                }
+            }
+
+            CanvasPerformanceInstrumentation.signposter.endInterval("drawing-strokes", signpost)
         }
     }
 

@@ -13,13 +13,13 @@ struct LibraryGridView: View {
     var onToggleSelection: ((String) -> Void)? = nil
 
     // Responsive columns based on available width
-    private let minCardWidth: CGFloat = 220
-    private let cardSpacing: CGFloat = 16
+    private let minCardWidth: CGFloat = 248
+    private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing
 
     var body: some View {
         GeometryReader { geometry in
             let columnCount = max(2, Int(geometry.size.width / (minCardWidth + cardSpacing)))
-            let totalSpacing = CGFloat(columnCount - 1) * cardSpacing + 48 // 24px padding each side
+            let totalSpacing = CGFloat(columnCount - 1) * cardSpacing + (CommandKMetrics.contentPadding * 2)
             let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
 
             ScrollView {
@@ -41,7 +41,7 @@ struct LibraryGridView: View {
                             )
                     }
                 }
-                .padding(24)
+                .padding(CommandKMetrics.contentPadding)
             }
         }
     }
@@ -100,6 +100,8 @@ private struct LibraryCardView: View {
     @State private var isHovered: Bool = false
     @State private var showDeleteAlert: Bool = false
 
+    private let cornerRadius = CommandKMetrics.cardCornerRadius
+
     /// Dynamic preview height based on content type
     private var previewHeight: CGFloat {
         if item.atomType == .image {
@@ -110,9 +112,9 @@ private struct LibraryCardView: View {
             return cardWidth * 9.0 / 16.0
         }
         switch item.atomType {
-        case .project: return 90
-        case .connection: return 100
-        default: return 110
+        case .project: return 104
+        case .connection: return 96
+        default: return 118
         }
     }
 
@@ -124,9 +126,9 @@ private struct LibraryCardView: View {
                 .clipped()
 
             // Info area
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(item.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(DS.text)
                     .lineLimit(2)
 
@@ -148,13 +150,16 @@ private struct LibraryCardView: View {
                         .foregroundColor(DS.textMuted)
                 }
             }
-            .padding(12)
+            .padding(14)
         }
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.accent)
-        .shadow(color: .black.opacity(isHovered ? 0.4 : 0.2), radius: isHovered ? 16 : 8, y: isHovered ? 8 : 4)
-        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .commandKGalleryCardChrome(
+            isHovered: isHovered,
+            isSelected: isSelected,
+            accentColor: item.color,
+            cornerRadius: cornerRadius
+        )
+        .cardSelectionOverlay(isSelected: isSelected, accentColor: item.color)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
         .onHover { hovering in isHovered = hovering }
         .contentShape(Rectangle())
@@ -199,12 +204,12 @@ private struct LibraryCardView: View {
             Image(systemName: item.icon)
                 .font(.system(size: 10))
             Text(item.typeName)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .semibold))
         }
         .foregroundColor(item.color)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(item.color.opacity(0.12))
+        .background(item.color.opacity(0.10))
         .clipShape(Capsule())
     }
 
@@ -212,14 +217,14 @@ private struct LibraryCardView: View {
 
     @ViewBuilder
     private var previewArea: some View {
-        ZStack {
-            LinearGradient(
-                colors: [item.color.opacity(0.15), item.color.opacity(0.05)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        ZStack(alignment: .topLeading) {
+            item.color.opacity(0.08)
 
             previewContent
+
+            Rectangle()
+                .fill(item.color.opacity(0.18))
+                .frame(height: 1)
         }
     }
 
@@ -287,19 +292,19 @@ private struct LibraryCardView: View {
         VStack(spacing: 8) {
             if let preview = item.preview, !preview.isEmpty {
                 Text(preview)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
                 Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 0)
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(Color(hex: "#FFD60A").opacity(0.6))
+                    .font(.system(size: 30))
+                    .foregroundColor(item.color.opacity(0.72))
                 Spacer(minLength: 0)
             }
         }
@@ -310,13 +315,13 @@ private struct LibraryCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let preview = item.preview, !preview.isEmpty {
                 Text(preview)
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundColor(DS.textSecondary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
                 Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 0)
@@ -334,45 +339,26 @@ private struct LibraryCardView: View {
 
     @ViewBuilder
     private var researchPreview: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Spacer(minLength: 0)
             Image(systemName: "book.fill")
-                .font(.system(size: 32))
+                .font(.system(size: 30))
                 .foregroundColor(item.color.opacity(0.6))
+            Text("Research")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.textSecondary)
             Spacer(minLength: 0)
         }
     }
 
     @ViewBuilder
     private var connectionPreview: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Spacer(minLength: 0)
 
-            // Connection-specific visual — two linked circles
-            HStack(spacing: -6) {
-                Circle()
-                    .fill(Color(hex: "#8B5CF6").opacity(0.3))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#8B5CF6").opacity(0.7))
-                    )
-                Circle()
-                    .fill(Color(hex: "#6366F1").opacity(0.3))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color(hex: "#6366F1").opacity(0.7))
-                    )
-            }
-            .overlay(
-                // Link line between them
-                Rectangle()
-                    .fill(Color(hex: "#8B5CF6").opacity(0.4))
-                    .frame(width: 20, height: 2)
-            )
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundColor(item.color.opacity(0.7))
 
             if let preview = item.preview, !preview.isEmpty {
                 Text(String(preview.prefix(60)))
@@ -389,15 +375,21 @@ private struct LibraryCardView: View {
 
     @ViewBuilder
     private var projectPreview: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Spacer(minLength: 0)
-            Image(systemName: "folder.fill")
-                .font(.system(size: 36))
-                .foregroundColor(item.color.opacity(0.6))
+
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DS.surfaceElevated.opacity(0.72))
+                .frame(width: 68, height: 52)
+                .overlay(
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(item.color)
+                )
 
             if item.childCount > 0 {
                 Text("\(item.childCount) items")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.textMuted)
             }
             Spacer(minLength: 0)
@@ -412,19 +404,6 @@ private struct LibraryCardView: View {
                 .font(.system(size: 32))
                 .foregroundColor(item.color.opacity(0.5))
             Spacer(minLength: 0)
-        }
-    }
-
-    // MARK: - Card Background
-
-    private var cardBackground: some View {
-        ZStack {
-            DS.surfaceElevated
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    isHovered ? DS.borderActive : DS.border,
-                    lineWidth: 1
-                )
         }
     }
 

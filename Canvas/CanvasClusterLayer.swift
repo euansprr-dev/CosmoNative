@@ -43,6 +43,7 @@ struct CanvasClusterLayer: View {
     @State private var editingClusterID: UUID?
     @State private var editingName: String = ""
     @State private var localResizingClusterId: UUID?
+    @State private var clusterViewDropPreview: ClusterViewDropPreview?
 
     // MARK: - Body
 
@@ -121,61 +122,76 @@ struct CanvasClusterLayer: View {
         let rect = clusterScreenRect(cluster)
         let isHovered = hoveredClusterID == cluster.id
         let isEditing = editingClusterID == cluster.id
-        let isDropTarget = dropTargetClusterId == cluster.id
         let isSelected = selectedClusterId == cluster.id
         let showLabel = cluster.isUserCreated || isHovered || effectiveScale < 0.7
         let isZoneCluster = cluster.zoneType != nil
         let hasAltContent = cluster.isUserCreated && (cluster.viewMode != .canvas || isZoneCluster)
+        let supportsClusterViewDrop = cluster.isUserCreated && !isZoneCluster
+        let clusterViewPreview = clusterViewDropPreview?.clusterId == cluster.id ? clusterViewDropPreview : nil
+        let isClusterViewDropTarget = clusterViewPreview != nil
+        let isDropTarget = dropTargetClusterId == cluster.id || isClusterViewDropTarget
         let clusterIsResizing = resizingClusterId == cluster.id || localResizingClusterId == cluster.id
         let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
-        ZStack {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
-                            style: StrokeStyle(
-                                lineWidth: isSelected || isDropTarget ? 2 : 1.5,
-                                dash: (isSelected || isDropTarget) ? [] : [4, 4]
+        clusterViewDropSurface(
+            enabled: supportsClusterViewDrop,
+            cluster: cluster,
+            clusterSize: rect.size
+        ) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(
+                                isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
+                                style: StrokeStyle(
+                                    lineWidth: isSelected || isDropTarget ? 2 : 1.5,
+                                    dash: (isSelected || isDropTarget) ? [] : [4, 4]
+                                )
                             )
-                        )
-                )
-                .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
-                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+                    )
+                    .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
+                    .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
 
-            if showLabel || hasAltContent {
-                VStack(spacing: 0) {
-                    if showLabel {
-                        clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster, allowDrag: hasAltContent)
-                            .frame(height: 42)
-                            .padding(.top, 8)
-                    } else {
-                        Spacer(minLength: 8)
-                    }
+                if showLabel || hasAltContent {
+                    VStack(spacing: 0) {
+                        if showLabel {
+                            clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster, allowDrag: hasAltContent)
+                                .frame(height: 42)
+                                .padding(.top, 8)
+                        } else {
+                            Spacer(minLength: 8)
+                        }
 
-                    if hasAltContent {
-                        clusterAlternativeContent(
-                            cluster,
-                            clusterWidth: rect.width,
-                            clusterHeight: rect.height - 54
-                        )
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
-                    } else {
-                        Spacer(minLength: 0)
+                        if hasAltContent {
+                            clusterAlternativeContent(
+                                cluster,
+                                clusterWidth: rect.width,
+                                clusterHeight: rect.height - 54,
+                                isDropTargeted: isClusterViewDropTarget,
+                                highlightedBoardColumnValue: clusterViewPreview?.boardColumnValue
+                            )
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 8)
+                        } else {
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
-            }
 
-            if cluster.isUserCreated && isSelected {
-                resizeHandlesOverlay(cluster: cluster, rect: rect)
             }
         }
         .frame(width: rect.width, height: rect.height)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .contentShape(RoundedRectangle(cornerRadius: 16))
+        // Resize handles rendered OUTSIDE the clip shape so edge/corner
+        // handles aren't clipped and remain fully interactive in grid/list/board modes
+        .overlay {
+            if cluster.isUserCreated && isSelected {
+                resizeHandlesOverlay(cluster: cluster, rect: rect)
+            }
+        }
         .allowsHitTesting(cluster.isUserCreated)
         .onTapGesture(count: 1) {
             if cluster.isUserCreated {
@@ -185,7 +201,7 @@ struct CanvasClusterLayer: View {
         .gesture(
             (isZoneCluster || hasAltContent || clusterIsResizing || resizingClusterId != nil || localResizingClusterId != nil)
             ? nil
-            : DragGesture(minimumDistance: 10)
+            : DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
                 .onChanged { gesture in
                     guard cluster.isUserCreated else { return }
                     if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
@@ -236,7 +252,7 @@ struct CanvasClusterLayer: View {
         .contentShape(Rectangle())
         .gesture(
             ((isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil)
-            ? DragGesture(minimumDistance: 10)
+            ? DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
                 .onChanged { gesture in
                     if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
                     onDragCluster?(cluster.id, gesture.translation)
@@ -251,7 +267,13 @@ struct CanvasClusterLayer: View {
     // MARK: - Alternative Content (List / Board)
 
     @ViewBuilder
-    private func clusterAlternativeContent(_ cluster: CanvasCluster, clusterWidth: CGFloat, clusterHeight: CGFloat) -> some View {
+    private func clusterAlternativeContent(
+        _ cluster: CanvasCluster,
+        clusterWidth: CGFloat,
+        clusterHeight: CGFloat,
+        isDropTargeted: Bool,
+        highlightedBoardColumnValue: String?
+    ) -> some View {
         if let zoneType = cluster.zoneType {
             let zoneWidth = max(clusterWidth - 4, 100)
             let zoneHeight = max(clusterHeight - 8, 100)
@@ -276,6 +298,7 @@ struct CanvasClusterLayer: View {
                         cluster: cluster,
                         clusterColor: cluster.color,
                         blocks: blocks,
+                        isDropTargeted: isDropTargeted,
                         sortOrder: cluster.sortOrder,
                         expandedBlockUUID: expandedBlockUUIDs[cluster.id],
                         onChangeSortOrder: { order in
@@ -286,9 +309,6 @@ struct CanvasClusterLayer: View {
                         },
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
-                        },
-                        onDrop: { event in
-                            onClusterViewDrop?(event)
                         }
                     )
                 case .board:
@@ -296,9 +316,7 @@ struct CanvasClusterLayer: View {
                         cluster: cluster,
                         clusterColor: cluster.color,
                         blocks: blocks,
-                        onBoardColumnDrop: { event in
-                            onBoardColumnDrop?(event)
-                        },
+                        highlightedColumnValue: highlightedBoardColumnValue,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
                         }
@@ -308,17 +326,40 @@ struct CanvasClusterLayer: View {
                         cluster: cluster,
                         clusterColor: cluster.color,
                         blocks: blocks,
+                        isDropTargeted: isDropTargeted,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
-                        },
-                        onDrop: { event in
-                            onClusterViewDrop?(event)
                         }
                     )
                 }
             }
             .frame(width: contentWidth, height: contentHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    @ViewBuilder
+    private func clusterViewDropSurface<Content: View>(
+        enabled: Bool,
+        cluster: CanvasCluster,
+        clusterSize: CGSize,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if enabled {
+            content()
+                .onDrop(
+                    of: [.text],
+                    delegate: ClusterViewSurfaceDropDelegate(
+                        cluster: cluster,
+                        blocks: blocks,
+                        clusterSize: clusterSize,
+                        preview: $clusterViewDropPreview,
+                        onBoardColumnDrop: onBoardColumnDrop,
+                        onClusterViewDrop: onClusterViewDrop
+                    )
+                )
+        } else {
+            content()
         }
     }
 
@@ -459,6 +500,125 @@ struct CanvasClusterLayer: View {
         let screenY = origin.y + canvasOffset.height + scaledPanOffset.height
 
         return CGRect(x: screenX, y: screenY, width: size.width, height: size.height)
+    }
+}
+
+private struct ClusterViewDropPreview: Equatable {
+    let clusterId: UUID
+    let boardColumnValue: String?
+}
+
+private struct ClusterViewSurfaceDropDelegate: DropDelegate {
+    let cluster: CanvasCluster
+    let blocks: [CanvasBlock]
+    let clusterSize: CGSize
+    @Binding var preview: ClusterViewDropPreview?
+    let onBoardColumnDrop: ((BoardDropEvent) -> Void)?
+    let onClusterViewDrop: ((ClusterTransferEvent) -> Void)?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.text])
+    }
+
+    func dropEntered(info: DropInfo) {
+        updatePreview(for: info, animated: true)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updatePreview(for: info, animated: false)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        clearPreview(animated: true)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let target = previewTarget(for: info)
+        clearPreview(animated: true)
+
+        let providers = info.itemProviders(for: [.text])
+        guard !providers.isEmpty else { return false }
+
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in
+                guard let blockUUID = blockUUID(from: item) else { return }
+                DispatchQueue.main.async {
+                    switch cluster.viewMode {
+                    case .board:
+                        guard let block = blocks.first(where: { $0.entityUuid == blockUUID }) else { return }
+                        let targetColumnValue = target?.boardColumnValue ?? cluster.defaultBoardDropColumnValue(for: block, among: blocks)
+                        onBoardColumnDrop?(
+                            BoardDropEvent(
+                                blockUUID: blockUUID,
+                                targetClusterId: cluster.id,
+                                targetColumnValue: targetColumnValue
+                            )
+                        )
+                    case .list, .grid, .canvas:
+                        onClusterViewDrop?(
+                            ClusterTransferEvent(
+                                blockUUID: blockUUID,
+                                targetClusterId: cluster.id
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return true
+    }
+
+    private func updatePreview(for info: DropInfo, animated: Bool) {
+        setPreview(previewTarget(for: info), animated: animated)
+    }
+
+    private func clearPreview(animated: Bool) {
+        guard preview?.clusterId == cluster.id else { return }
+        setPreview(nil, animated: animated)
+    }
+
+    private func setPreview(_ newValue: ClusterViewDropPreview?, animated: Bool) {
+        guard preview != newValue else { return }
+        if animated {
+            withAnimation(ProMotionSprings.snappy) {
+                preview = newValue
+            }
+        } else {
+            preview = newValue
+        }
+    }
+
+    private func previewTarget(for info: DropInfo) -> ClusterViewDropPreview? {
+        guard validateDrop(info: info) else { return nil }
+
+        switch cluster.viewMode {
+        case .board:
+            return ClusterViewDropPreview(
+                clusterId: cluster.id,
+                boardColumnValue: cluster.boardDropColumnValue(
+                    for: info.location.x,
+                    clusterWidth: clusterSize.width,
+                    blocks: blocks
+                )
+            )
+        case .list, .grid, .canvas:
+            return ClusterViewDropPreview(clusterId: cluster.id, boardColumnValue: nil)
+        }
+    }
+
+    private func blockUUID(from item: NSSecureCoding?) -> String? {
+        if let data = item as? Data {
+            return String(data: data, encoding: .utf8)
+        }
+        if let text = item as? String {
+            return text
+        }
+        if let text = item as? NSString {
+            return text as String
+        }
+        return nil
     }
 }
 

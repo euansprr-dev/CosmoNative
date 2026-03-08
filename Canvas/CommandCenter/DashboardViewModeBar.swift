@@ -32,8 +32,10 @@ struct DashboardViewModeBar: View {
     var todayCount: Int
     var upcomingCount: Int
     var completedCount: Int
+    var completedArrivalToken: Int
 
     @Namespace private var tabIndicator
+    @State private var pulseCompletedBadge = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -41,6 +43,18 @@ struct DashboardViewModeBar: View {
                 tabButton(mode)
             }
             Spacer()
+        }
+        .onChange(of: completedArrivalToken) { _, _ in
+            guard completedCount > 0 else { return }
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.62)) {
+                pulseCompletedBadge = true
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    pulseCompletedBadge = false
+                }
+            }
         }
     }
 
@@ -62,15 +76,7 @@ struct DashboardViewModeBar: View {
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
 
                 if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(isSelected ? DS.accent : DS.textMuted)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? DS.accentSoft : DS.surface)
-                        )
+                    badge(for: mode, count: count, isSelected: isSelected)
                 }
             }
             .foregroundColor(isSelected ? DS.accent : DS.textSecondary)
@@ -88,6 +94,27 @@ struct DashboardViewModeBar: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func badge(for mode: DashboardViewMode, count: Int, isSelected: Bool) -> some View {
+        let isCompletedBadge = mode == .completed
+        let isPulsing = isCompletedBadge && pulseCompletedBadge
+
+        return Text("\(count)")
+            .font(.system(size: 10, weight: .semibold))
+            .contentTransition(.numericText(value: Double(count)))
+            .foregroundColor(isSelected ? DS.accent : DS.textMuted)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                Capsule()
+                    .fill(isSelected ? DS.accentSoft : DS.surface)
+                    .overlay(
+                        Capsule()
+                            .fill(DS.green.opacity(isPulsing ? 0.18 : 0))
+                    )
+            )
+            .scaleEffect(isPulsing ? 1.12 : 1.0)
     }
 
     private func badgeCount(for mode: DashboardViewMode) -> Int {

@@ -9,6 +9,8 @@ struct DashboardTaskList: View {
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     @State var expandedTaskId: String?
     @State private var selectedTaskUUIDs: Set<String> = []
+    @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -131,7 +133,7 @@ struct DashboardTaskList: View {
         ForEach(tasks) { task in
             taskRow(task)
 
-            if expandedTaskId == task.uuid {
+            if expandedTaskId == task.uuid && completionStates[task.uuid] == nil {
                 TaskDetailInlineEditor(
                     viewModel: viewModel,
                     task: task,
@@ -234,6 +236,8 @@ struct DashboardTaskList: View {
             && viewModel.currentVisibleTasks.indices.contains(viewModel.selectedTaskIndex!)
             && viewModel.currentVisibleTasks[viewModel.selectedTaskIndex!].uuid == task.uuid
         let isMultiSelected = selectedTaskUUIDs.contains(task.uuid)
+        let completionState = completionStates[task.uuid]
+        let isAnimatingCompletion = completionState != nil
 
         HStack(spacing: 0) {
             // Priority color bar
@@ -244,12 +248,13 @@ struct DashboardTaskList: View {
 
             HStack(spacing: 10) {
                 // Checkbox
-                checkboxButton(task)
+                checkboxButton(task, completionState: completionState)
 
                 // Title + meta
-                taskContent(task)
+                taskContent(task, completionState: completionState)
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        guard !isAnimatingCompletion else { return }
                         if NSEvent.modifierFlags.contains(.shift) {
                             if selectedTaskUUIDs.contains(task.uuid) {
                                 selectedTaskUUIDs.remove(task.uuid)
@@ -271,13 +276,8 @@ struct DashboardTaskList: View {
                     dueDateChip(dueInfo, isOverdue: task.isOverdue)
                 }
 
-                // Duration pill
-                if !task.isCompleted && task.estimatedMinutes > 0 {
-                    durationPill(task)
-                }
-
                 // Play button
-                if !task.isCompleted {
+                if !task.isCompleted && !isAnimatingCompletion {
                     playButton(task, isActive: isActiveSession)
                 }
             }
@@ -304,10 +304,14 @@ struct DashboardTaskList: View {
                     lineWidth: isMultiSelected ? 2 : 1
                 )
         )
+        .scaleEffect(completionState?.rowScale ?? 1)
+        .opacity(completionState?.rowOpacity ?? 1)
+        .offset(y: completionState?.rowOffsetY ?? 0)
+        .blur(radius: completionState?.blurRadius ?? 0)
         .contentShape(Rectangle())
         .contextMenu {
             Button {
-                Task { await viewModel.toggleTaskCompletion(task) }
+                handleTaskCompletionTap(task)
             } label: {
                 Label(task.isCompleted ? "Mark Incomplete" : "Complete", systemImage: task.isCompleted ? "circle" : "checkmark.circle")
             }
@@ -378,28 +382,16 @@ struct DashboardTaskList: View {
     // MARK: - Checkbox
 
     @ViewBuilder
-    private func checkboxButton(_ task: TaskViewModel) -> some View {
+    private func checkboxButton(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
         Button {
-            Task { await viewModel.toggleTaskCompletion(task) }
+            handleTaskCompletionTap(task)
         } label: {
-            ZStack {
-                Circle()
-                    .fill(task.isCompleted ? DS.accent : Color.clear)
-                    .frame(width: 18, height: 18)
-
-                Circle()
-                    .stroke(
-                        task.isCompleted ? DS.accent : task.priority.color.opacity(0.5),
-                        lineWidth: 1.5
-                    )
-                    .frame(width: 18, height: 18)
-
-                if task.isCompleted {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white)
-                }
-            }
+            CommandCenterAnimatedCheckbox(
+                priorityColor: task.priority.color,
+                isCompleted: task.isCompleted,
+                completionState: completionState,
+                size: 18
+            )
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -408,7 +400,7 @@ struct DashboardTaskList: View {
     // MARK: - Task Content
 
     @ViewBuilder
-    private func taskContent(_ task: TaskViewModel) -> some View {
+    private func taskContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 if task.intent != .general {
@@ -417,11 +409,15 @@ struct DashboardTaskList: View {
                         .foregroundColor(task.intent.color.opacity(0.7))
                 }
 
-                Text(task.title)
-                    .font(.system(size: 13, weight: task.isCompleted ? .regular : .medium))
-                    .foregroundColor(task.isCompleted ? DS.textMuted : DS.text)
-                    .strikethrough(task.isCompleted, color: DS.textMuted)
-                    .lineLimit(1)
+                CommandCenterAnimatedTaskTitle(
+                    title: task.title,
+                    isCompleted: task.isCompleted,
+                    completionState: completionState,
+                    font: .system(size: 13, weight: task.isCompleted ? .regular : .medium),
+                    activeColor: DS.text,
+                    completedColor: DS.textMuted
+                )
+                .lineLimit(1)
             }
 
             HStack(spacing: 6) {
@@ -458,17 +454,6 @@ struct DashboardTaskList: View {
                 Capsule()
                     .fill(isOverdue ? PlannerumColors.overdue.opacity(0.1) : DS.surface)
             )
-    }
-
-    // MARK: - Duration Pill
-
-    private func durationPill(_ task: TaskViewModel) -> some View {
-        Text("\(task.estimatedMinutes)m")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(DS.textMuted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(DS.surface, in: Capsule())
     }
 
     // MARK: - Play Button
@@ -534,5 +519,208 @@ struct DashboardTaskList: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
+    }
+
+    private func handleTaskCompletionTap(_ task: TaskViewModel) {
+        guard completionStates[task.uuid] == nil else { return }
+
+        if task.isCompleted {
+            Task { _ = await viewModel.uncompleteTask(uuid: task.uuid) }
+            return
+        }
+
+        expandedTaskId = nil
+        let timings = CommandCenterCompletionTimings(reduceMotion: reduceMotion)
+        completionStates[task.uuid] = .initial
+
+        withAnimation(.easeInOut(duration: timings.ringDuration)) {
+            updateCompletionState(for: task.uuid) { state in
+                state.ringProgress = 1
+                state.fillScale = 1
+                state.fillOpacity = 1
+            }
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: timings.checkDelay.nanoseconds)
+            withAnimation(.spring(response: timings.checkResponse, dampingFraction: 0.78)) {
+                updateCompletionState(for: task.uuid) { $0.checkProgress = 1 }
+            }
+
+            try? await Task.sleep(nanoseconds: (timings.strikeDelay - timings.checkDelay).nanoseconds)
+            withAnimation(.easeInOut(duration: timings.strikeDuration)) {
+                updateCompletionState(for: task.uuid) { $0.strikeProgress = 1 }
+            }
+
+            try? await Task.sleep(nanoseconds: (timings.fadeDelay - timings.strikeDelay).nanoseconds)
+            withAnimation(.easeInOut(duration: timings.fadeDuration)) {
+                updateCompletionState(for: task.uuid) { state in
+                    state.rowOpacity = 0
+                    state.rowScale = reduceMotion ? 0.98 : 0.95
+                    state.rowOffsetY = reduceMotion ? -4 : -10
+                    state.blurRadius = reduceMotion ? 0.6 : 1.8
+                }
+            }
+
+            try? await Task.sleep(nanoseconds: timings.fadeDuration.nanoseconds)
+            let completed = await viewModel.completeTask(uuid: task.uuid)
+            completionStates.removeValue(forKey: task.uuid)
+
+            if completed {
+                viewModel.notifyCompletedTaskArrival()
+            }
+        }
+    }
+
+    private func updateCompletionState(for taskUUID: String, _ update: (inout CommandCenterTaskCompletionState) -> Void) {
+        var state = completionStates[taskUUID] ?? .initial
+        update(&state)
+        completionStates[taskUUID] = state
+    }
+}
+
+struct CommandCenterTaskCompletionState: Equatable {
+    var ringProgress: CGFloat = 0
+    var fillScale: CGFloat = 0.7
+    var fillOpacity: Double = 0
+    var checkProgress: CGFloat = 0
+    var strikeProgress: CGFloat = 0
+    var rowOpacity: Double = 1
+    var rowScale: CGFloat = 1
+    var rowOffsetY: CGFloat = 0
+    var blurRadius: CGFloat = 0
+
+    static let initial = CommandCenterTaskCompletionState()
+}
+
+struct CommandCenterCompletionTimings {
+    let ringDuration: Double
+    let checkDelay: Double
+    let checkResponse: Double
+    let strikeDelay: Double
+    let strikeDuration: Double
+    let fadeDelay: Double
+    let fadeDuration: Double
+
+    init(reduceMotion: Bool) {
+        if reduceMotion {
+            ringDuration = 0.14
+            checkDelay = 0.05
+            checkResponse = 0.18
+            strikeDelay = 0.16
+            strikeDuration = 0.10
+            fadeDelay = 0.28
+            fadeDuration = 0.16
+        } else {
+            ringDuration = 0.24
+            checkDelay = 0.12
+            checkResponse = 0.24
+            strikeDelay = 0.32
+            strikeDuration = 0.18
+            fadeDelay = 0.54
+            fadeDuration = 0.24
+        }
+    }
+}
+
+struct CommandCenterAnimatedCheckbox: View {
+    let priorityColor: Color
+    let isCompleted: Bool
+    let completionState: CommandCenterTaskCompletionState?
+    let size: CGFloat
+
+    private var ringProgress: CGFloat {
+        if isCompleted { return 1 }
+        return completionState?.ringProgress ?? 0
+    }
+
+    private var fillScale: CGFloat {
+        if isCompleted { return 1 }
+        return completionState?.fillScale ?? 0.7
+    }
+
+    private var fillOpacity: Double {
+        if isCompleted { return 1 }
+        return completionState?.fillOpacity ?? 0
+    }
+
+    private var checkProgress: CGFloat {
+        if isCompleted { return 1 }
+        return completionState?.checkProgress ?? 0
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(priorityColor.opacity(isCompleted ? 0 : 0.4), lineWidth: 1.5)
+                .frame(width: size, height: size)
+
+            Circle()
+                .fill(DS.green)
+                .frame(width: size, height: size)
+                .scaleEffect(fillScale)
+                .opacity(fillOpacity)
+
+            Circle()
+                .trim(from: 0, to: ringProgress)
+                .stroke(DS.green, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(-90))
+                .opacity(isCompleted || completionState != nil ? 1 : 0)
+
+            CommandCenterCheckmarkShape()
+                .trim(from: 0, to: checkProgress)
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                .frame(width: size * 0.52, height: size * 0.52)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+struct CommandCenterAnimatedTaskTitle: View {
+    let title: String
+    let isCompleted: Bool
+    let completionState: CommandCenterTaskCompletionState?
+    let font: Font
+    let activeColor: Color
+    let completedColor: Color
+
+    private var strikeProgress: CGFloat {
+        if isCompleted { return 1 }
+        return completionState?.strikeProgress ?? 0
+    }
+
+    var body: some View {
+        Text(title)
+            .font(font)
+            .foregroundColor(isCompleted || completionState != nil ? completedColor : activeColor)
+            .strikethrough(isCompleted, color: completedColor)
+            .overlay(alignment: .leading) {
+                if !isCompleted {
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(completedColor)
+                            .frame(width: geo.size.width * strikeProgress, height: 1.4)
+                            .offset(y: 0.5)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private struct CommandCenterCheckmarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.14, y: rect.minY + rect.height * 0.56))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.minY + rect.height * 0.82))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.88, y: rect.minY + rect.height * 0.18))
+        return path
+    }
+}
+
+private extension Double {
+    var nanoseconds: UInt64 {
+        UInt64((self * 1_000_000_000).rounded())
     }
 }

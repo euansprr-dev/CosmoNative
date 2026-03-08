@@ -2606,22 +2606,19 @@ class AgentToolExecutor {
             let intent = lessonDict["intent"] as? String
 
             let targetModuleOverride = lessonDict["targetModule"] as? String
+            let targetModuleId = targetModuleOverride ?? PromptTemplateStore.categoryToModuleMap[category]
             let lesson = InferredLesson(
                 clientUUID: clientUUID,
                 rule: rule,
                 evidence: evidence,
                 category: category,
                 confidence: 0.9,  // High confidence for explicit user lessons
-                intent: intent
+                intent: intent,
+                source: .explicitUser,
+                enforcement: .hard,  // Explicit user saves are always hard rules
+                targetModuleId: targetModuleId
             )
             await LessonExtractor.shared.storeLesson(lesson)
-
-            // Auto-route to matching skill module
-            let moduleId = targetModuleOverride ?? PromptTemplateStore.categoryToModuleMap[category]
-            if let moduleId = moduleId {
-                let formatted = LessonExtractor.shared.formatLessonForModule(lesson)
-                PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: formatted)
-            }
             savedCount += 1
         }
 

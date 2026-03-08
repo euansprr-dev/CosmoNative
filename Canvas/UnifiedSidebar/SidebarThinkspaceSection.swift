@@ -12,6 +12,7 @@ struct SidebarThinkspaceSection: View {
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Data
     @State private var projects: [Atom] = []
@@ -46,6 +47,14 @@ struct SidebarThinkspaceSection: View {
         "#A8CCE8", "#CAB8E8", "#F4AFA0", "#8FC7A2",
         "#F5E6C8", "#E8B8A8", "#A8D8E8", "#D8A8E8",
     ]
+
+    private var hoverAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.hover
+    }
+
+    private var actionAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.snappy
+    }
 
     // MARK: - Filtered Thinkspaces
 
@@ -88,32 +97,24 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Section header
+        VStack(spacing: isCollapsed ? 10 : 12) {
             sectionHeader
 
-            if !isCollapsed {
-                Group {
-                    // Filter chips
-                    if !projects.isEmpty {
-                        filterChipsRow
-                            .padding(.top, 4)
-                    }
-
-                    // Creation field
-                    if isCreatingThinkspace {
-                        newThinkspaceRow
-                            .padding(.horizontal, 12)
-                            .padding(.top, 6)
-                    }
-
-                    // Thinkspace list
-                    thinkspaceList
-                        .padding(.top, 4)
+            if isCollapsed {
+                collapsedThinkspaceStack
+            } else {
+                if !projects.isEmpty {
+                    filterChipsRow
                 }
-                .transition(.opacity.combined(with: .move(edge: .leading)))
+
+                if isCreatingThinkspace {
+                    newThinkspaceRow
+                }
+
+                thinkspaceList
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .focused($isSectionFocused)
         .focusable()
         .focusEffectDisabled()
@@ -143,50 +144,32 @@ struct SidebarThinkspaceSection: View {
     private var sectionHeader: some View {
         HStack(spacing: 6) {
             if isCollapsed {
-                // Icon-only mode
                 Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(DS.textSecondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .frame(maxWidth: .infinity)
             } else {
-                Text("THINKSPACES")
-                    .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.88)
+                Text("Thinkspaces")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        isCreatingThinkspace = true
-                        newName = ""
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        isNameFieldFocused = true
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.accent)
-                        .frame(width: 20, height: 20)
-                        .background(DS.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
-                }
-                .buttonStyle(.plain)
-                .help("New ThinkSpace")
+                createThinkspaceButton
             }
         }
-        .padding(.horizontal, isCollapsed ? 8 : 16)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Filter Chips Row
 
     private var filterChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 filterChip(label: "All", color: DS.accent, isSelected: selectedProjectFilter == nil) {
-                    withAnimation(ProMotionSprings.snappy) {
+                    withAnimation(actionAnimation) {
                         selectedProjectFilter = nil
                     }
                 }
@@ -198,7 +181,7 @@ struct SidebarThinkspaceSection: View {
                         color: color,
                         isSelected: selectedProjectFilter == project.uuid
                     ) {
-                        withAnimation(ProMotionSprings.snappy) {
+                        withAnimation(actionAnimation) {
                             selectedProjectFilter = project.uuid
                         }
                     }
@@ -211,30 +194,29 @@ struct SidebarThinkspaceSection: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
         }
     }
 
     @ViewBuilder
     private func filterChip(label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: 6) {
                 Circle()
                     .fill(color)
-                    .frame(width: 5, height: 5)
+                    .frame(width: 6, height: 6)
 
                 Text(label)
-                    .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                     .foregroundColor(isSelected ? color : DS.textSecondary)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
             .background(
-                Capsule().fill(isSelected ? color.opacity(0.12) : Color.clear)
+                Capsule().fill(isSelected ? color.opacity(0.12) : DS.surface)
             )
             .overlay(
-                Capsule().stroke(isSelected ? color.opacity(0.25) : Color.clear, lineWidth: 0.5)
+                Capsule().stroke(isSelected ? color.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -244,41 +226,43 @@ struct SidebarThinkspaceSection: View {
 
     private var newThinkspaceRow: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(DS.accent.opacity(0.15))
-                .frame(width: 22, height: 22)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(DS.accent.opacity(0.14))
+                .frame(width: 28, height: 28)
                 .overlay(
                     Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DS.accent)
                 )
 
             TextField("Name", text: $newName)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)
                 .focused($isNameFieldFocused)
                 .onSubmit { createThinkspace() }
 
             Button {
-                withAnimation(ProMotionSprings.snappy) {
+                withAnimation(actionAnimation) {
                     isCreatingThinkspace = false
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.textMuted)
+                    .frame(width: 24, height: 24)
+                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(DS.accent.opacity(0.08))
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                .fill(DS.surface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(DS.accent.opacity(0.25), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
                 )
         )
         .transition(.asymmetric(
@@ -292,16 +276,31 @@ struct SidebarThinkspaceSection: View {
     @ViewBuilder
     private var thinkspaceList: some View {
         let items = filteredThinkspaces
-        if items.isEmpty && !isCollapsed {
+        if items.isEmpty {
             thinkspaceEmptyState
         } else {
-            VStack(spacing: 1) {
+            VStack(spacing: 6) {
                 ForEach(items) { thinkspace in
                     thinkspaceRow(thinkspace)
                 }
             }
-            .padding(.horizontal, isCollapsed ? 6 : 8)
         }
+    }
+
+    @ViewBuilder
+    private var collapsedThinkspaceStack: some View {
+        let items = Array(filteredThinkspaces.prefix(4))
+
+        VStack(spacing: 8) {
+            if items.isEmpty {
+                EmptyView()
+            } else {
+                ForEach(items) { thinkspace in
+                    thinkspaceRow(thinkspace)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func thinkspaceRow(_ thinkspace: Thinkspace) -> some View {
@@ -309,6 +308,7 @@ struct SidebarThinkspaceSection: View {
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
         let isRenaming = renamingThinkspaceId == thinkspace.id
+        let isDropTarget = crossDragManager.hoveredThinkspaceId == thinkspace.id
 
         return VStack(alignment: .leading, spacing: 0) {
             if isRenaming && !isCollapsed {
@@ -328,24 +328,17 @@ struct SidebarThinkspaceSection: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(crossThinkspaceHighlight(for: thinkspace, isActive: isActive, isHovered: isHovered))
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                .fill(thinkspaceRowFill(isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
                 .strokeBorder(
-                    crossDragManager.hoveredThinkspaceId == thinkspace.id
-                        ? DS.accent.opacity(0.5)
-                        : Color.clear,
-                    lineWidth: 1.5
+                    isDropTarget ? DS.accent.opacity(0.32) : (isActive ? DS.accent.opacity(0.14) : Color.clear),
+                    lineWidth: isDropTarget ? 1.5 : 1
                 )
         )
-        .scaleEffect(crossDragManager.hoveredThinkspaceId == thinkspace.id
-                      ? 1.0 + 0.04 * blinkPulse(crossDragManager.hoverProgress)
-                      : 1.0)
-        .opacity(crossDragManager.hoveredThinkspaceId == thinkspace.id
-                 ? 1.0 - 0.4 * blinkPulse(crossDragManager.hoverProgress)
-                 : 1.0)
+        .shadow(color: isDropTarget ? DS.accentGlow : .clear, radius: 12, x: 0, y: 0)
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -359,69 +352,65 @@ struct SidebarThinkspaceSection: View {
         .contextMenu {
             thinkspaceContextMenu(thinkspace)
         }
-        .animation(.easeInOut(duration: 0.12), value: isHovered)
-        .animation(.linear(duration: 0.05), value: crossDragManager.hoverProgress)
+        .animation(hoverAnimation, value: isHovered)
+        .animation(hoverAnimation, value: isDropTarget)
     }
 
     @ViewBuilder
     private func thinkspaceRowLabel(_ thinkspace: Thinkspace, isActive: Bool, isExpanded: Bool) -> some View {
+        let project = projectFor(thinkspace)
+        let color = project.map { projectColor(for: $0) } ?? DS.accent
+
         if isCollapsed {
-            // Collapsed: just icon
-            let project = projectFor(thinkspace)
-            let color = project.map { projectColor(for: $0) } ?? DS.textMuted
-            Circle()
-                .fill(isActive ? DS.accent.opacity(0.2) : color.opacity(0.15))
-                .frame(width: 28, height: 28)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isActive ? DS.accentSoft : DS.surface)
+                .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                 .overlay(
                     Text(String(thinkspace.name.prefix(1)).uppercased())
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundColor(isActive ? DS.accent : color)
                 )
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
                 .help(thinkspace.name)
         } else {
-            // Expanded: full row
-            HStack(spacing: 6) {
-                // Active indicator
+            HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(isActive ? DS.accent : Color.clear)
-                    .frame(width: 3, height: 16)
+                    .frame(width: 3, height: 18)
 
-                // Expand chevron
                 Button {
                     toggleExpand(thinkspace)
                 } label: {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DS.textMuted)
-                        .frame(width: 12, height: 12)
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
 
-                // Project color dot
-                let project = projectFor(thinkspace)
-                if let project = project {
-                    Circle()
-                        .fill(projectColor(for: project))
-                        .frame(width: 5, height: 5)
-                }
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isActive ? DS.accent.opacity(0.14) : color.opacity(0.14))
+                    .frame(width: 24, height: 24)
+                    .overlay(
+                        Text(String(thinkspace.name.prefix(1)).uppercased())
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(isActive ? DS.accent : color)
+                    )
 
-                // Name
                 Text(thinkspace.name)
-                    .font(.system(size: 12, weight: isActive ? .semibold : .medium))
+                    .font(.system(size: 13, weight: isActive ? .semibold : .medium))
                     .foregroundColor(isActive ? DS.text : DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer()
 
-                // Block count
                 Text("\(thinkspace.blockCount)")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundColor(DS.textMuted)
+                    .frame(minWidth: 22, alignment: .trailing)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
             .contentShape(Rectangle())
         }
     }
@@ -429,27 +418,35 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Rename Row
 
     private func thinkspaceRenameRow(_ thinkspace: Thinkspace) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(DS.accent)
-                .frame(width: 3, height: 16)
+        let project = projectFor(thinkspace)
+        let color = project.map { projectColor(for: $0) } ?? DS.accent
+
+        return HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(color.opacity(0.14))
+                .frame(width: 24, height: 24)
+                .overlay(
+                    Text(String(thinkspace.name.prefix(1)).uppercased())
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(color)
+                )
 
             TextField("Name", text: $renameText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)
                 .focused($isRenameFieldFocused)
                 .onSubmit { commitRename(thinkspace) }
                 .onExitCommand { cancelRename() }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(DS.accent.opacity(0.08))
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                .fill(DS.surface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(DS.accent.opacity(0.25), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
                 )
         )
     }
@@ -461,31 +458,38 @@ struct SidebarThinkspaceSection: View {
         let docs = manager.childDocsCache[thinkspace.id] ?? []
         let isLoading = childDocsLoading.contains(thinkspace.id)
 
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 4) {
             if isLoading {
                 HStack(spacing: 6) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
                         .scaleEffect(0.5)
                     Text("Loading...")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DS.textMuted)
                 }
-                .padding(.leading, 28)
-                .padding(.vertical, 4)
             } else if docs.isEmpty {
                 Text("No blocks")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.textMuted)
-                    .padding(.leading, 28)
-                    .padding(.vertical, 4)
             } else {
                 ForEach(docs) { doc in
                     sidebarChildDocRow(doc, thinkspaceId: thinkspace.id)
                 }
             }
         }
-        .padding(.bottom, 2)
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+        .padding(.leading, 24)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     private func sidebarChildDocRow(_ doc: ChildDoc, thinkspaceId: String) -> some View {
@@ -498,37 +502,26 @@ struct SidebarThinkspaceSection: View {
                 userInfo: ["type": doc.entityType, "id": doc.entityId]
             )
         } label: {
-            HStack(spacing: 4) {
-                Rectangle()
-                    .fill(DS.borderActive)
-                    .frame(width: 1)
-                    .padding(.leading, 22)
-
-                Rectangle()
-                    .fill(DS.borderActive)
-                    .frame(width: 6, height: 1)
-
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(doc.entityType.color.opacity(0.15))
-                    .frame(width: 16, height: 16)
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(doc.entityType.color.opacity(0.14))
+                    .frame(width: 20, height: 20)
                     .overlay(
                         Image(systemName: doc.entityType.icon)
-                            .font(.system(size: 8, weight: .medium))
+                            .font(.system(size: 9, weight: .medium))
                             .foregroundColor(doc.entityType.color)
                     )
 
                 Text(doc.title)
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer()
             }
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered ? DS.surfaceHover : Color.clear)
-            )
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 8, hoverFill: DS.surfaceHover)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -605,28 +598,66 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Empty State
 
     private var thinkspaceEmptyState: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Image(systemName: "rectangle.3.group")
-                .font(.system(size: 16))
+                .font(.system(size: 18))
                 .foregroundColor(DS.textMuted)
 
-            Text("No ThinkSpaces")
+            Text("No thinkspaces yet")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.textSecondary)
+
+            Text("Create one to start organizing the canvas.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.textMuted)
-
-            Text("Tap + to create")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 18)
+    }
+
+    private var createThinkspaceButton: some View {
+        Button {
+            withAnimation(actionAnimation) {
+                isCreatingThinkspace = true
+                newName = ""
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isNameFieldFocused = true
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.accent)
+                .frame(width: 28, height: 28)
+                .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .help("New ThinkSpace")
+    }
+
+    private func thinkspaceRowFill(isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
+        if isDropTarget {
+            return DS.accentSoft
+        }
+        if isActive {
+            return DS.accentSoft
+        }
+        if isHovered {
+            return DS.surfaceHover
+        }
+        return .clear
     }
 
     // MARK: - Actions
 
     private func selectThinkspace(_ thinkspace: Thinkspace) {
         // Only set destination — MainView's onChange handles the actual switchTo()
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             currentDestination = .thinkspace(id: thinkspace.id)
         }
     }
@@ -640,20 +671,20 @@ struct SidebarThinkspaceSection: View {
         Task {
             await manager.rename(thinkspace, to: trimmed)
         }
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             renamingThinkspaceId = nil
         }
     }
 
     private func cancelRename() {
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             renamingThinkspaceId = nil
             renameText = ""
         }
     }
 
     private func toggleExpand(_ thinkspace: Thinkspace) {
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             if expandedThinkspaces.contains(thinkspace.id) {
                 expandedThinkspaces.remove(thinkspace.id)
             } else {
@@ -680,11 +711,11 @@ struct SidebarThinkspaceSection: View {
                 projectUuid: selectedProjectFilter
             ) {
                 await manager.switchTo(thinkspace)
-                withAnimation(ProMotionSprings.snappy) {
+                withAnimation(actionAnimation) {
                     currentDestination = .thinkspace(id: thinkspace.id)
                 }
             }
-            withAnimation(ProMotionSprings.snappy) {
+            withAnimation(actionAnimation) {
                 isCreatingThinkspace = false
             }
         }
@@ -717,7 +748,7 @@ struct SidebarThinkspaceSection: View {
         isKeyboardNavigating = true
         let items = allNavigableItems
         guard !items.isEmpty else { return }
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             selectedIndex = min(selectedIndex + 1, items.count - 1)
             updateHoverFromKeyboard()
         }
@@ -727,7 +758,7 @@ struct SidebarThinkspaceSection: View {
         isKeyboardNavigating = true
         let items = allNavigableItems
         guard !items.isEmpty else { return }
-        withAnimation(ProMotionSprings.snappy) {
+        withAnimation(actionAnimation) {
             selectedIndex = max(selectedIndex - 1, 0)
             updateHoverFromKeyboard()
         }
@@ -754,7 +785,7 @@ struct SidebarThinkspaceSection: View {
         if renamingThinkspaceId != nil {
             cancelRename()
         } else if isCreatingThinkspace {
-            withAnimation(ProMotionSprings.snappy) {
+            withAnimation(actionAnimation) {
                 isCreatingThinkspace = false
             }
         }
@@ -772,7 +803,7 @@ struct SidebarThinkspaceSection: View {
         let items = allNavigableItems
         guard selectedIndex < items.count else { return }
         if case .thinkspace(let thinkspace, _) = items[selectedIndex] {
-            withAnimation(ProMotionSprings.snappy) {
+            withAnimation(actionAnimation) {
                 expandedThinkspaces.remove(thinkspace.id)
             }
         }
@@ -806,29 +837,5 @@ struct SidebarThinkspaceSection: View {
     private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
         guard let projectUuid = thinkspace.projectUuid else { return nil }
         return projects.first { $0.uuid == projectUuid }
-    }
-
-    // MARK: - Cross-Thinkspace Drag Helpers
-
-    /// Background fill for thinkspace rows, accounting for cross-thinkspace drag highlight
-    private func crossThinkspaceHighlight(for thinkspace: Thinkspace, isActive: Bool, isHovered: Bool) -> some ShapeStyle {
-        if crossDragManager.hoveredThinkspaceId == thinkspace.id {
-            return AnyShapeStyle(DS.accent.opacity(0.15))
-        } else if isActive {
-            return AnyShapeStyle(DS.accent.opacity(0.10))
-        } else if isHovered {
-            return AnyShapeStyle(DS.surfaceHover)
-        } else {
-            return AnyShapeStyle(Color.clear)
-        }
-    }
-
-    /// Generates a 3-pulse blink wave from progress 0→1
-    /// Returns 0→1→0 three times across the progress range
-    private func blinkPulse(_ progress: CGFloat) -> CGFloat {
-        guard progress > 0 && progress < 1 else { return 0 }
-        // 3 pulses: sin wave with 3 full cycles
-        let wave = sin(progress * .pi * 3)
-        return max(0, wave)
     }
 }

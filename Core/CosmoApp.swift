@@ -74,8 +74,11 @@ struct CosmoApp: App {
         // Migrate existing lessons to add intent scope
         Task { await LessonExtractor.shared.migrateExistingLessons() }
 
-        // Migrate existing lessons into matching skill modules
-        Task { await LessonExtractor.shared.migrateExistingLessonsToModules() }
+        // Migrate lesson enforcement levels (source/enforcement/targetModuleId)
+        Task { await LessonExtractor.shared.migrateEnforcementLevels() }
+
+        // Import module LEARNED RULES into canonical atom storage + strip from modules
+        Task { await LessonExtractor.shared.migrateModuleLessonsToAtoms() }
 
         // Register Swipe File hotkey (Cmd+Shift+S)
         print("📋 Registering Swipe File hotkey callback...")

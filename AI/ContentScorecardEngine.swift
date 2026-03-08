@@ -167,13 +167,20 @@ class ContentScorecardEngine: ObservableObject {
             throw ScorecardError.emptyDraft
         }
 
-        // 4. Build connection names for originality evaluation
+        // 4. Load hard lesson rules for compliance evaluation
+        let lessonPolicy = await LessonPolicyResolver.resolveForWritingEngine(
+            clientUUID: contentMeta?.clientProfileUUID,
+            intent: "draft"
+        )
+
+        // 5. Build connection names for originality evaluation
         let connectionNames = knowledgeContext.connections.map { $0.atom.title ?? "Untitled" }
         let userMessage = buildEvaluationPrompt(
             draftText: draftText,
             voiceFingerprint: voiceFingerprint,
             hasKnowledgeContext: hasKnowledgeContext,
-            connectionNames: connectionNames
+            connectionNames: connectionNames,
+            hardLessons: lessonPolicy.hardRules
         )
 
         let messages: [[String: Any]] = [
@@ -206,7 +213,8 @@ class ContentScorecardEngine: ObservableObject {
         draftText: String,
         voiceFingerprint: IntelligenceVoiceFingerprint? = nil,
         hasKnowledgeContext: Bool = false,
-        connectionNames: [String] = []
+        connectionNames: [String] = [],
+        hardLessons: [InferredLesson] = []
     ) -> String {
         // Build quantified voice rules section if Intelligence Model exists
         var quantifiedVoiceRules = ""
@@ -246,12 +254,28 @@ class ContentScorecardEngine: ObservableObject {
             quantifiedVoiceRules = rules.joined(separator: "\n") + "\n\n"
         }
 
+        // Build hard lesson rules section for compliance checking
+        var lessonRulesSection = ""
+        if !hardLessons.isEmpty {
+            var lessonLines = ["HARD WRITING RULES (learned from user's past edits — violations are critical):"]
+            for (i, lesson) in hardLessons.prefix(10).enumerated() {
+                if let optimized = lesson.optimizedInstruction, !optimized.isEmpty {
+                    lessonLines.append("\(i + 1). \(optimized)")
+                } else {
+                    lessonLines.append("\(i + 1). \(lesson.rule)")
+                }
+            }
+            lessonLines.append("")
+            lessonLines.append("When evaluating Voice Match and Copy Score, flag any violation of these hard rules as a voice drift.")
+            lessonRulesSection = lessonLines.joined(separator: "\n") + "\n\n"
+        }
+
         return """
         You are a content scorecard evaluator. Analyze the following draft against the editing \
         checklist criteria from the methodology (Layer 1) and the client voice patterns (Layer 2), \
         compare structural alignment against the top swipe patterns (Layer 3)\(hasKnowledgeContext ? ", \\\nand evaluate intellectual originality against the knowledge frameworks (Layer 4)" : "").
 
-        \(quantifiedVoiceRules)=== FULL DRAFT ===
+        \(quantifiedVoiceRules)\(lessonRulesSection)=== FULL DRAFT ===
         \(draftText)
         === END DRAFT ===
 

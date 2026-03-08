@@ -322,23 +322,23 @@ enum WritingContentFormat: String, CaseIterable {
         }
     }
 
-    /// Map to the ContentFormat used by SwipeAnalysis for format comparison
+    /// Exact swipe types allowed for this writing target.
     var swipeFormatFamily: Set<ContentFormat> {
         switch self {
         case .instagramReel, .tiktokScript, .youtubeShort:
             return [.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
         case .instagramCarousel, .instagramStory:
-            return [.carousel, .post]
+            return [.carousel]
         case .twitterThread:
             return [.thread]
         case .twitterSingle:
             return [.tweet]
         case .linkedinPost, .staticPost:
-            return [.post, .longForm]
+            return [.post]
         case .youtubeLongForm:
-            return [.youtube, .longForm]
+            return [.youtube]
         case .newsletter:
-            return [.newsletter, .longForm]
+            return [.newsletter]
         }
     }
 
@@ -357,6 +357,111 @@ enum WritingContentFormat: String, CaseIterable {
         case .instagramReel, .youtubeShort, .youtubeLongForm, .tiktokScript: return .script
         case .twitterSingle, .linkedinPost, .newsletter, .staticPost: return .plaintext
         }
+    }
+
+    /// Query terms used when backfilling same-type swipes from search.
+    var swipeSearchTerms: [String] {
+        switch self {
+        case .instagramReel, .tiktokScript, .youtubeShort:
+            return ["reel", "short form video", "voiceover reel"]
+        case .instagramCarousel:
+            return ["carousel", "slides"]
+        case .instagramStory:
+            return ["story", "slides"]
+        case .twitterThread:
+            return ["thread"]
+        case .twitterSingle:
+            return ["tweet", "x post"]
+        case .linkedinPost:
+            return ["linkedin post", "post"]
+        case .youtubeLongForm:
+            return ["youtube", "long form"]
+        case .newsletter:
+            return ["newsletter"]
+        case .staticPost:
+            return ["post", "static post"]
+        }
+    }
+
+    func matchesSwipeFormat(_ format: ContentFormat?) -> Bool {
+        guard let format else { return false }
+        return swipeFormatFamily.contains(format)
+    }
+
+    static func detect(from atom: Atom) -> WritingContentFormat {
+        if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String {
+            switch explicitFormat {
+            case "reel": return .instagramReel
+            case "carousel": return .instagramCarousel
+            case "thread": return .twitterThread
+            case "post": return .staticPost
+            default: break
+            }
+        }
+
+        guard let meta = atom.metadataValue(as: ContentAtomMetadata.self) else {
+            return .staticPost
+        }
+
+        switch meta.platform {
+        case .instagram:
+            let focusState = ContentFocusModeState.from(atom: atom)
+            let draft = focusState?.draftContent ?? ""
+            if draft.contains("\"slides\"") { return .instagramCarousel }
+            if draft.contains("[STORY:") { return .instagramStory }
+            if draft.contains("[VISUAL:") { return .instagramReel }
+            return .instagramReel
+
+        case .twitter:
+            let focusState = ContentFocusModeState.from(atom: atom)
+            let draft = focusState?.draftContent ?? ""
+            if draft.contains("\"tweets\"") { return .twitterThread }
+            return .twitterSingle
+
+        case .linkedin: return .linkedinPost
+        case .youtube: return .youtubeLongForm
+        case .tiktok: return .tiktokScript
+        default: return .staticPost
+        }
+    }
+
+    static func matchingSwipeFormats(for filter: String) -> Set<ContentFormat>? {
+        let normalized = normalizeFormatFilter(filter)
+        guard !normalized.isEmpty else { return nil }
+
+        if normalized.contains("carousel") { return [.carousel] }
+        if normalized.contains("story") { return [.carousel] }
+        if normalized.contains("thread") { return [.thread] }
+        if normalized.contains("tweet") || normalized.contains("x post") || normalized.contains("twitter post") {
+            return [.tweet]
+        }
+        if normalized.contains("linkedin") || normalized.contains("static post") {
+            return [.post]
+        }
+        if normalized.contains("newsletter") { return [.newsletter] }
+        if normalized.contains("youtube") && normalized.contains("long") { return [.youtube] }
+        if normalized.contains("reel") || normalized.contains("tiktok") || normalized.contains("short") {
+            return [.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
+        }
+
+        if let direct = ContentFormat.allCases.first(where: {
+            normalizeFormatFilter($0.rawValue) == normalized || normalizeFormatFilter($0.displayName) == normalized
+        }) {
+            return [direct]
+        }
+
+        return nil
+    }
+
+    private static func normalizeFormatFilter(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "/", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 
@@ -470,9 +575,29 @@ struct ConfidenceBreakdown: Codable, Sendable {
     let reasoning: String
 }
 
+/// Structured system block with prompt caching metadata.
+struct PromptCacheBlock: Sendable {
+    let content: String
+    let cacheControl: Bool
+    let ttl: String?
+    let label: String
+
+    init(
+        content: String,
+        cacheControl: Bool,
+        ttl: String? = nil,
+        label: String = ""
+    ) {
+        self.content = content
+        self.cacheControl = cacheControl
+        self.ttl = ttl
+        self.label = label
+    }
+}
+
 /// 4-layer mega-context prompt with cache control boundaries for prompt caching.
 struct PromptContext {
-    let systemBlocks: [(content: String, cacheControl: Bool)]
+    let systemBlocks: [PromptCacheBlock]
     let modelTier: ContentModelTier
 }
 

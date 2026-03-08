@@ -55,9 +55,6 @@ struct MainView: View {
     // Track last-used thinkspace for T-key shortcut
     @State private var lastThinkspaceId: String?
 
-    // Sidebar collapse state (mirrors UnifiedSidebar's @AppStorage)
-    @AppStorage("sidebarCollapsed") private var sidebarCollapsed: Bool = false
-
     var body: some View {
         ZStack {
             // Main layout: sidebar + content area
@@ -1120,14 +1117,14 @@ struct MainView: View {
                 y: windowHeight - windowPoint.y
             )
 
-            // Don't show menus when overlays are active or not on a thinkspace
-            guard isThinkspaceActive, !showCommandK, appState.focusedEntity == nil else {
+            // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
+            let sidebarWidth = crossDragManager.sidebarWidth
+            if screenPoint.x < sidebarWidth + 4 {
                 return event
             }
 
-            // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            let sidebarWidth: CGFloat = self.sidebarCollapsed ? 48 : 260
-            if screenPoint.x < sidebarWidth {
+            // Don't show menus when overlays are active or not on a thinkspace
+            guard isThinkspaceActive, !showCommandK, appState.focusedEntity == nil else {
                 return event
             }
 

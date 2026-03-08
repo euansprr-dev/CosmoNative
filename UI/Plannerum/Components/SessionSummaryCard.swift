@@ -192,7 +192,7 @@ struct SessionSummaryCard: View {
                 icon: "clock",
                 label: "Duration",
                 value: durationString,
-                detail: "planned \(result.plannedMinutes)m"
+                detail: result.plannedMinutes > 0 ? "planned \(result.plannedMinutes)m" : "open-ended"
             )
 
             statCell(
@@ -333,4 +333,3 @@ struct SessionSummaryCard: View {
         }
     }
 }
-

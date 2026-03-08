@@ -13,7 +13,6 @@ struct TaskDetailInlineEditor: View {
     @State private var editTitle: String
     @State private var editPriority: TaskPriority
     @State private var editDueDate: Date?
-    @State private var editDuration: Int
     @State private var editIntent: TaskIntent
     @State private var editNotes: String
     @State private var showDatePicker: Bool = false
@@ -27,7 +26,6 @@ struct TaskDetailInlineEditor: View {
         _editTitle = State(initialValue: task.title)
         _editPriority = State(initialValue: task.priority)
         _editDueDate = State(initialValue: task.dueDate)
-        _editDuration = State(initialValue: task.estimatedMinutes)
         _editIntent = State(initialValue: task.intent)
         _editNotes = State(initialValue: task.body ?? "")
     }
@@ -35,12 +33,14 @@ struct TaskDetailInlineEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Title
-            TextField("", text: $editTitle, prompt: Text("Task name").foregroundColor(DS.textMuted))
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.text)
-                .focused($titleFocused)
-                .onSubmit { save() }
+            overlayTextField(
+                text: $editTitle,
+                placeholder: "Task name",
+                textColor: DS.text,
+                font: .system(size: 14, weight: .medium)
+            )
+            .focused($titleFocused)
+            .onSubmit { save() }
 
             // Priority row
             HStack(spacing: 6) {
@@ -91,33 +91,9 @@ struct TaskDetailInlineEditor: View {
                 }
             }
 
-            // Duration + Intent row
-            HStack(spacing: 6) {
-                // Duration quick picks
-                Text("Duration")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
-
-                ForEach([15, 30, 45, 60, 90], id: \.self) { mins in
-                    Button {
-                        editDuration = mins
-                    } label: {
-                        Text("\(mins)m")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(editDuration == mins ? DS.accent : DS.textMuted)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule()
-                                    .fill(editDuration == mins ? DS.accentSoft : DS.surface)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-
+            HStack {
                 Spacer()
 
-                // Intent
                 Menu {
                     ForEach(TaskIntent.allCases, id: \.self) { intent in
                         Button {
@@ -127,24 +103,39 @@ struct TaskDetailInlineEditor: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: editIntent.iconName)
                             .font(.system(size: 10))
+                            .foregroundColor(editIntent.color)
+
                         Text(editIntent.displayName)
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.text)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(DS.textSecondary)
                     }
-                    .foregroundColor(editIntent.color)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(editIntent.color.opacity(0.1), in: Capsule())
+                    .background(DS.surfaceElevated, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
                 }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
             }
 
             // Notes
-            TextField("", text: $editNotes, prompt: Text("Notes...").foregroundColor(DS.textMuted), axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.textSecondary)
+            overlayTextField(
+                text: $editNotes,
+                placeholder: "Notes...",
+                textColor: DS.textSecondary,
+                font: .system(size: 12),
+                axis: .vertical
+            )
                 .lineLimit(2...4)
 
             // Actions
@@ -251,11 +242,34 @@ struct TaskDetailInlineEditor: View {
                 title: editTitle.isEmpty ? nil : editTitle,
                 priority: editPriority != task.priority ? editPriority : nil,
                 dueDate: editDueDate,
-                estimatedMinutes: editDuration != task.estimatedMinutes ? editDuration : nil,
                 intent: editIntent != task.intent ? editIntent : nil,
                 body: editNotes.isEmpty ? nil : editNotes
             )
             onDismiss()
+        }
+    }
+
+    private func overlayTextField(
+        text: Binding<String>,
+        placeholder: String,
+        textColor: Color,
+        font: Font,
+        axis: Axis = .horizontal
+    ) -> some View {
+        let placeholderAlignment: Alignment = axis == .vertical ? .topLeading : .leading
+
+        return ZStack(alignment: placeholderAlignment) {
+            if text.wrappedValue.isEmpty {
+                Text(placeholder)
+                    .font(font)
+                    .foregroundColor(DS.text.opacity(0.45))
+                    .allowsHitTesting(false)
+            }
+
+            TextField("", text: text, axis: axis)
+                .textFieldStyle(.plain)
+                .font(font)
+                .foregroundColor(textColor)
         }
     }
 }

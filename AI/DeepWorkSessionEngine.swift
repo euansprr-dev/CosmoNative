@@ -62,12 +62,17 @@ struct ActiveDeepWorkSession: Codable, Sendable {
     }
 
     var remainingSeconds: TimeInterval {
-        max(0, TimeInterval(plannedMinutes * 60) - elapsedActiveSeconds)
+        guard plannedMinutes > 0 else { return 0 }
+        return max(0, TimeInterval(plannedMinutes * 60) - elapsedActiveSeconds)
     }
 
     var progress: Double {
         guard plannedMinutes > 0 else { return 0 }
         return min(1.0, elapsedActiveSeconds / TimeInterval(plannedMinutes * 60))
+    }
+
+    var isOpenEnded: Bool {
+        plannedMinutes <= 0
     }
 }
 
@@ -211,12 +216,13 @@ class DeepWorkSessionEngine: ObservableObject {
         stopDistractionDetection()
 
         let actualMinutes = Int(session.elapsedActiveSeconds / 60)
+        let effectivePlannedMinutes = session.isOpenEnded ? max(actualMinutes, 1) : session.plannedMinutes
 
         // Find atoms created during this session
         let outputAtomUUIDs = await findOutputAtoms(since: session.startedAt)
 
-        // Calculate XP: base 15 + (focusScore/100 * plannedMinutes/30 * 10)
-        let xpEarned = 15 + Int((focusScore / 100.0) * (Double(session.plannedMinutes) / 30.0) * 10.0)
+        // Open-ended sessions still need XP to scale with actual time spent.
+        let xpEarned = 15 + Int((focusScore / 100.0) * (Double(effectivePlannedMinutes) / 30.0) * 10.0)
 
         // Create session metadata
         let sessionMetadata = DeepWorkSessionMetadata(
@@ -306,7 +312,7 @@ class DeepWorkSessionEngine: ObservableObject {
         elapsedSeconds = newSeconds
 
         // Check if target reached
-        if session.remainingSeconds <= 0 && !showExtensionPrompt {
+        if !session.isOpenEnded && session.remainingSeconds <= 0 && !showExtensionPrompt {
             showExtensionPrompt = true
         }
     }

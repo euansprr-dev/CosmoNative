@@ -24,6 +24,7 @@ struct SkillsAndPromptsSettingsTab: View {
     // Learned skills
     @State private var learnedSkills: [InferredLesson] = []
     @State private var selectedIntentFilter: String = "all"
+    @State private var selectedEnforcementFilter: String = "all"
     @State private var editingSkillId: UUID? = nil
     @State private var editingSkillRule: String = ""
     @State private var editingSkillIntent: String = "universal"
@@ -334,12 +335,23 @@ struct SkillsAndPromptsSettingsTab: View {
                                         .fill(Color.orange.opacity(0.1))
                                 )
                         } else {
-                            intentBadge("Writing")
+                            Text("Core")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.teal)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.teal.opacity(0.1))
+                                )
                         }
 
-                        let rulesCount = promptStore.learnedRulesCount(for: module.id)
-                        if rulesCount > 0 {
-                            Text("\(rulesCount) learned")
+                        let linkedCount = learnedSkills.filter { lesson in
+                            (lesson.targetModuleId == module.id) ||
+                            (lesson.targetModuleId == nil && PromptTemplateStore.categoryToModuleMap[lesson.category] == module.id)
+                        }.count
+                        if linkedCount > 0 {
+                            Text("\(linkedCount) rules")
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundColor(.green)
                                 .padding(.horizontal, 6)
@@ -597,11 +609,20 @@ struct SkillsAndPromptsSettingsTab: View {
 
             if isLearnedSkillsExpanded {
                 VStack(spacing: SanctuaryLayout.Spacing.md) {
-                    // Intent filter chips
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
-                            ForEach(intentFilters, id: \.self) { filter in
-                                intentFilterChip(filter)
+                    // Filter chips
+                    VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                                ForEach(intentFilters, id: \.self) { filter in
+                                    intentFilterChip(filter)
+                                }
+                            }
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                                ForEach(["all", "hard", "advisory"], id: \.self) { filter in
+                                    enforcementFilterChip(filter)
+                                }
                             }
                         }
                     }
@@ -632,14 +653,27 @@ struct SkillsAndPromptsSettingsTab: View {
     }
 
     private var filteredSkills: [InferredLesson] {
+        var result = learnedSkills
+
+        // Intent filter
         switch selectedIntentFilter {
-        case "all":
-            return learnedSkills
+        case "all": break
         case "universal":
-            return learnedSkills.filter { $0.intent == nil }
+            result = result.filter { $0.intent == nil }
         default:
-            return learnedSkills.filter { $0.intent == selectedIntentFilter }
+            result = result.filter { $0.intent == selectedIntentFilter }
         }
+
+        // Enforcement filter
+        switch selectedEnforcementFilter {
+        case "hard":
+            result = result.filter { $0.effectiveEnforcement == .hard }
+        case "advisory":
+            result = result.filter { $0.effectiveEnforcement == .advisory }
+        default: break
+        }
+
+        return result
     }
 
     @ViewBuilder
@@ -653,6 +687,23 @@ struct SkillsAndPromptsSettingsTab: View {
                 .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
                 .background(
                     Capsule().fill(isSelected ? CosmoColors.cosmoAI : SanctuaryColors.Glass.secondary)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func enforcementFilterChip(_ filter: String) -> some View {
+        let isSelected = selectedEnforcementFilter == filter
+        let chipColor: Color = filter == "hard" ? .red : filter == "advisory" ? .orange : CosmoColors.cosmoAI
+        Button(action: { selectedEnforcementFilter = filter }) {
+            Text(filter.capitalized)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? .white : SanctuaryColors.Text.secondary)
+                .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
+                .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
+                .background(
+                    Capsule().fill(isSelected ? chipColor : SanctuaryColors.Glass.secondary)
                 )
         }
         .buttonStyle(.plain)
@@ -685,11 +736,12 @@ struct SkillsAndPromptsSettingsTab: View {
                     }
 
                     HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        enforcementBadge(skill.effectiveEnforcement)
                         categoryBadge(skill.category)
                         intentBadge(skill.intent ?? "universal")
                         confidenceBar(skill.confidence)
 
-                        if let moduleId = PromptTemplateStore.categoryToModuleMap[skill.category],
+                        if let moduleId = skill.targetModuleId ?? PromptTemplateStore.categoryToModuleMap[skill.category],
                            let module = promptStore.modules.first(where: { $0.id == moduleId }) {
                             Text(module.title)
                                 .font(.system(size: 9, weight: .medium))
@@ -700,17 +752,6 @@ struct SkillsAndPromptsSettingsTab: View {
                                     RoundedRectangle(cornerRadius: 4)
                                         .fill(Color.green.opacity(0.1))
                                 )
-
-                            Button(action: {
-                                let shortId = String(skill.id.uuidString.prefix(8))
-                                promptStore.removeLessonFromModule(moduleId: moduleId, lessonId: shortId)
-                            }) {
-                                Image(systemName: "link.badge.plus")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(SanctuaryColors.Text.muted)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Unlink from \(module.title)")
                         }
 
                         if skill.clientUUID != nil {
@@ -973,6 +1014,21 @@ struct SkillsAndPromptsSettingsTab: View {
         return SanctuaryColors.Semantic.error
     }
 
+    @ViewBuilder
+    private func enforcementBadge(_ enforcement: LessonEnforcement) -> some View {
+        let isHard = enforcement == .hard
+        let color: Color = isHard ? .red : SanctuaryColors.Text.muted
+        Text(isHard ? "Hard" : "Advisory")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(color.opacity(0.1))
+            )
+    }
+
     private func intentColor(_ intent: String) -> Color {
         switch intent {
         case "draft": return .purple
@@ -994,7 +1050,7 @@ struct SkillsAndPromptsSettingsTab: View {
     private func saveEditedSkill(_ skill: InferredLesson) {
         Task {
             let newIntent = editingSkillIntent == "universal" ? nil : editingSkillIntent
-            let updated = InferredLesson(
+            var updated = InferredLesson(
                 id: skill.id,
                 clientUUID: skill.clientUUID,
                 rule: editingSkillRule,
@@ -1006,6 +1062,9 @@ struct SkillsAndPromptsSettingsTab: View {
                 optimizedInstruction: skill.optimizedInstruction,
                 intent: newIntent
             )
+            updated.source = skill.source
+            updated.enforcement = skill.enforcement
+            updated.targetModuleId = skill.targetModuleId
 
             let repo = AtomRepository.shared
             let atoms = try? await repo.fetchAll(type: .agentLearning)

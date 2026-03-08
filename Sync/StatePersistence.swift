@@ -55,7 +55,7 @@ class StatePersistence: ObservableObject {
             self.voicePillState = WindowState()
             self.canvasState = CanvasState()
             self.selectedSection = "today"
-            self.sidebarWidth = 250
+            self.sidebarWidth = UnifiedSidebarMetrics.defaultExpandedWidth
             self.lastOpenedEntityType = nil
             self.lastOpenedEntityId = nil
         }

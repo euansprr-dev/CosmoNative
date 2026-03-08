@@ -8,7 +8,7 @@ import AppKit
 // MARK: - Preference Key for Thinkspace Row Frames
 
 struct ThinkspaceRowFrameKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
+    static let defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue()) { _, new in new }
     }
@@ -37,7 +37,7 @@ class CrossThinkspaceDragManager: ObservableObject {
     var thinkspaceRowFrames: [String: CGRect] = [:]
 
     // Sidebar width for hit testing
-    var sidebarWidth: CGFloat = 260
+    var sidebarWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
 
     // Timing
     private let switchDelay: TimeInterval = 0.8
@@ -209,10 +209,11 @@ class CrossThinkspaceDragManager: ObservableObject {
                 guard let window = event.window else { return }
 
                 let windowPoint = event.locationInWindow
-                // Flip Y for SwiftUI coordinate system (origin at top-left)
+                // Flip Y for SwiftUI coordinate system (origin at top-left of content area)
+                let contentHeight = window.contentView?.bounds.height ?? window.frame.height
                 let flippedPoint = CGPoint(
                     x: windowPoint.x,
-                    y: window.frame.height - windowPoint.y
+                    y: contentHeight - windowPoint.y
                 )
                 self.floatingPosition = flippedPoint
 
@@ -235,9 +236,10 @@ class CrossThinkspaceDragManager: ObservableObject {
                 guard let window = event.window else { return }
 
                 let windowPoint = event.locationInWindow
+                let contentHeight = window.contentView?.bounds.height ?? window.frame.height
                 let flippedPoint = CGPoint(
                     x: windowPoint.x,
-                    y: window.frame.height - windowPoint.y
+                    y: contentHeight - windowPoint.y
                 )
 
                 if self.hasThinkspaceSwitched || self.isOverSidebar {
@@ -303,12 +305,12 @@ struct CrossThinkspaceDragPreview: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 4)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(DS.accent.opacity(0.3), lineWidth: 1)
+                .strokeBorder(DS.border, lineWidth: 0.5)
         )
     }
 }

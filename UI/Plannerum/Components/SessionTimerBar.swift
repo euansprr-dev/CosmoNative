@@ -177,6 +177,18 @@ struct SessionTimerBar: View {
     // MARK: - Timer Display
 
     private func timerDisplay(_ session: ActiveDeepWorkSession) -> some View {
+        if session.isOpenEnded {
+            let minutes = engine.elapsedSeconds / 60
+            let seconds = engine.elapsedSeconds % 60
+            let timeString = String(format: "%02d:%02d", minutes, seconds)
+
+            return Text(timeString)
+                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                .foregroundColor(PlannerumColors.textPrimary)
+                .monospacedDigit()
+                .frame(minWidth: 80)
+        }
+
         let remaining = Int(session.remainingSeconds)
         let isOvertime = remaining <= 0
 

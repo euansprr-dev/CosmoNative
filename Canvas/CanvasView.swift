@@ -61,9 +61,8 @@ struct CanvasView: View {
     // PERF: Debounced frame tracker update — only needed for right-click hit testing
     @State private var frameUpdateTask: Task<Void, Never>?
 
-    // PERF: Cached consumed UUIDs set — avoids iterating all clusters on every render pass.
-    // Only the set is cached; ForEach still reads live blocks from spatialEngine so selection/drag state propagates.
-    @State private var cachedConsumedUUIDs: Set<String> = []
+    // Block UUIDs consumed by non-canvas clusters — computed live from clusterEngine state.
+    // No caching needed; iterating a handful of clusters is negligible.
 
     // Ambient knowledge panel
     @StateObject private var ambientEngine = AmbientFieldEngine()
@@ -159,7 +158,6 @@ struct CanvasView: View {
                         },
                         onChangeViewMode: { id, mode in
                             clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
-                            recomputeFilteredBlocks()
                         },
                         onChangeBoardGrouping: { id, grouping in
                             clusterEngine.setBoardGrouping(for: id, grouping: grouping)
@@ -183,7 +181,6 @@ struct CanvasView: View {
                                 clusterEngine.removeBlockFromCluster(blockUUID: event.blockUUID, clusterId: sourceCluster.id, blocks: spatialEngine.blocks)
                             }
                             clusterEngine.addBlockToCluster(blockUUID: event.blockUUID, clusterId: event.targetClusterId, blocks: spatialEngine.blocks)
-                            recomputeFilteredBlocks()
                         },
                         onOpenFocusMode: { uuid in
                             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == uuid }),
@@ -331,10 +328,6 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
-                recomputeFilteredBlocks()
-            }
-            .onChange(of: clusterConsumedBlockUUIDs) { _, newValue in
-                cachedConsumedUUIDs = newValue
             }
             .onChange(of: canvasOffset) { _, _ in
                 scheduleFrameUpdate(screenCenter: screenCenter)
@@ -470,7 +463,7 @@ struct CanvasView: View {
     }
 
     private var blocksLayer: some View {
-        ForEach(spatialEngine.blocks.filter { !cachedConsumedUUIDs.contains($0.entityUuid) }, id: \.id) { block in
+        ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
             CanvasBlockContainer(
                 block: block,
                 canvasOffset: canvasOffset,
@@ -549,11 +542,6 @@ struct CanvasView: View {
     // blockView(for:) has been extracted into CanvasBlockContainer (see bottom of file)
     // for Equatable-based SwiftUI diffing — only changed blocks re-render.
 
-    /// PERF: Recompute cached consumed UUIDs — only when cluster membership changes.
-    /// The set lookup in ForEach is O(1) per block; caching avoids re-iterating all clusters per frame.
-    private func recomputeFilteredBlocks() {
-        cachedConsumedUUIDs = clusterConsumedBlockUUIDs
-    }
 
     /// PERF: Rebuild the media content cache when blocks change
     private func rebuildMediaContentCache() {
@@ -663,7 +651,7 @@ struct CanvasView: View {
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
                     await repairLegacyBlocksIfNeeded()
                     rebuildMediaContentCache()
-                    recomputeFilteredBlocks()
+                    
 
                     // Restore persisted zoom/pan for current thinkspace
                     if let tsId = thinkspaceId,
@@ -677,7 +665,7 @@ struct CanvasView: View {
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
                     )
-                    recomputeFilteredBlocks()
+                    
                 }
 
                 // Load persisted inbox blocks
@@ -1121,7 +1109,7 @@ struct CanvasView: View {
                         // Reload blocks to pick up the transferred block
                         await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
                         rebuildMediaContentCache()
-                        recomputeFilteredBlocks()
+                        
                     }
                 }
 
@@ -1192,7 +1180,7 @@ struct CanvasView: View {
                         blocks: spatialEngine.blocks
                     )
                     rebuildMediaContentCache()
-                    recomputeFilteredBlocks()
+                    
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
@@ -2014,8 +2002,9 @@ struct CanvasView: View {
             }
             crossDragManager.enterSidebar()
 
-            // Update cursor position (flip Y for SwiftUI coords)
-            let flippedY = window.frame.height - windowPoint.y
+            // Update cursor position (flip Y for SwiftUI coords — use content view height, not window frame)
+            let contentHeight = window.contentView?.bounds.height ?? window.frame.height
+            let flippedY = contentHeight - windowPoint.y
             crossDragManager.updateCursorPosition(CGPoint(x: windowPoint.x, y: flippedY))
         } else if crossDragManager.isOverSidebar {
             // Cursor left the sidebar, return to normal canvas drag
@@ -2036,7 +2025,8 @@ struct CanvasView: View {
             let mouseLocation = NSEvent.mouseLocation
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
                 let windowPoint = window.convertPoint(fromScreen: mouseLocation)
-                let flippedY = window.frame.height - windowPoint.y
+                let contentHeight = window.contentView?.bounds.height ?? window.frame.height
+                let flippedY = contentHeight - windowPoint.y
                 crossDragManager.completeDrop(screenPosition: CGPoint(x: windowPoint.x, y: flippedY))
             }
             return
@@ -2134,7 +2124,7 @@ struct CanvasView: View {
         // Recompute bounds so the zone visually expands to include the new block
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
         // Recompute filtered blocks since cluster membership affects which blocks are visible
-        recomputeFilteredBlocks()
+        
     }
 
     // MARK: - Cluster Drag Handlers
@@ -3189,7 +3179,7 @@ struct CanvasView: View {
         await spatialEngine.addBlock(block, persist: true)
         selectedBlockId = block.id
         rebuildMediaContentCache()
-        recomputeFilteredBlocks()
+        
 
         print("📋 Pasted \(classification.sourceType.rawValue) URL → canvas block (uuid: \(atom.uuid))")
 
@@ -3231,7 +3221,7 @@ struct CanvasView: View {
             let block = CanvasBlock.fromAtom(atom, position: position)
             await spatialEngine.addBlock(block, persist: true)
             selectedBlockId = block.id
-            recomputeFilteredBlocks()
+            
             print("📋 Pasted image → canvas block (uuid: \(atom.uuid))")
         } catch {
             print("⚠️ [CanvasView] Failed to paste image: \(error)")

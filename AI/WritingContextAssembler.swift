@@ -22,27 +22,61 @@ enum WritingContextAssembler {
         let layer3 = await assembleLayer3(contentAtom: contentAtom)
         let layer4 = await assembleLayer4(contentAtom: contentAtom)
 
-        var blocks: [(content: String, cacheControl: Bool)] = []
+        return PromptContext(
+            systemBlocks: makeCachedBlocks(
+                layer1: layer1,
+                layer2: layer2,
+                layer3: layer3,
+                layer4: layer4
+            ),
+            modelTier: .writer
+        )
+    }
 
-        // Layer 1: Methodology — stable across ALL requests, always cached
-        blocks.append((content: layer1, cacheControl: true))
+    nonisolated static func makeCachedBlocks(
+        layer1: String,
+        layer2: String,
+        layer3: String,
+        layer4: String,
+        ttl: String = "1h"
+    ) -> [PromptCacheBlock] {
+        var blocks: [PromptCacheBlock] = []
 
-        // Layer 2: Client profile — stable per client, cached per client
+        blocks.append(PromptCacheBlock(
+            content: layer1,
+            cacheControl: true,
+            ttl: ttl,
+            label: "Layer 1"
+        ))
+
         if !layer2.isEmpty {
-            blocks.append((content: layer2, cacheControl: true))
+            blocks.append(PromptCacheBlock(
+                content: layer2,
+                cacheControl: true,
+                ttl: ttl,
+                label: "Layer 2"
+            ))
         }
 
-        // Layer 3: Swipe intelligence — changes per content piece
         if !layer3.isEmpty {
-            blocks.append((content: layer3, cacheControl: true))
+            blocks.append(PromptCacheBlock(
+                content: layer3,
+                cacheControl: true,
+                ttl: ttl,
+                label: "Layer 3"
+            ))
         }
 
-        // Layer 4: Knowledge context — connections relevant to this content piece
         if !layer4.isEmpty {
-            blocks.append((content: layer4, cacheControl: true))
+            blocks.append(PromptCacheBlock(
+                content: layer4,
+                cacheControl: true,
+                ttl: ttl,
+                label: "Layer 4"
+            ))
         }
 
-        return PromptContext(systemBlocks: blocks, modelTier: .writer)
+        return blocks
     }
 
     // MARK: - Layer 1: Methodology
@@ -259,8 +293,11 @@ enum WritingContextAssembler {
 
     private static func assembleLayer3(contentAtom: Atom) async -> String {
         let metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self)
+        let targetFormat = WritingContentFormat.detect(from: contentAtom)
         var lines: [String] = []
         lines.append("=== LAYER 3: SWIPE INTELLIGENCE ===")
+        lines.append("")
+        lines.append("Target writing format: \(targetFormat.displayName)")
         lines.append("")
 
         // Extract niche for pattern queries
@@ -285,9 +322,13 @@ enum WritingContextAssembler {
         }
 
         // Matching swipes with full transcripts
-        let swipeAtoms = await findMatchingSwipes(for: contentAtom, limit: 30)
+        let swipeAtoms = await findMatchingSwipes(
+            for: contentAtom,
+            limit: 30,
+            targetFormat: targetFormat
+        )
         if !swipeAtoms.isEmpty {
-            lines.append("--- MATCHING SWIPES (\(swipeAtoms.count) files) ---")
+            lines.append("--- MATCHING SAME-TYPE SWIPES (\(swipeAtoms.count) files) ---")
             lines.append("")
 
             for (index, swipe) in swipeAtoms.enumerated() {
@@ -373,7 +414,11 @@ enum WritingContextAssembler {
 
     // MARK: - Swipe Search
 
-    private static func findMatchingSwipes(for contentAtom: Atom, limit: Int) async -> [Atom] {
+    private static func findMatchingSwipes(
+        for contentAtom: Atom,
+        limit: Int,
+        targetFormat: WritingContentFormat
+    ) async -> [Atom] {
         let metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self)
 
         // First, load inherited swipes directly
@@ -385,38 +430,61 @@ enum WritingContextAssembler {
                 }
             }
         }
+        swipes = filterSameTypeSwipesForLayer3(swipes, targetFormat: targetFormat)
+        var seenUUIDs = Set(swipes.map(\.uuid))
 
         // If we need more, search via HybridSearchEngine
         if swipes.count < limit {
-            let query = contentAtom.title ?? contentAtom.body ?? ""
-            guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return swipes
+            var queries: [String] = []
+            if let primaryQuerySource = contentAtom.title ?? contentAtom.body {
+                let primaryQuery = primaryQuerySource.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !primaryQuery.isEmpty {
+                    queries.append(primaryQuery)
+                }
+            }
+            for term in targetFormat.swipeSearchTerms where !queries.contains(term) {
+                queries.append(term)
             }
 
-            let remaining = limit - swipes.count
-            let existingUUIDs = Set(swipes.map(\.uuid))
+            for query in queries where swipes.count < limit {
+                do {
+                    let results = try await HybridSearchEngine.shared.search(
+                        query: query,
+                        limit: (limit - swipes.count) + 10,
+                        entityTypes: [.research]
+                    )
 
-            do {
-                let results = try await HybridSearchEngine.shared.search(
-                    query: query,
-                    limit: remaining + 5,
-                    entityTypes: [.research]
-                )
+                    for result in results {
+                        guard swipes.count < limit else { break }
+                        guard let uuid = result.entityUUID, !seenUUIDs.contains(uuid) else { continue }
 
-                for result in results {
-                    guard swipes.count < limit else { break }
-                    guard let uuid = result.entityUUID, !existingUUIDs.contains(uuid) else { continue }
-
-                    if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid),
-                       swipe.isSwipeFileAtom {
-                        swipes.append(swipe)
+                        if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid),
+                           swipe.isSwipeFileAtom,
+                           targetFormat.matchesSwipeFormat(swipe.swipeAnalysis?.swipeContentFormat) {
+                            swipes.append(swipe)
+                            seenUUIDs.insert(uuid)
+                        }
                     }
+                } catch {
+                    print("WritingContextAssembler: swipe search failed for '\(query)': \(error)")
                 }
-            } catch {
-                print("WritingContextAssembler: swipe search failed: \(error)")
             }
         }
 
         return swipes
+    }
+
+    nonisolated static func filterSameTypeSwipesForLayer3(
+        _ swipes: [Atom],
+        targetFormat: WritingContentFormat
+    ) -> [Atom] {
+        var seen = Set<String>()
+        return swipes.filter { swipe in
+            guard !seen.contains(swipe.uuid) else { return false }
+            guard swipe.isSwipeFileAtom else { return false }
+            guard targetFormat.matchesSwipeFormat(swipe.swipeAnalysis?.swipeContentFormat) else { return false }
+            seen.insert(swipe.uuid)
+            return true
+        }
     }
 }

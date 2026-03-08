@@ -756,9 +756,20 @@ class TelegramBridgeService: ObservableObject {
                     newModuleId: suggestion.newModuleId
                 )
                 if corrected.action == "add_to_module", let moduleId = corrected.moduleId {
-                    PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: text)
+                    // Store as canonical lesson atom (no longer duplicated into module content)
+                    let category = PromptTemplateStore.categoryToModuleMap.first(where: { $0.value == moduleId })?.key ?? "general"
+                    let lesson = InferredLesson(
+                        rule: text,
+                        evidence: "User-edited module suggestion",
+                        category: category,
+                        confidence: 0.95,
+                        source: .explicitUser,
+                        enforcement: .hard,
+                        targetModuleId: moduleId
+                    )
+                    await LessonExtractor.shared.storeLesson(lesson)
                     let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                    await sendMessage(chatId: chatId, text: "Added (edited) to \(moduleName).")
+                    await sendMessage(chatId: chatId, text: "Saved as lesson (mapped to \(moduleName)).")
                 } else if corrected.action == "create_module",
                           let newId = corrected.newModuleId,
                           let newTitle = corrected.newModuleTitle {
@@ -1585,16 +1596,8 @@ class TelegramBridgeService: ObservableObject {
             let uuidStr = String(data.dropFirst("lesson_yes:".count))
             if let lessonID = UUID(uuidString: uuidStr) {
                 await LessonExtractor.shared.updateConfidence(lessonID: lessonID, confirmed: true, fastConfirm: true)
-                // Auto-route to matching skill module
-                if let lesson = await LessonExtractor.shared.loadLesson(byID: lessonID),
-                   let moduleId = PromptTemplateStore.categoryToModuleMap[lesson.category] {
-                    let formatted = LessonExtractor.shared.formatLessonForModule(lesson)
-                    PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: formatted)
-                    let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                    await sendMessage(chatId: chatIdStr, text: "Saved and added to \(moduleName).")
-                } else {
-                    await sendMessage(chatId: chatIdStr, text: "Got it — rule saved.")
-                }
+                // Confirmed lessons are now canonical atoms (no module duplication)
+                await sendMessage(chatId: chatIdStr, text: "Got it — rule saved as hard rule.")
             }
         } else if data.hasPrefix("lesson_no:") {
             let uuidStr = String(data.dropFirst("lesson_no:".count))
@@ -1628,21 +1631,29 @@ class TelegramBridgeService: ObservableObject {
             let moduleId = String(parts[1])
 
             await LessonExtractor.shared.updateConfidence(lessonID: lessonID, confirmed: true, fastConfirm: true)
-            if let lesson = await LessonExtractor.shared.loadLesson(byID: lessonID) {
-                let formatted = LessonExtractor.shared.formatLessonForModule(lesson)
-                PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: formatted)
-                let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                await sendMessage(chatId: chatIdStr, text: "Added to \(moduleName).")
-            }
+            // Lesson is confirmed as canonical atom with targetModuleId for UI grouping
+            let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
+            await sendMessage(chatId: chatIdStr, text: "Saved as hard rule (mapped to \(moduleName)).")
         }
         // Handle module suggestion buttons
         else if data.hasPrefix("module_approve:") {
             let suggestionId = String(data.dropFirst("module_approve:".count))
             if let suggestion = pendingModuleSuggestions.removeValue(forKey: suggestionId) {
                 if suggestion.action == "add_to_module", let moduleId = suggestion.moduleId {
-                    PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: suggestion.content)
+                    // Store as canonical lesson atom (no longer duplicated into module content)
+                    let category = PromptTemplateStore.categoryToModuleMap.first(where: { $0.value == moduleId })?.key ?? "general"
+                    let lesson = InferredLesson(
+                        rule: suggestion.content,
+                        evidence: "Approved module suggestion",
+                        category: category,
+                        confidence: 0.95,
+                        source: .explicitUser,
+                        enforcement: .hard,
+                        targetModuleId: moduleId
+                    )
+                    await LessonExtractor.shared.storeLesson(lesson)
                     let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                    await sendMessage(chatId: chatIdStr, text: "Added to \(moduleName).")
+                    await sendMessage(chatId: chatIdStr, text: "Saved as lesson (mapped to \(moduleName)).")
                 } else if suggestion.action == "create_module",
                           let newId = suggestion.newModuleId,
                           let newTitle = suggestion.newModuleTitle {

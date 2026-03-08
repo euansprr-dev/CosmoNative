@@ -17,20 +17,23 @@ struct SidebarDimensionSection: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: isCollapsed ? 0 : 12) {
             sectionHeader
 
-            if !isCollapsed {
-                VStack(spacing: 2) {
+            if isCollapsed {
+                collapsedIndexBadge
+                    .frame(maxWidth: .infinity)
+            } else {
+                cosmoIndexCard
+
+                VStack(spacing: 6) {
                     ForEach(LevelDimension.allCases, id: \.self) { dimension in
                         dimensionRow(dimension)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-                .transition(.opacity.combined(with: .move(edge: .leading)))
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $presentedDimension) { dimension in
             DimensionDetailView(
                 dimension: dimension,
@@ -46,48 +49,92 @@ struct SidebarDimensionSection: View {
     private var sectionHeader: some View {
         HStack(spacing: 6) {
             if isCollapsed {
-                // Collapsed: just show CI score in a circle
-                ZStack {
-                    Circle()
-                        .stroke(DS.accent.opacity(0.3), lineWidth: 2)
-                        .frame(width: 28, height: 28)
-
-                    Circle()
-                        .trim(from: 0, to: CGFloat(cosmoIndex) / 100.0)
-                        .stroke(DS.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                        .frame(width: 28, height: 28)
-                        .rotationEffect(.degrees(-90))
-
-                    Text("\(cosmoIndex)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(DS.accent)
-                }
-                .frame(maxWidth: .infinity)
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(maxWidth: .infinity)
             } else {
-                Text("DIMENSIONS")
-                    .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.88)
+                Text("Dimensions")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
 
                 Spacer()
 
-                // CI score badge
-                HStack(spacing: 3) {
-                    Text("CI")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(DS.accent)
-
-                    Text("\(cosmoIndex)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(DS.accent)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(DS.accent.opacity(0.10), in: Capsule())
+                Text("CI \(cosmoIndex)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(DS.accentSoft, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+                    )
             }
         }
-        .padding(.horizontal, isCollapsed ? 8 : 16)
-        .padding(.vertical, 6)
+    }
+
+    private var collapsedIndexBadge: some View {
+        ZStack {
+            Circle()
+                .stroke(DS.accent.opacity(0.22), lineWidth: 2)
+                .frame(width: 32, height: 32)
+
+            Circle()
+                .trim(from: 0, to: CGFloat(cosmoIndex) / 100.0)
+                .stroke(DS.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .frame(width: 32, height: 32)
+                .rotationEffect(.degrees(-90))
+
+            Text("\(cosmoIndex)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(DS.accent)
+        }
+    }
+
+    private var cosmoIndexCard: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .stroke(DS.accent.opacity(0.18), lineWidth: 3)
+                    .frame(width: 42, height: 42)
+
+                Circle()
+                    .trim(from: 0, to: CGFloat(cosmoIndex) / 100.0)
+                    .stroke(DS.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .frame(width: 42, height: 42)
+                    .rotationEffect(.degrees(-90))
+
+                Text("\(cosmoIndex)")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(DS.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Cosmo Index")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.text)
+
+                Text("Weighted view across your six dimensions")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.textMuted)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 
     // MARK: - Dimension Row
@@ -96,54 +143,49 @@ struct SidebarDimensionSection: View {
         let index = engine.dimensionIndices[dimension] ?? .empty
         let score = Int(index.score.rounded())
         let isHovered = hoveredDimension == dimension
+        let color = Color(hex: dimension.colorHex)
 
         return Button {
             presentedDimension = dimension
         } label: {
             HStack(spacing: 8) {
-                // Icon
-                Image(systemName: dimension.iconName)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(Color(hex: dimension.colorHex))
-                    .frame(width: 16)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.opacity(0.14))
+                    .frame(width: 24, height: 24)
+                    .overlay(
+                        Image(systemName: dimension.iconName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(color)
+                    )
 
-                // Name
                 Text(dimension.displayName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.textSecondary)
                     .lineLimit(1)
 
-                Spacer()
+                Spacer(minLength: 8)
 
-                // Mini progress bar
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        // Track
-                        RoundedRectangle(cornerRadius: 1.5)
+                        Capsule()
                             .fill(DS.borderSubtle)
-                            .frame(height: 3)
+                            .frame(height: 4)
 
-                        // Fill
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color(hex: dimension.colorHex))
-                            .frame(width: max(0, geo.size.width * CGFloat(score) / 100.0), height: 3)
+                        Capsule()
+                            .fill(color)
+                            .frame(width: max(0, geo.size.width * CGFloat(score) / 100.0), height: 4)
                     }
                 }
-                .frame(width: 40, height: 3)
+                .frame(width: 48, height: 4)
 
-                // Score number
                 Text("\(score)")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundColor(DS.textMuted)
-                    .frame(width: 22, alignment: .trailing)
+                    .frame(width: 24, alignment: .trailing)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isHovered ? DS.surfaceHover : Color.clear)
-            )
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.dimensionRowHeight, alignment: .leading)
+            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 9, hoverFill: DS.surfaceHover)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

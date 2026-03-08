@@ -85,7 +85,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     @Published var todayTrackedMinutes: Int = 0
     @Published var todaySessionsByIntent: [TaskIntent: Int] = [:]
-    @Published var savedTimerPresets: [SavedTimerPreset] = []
+    @Published var completedArrivalToken: Int = 0
 
     // MARK: - Task Add
 
@@ -228,7 +228,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await loadWeeklyReport()
         updateHabits(from: plannerum.liveQuestEngine.quests)
         objectiveEngine.startTracking()
-        savedTimerPresets = SavedTimerPreset.loadAll()
         xpProgress = plannerum.xpProgress
         currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
     }
@@ -480,14 +479,19 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func toggleTaskCompletion(_ task: TaskViewModel) async {
         if task.isCompleted {
-            await uncompleteTask(uuid: task.uuid)
+            _ = await uncompleteTask(uuid: task.uuid)
         } else {
-            await plannerum.completeTask(taskId: task.uuid)
+            _ = await completeTask(uuid: task.uuid)
         }
-        await refreshTasks()
     }
 
-    func uncompleteTask(uuid: String) async {
+    func completeTask(uuid: String) async -> Bool {
+        await plannerum.completeTask(taskId: uuid)
+        await refreshTaskCollectionsAfterMutation()
+        return true
+    }
+
+    func uncompleteTask(uuid: String) async -> Bool {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
                 var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
@@ -495,8 +499,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 metadata.completedAt = nil
                 atom = atom.withMetadata(metadata)
             }
+            await refreshTaskCollectionsAfterMutation()
+            return true
         } catch {
             print("❌ Dashboard: Failed to uncomplete task: \(error)")
+            return false
         }
     }
 
@@ -540,10 +547,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if let time = parsed.scheduledTime {
                         metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
                     }
-                    if let mins = parsed.estimatedMinutes {
-                        metadata.durationMinutes = mins
-                        metadata.estimatedFocusMinutes = mins
-                    }
                     if let intent = parsed.intent {
                         metadata.intent = intent.rawValue
                     }
@@ -565,7 +568,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         priority: TaskPriority? = nil,
         dueDate: Date? = nil,
         scheduledTime: Date? = nil,
-        estimatedMinutes: Int? = nil,
         intent: TaskIntent? = nil,
         body: String? = nil
     ) async {
@@ -581,10 +583,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 }
                 if let time = scheduledTime {
                     metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
-                }
-                if let mins = estimatedMinutes {
-                    metadata.durationMinutes = mins
-                    metadata.estimatedFocusMinutes = mins
                 }
                 if let intent = intent {
                     metadata.intent = intent.rawValue
@@ -632,7 +630,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             taskUUID: task.uuid,
             taskTitle: task.title,
             intent: task.intent,
-            plannedMinutes: task.estimatedMinutes
+            plannedMinutes: 0
         )
     }
 
@@ -809,32 +807,20 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
     }
 
-    func startPresetSession(_ preset: SavedTimerPreset) {
-        sessionEngine.startSession(
-            taskUUID: nil,
-            taskTitle: preset.title,
-            intent: preset.intent,
-            plannedMinutes: preset.plannedMinutes
-        )
+    func notifyCompletedTaskArrival() {
+        completedArrivalToken += 1
+    }
 
-        // Update lastUsedAt
-        var presets = savedTimerPresets
-        if let idx = presets.firstIndex(where: { $0.id == preset.id }) {
-            presets[idx].lastUsedAt = Date()
-            savedTimerPresets = presets
-            SavedTimerPreset.saveAll(presets)
+    private func refreshTaskCollectionsAfterMutation() async {
+        switch viewMode {
+        case .today:
+            await refreshTasks()
+        case .upcoming:
+            await loadUpcomingTasks()
+            await loadCompletedTasks()
+        case .completed:
+            await loadCompletedTasks()
         }
-    }
-
-    func savePreset(title: String, intent: TaskIntent, minutes: Int) {
-        let preset = SavedTimerPreset(title: title, intent: intent, plannedMinutes: minutes)
-        savedTimerPresets.append(preset)
-        SavedTimerPreset.saveAll(savedTimerPresets)
-    }
-
-    func deletePreset(id: String) {
-        savedTimerPresets.removeAll { $0.id == id }
-        SavedTimerPreset.saveAll(savedTimerPresets)
     }
 
     // MARK: - Greeting

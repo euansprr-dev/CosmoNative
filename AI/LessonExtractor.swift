@@ -5,6 +5,21 @@
 
 import Foundation
 
+// MARK: - Lesson Enums
+
+/// How a lesson was created
+enum LessonSource: String, Codable {
+    case explicitUser = "explicit_user"       // User explicitly said "remember this" / "save this lesson"
+    case inferredEdit = "inferred_edit"        // Extracted from generation→edit comparison
+    case legacyModuleImport = "legacy_module_import"  // Imported from module LEARNED RULES section during migration
+}
+
+/// How strictly a lesson is enforced during writing
+enum LessonEnforcement: String, Codable {
+    case hard = "hard"         // Violations block/force rewrite — deterministic validators + scorecard check
+    case advisory = "advisory" // Included in prompt but not mechanically enforced
+}
+
 // MARK: - Inferred Lesson Model
 
 struct InferredLesson: Codable, Identifiable {
@@ -22,6 +37,12 @@ struct InferredLesson: Codable, Identifiable {
     /// Intent scope: nil = universal, "draft" = writing, "plan" = planning, etc.
     /// Lessons only activate when the agent's current intent matches (or when nil/universal).
     var intent: String?
+    /// How this lesson was created. nil for pre-migration lessons (treated as inferredEdit).
+    var source: LessonSource?
+    /// How strictly this lesson is enforced. nil for pre-migration lessons (treated as advisory).
+    var enforcement: LessonEnforcement?
+    /// Which module this lesson conceptually belongs to (for UI grouping). Derived from categoryToModuleMap.
+    var targetModuleId: String?
 
     init(
         id: UUID = UUID(),
@@ -33,7 +54,10 @@ struct InferredLesson: Codable, Identifiable {
         createdAt: Date = Date(),
         lastConfirmedAt: Date = Date(),
         optimizedInstruction: String? = nil,
-        intent: String? = nil
+        intent: String? = nil,
+        source: LessonSource? = nil,
+        enforcement: LessonEnforcement? = nil,
+        targetModuleId: String? = nil
     ) {
         self.id = id
         self.clientUUID = clientUUID
@@ -45,7 +69,32 @@ struct InferredLesson: Codable, Identifiable {
         self.lastConfirmedAt = lastConfirmedAt
         self.optimizedInstruction = optimizedInstruction
         self.intent = intent
+        self.source = source
+        self.enforcement = enforcement
+        self.targetModuleId = targetModuleId
     }
+
+    /// Effective enforcement level: explicit user + confirmed inferred = hard, else advisory
+    var effectiveEnforcement: LessonEnforcement {
+        if let enforcement = enforcement { return enforcement }
+        // Pre-migration fallback: explicit saves (0.9+) or confirmed (0.8+) = hard
+        if source == .explicitUser { return .hard }
+        if confidence >= 0.8 { return .hard }
+        return .advisory
+    }
+
+    /// Effective source: defaults to inferredEdit for pre-migration lessons
+    var effectiveSource: LessonSource {
+        return source ?? .inferredEdit
+    }
+}
+
+// MARK: - Notifications
+
+extension Notification.Name {
+    /// Posted when a lesson's confidence, enforcement, or rule text changes.
+    /// Observers (e.g. UnifiedWritingEngine) should invalidate cached lesson blocks.
+    static let cosmoLessonChanged = Notification.Name("cosmoLessonChanged")
 }
 
 // MARK: - Lesson Extractor
@@ -105,7 +154,10 @@ class LessonExtractor {
                 createdAt: lesson.createdAt,
                 lastConfirmedAt: Date(),
                 optimizedInstruction: correctedInstruction,
-                intent: lesson.intent
+                intent: lesson.intent,
+                source: .explicitUser,  // User-corrected = explicit
+                enforcement: .hard,     // User corrections are always hard rules
+                targetModuleId: lesson.targetModuleId ?? PromptTemplateStore.categoryToModuleMap[lesson.category]
             )
 
             let encoder = JSONEncoder()
@@ -115,6 +167,7 @@ class LessonExtractor {
             atom.body = correctedRule
 
             _ = try await atomRepo.update(atom)
+            NotificationCenter.default.post(name: .cosmoLessonChanged, object: nil)
         } catch {
             print("[LessonExtractor] Failed to correct lesson: \(error.localizedDescription)")
         }
@@ -222,7 +275,12 @@ class LessonExtractor {
                 return
             }
 
-            // Re-create with updated confidence (preserve optimizedInstruction + intent)
+            // Re-create with updated confidence (preserve all fields)
+            // Confirmed inferred lessons become hard enforcement
+            let updatedEnforcement: LessonEnforcement? = confirmed && fastConfirm
+                ? .hard
+                : (confirmed ? .hard : lesson.enforcement)
+
             let updatedLesson = InferredLesson(
                 id: lesson.id,
                 clientUUID: lesson.clientUUID,
@@ -233,7 +291,10 @@ class LessonExtractor {
                 createdAt: lesson.createdAt,
                 lastConfirmedAt: confirmed ? Date() : lesson.lastConfirmedAt,
                 optimizedInstruction: lesson.optimizedInstruction,
-                intent: lesson.intent
+                intent: lesson.intent,
+                source: lesson.source,
+                enforcement: updatedEnforcement,
+                targetModuleId: lesson.targetModuleId
             )
 
             let encoder = JSONEncoder()
@@ -242,6 +303,7 @@ class LessonExtractor {
             atom.structured = String(data: updatedData, encoding: .utf8)
 
             _ = try await atomRepo.update(atom)
+            NotificationCenter.default.post(name: .cosmoLessonChanged, object: nil)
         } catch {
             print("[LessonExtractor] Failed to update confidence: \(error.localizedDescription)")
         }
@@ -383,7 +445,10 @@ class LessonExtractor {
                 evidence: evidence,
                 category: category,
                 confidence: initialConfidence,
-                intent: intent
+                intent: intent,
+                source: .inferredEdit,
+                enforcement: .advisory,  // Inferred lessons start advisory until confirmed
+                targetModuleId: PromptTemplateStore.categoryToModuleMap[category]
             )
         }
     }
@@ -453,7 +518,10 @@ class LessonExtractor {
                         createdAt: lesson.createdAt,
                         lastConfirmedAt: lesson.lastConfirmedAt,
                         optimizedInstruction: instruction,
-                        intent: lesson.intent
+                        intent: lesson.intent,
+                        source: lesson.source,
+                        enforcement: lesson.enforcement,
+                        targetModuleId: lesson.targetModuleId
                     )
                 }
                 return updated
@@ -509,7 +577,10 @@ class LessonExtractor {
                 "category": lesson.category,
                 "clientUUID": lesson.clientUUID ?? "",
                 "confidence": lesson.confidence,
-                "intent": lesson.intent ?? ""
+                "intent": lesson.intent ?? "",
+                "source": lesson.effectiveSource.rawValue,
+                "enforcement": lesson.effectiveEnforcement.rawValue,
+                "targetModuleId": lesson.targetModuleId ?? ""
             ]
             let metadataData = try JSONSerialization.data(withJSONObject: metadataDict)
             let metadataStr = String(data: metadataData, encoding: .utf8)
@@ -527,7 +598,151 @@ class LessonExtractor {
         }
     }
 
-    // MARK: - Migration
+    // MARK: - Enforcement Migration
+
+    /// Migrate existing lessons to add source, enforcement, and targetModuleId fields.
+    /// - Explicit saves (confidence >= 0.9) → source=explicit_user, enforcement=hard
+    /// - Confirmed inferred (confidence >= 0.8) → source=inferred_edit, enforcement=hard
+    /// - Everything else → source=inferred_edit, enforcement=advisory
+    /// Also populates targetModuleId from categoryToModuleMap.
+    func migrateEnforcementLevels() async {
+        let migrationKey = "lessons_enforcement_migration_v1"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        do {
+            let atoms = try await atomRepo.fetchAll(type: .agentLearning)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            var migratedCount = 0
+
+            for var atom in atoms {
+                guard let meta = atom.metadataDict,
+                      meta["lessonType"] as? String == "inferred_lesson",
+                      let structuredStr = atom.structured,
+                      let data = structuredStr.data(using: .utf8),
+                      let lesson = try? decoder.decode(InferredLesson.self, from: data) else {
+                    continue
+                }
+
+                // Skip if already has enforcement set
+                guard lesson.enforcement == nil else { continue }
+
+                // Determine source and enforcement from confidence
+                let source: LessonSource = lesson.confidence >= 0.9 ? .explicitUser : .inferredEdit
+                let enforcement: LessonEnforcement = lesson.confidence >= 0.8 ? .hard : .advisory
+                let targetModuleId = PromptTemplateStore.categoryToModuleMap[lesson.category]
+
+                let updatedLesson = InferredLesson(
+                    id: lesson.id,
+                    clientUUID: lesson.clientUUID,
+                    rule: lesson.rule,
+                    evidence: lesson.evidence,
+                    category: lesson.category,
+                    confidence: lesson.confidence,
+                    createdAt: lesson.createdAt,
+                    lastConfirmedAt: lesson.lastConfirmedAt,
+                    optimizedInstruction: lesson.optimizedInstruction,
+                    intent: lesson.intent,
+                    source: source,
+                    enforcement: enforcement,
+                    targetModuleId: targetModuleId
+                )
+
+                let updatedData = try encoder.encode(updatedLesson)
+                atom.structured = String(data: updatedData, encoding: .utf8)
+
+                // Update metadata
+                var updatedMeta = meta
+                updatedMeta["source"] = source.rawValue
+                updatedMeta["enforcement"] = enforcement.rawValue
+                updatedMeta["targetModuleId"] = targetModuleId ?? ""
+                if let metaData = try? JSONSerialization.data(withJSONObject: updatedMeta),
+                   let metaStr = String(data: metaData, encoding: .utf8) {
+                    atom.metadata = metaStr
+                }
+
+                _ = try await atomRepo.update(atom)
+                migratedCount += 1
+            }
+
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            if migratedCount > 0 {
+                print("[LessonExtractor] Migrated \(migratedCount) lessons with source/enforcement/targetModuleId")
+            }
+        } catch {
+            print("[LessonExtractor] Enforcement migration failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Import lessons from module LEARNED RULES sections into canonical atom storage,
+    /// then strip the LEARNED RULES sections from module content.
+    /// Reconciles against existing lesson atoms by text similarity to avoid duplicates.
+    func migrateModuleLessonsToAtoms() async {
+        let migrationKey = "lessons_strip_module_dups_v1"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let store = PromptTemplateStore.shared
+        let existingLessons = await loadLessons(minConfidence: 0.0)
+        var importedCount = 0
+
+        for module in store.modules {
+            guard let headerRange = module.content.range(of: PromptTemplateStore.LEARNED_RULES_HEADER) else {
+                continue
+            }
+
+            let rulesSection = String(module.content[headerRange.upperBound...])
+            let ruleLines = rulesSection.components(separatedBy: "\n")
+                .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ") }
+
+            for line in ruleLines {
+                let ruleText = line.trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "^- ", with: "", options: .regularExpression)
+                    // Strip [#shortId] marker
+                    .replacingOccurrences(of: "\\s*\\[#[a-fA-F0-9]+\\]$", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+
+                guard !ruleText.isEmpty else { continue }
+
+                // Check if a similar lesson already exists as an atom
+                let isDuplicate = existingLessons.contains { existing in
+                    computeWordSimilarity(ruleText, existing.rule) > 0.7
+                        || (existing.optimizedInstruction != nil && computeWordSimilarity(ruleText, existing.optimizedInstruction!) > 0.7)
+                }
+
+                guard !isDuplicate else { continue }
+
+                // Infer category from module ID (reverse lookup)
+                let category = PromptTemplateStore.categoryToModuleMap.first(where: { $0.value == module.id })?.key ?? "general"
+
+                let lesson = InferredLesson(
+                    rule: ruleText,
+                    evidence: "Imported from module '\(module.title)' LEARNED RULES section",
+                    category: category,
+                    confidence: 0.8,  // High confidence — was already in production
+                    source: .legacyModuleImport,
+                    enforcement: .hard,  // Was in production, treat as hard
+                    targetModuleId: module.id
+                )
+
+                await storeLesson(lesson)
+                importedCount += 1
+            }
+        }
+
+        // Strip LEARNED RULES sections from all modules
+        store.stripLearnedRulesFromAllModules()
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        if importedCount > 0 {
+            print("[LessonExtractor] Imported \(importedCount) lessons from module LEARNED RULES sections")
+        }
+        print("[LessonExtractor] Stripped LEARNED RULES sections from all modules")
+        NotificationCenter.default.post(name: .cosmoLessonChanged, object: nil)
+    }
+
+    // MARK: - Intent Migration
 
     /// Migrate existing lessons to add intent scope based on category.
     /// Writing-related categories get intent="draft", others remain universal.
@@ -598,26 +813,12 @@ class LessonExtractor {
         }
     }
 
-    // MARK: - Module Migration
+    // MARK: - Module Migration (Legacy — superseded by migrateModuleLessonsToAtoms)
 
-    /// Migrate all existing confirmed lessons into their matching skill modules.
-    /// Runs once (guarded by UserDefaults flag).
+    /// Legacy migration: no longer writes to modules. Kept for guard flag compatibility.
     func migrateExistingLessonsToModules() async {
-        let migrationKey = "lessons_module_migration_v1"
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
-
-        let lessons = await loadLessons(minConfidence: 0.3)
-        var routedCount = 0
-
-        for lesson in lessons {
-            guard let moduleId = PromptTemplateStore.categoryToModuleMap[lesson.category] else { continue }
-            let formatted = formatLessonForModule(lesson)
-            PromptTemplateStore.shared.appendLessonToModule(moduleId: moduleId, formattedRule: formatted)
-            routedCount += 1
-        }
-
-        UserDefaults.standard.set(true, forKey: migrationKey)
-        print("[LessonExtractor] Migrated \(routedCount) lessons into skill modules")
+        // No-op: superseded by migrateModuleLessonsToAtoms() which imports FROM modules into atoms.
+        // Guard flag "lessons_module_migration_v1" already set on older installs.
     }
 
     /// Jaccard word similarity between two strings (0.0 = no overlap, 1.0 = identical)

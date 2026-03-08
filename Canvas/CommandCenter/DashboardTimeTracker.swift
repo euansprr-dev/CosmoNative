@@ -1,5 +1,5 @@
 // Canvas/CommandCenter/DashboardTimeTracker.swift
-// Timery-style time tracking panel: active timer, today's summary, saved presets
+// Timery-style time tracking panel: active timer and today's summary
 // March 2026
 
 import SwiftUI
@@ -7,31 +7,18 @@ import SwiftUI
 struct DashboardTimeTracker: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
-    @State private var showAddPreset = false
-    @State private var newPresetTitle = ""
-    @State private var newPresetIntent: TaskIntent = .general
-    @State private var newPresetMinutes: Int = 30
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader
 
-            // Active session (when running)
             if let session = viewModel.sessionEngine.activeSession {
                 activeTimerCard(session)
             }
 
-            // Today's time summary
             todayTimeSummary
-
-            // Saved timer presets
-            if !viewModel.savedTimerPresets.isEmpty || showAddPreset {
-                savedTimersSection
-            }
         }
     }
-
-    // MARK: - Header
 
     private var sectionHeader: some View {
         HStack(spacing: 6) {
@@ -41,36 +28,17 @@ struct DashboardTimeTracker: View {
 
             Text("TIME TRACKING")
                 .dsSectionLabel()
-
-            Spacer()
-
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    showAddPreset.toggle()
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .frame(width: 20, height: 20)
-                    .background(DS.surface, in: Circle())
-            }
-            .buttonStyle(.plain)
         }
     }
-
-    // MARK: - Active Timer Card
 
     @ViewBuilder
     private func activeTimerCard(_ session: ActiveDeepWorkSession) -> some View {
         VStack(spacing: 8) {
             HStack {
-                // Intent badge
                 Image(systemName: session.intent.iconName)
                     .font(.system(size: 10))
                     .foregroundColor(session.intent.color)
 
-                // Task name
                 Text(session.taskTitle)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.text)
@@ -78,7 +46,6 @@ struct DashboardTimeTracker: View {
 
                 Spacer()
 
-                // Focus score indicator
                 HStack(spacing: 4) {
                     Circle()
                         .fill(focusScoreColor)
@@ -91,7 +58,6 @@ struct DashboardTimeTracker: View {
             }
 
             HStack(spacing: 12) {
-                // Timer display — updates every second via TimelineView (doesn't trigger parent re-renders)
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(formattedElapsedTime)
                         .font(.system(size: 28, weight: .light, design: .monospaced))
@@ -100,7 +66,6 @@ struct DashboardTimeTracker: View {
 
                 Spacer()
 
-                // Controls
                 HStack(spacing: 8) {
                     if viewModel.sessionEngine.isTimerRunning {
                         controlButton(icon: "pause.fill", color: DS.text, bg: DS.surfaceElevated) {
@@ -137,8 +102,6 @@ struct DashboardTimeTracker: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Today's Time Summary
-
     private var todayTimeSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -153,7 +116,6 @@ struct DashboardTimeTracker: View {
                 Spacer()
             }
 
-            // Intent breakdown bar
             if !viewModel.todaySessionsByIntent.isEmpty {
                 intentBreakdownBar
                 intentLegend
@@ -186,7 +148,7 @@ struct DashboardTimeTracker: View {
                         .fill(entry.key.color)
                         .frame(width: 6, height: 6)
 
-                    Text("\(entry.key.displayName)")
+                    Text(entry.key.displayName)
                         .font(.system(size: 9))
                         .foregroundColor(DS.textMuted)
 
@@ -203,174 +165,6 @@ struct DashboardTimeTracker: View {
             .sorted { $0.value > $1.value }
     }
 
-    // MARK: - Saved Timer Presets
-
-    private var savedTimersSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("SAVED TIMERS")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundColor(DS.textMuted)
-
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 8),
-                GridItem(.flexible(), spacing: 8)
-            ], spacing: 8) {
-                ForEach(viewModel.savedTimerPresets) { preset in
-                    presetTile(preset)
-                }
-            }
-
-            if showAddPreset {
-                addPresetForm
-            }
-        }
-    }
-
-    private func presetTile(_ preset: SavedTimerPreset) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: preset.intent.iconName)
-                .font(.system(size: 10))
-                .foregroundColor(preset.intent.color)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(preset.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
-
-                Text("\(preset.plannedMinutes)m")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
-            }
-
-            Spacer(minLength: 2)
-
-            Button {
-                viewModel.startPresetSession(preset)
-            } label: {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.accent)
-                    .frame(width: 22, height: 22)
-                    .background(DS.accentSoft, in: Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-        .contextMenu {
-            Button(role: .destructive) {
-                viewModel.deletePreset(id: preset.id)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
-    // MARK: - Add Preset Form
-
-    private var addPresetForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .leading) {
-                if newPresetTitle.isEmpty {
-                    Text("Timer name...")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "767685"))
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: $newPresetTitle)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color(hex: "1A1A1F"))
-            }
-
-            HStack(spacing: 6) {
-                // Intent picker (compact)
-                Menu {
-                    ForEach(TaskIntent.allCases, id: \.self) { intent in
-                        Button {
-                            newPresetIntent = intent
-                        } label: {
-                            Label(intent.displayName, systemImage: intent.iconName)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: newPresetIntent.iconName)
-                            .font(.system(size: 9))
-                        Text(newPresetIntent.displayName)
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(DS.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(newPresetIntent.color.opacity(0.15), in: Capsule())
-                }
-
-                // Duration — manual buttons instead of Stepper for better styling control
-                HStack(spacing: 4) {
-                    Button {
-                        newPresetMinutes = max(5, newPresetMinutes - 15)
-                    } label: {
-                        Image(systemName: "minus")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(DS.textSecondary)
-                            .frame(width: 22, height: 22)
-                            .background(DS.surfaceHover, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Text("\(newPresetMinutes)m")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .frame(width: 36)
-
-                    Button {
-                        newPresetMinutes = min(240, newPresetMinutes + 15)
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(DS.textSecondary)
-                            .frame(width: 22, height: 22)
-                            .background(DS.surfaceHover, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer()
-
-                Button("Save") {
-                    guard !newPresetTitle.isEmpty else { return }
-                    viewModel.savePreset(title: newPresetTitle, intent: newPresetIntent, minutes: newPresetMinutes)
-                    newPresetTitle = ""
-                    newPresetMinutes = 30
-                    newPresetIntent = .general
-                    showAddPreset = false
-                }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(DS.accent, in: RoundedRectangle(cornerRadius: 6))
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-    }
-
-    // MARK: - Helpers
-
     private var focusScoreColor: Color {
         let score = viewModel.sessionEngine.focusScore
         if score >= 80 { return DS.green }
@@ -379,17 +173,17 @@ struct DashboardTimeTracker: View {
     }
 
     private var formattedElapsedTime: String {
-        // Use session's live elapsed time (computed from Date()) instead of @Published elapsedSeconds
-        // This avoids triggering ViewModel re-renders — TimelineView handles per-second updates
         let totalSeconds: Int
         if let session = viewModel.sessionEngine.activeSession {
             totalSeconds = Int(session.elapsedActiveSeconds)
         } else {
             totalSeconds = 0
         }
+
         let hours = totalSeconds / 3600
         let mins = (totalSeconds % 3600) / 60
         let secs = totalSeconds % 60
+
         if hours > 0 {
             return String(format: "%d:%02d:%02d", hours, mins, secs)
         }

@@ -202,6 +202,8 @@
 		6076FD17359BE19581122CC6 /* VoiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AF9ABBFDF6601F3D43015B /* VoiceTypes.swift */; };
 		60B6911E36F2C6598CE794D7 /* ContentScorecardEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B6073A503A3B115DB224454 /* ContentScorecardEngine.swift */; };
 		F63CC2CAF54CB93C5FE14F3C /* LessonExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFDAFEF41801971464EFCB1 /* LessonExtractor.swift */; };
+		B7E3A1D9C42F8E6B0A159D3E /* LessonPolicyResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E3A1D9C42F8E6B0A159D3F /* LessonPolicyResolver.swift */; };
+		C4F2B8E7D53A9F1C2B068E4A /* DeterministicWritingValidators.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F2B8E7D53A9F1C2B068E4B /* DeterministicWritingValidators.swift */; };
 		58BCF15D1D96D5B5EFEE5043 /* ExperienceBufferService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA48F1877E88F9AD01537B6 /* ExperienceBufferService.swift */; };
 		9D2E4F7A1B8C3D6E5A0F9B7C /* RedTeamEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C1D3E6B0A7F2C5D4B9E8A6F /* RedTeamEngine.swift */; };
 		611198CC5221EF5C866A54C5 /* CosmoAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 676BAE337AAA29147AF6071F /* CosmoAgentService.swift */; };
@@ -1079,6 +1081,8 @@
 		E7F3A1B2C4D5E6F7A8B9C0D1 /* SwipeAdaptationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwipeAdaptationEngine.swift; path = AI/SwipeAdaptationEngine.swift; sourceTree = SOURCE_ROOT; };
 		D3A61B7C2E9085D4F6C1B3E0 /* KnowledgeContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeContextAssembler.swift; sourceTree = "<group>"; };
 		FDFDAFEF41801971464EFCB1 /* LessonExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LessonExtractor.swift; sourceTree = "<group>"; };
+		B7E3A1D9C42F8E6B0A159D3F /* LessonPolicyResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LessonPolicyResolver.swift; sourceTree = "<group>"; };
+		C4F2B8E7D53A9F1C2B068E4B /* DeterministicWritingValidators.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeterministicWritingValidators.swift; sourceTree = "<group>"; };
 		2DA48F1877E88F9AD01537B6 /* ExperienceBufferService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceBufferService.swift; sourceTree = "<group>"; };
 		D3E4F5A6B7C8D9E0F1A2B3C4 /* IdeasTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasTab.swift; sourceTree = "<group>"; };
 		D401717D164436BD5E993B2E /* WeeklySummaryGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklySummaryGenerator.swift; sourceTree = "<group>"; };
@@ -2099,6 +2103,8 @@
 				D3A61B7C2E9085D4F6C1B3E0 /* KnowledgeContextAssembler.swift */,
 				C6D80F2E41B793A598C0D6E2 /* CrossReferenceEngine.swift */,
 				FDFDAFEF41801971464EFCB1 /* LessonExtractor.swift */,
+				B7E3A1D9C42F8E6B0A159D3F /* LessonPolicyResolver.swift */,
+				C4F2B8E7D53A9F1C2B068E4B /* DeterministicWritingValidators.swift */,
 				2DA48F1877E88F9AD01537B6 /* ExperienceBufferService.swift */,
 				5A2B3C4D5E6F7A8B9C0D1E01 /* SynthesisEngine.swift */,
 				5A3B4C5D6E7F8A9B0C1D2E01 /* SynthesisResult.swift */,
@@ -3335,6 +3341,8 @@
 				F8B3C4D5E6F708293A4B5C6E /* MetaPatternEngine.swift in Sources */,
 				D7E91A3F52C804B6A9D1E7F3 /* CrossReferenceEngine.swift in Sources */,
 				F63CC2CAF54CB93C5FE14F3C /* LessonExtractor.swift in Sources */,
+				B7E3A1D9C42F8E6B0A159D3E /* LessonPolicyResolver.swift in Sources */,
+				C4F2B8E7D53A9F1C2B068E4A /* DeterministicWritingValidators.swift in Sources */,
 				58BCF15D1D96D5B5EFEE5043 /* ExperienceBufferService.swift in Sources */,
 				8C61F096829099D16B46FA12 /* CosmoContextProvider.swift in Sources */,
 				8EC9F5A6CF58D4E421C77017 /* CosmoAction.swift in Sources */,

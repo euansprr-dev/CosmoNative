@@ -1101,15 +1101,13 @@ class AgentContextAssembler {
         }
 
         let intentStr = intent?.rawValue
-        let result = await LessonExtractor.shared.formatLessonsForPrompt(clientUUID: clientUUID, intent: intentStr)
+        let (result, trackedLessons) = await LessonPolicyResolver.resolveForAgent(
+            clientUUID: clientUUID,
+            intent: intentStr
+        )
 
         // Track injected skills for transparency
-        if !result.isEmpty {
-            let lessons = await LessonExtractor.shared.loadLessons(clientUUID: clientUUID, intent: intentStr)
-            lastInjectedSkills = lessons.prefix(15).map { (rule: $0.rule, category: $0.category, intent: $0.intent) }
-        } else {
-            lastInjectedSkills = []
-        }
+        lastInjectedSkills = trackedLessons
 
         return result
     }

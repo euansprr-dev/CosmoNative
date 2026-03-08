@@ -556,6 +556,23 @@ class PromptTemplateStore: ObservableObject {
         return rulesSection.components(separatedBy: "\n").filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ") }.count
     }
 
+    /// Strip all LEARNED RULES sections from every module's content.
+    /// Called during migration after lessons have been imported into canonical atom storage.
+    func stripLearnedRulesFromAllModules() {
+        var strippedCount = 0
+        for i in modules.indices {
+            guard let headerRange = modules[i].content.range(of: Self.LEARNED_RULES_HEADER) else {
+                continue
+            }
+            modules[i].content = String(modules[i].content[..<headerRange.lowerBound])
+            strippedCount += 1
+        }
+        if strippedCount > 0 {
+            saveModuleState()
+            print("[PromptTemplateStore] Stripped LEARNED RULES sections from \(strippedCount) modules")
+        }
+    }
+
     // MARK: - Custom Module Management
 
     /// Create and append a new custom module.

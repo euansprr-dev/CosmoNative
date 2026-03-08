@@ -11,7 +11,9 @@ struct UpcomingBoardView: View {
     @State private var newTaskText = ""
     @State private var dropTargetDay: String?
     @State private var selectedTaskUUIDs: Set<String> = []
+    @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
     @FocusState private var addTaskFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -239,28 +241,34 @@ struct UpcomingBoardView: View {
 
     private func boardTaskCard(_ task: TaskViewModel) -> some View {
         let isSelected = selectedTaskUUIDs.contains(task.uuid)
+        let completionState = completionStates[task.uuid]
+        let isAnimatingCompletion = completionState != nil
 
         return HStack(alignment: .top, spacing: 10) {
             // Checkbox
             Button {
-                Task { await viewModel.toggleTaskCompletion(task) }
+                handleTaskCompletionTap(task)
             } label: {
-                Circle()
-                    .fill(Color.clear)
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Circle()
-                            .stroke(task.priority.color.opacity(0.5), lineWidth: 1.5)
-                    )
+                CommandCenterAnimatedCheckbox(
+                    priorityColor: task.priority.color,
+                    isCompleted: task.isCompleted,
+                    completionState: completionState,
+                    size: 20
+                )
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
             .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.text)
+                CommandCenterAnimatedTaskTitle(
+                    title: task.title,
+                    isCompleted: task.isCompleted,
+                    completionState: completionState,
+                    font: .system(size: 13, weight: .medium),
+                    activeColor: DS.text,
+                    completedColor: DS.textMuted
+                )
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -298,8 +306,13 @@ struct UpcomingBoardView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(isSelected ? DS.accent.opacity(0.4) : DS.borderSubtle, lineWidth: isSelected ? 2 : 1)
         )
+        .scaleEffect(completionState?.rowScale ?? 1)
+        .opacity(completionState?.rowOpacity ?? 1)
+        .offset(y: completionState?.rowOffsetY ?? 0)
+        .blur(radius: completionState?.blurRadius ?? 0)
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !isAnimatingCompletion else { return }
             if NSEvent.modifierFlags.contains(.shift) {
                 // Shift+click: toggle selection
                 if selectedTaskUUIDs.contains(task.uuid) {
@@ -313,7 +326,7 @@ struct UpcomingBoardView: View {
         }
         .contextMenu {
             Button {
-                Task { await viewModel.toggleTaskCompletion(task) }
+                handleTaskCompletionTap(task)
             } label: {
                 Label(task.isCompleted ? "Mark Incomplete" : "Complete", systemImage: task.isCompleted ? "circle" : "checkmark.circle")
             }
@@ -486,7 +499,6 @@ struct UpcomingBoardView: View {
                 priority: parsed.priority,
                 dueDate: date,
                 scheduledTime: parsed.scheduledTime,
-                estimatedMinutes: parsed.estimatedMinutes,
                 intent: parsed.intent
             )
         }
@@ -500,6 +512,62 @@ struct UpcomingBoardView: View {
             newTaskText = ""
             addingTaskInColumn = nil
         }
+    }
+
+    private func handleTaskCompletionTap(_ task: TaskViewModel) {
+        guard completionStates[task.uuid] == nil else { return }
+
+        if task.isCompleted {
+            Task { _ = await viewModel.uncompleteTask(uuid: task.uuid) }
+            return
+        }
+
+        let timings = CommandCenterCompletionTimings(reduceMotion: reduceMotion)
+        completionStates[task.uuid] = .initial
+
+        withAnimation(.easeInOut(duration: timings.ringDuration)) {
+            updateCompletionState(for: task.uuid) { state in
+                state.ringProgress = 1
+                state.fillScale = 1
+                state.fillOpacity = 1
+            }
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(timings.checkDelay * 1_000_000_000))
+            withAnimation(.spring(response: timings.checkResponse, dampingFraction: 0.78)) {
+                updateCompletionState(for: task.uuid) { $0.checkProgress = 1 }
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64((timings.strikeDelay - timings.checkDelay) * 1_000_000_000))
+            withAnimation(.easeInOut(duration: timings.strikeDuration)) {
+                updateCompletionState(for: task.uuid) { $0.strikeProgress = 1 }
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64((timings.fadeDelay - timings.strikeDelay) * 1_000_000_000))
+            withAnimation(.easeInOut(duration: timings.fadeDuration)) {
+                updateCompletionState(for: task.uuid) { state in
+                    state.rowOpacity = 0
+                    state.rowScale = reduceMotion ? 0.98 : 0.95
+                    state.rowOffsetY = reduceMotion ? -4 : -10
+                    state.blurRadius = reduceMotion ? 0.6 : 1.8
+                }
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(timings.fadeDuration * 1_000_000_000))
+            let completed = await viewModel.completeTask(uuid: task.uuid)
+            completionStates.removeValue(forKey: task.uuid)
+
+            if completed {
+                viewModel.notifyCompletedTaskArrival()
+            }
+        }
+    }
+
+    private func updateCompletionState(for taskUUID: String, _ update: (inout CommandCenterTaskCompletionState) -> Void) {
+        var state = completionStates[taskUUID] ?? .initial
+        update(&state)
+        completionStates[taskUUID] = state
     }
 }
 

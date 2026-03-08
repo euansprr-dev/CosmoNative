@@ -1,5 +1,5 @@
 // Canvas/CommandCenter/TaskInputParser.swift
-// Natural language task input parser — extracts priority, dates, times, durations, intents
+// Natural language task input parser — extracts priority, dates, times, and intents
 // March 2026
 
 import Foundation
@@ -9,7 +9,6 @@ struct ParsedTaskInput {
     var priority: TaskPriority?
     var dueDate: Date?
     var scheduledTime: Date?
-    var estimatedMinutes: Int?
     var intent: TaskIntent?
 }
 
@@ -22,9 +21,6 @@ enum TaskInputParser {
 
         // Extract priority (p1/p2/p3/p4)
         result.priority = extractPriority(&remaining)
-
-        // Extract duration (30m, 1h, 90min, 1.5h)
-        result.estimatedMinutes = extractDuration(&remaining)
 
         // Extract intent keywords
         result.intent = extractIntent(&remaining)
@@ -65,48 +61,6 @@ enum TaskInputParser {
             if let range = input.range(of: pattern, options: .regularExpression, range: input.startIndex..<input.endIndex) {
                 input.removeSubrange(range)
                 return priority
-            }
-        }
-        return nil
-    }
-
-    // MARK: - Duration
-
-    private static func extractDuration(_ input: inout String) -> Int? {
-        // Match patterns like "30m", "1h", "90min", "1.5h", "1h30m"
-        let patterns: [(String, (String) -> Int?)] = [
-            ("\\b(\\d+)h(\\d+)m\\b", { str in
-                let parts = str.components(separatedBy: CharacterSet(charactersIn: "hm")).filter { !$0.isEmpty }
-                guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
-                return h * 60 + m
-            }),
-            ("\\b(\\d+\\.\\d+)h\\b", { str in
-                let num = str.replacingOccurrences(of: "h", with: "")
-                guard let hours = Double(num) else { return nil }
-                return Int(hours * 60)
-            }),
-            ("\\b(\\d+)h\\b", { str in
-                let num = str.replacingOccurrences(of: "h", with: "")
-                guard let hours = Int(num) else { return nil }
-                return hours * 60
-            }),
-            ("\\b(\\d+)min\\b", { str in
-                let num = str.replacingOccurrences(of: "min", with: "")
-                return Int(num)
-            }),
-            ("\\b(\\d+)m\\b", { str in
-                let num = str.replacingOccurrences(of: "m", with: "")
-                return Int(num)
-            }),
-        ]
-
-        for (pattern, converter) in patterns {
-            if let match = input.range(of: pattern, options: .regularExpression) {
-                let matchStr = String(input[match])
-                if let minutes = converter(matchStr) {
-                    input.removeSubrange(match)
-                    return minutes
-                }
             }
         }
         return nil

@@ -229,9 +229,9 @@ final class ResearchService {
     /// between requests, dramatically reducing cost and latency for mega-context prompts.
     ///
     /// - Parameters:
-    ///   - systemBlocks: Array of (content, cacheControl) tuples. Each becomes a content block
-    ///     in the system message. When cacheControl is true, `cache_control: {"type": "ephemeral"}`
-    ///     is added to the content block boundary.
+    ///   - systemBlocks: Structured prompt blocks. Each becomes a content block
+    ///     in the system message. When `cacheControl` is true, a prompt-cache boundary
+    ///     is added and optional `ttl` is passed through to the provider.
     ///   - messages: Conversation messages (user/assistant turns)
     ///   - model: OpenRouter model ID (e.g., "anthropic/claude-opus-4-6")
     ///   - maxTokens: Maximum tokens in the response
@@ -239,7 +239,7 @@ final class ResearchService {
     ///   - onToken: Optional streaming callback for token-by-token response. When provided,
     ///     the request uses SSE streaming and calls this closure for each token.
     func generateWithCaching(
-        systemBlocks: [(content: String, cacheControl: Bool)],
+        systemBlocks: [PromptCacheBlock],
         messages: [[String: Any]],
         model: String,
         maxTokens: Int = 8192,
@@ -258,18 +258,7 @@ final class ResearchService {
         request.setValue("CosmoOS/1.0", forHTTPHeaderField: "HTTP-Referer")
         request.setValue("CosmoOS", forHTTPHeaderField: "X-Title")
 
-        // Build system message with content blocks
-        var systemContentBlocks: [[String: Any]] = []
-        for block in systemBlocks {
-            var contentBlock: [String: Any] = [
-                "type": "text",
-                "text": block.content
-            ]
-            if block.cacheControl {
-                contentBlock["cache_control"] = ["type": "ephemeral"]
-            }
-            systemContentBlocks.append(contentBlock)
-        }
+        let systemContentBlocks = buildSystemContentBlocks(systemBlocks)
 
         let systemMessage: [String: Any] = [
             "role": "system",
@@ -292,12 +281,33 @@ final class ResearchService {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        print("🌐 [ResearchService.generateWithCaching] Request body size: \(request.httpBody?.count ?? 0) bytes")
 
         if useStreaming, let tokenHandler = onToken {
             return try await streamOpenRouter(request: request, onToken: tokenHandler)
         } else {
             return try await executeOpenRouter(request: request)
         }
+    }
+
+    func generateWithCaching(
+        systemBlocks: [(content: String, cacheControl: Bool)],
+        messages: [[String: Any]],
+        model: String,
+        maxTokens: Int = 8192,
+        temperature: Double = 0.3,
+        onToken: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        try await generateWithCaching(
+            systemBlocks: systemBlocks.map {
+                PromptCacheBlock(content: $0.content, cacheControl: $0.cacheControl)
+            },
+            messages: messages,
+            model: model,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            onToken: onToken
+        )
     }
 
     // MARK: - Generate With Tool Use
@@ -310,7 +320,7 @@ final class ResearchService {
     /// OpenRouter/Anthropic may return `content` as a plain string (text-only responses) or as
     /// an array of content blocks (when tools are used). Both formats are handled.
     func generateWithTools(
-        systemBlocks: [(content: String, cacheControl: Bool)],
+        systemBlocks: [PromptCacheBlock],
         messages: [[String: Any]],
         tools: [[String: Any]],
         model: String,
@@ -331,18 +341,7 @@ final class ResearchService {
         request.setValue("CosmoOS/1.0", forHTTPHeaderField: "HTTP-Referer")
         request.setValue("CosmoOS", forHTTPHeaderField: "X-Title")
 
-        // Build system message with content blocks
-        var systemContentBlocks: [[String: Any]] = []
-        for block in systemBlocks {
-            var contentBlock: [String: Any] = [
-                "type": "text",
-                "text": block.content
-            ]
-            if block.cacheControl {
-                contentBlock["cache_control"] = ["type": "ephemeral"]
-            }
-            systemContentBlocks.append(contentBlock)
-        }
+        let systemContentBlocks = buildSystemContentBlocks(systemBlocks)
 
         let systemMessage: [String: Any] = [
             "role": "system",
@@ -353,10 +352,14 @@ final class ResearchService {
         allMessages.append(contentsOf: messages)
 
         // Non-streaming for reliable tool_use parsing
+        let effectiveTools = cacheControlBreakpointCount(in: systemBlocks) >= 4
+            ? tools
+            : cacheToolDefinitions(tools, ttl: "1h")
+
         let body: [String: Any] = [
             "model": model,
             "messages": allMessages,
-            "tools": tools,
+            "tools": effectiveTools,
             "temperature": temperature,
             "max_tokens": maxTokens
         ]
@@ -401,10 +404,8 @@ final class ResearchService {
 
             print("🌐 [ResearchService.generateWithTools] finish_reason: \(finishReason ?? "nil"), message keys: \(message?.keys.sorted() ?? [])")
 
-            if let usage = json?["usage"] as? [String: Any],
-               let cacheHits = usage["prompt_tokens_details"] as? [String: Any],
-               let cachedTokens = cacheHits["cached_tokens"] as? Int, cachedTokens > 0 {
-                print("ResearchService (tools): cache hit — \(cachedTokens) tokens cached")
+            if let usage = json?["usage"] as? [String: Any] {
+                Self.logUsage(prefix: "ResearchService (tools)", usage: usage)
             }
 
             var textContent = ""
@@ -458,6 +459,79 @@ final class ResearchService {
         }
 
         return parsed
+    }
+
+    func generateWithTools(
+        systemBlocks: [(content: String, cacheControl: Bool)],
+        messages: [[String: Any]],
+        tools: [[String: Any]],
+        model: String,
+        maxTokens: Int = 8192,
+        temperature: Double = 0.3,
+        onToken: (@Sendable (String) -> Void)? = nil
+    ) async throws -> ClaudeToolUseResponse {
+        try await generateWithTools(
+            systemBlocks: systemBlocks.map {
+                PromptCacheBlock(content: $0.content, cacheControl: $0.cacheControl)
+            },
+            messages: messages,
+            tools: tools,
+            model: model,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            onToken: onToken
+        )
+    }
+
+    private func buildSystemContentBlocks(_ systemBlocks: [PromptCacheBlock]) -> [[String: Any]] {
+        systemBlocks.map { block in
+            var contentBlock: [String: Any] = [
+                "type": "text",
+                "text": block.content
+            ]
+            if block.cacheControl {
+                var cacheControl: [String: Any] = ["type": "ephemeral"]
+                if let ttl = block.ttl, !ttl.isEmpty {
+                    cacheControl["ttl"] = ttl
+                }
+                contentBlock["cache_control"] = cacheControl
+            }
+            return contentBlock
+        }
+    }
+
+    private func cacheControlBreakpointCount(in systemBlocks: [PromptCacheBlock]) -> Int {
+        systemBlocks.reduce(into: 0) { count, block in
+            if block.cacheControl {
+                count += 1
+            }
+        }
+    }
+
+    private func cacheToolDefinitions(_ tools: [[String: Any]], ttl: String?) -> [[String: Any]] {
+        guard !tools.isEmpty else { return tools }
+        var cachedTools = tools
+        var lastTool = cachedTools[cachedTools.count - 1]
+        var cacheControl: [String: Any] = ["type": "ephemeral"]
+        if let ttl, !ttl.isEmpty {
+            cacheControl["ttl"] = ttl
+        }
+        lastTool["cache_control"] = cacheControl
+        cachedTools[cachedTools.count - 1] = lastTool
+        return cachedTools
+    }
+
+    nonisolated private static func logUsage(prefix: String, usage: [String: Any]) {
+        let promptTokens = usage["prompt_tokens"] as? Int ?? 0
+        let completionTokens = usage["completion_tokens"] as? Int ?? 0
+        let cacheHits = usage["prompt_tokens_details"] as? [String: Any]
+        let cachedTokens = cacheHits?["cached_tokens"] as? Int ?? 0
+        let uncachedPromptTokens = max(promptTokens - cachedTokens, 0)
+        let cacheHitRate = promptTokens > 0 ? (Double(cachedTokens) / Double(promptTokens)) * 100 : 0
+
+        print(
+            "🌐 [\(prefix)] Usage: prompt=\(promptTokens), uncached=\(uncachedPromptTokens), cached=\(cachedTokens), completion=\(completionTokens), cache_hit_rate=\(String(format: "%.1f", cacheHitRate))%"
+        )
     }
 
     // MARK: - Streaming SSE
@@ -551,10 +625,7 @@ final class ResearchService {
 
         // Log cache usage if present
         if let usage = json?["usage"] as? [String: Any] {
-            let cacheHits = usage["prompt_tokens_details"] as? [String: Any]
-            if let cachedTokens = cacheHits?["cached_tokens"] as? Int, cachedTokens > 0 {
-                print("ResearchService: cache hit — \(cachedTokens) tokens cached")
-            }
+            Self.logUsage(prefix: "ResearchService", usage: usage)
         }
 
         return content

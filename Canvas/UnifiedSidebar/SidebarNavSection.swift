@@ -7,11 +7,16 @@ import SwiftUI
 struct SidebarNavSection: View {
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var hoveredItem: String?
 
+    private var actionAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.snappy
+    }
+
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: isCollapsed ? 8 : 6) {
             navRow(
                 id: "commandCenter",
                 icon: "hexagon",
@@ -39,8 +44,7 @@ struct SidebarNavSection: View {
                 badge: inboxUnreadCount
             )
         }
-        .padding(.horizontal, isCollapsed ? 6 : 12)
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Nav Row
@@ -56,63 +60,28 @@ struct SidebarNavSection: View {
         let isHovered = hoveredItem == id
 
         return Button {
-            withAnimation(ProMotionSprings.snappy) {
+            withAnimation(actionAnimation) {
                 currentDestination = destination
             }
         } label: {
-            HStack(spacing: 0) {
-                // Active indicator — 3pt accent left border
-                if !isCollapsed {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(isActive ? DS.accent : Color.clear)
-                        .frame(width: 3, height: 20)
-                        .padding(.trailing, 8)
-                }
-
-                let activeIcon = (icon == "hexagon") ? icon : icon + ".fill"
-                Image(systemName: isActive ? activeIcon : icon)
-                    .font(.system(size: isCollapsed ? 16 : 14, weight: .medium))
-                    .foregroundColor(isActive ? DS.accent : DS.textSecondary)
-                    .frame(width: isCollapsed ? 32 : 20, height: isCollapsed ? 32 : 20)
-
-                if !isCollapsed {
-                    Text(label)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                        .foregroundColor(isActive ? DS.text : DS.textSecondary)
-                        .padding(.leading, 8)
-                        .transition(.opacity.combined(with: .move(edge: .leading)))
-
-                    Spacer()
-
-                    // Badge
-                    if let count = badge, count > 0 {
-                        Text("\(count)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(DS.accent, in: Capsule())
-                            .transition(.opacity.combined(with: .scale))
-                    }
+            Group {
+                if isCollapsed {
+                    collapsedRowContent(
+                        icon: icon,
+                        isActive: isActive,
+                        badge: badge,
+                        isHovered: isHovered
+                    )
                 } else {
-                    // Badge dot in collapsed mode
-                    if let count = badge, count > 0 {
-                        Circle()
-                            .fill(DS.accent)
-                            .frame(width: 6, height: 6)
-                            .offset(x: -4, y: -10)
-                    }
+                    expandedRowContent(
+                        icon: icon,
+                        label: label,
+                        isActive: isActive,
+                        badge: badge,
+                        isHovered: isHovered
+                    )
                 }
             }
-            .padding(.horizontal, isCollapsed ? 0 : 8)
-            .padding(.vertical, isCollapsed ? 4 : 6)
-            .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .leading)
-            .background(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .fill(isActive
-                          ? DS.accent.opacity(0.10)
-                          : (isHovered ? DS.surfaceHover : Color.clear))
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -120,6 +89,85 @@ struct SidebarNavSection: View {
         .help(label)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func expandedRowContent(
+        icon: String,
+        label: String,
+        isActive: Bool,
+        badge: Int?,
+        isHovered: Bool
+    ) -> some View {
+        let activeIcon = icon == "hexagon" ? icon : "\(icon).fill"
+
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isActive ? DS.accent.opacity(0.14) : DS.surface)
+
+                Image(systemName: isActive ? activeIcon : icon)
+                    .font(.system(size: UnifiedSidebarMetrics.iconSize, weight: .medium))
+                    .foregroundColor(isActive ? DS.accent : DS.textSecondary)
+            }
+            .frame(width: 32, height: 32)
+
+            Text(label)
+                .font(.system(size: 14, weight: isActive ? .semibold : .medium))
+                .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            if let count = badge, count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(DS.accentSoft, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+                    )
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.standardRowHeight, alignment: .leading)
+        .unifiedSidebarRowChrome(isActive: isActive, isHovered: isHovered)
+    }
+
+    @ViewBuilder
+    private func collapsedRowContent(
+        icon: String,
+        isActive: Bool,
+        badge: Int?,
+        isHovered: Bool
+    ) -> some View {
+        let activeIcon = icon == "hexagon" ? icon : "\(icon).fill"
+
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: isActive ? activeIcon : icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(isActive ? DS.accent : DS.textSecondary)
+                .frame(
+                    width: UnifiedSidebarMetrics.railHitTarget,
+                    height: UnifiedSidebarMetrics.railHitTarget
+                )
+                .unifiedSidebarRowChrome(
+                    isActive: isActive,
+                    isHovered: isHovered,
+                    cornerRadius: 10
+                )
+
+            if let count = badge, count > 0 {
+                Circle()
+                    .fill(DS.accent)
+                    .frame(width: 7, height: 7)
+                    .offset(x: 2, y: -1)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Inbox Count

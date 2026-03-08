@@ -22,7 +22,7 @@ struct SmartTaskCaptureRow: View {
 
                 ZStack(alignment: .leading) {
                     if viewModel.newTaskTitle.isEmpty {
-                        Text("Add task... (try \"Write reels p1 tomorrow 2pm 45m\")")
+                        Text("Add task... (try \"Write reels p1 tomorrow 2pm\")")
                             .font(.system(size: 13))
                             .foregroundColor(Color(hex: "767685"))
                             .allowsHitTesting(false)
@@ -99,14 +99,6 @@ struct SmartTaskCaptureRow: View {
                     )
                 }
 
-                if let mins = parsedInput.estimatedMinutes {
-                    metadataChip(
-                        icon: "timer",
-                        label: "\(mins)m",
-                        color: DS.textSecondary
-                    )
-                }
-
                 if let intent = parsedInput.intent {
                     metadataChip(
                         icon: intent.iconName,
@@ -146,7 +138,6 @@ struct SmartTaskCaptureRow: View {
         parsedInput.priority != nil
             || parsedInput.dueDate != nil
             || parsedInput.scheduledTime != nil
-            || parsedInput.estimatedMinutes != nil
             || parsedInput.intent != nil
     }
 

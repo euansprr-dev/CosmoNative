@@ -36,7 +36,7 @@ struct LoadedContextInfo {
 /// of ResearchService.shared.generateWithTools(), avoiding main actor starvation.
 private func performWritingAPICall(
     apiKey: String,
-    systemBlocks: [(content: String, cacheControl: Bool)],
+    systemBlocks: [PromptCacheBlock],
     messages: [[String: Any]],
     tools: [[String: Any]],
     model: String,
@@ -53,13 +53,16 @@ private func performWritingAPICall(
     request.setValue("CosmoOS", forHTTPHeaderField: "X-Title")
 
     // Build system message with cache control blocks
-    var systemContentBlocks: [[String: Any]] = []
-    for block in systemBlocks {
+    let systemContentBlocks = systemBlocks.map { block -> [String: Any] in
         var contentBlock: [String: Any] = ["type": "text", "text": block.content]
         if block.cacheControl {
-            contentBlock["cache_control"] = ["type": "ephemeral"]
+            var cacheControl: [String: Any] = ["type": "ephemeral"]
+            if let ttl = block.ttl, !ttl.isEmpty {
+                cacheControl["ttl"] = ttl
+            }
+            contentBlock["cache_control"] = cacheControl
         }
-        systemContentBlocks.append(contentBlock)
+        return contentBlock
     }
 
     let systemMessage: [String: Any] = ["role": "system", "content": systemContentBlocks]
@@ -68,9 +71,14 @@ private func performWritingAPICall(
 
     // Mark last tool with cache_control so providers cache static tool definitions
     var cachedTools = tools
-    if !cachedTools.isEmpty {
+    let cacheableBlockCount = systemBlocks.reduce(into: 0) { count, block in
+        if block.cacheControl {
+            count += 1
+        }
+    }
+    if !cachedTools.isEmpty, cacheableBlockCount < 4 {
         var lastTool = cachedTools[cachedTools.count - 1]
-        lastTool["cache_control"] = ["type": "ephemeral"]
+        lastTool["cache_control"] = ["type": "ephemeral", "ttl": "1h"]
         cachedTools[cachedTools.count - 1] = lastTool
     }
 
@@ -102,10 +110,16 @@ private func performWritingAPICall(
     let message = firstChoice?["message"] as? [String: Any]
     let finishReason = firstChoice?["finish_reason"] as? String
 
-    if let usage = json?["usage"] as? [String: Any],
-       let details = usage["prompt_tokens_details"] as? [String: Any],
-       let cached = details["cached_tokens"] as? Int, cached > 0 {
-        print("🌐 [WritingAPICall] Cache hit: \(cached) tokens")
+    if let usage = json?["usage"] as? [String: Any] {
+        let promptTokens = usage["prompt_tokens"] as? Int ?? 0
+        let completionTokens = usage["completion_tokens"] as? Int ?? 0
+        let details = usage["prompt_tokens_details"] as? [String: Any]
+        let cachedTokens = details?["cached_tokens"] as? Int ?? 0
+        let uncachedPromptTokens = max(promptTokens - cachedTokens, 0)
+        let cacheHitRate = promptTokens > 0 ? (Double(cachedTokens) / Double(promptTokens)) * 100 : 0
+        print(
+            "🌐 [WritingAPICall] Usage: prompt=\(promptTokens), uncached=\(uncachedPromptTokens), cached=\(cachedTokens), completion=\(completionTokens), cache_hit_rate=\(String(format: "%.1f", cacheHitRate))%"
+        )
     }
 
     var textContent = ""
@@ -186,12 +200,16 @@ final class UnifiedWritingEngine: ObservableObject {
 
     private let database = CosmoDatabase.shared
 
+    /// Notification observer for lesson changes — invalidates cachedBlock2
+    private var lessonChangeObserver: NSObjectProtocol?
+
     // MARK: - Constants
 
     private let writerModel = ContentModelTier.writer.rawValue
     private let brainstormModel = ContentModelTier.writer.rawValue  // Opus for ALL phases — outline quality matters
     private let scorecardModel = ContentModelTier.strategist.rawValue
     private let maxRetries = 2
+    private let promptCacheTTL = "1h"
     private let tokenSummarizationThreshold = 100_000  // Opus 4.6 has 1M context — don't summarize mid-session
 
     // MARK: - Phase-Aware Model Selection
@@ -223,6 +241,18 @@ final class UnifiedWritingEngine: ObservableObject {
         self.cachedExperienceBuffer = ""
         self.cachedReferenceMaterial = [:]
         self.clientPostIndex = []
+
+        // Observe lesson changes to invalidate Block 2 cache (new/confirmed/corrected lessons)
+        if lessonChangeObserver == nil {
+            lessonChangeObserver = NotificationCenter.default.addObserver(
+                forName: .cosmoLessonChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.cachedBlock2 = nil
+                print("🔧 [UnifiedWritingEngine] Block 2 cache invalidated (lesson changed)")
+            }
+        }
 
         // Restore persisted conversation — prefer in-memory messages, fall back to atom persistence
         if !existingMessages.isEmpty {
@@ -259,32 +289,36 @@ final class UnifiedWritingEngine: ObservableObject {
         buildCachedBlocks(contentAtom: contentAtom)
         print("🔧 [UnifiedWritingEngine] Block1 length: \(cachedBlock1?.count ?? 0) chars, Block2 length: \(cachedBlock2?.count ?? 0) chars")
 
-        // Load learned preferences for this client
+        // Load learned lessons + preferences for this client via LessonPolicyResolver
         let contentMeta = contentAtom.metadataValue(as: ContentAtomMetadata.self)
         if let clientUUID = contentMeta?.clientProfileUUID {
-            onContextActivity?(.started(name: "load_preferences", displayLabel: "Loading learned preferences", args: [:]))
-            let prefs = await loadLearnedPreferences(clientUUID: clientUUID)
-            if !prefs.isEmpty, var block2 = cachedBlock2, !block2.isEmpty {
-                // Separate writing rules (with examples) from simple key-value preferences
-                let writingRules = prefs.filter { $0.key == "writing_rule" }
-                let otherPrefs = prefs.filter { $0.key != "writing_rule" }
+            onContextActivity?(.started(name: "load_preferences", displayLabel: "Loading learned rules", args: [:]))
 
-                if !writingRules.isEmpty {
-                    let rulesText = writingRules.enumerated().map { i, rule in
-                        "\(i + 1). \(rule.value)"
-                    }.joined(separator: "\n\n")
-                    block2 += "\n\n## LEARNED WRITING RULES — MANDATORY\n"
-                    block2 += "These rules were learned from the user's past edits. "
-                    block2 += "Violating these will result in rejection.\n\n\(rulesText)"
+            // Resolve lessons from canonical atom storage (single source of truth)
+            let format = detectContentFormat().rawValue
+            let policy = await LessonPolicyResolver.resolveForWritingEngine(
+                clientUUID: clientUUID,
+                intent: "draft",
+                format: format
+            )
+
+            // Also load simple key-value user preferences
+            let userPrefs = await loadUserPreferences(clientUUID: clientUUID)
+
+            if var block2 = cachedBlock2, !block2.isEmpty {
+                if !policy.formattedBlock.isEmpty {
+                    block2 += policy.formattedBlock
                 }
-                if !otherPrefs.isEmpty {
-                    let prefsText = otherPrefs.map { "- \($0.key): \($0.value)" }.joined(separator: "\n")
+                if !userPrefs.isEmpty {
+                    let prefsText = userPrefs.map { "- \($0.key): \($0.value)" }.joined(separator: "\n")
                     block2 += "\n\n## User Preferences\n\(prefsText)"
                 }
                 cachedBlock2 = block2
-                print("🔧 [UnifiedWritingEngine] Injected \(prefs.count) learned preferences into Block 2")
+                let hardCount = policy.hardRules.count
+                let advisoryCount = policy.advisoryRules.count
+                print("🔧 [UnifiedWritingEngine] Injected \(hardCount) hard + \(advisoryCount) advisory lessons into Block 2")
             }
-            onContextActivity?(.completed(name: "load_preferences", displayLabel: "Learned preferences loaded", resultPreview: "\(prefs.count) rules/preferences"))
+            onContextActivity?(.completed(name: "load_preferences", displayLabel: "Learned rules loaded", resultPreview: "\(policy.totalCount) rules (\(policy.hardRules.count) hard)"))
 
             // Inject batch analyses relevant to this content's format
             let batchInsights = loadBatchAnalyses(format: detectContentFormat())
@@ -376,32 +410,6 @@ final class UnifiedWritingEngine: ObservableObject {
 
         print("💬 [UnifiedWritingEngine] sendMessage: \"\(text.prefix(80))\" phase: \(phase.rawValue)")
         print("💬 [UnifiedWritingEngine] Conversation has \(messages.count) messages, contentAtom: \(contentAtom?.uuid ?? "NIL")")
-
-        // Inject context reminder on first user message so the AI knows exactly what's available
-        // and is forced to analyze it before responding
-        if messages.isEmpty || messages.filter({ $0.role == .user }).count == 0 {
-            let contextReminder = buildContextReminder()
-            if !contextReminder.isEmpty {
-                messages.append(WritingMessage(role: .system, content: contextReminder))
-            }
-        } else if clientMeta != nil {
-            // Update any stale "None linked" context reminder now that a profile is loaded.
-            // Without this, the AI sees the old reminder and re-calls get_client_profile on every turn.
-            if let reminderIdx = messages.firstIndex(where: {
-                $0.role == .system && $0.content.contains("CONTENT PROFILE: None linked")
-            }) {
-                let updatedContent = messages[reminderIdx].content.replacingOccurrences(
-                    of: "CONTENT PROFILE: None linked. Use the get_client_profile tool to search for and load a client profile by name. If the user mentions a creator name, search for it immediately.",
-                    with: "CONTENT PROFILE: \(clientMeta!.clientName) — LOADED. Full intelligence model, voice fingerprint, and top-performing posts are in the system prompt."
-                )
-                messages[reminderIdx] = WritingMessage(
-                    id: messages[reminderIdx].id,
-                    role: .system,
-                    content: updatedContent,
-                    timestamp: messages[reminderIdx].timestamp
-                )
-            }
-        }
 
         // Append user message
         let userMsg = WritingMessage(role: .user, content: text)
@@ -684,7 +692,7 @@ final class UnifiedWritingEngine: ObservableObject {
     /// - @Published state is NOT modified here — the caller commits results.
     nonisolated private func runConversationLoopOffMain(
         snapshot: [WritingMessage],
-        systemBlocks: [(content: String, cacheControl: Bool)],
+        systemBlocks: [PromptCacheBlock],
         tools: [[String: Any]],
         model: String,
         apiKey: String,
@@ -828,16 +836,30 @@ final class UnifiedWritingEngine: ObservableObject {
 
     /// Build API messages from a WritingMessage array.
     /// `nonisolated static` so it can be called from the off-main conversation loop.
-    nonisolated private static func buildAPIMessages(from messages: [WritingMessage]) -> [[String: Any]] {
+    nonisolated static func buildAPIMessages(from messages: [WritingMessage]) -> [[String: Any]] {
         var apiMessages: [[String: Any]] = []
+        let preserveFromIndex = max(0, messages.count - 6)
+        var compactedToolCallIds = Set<String>()
 
-        for msg in messages {
+        for (index, msg) in messages.enumerated() {
             switch msg.role {
             case .user:
                 apiMessages.append(["role": "user", "content": msg.content])
 
             case .assistant:
                 if let toolCalls = msg.toolCalls, !toolCalls.isEmpty {
+                    let shouldCompact = index < preserveFromIndex
+                        && toolCalls.allSatisfy { compactableHistoricalToolNames.contains($0.toolName) }
+
+                    if shouldCompact {
+                        compactedToolCallIds.formUnion(toolCalls.map(\.id))
+                        let summary = compactedAssistantSummary(from: msg, toolCalls: toolCalls)
+                        if !summary.isEmpty {
+                            apiMessages.append(["role": "assistant", "content": summary])
+                        }
+                        continue
+                    }
+
                     var assistantMsg: [String: Any] = ["role": "assistant"]
                     if !msg.content.isEmpty {
                         assistantMsg["content"] = msg.content
@@ -864,6 +886,9 @@ final class UnifiedWritingEngine: ObservableObject {
             case .toolResult:
                 if let results = msg.toolResults {
                     for result in results {
+                        if compactedToolCallIds.contains(result.toolCallId) {
+                            continue
+                        }
                         apiMessages.append([
                             "role": "tool",
                             "tool_call_id": result.toolCallId,
@@ -880,25 +905,94 @@ final class UnifiedWritingEngine: ObservableObject {
         return apiMessages
     }
 
-    // MARK: - Context Assembly
+    nonisolated private static let compactableHistoricalToolNames: Set<String> = [
+        "set_title",
+        "set_description",
+        "update_outline",
+        "add_hooks",
+        "write_draft",
+        "edit_section",
+        "get_client_profile"
+    ]
 
-    /// Assemble the 3-tier system blocks for the API call.
-    private func assembleSystemBlocks() -> [(content: String, cacheControl: Bool)] {
-        var blocks: [(content: String, cacheControl: Bool)] = []
+    nonisolated private static func compactedAssistantSummary(
+        from message: WritingMessage,
+        toolCalls: [WritingToolCall]
+    ) -> String {
+        let trimmedContent = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let toolNames = toolCalls.map(\.toolName).joined(separator: ", ")
 
-        // Block 1: Methodology + platform constraints (cached, stable across all requests)
-        let block1 = cachedBlock1 ?? assembleBlock1()
-        blocks.append((content: block1, cacheControl: true))
-
-        // Block 2: Intelligence model + transcripts (cached, stable per client)
-        if let block2 = cachedBlock2, !block2.isEmpty {
-            blocks.append((content: block2, cacheControl: true))
+        if toolCalls.contains(where: { $0.toolName == "get_client_profile" }) {
+            if trimmedContent.isEmpty {
+                return "[Earlier tool result compacted: client profile already loaded into system context.]"
+            }
+            return trimmedContent
         }
 
-        // Block 3: Dynamic context (per-request)
-        let block3 = assembleBlock3()
-        if !block3.isEmpty {
-            blocks.append((content: block3, cacheControl: false))
+        if trimmedContent.isEmpty {
+            return "[Earlier tool actions already applied to session state: \(toolNames)]"
+        }
+        return trimmedContent + "\n\n[Earlier tool actions already applied to session state: \(toolNames)]"
+    }
+
+    // MARK: - Context Assembly
+
+    /// Assemble the 4-tier system blocks for the API call.
+    private func assembleSystemBlocks() -> [PromptCacheBlock] {
+        let block1 = cachedBlock1 ?? assembleBlock1()
+        let block2 = (cachedBlock2?.isEmpty == false) ? cachedBlock2 : nil
+        let stableBlock3 = assembleStableBlock3()
+        let dynamicBlock3 = assembleDynamicBlock3()
+
+        return Self.composeSystemBlocks(
+            block1: block1,
+            block2: block2,
+            stableBlock3: stableBlock3,
+            dynamicBlock3: dynamicBlock3,
+            ttl: promptCacheTTL
+        )
+    }
+
+    nonisolated static func composeSystemBlocks(
+        block1: String,
+        block2: String?,
+        stableBlock3: String,
+        dynamicBlock3: String,
+        ttl: String
+    ) -> [PromptCacheBlock] {
+        var blocks: [PromptCacheBlock] = []
+
+        blocks.append(PromptCacheBlock(
+            content: block1,
+            cacheControl: true,
+            ttl: ttl,
+            label: "Block 1"
+        ))
+
+        if let block2, !block2.isEmpty {
+            blocks.append(PromptCacheBlock(
+                content: block2,
+                cacheControl: true,
+                ttl: ttl,
+                label: "Block 2"
+            ))
+        }
+
+        if !stableBlock3.isEmpty {
+            blocks.append(PromptCacheBlock(
+                content: stableBlock3,
+                cacheControl: true,
+                ttl: ttl,
+                label: "Block 3A"
+            ))
+        }
+
+        if !dynamicBlock3.isEmpty {
+            blocks.append(PromptCacheBlock(
+                content: dynamicBlock3,
+                cacheControl: false,
+                label: "Block 3B"
+            ))
         }
 
         return blocks
@@ -977,13 +1071,12 @@ final class UnifiedWritingEngine: ObservableObject {
         return result
     }
 
-    /// Block 3: Dynamic context — swipes + current state + knowledge + beat patterns.
-    /// Changes per request.
-    private func assembleBlock3() -> String {
+    /// Block 3A: Session-stable swipe/reference context.
+    private func assembleStableBlock3() -> String {
         guard let atom = contentAtom else { return "" }
 
         var lines: [String] = []
-        lines.append("=== DYNAMIC CONTEXT ===")
+        lines.append("=== STABLE SESSION CONTEXT ===")
         lines.append("")
 
         // Selected swipe examples (compressed)
@@ -996,7 +1089,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 lines.append("")
             }
 
-            lines.append("--- SWIPE EXAMPLES (\(selectedSwipes.count) selected) ---")
+            lines.append("--- SAME-TYPE SWIPE EXAMPLES (\(selectedSwipes.count) selected) ---")
             for (i, swipe) in selectedSwipes.enumerated() {
                 lines.append("SWIPE #\(i + 1) (UUID: \(swipe.id.uuidString)):")
                 lines.append(swipe.formatted())
@@ -1013,18 +1106,50 @@ final class UnifiedWritingEngine: ObservableObject {
             }
             lines.append("""
             RULES:
-            1. These \(selectedSwipes.count) swipe examples are your PERMANENT reference for this session.
-            2. On EVERY revision, maintain the PRIMARY swipe's structural DNA — beat pattern, hook type, section count, and emotional arc.
-            3. When the user asks to shorten/lengthen slides, REDISTRIBUTE content to maintain the same beat pattern — do NOT flatten or simplify the structure.
-            4. When the user asks for stats or data, pull from the swipe examples above — they contain real data points.
-            5. NEVER drop the structural patterns from these swipes, even when making formatting changes.
-            6. Use read_swipe_body to load full body text of any swipe for deeper analysis. The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL.
-            7. Use list_client_posts + read_client_post to access the client's post bodies on demand.
+            1. These \(selectedSwipes.count) swipe examples are your PERMANENT same-type reference set for this session.
+            2. The PRIMARY BLUEPRINT is the core structural anchor. The other \(max(selectedSwipes.count - 1, 0)) swipes are supporting evidence for rhythm, pacing, hooks, and density in this exact format.
+            3. On EVERY revision, maintain the PRIMARY swipe's structural DNA — beat pattern, hook type, section count, and emotional arc.
+            4. When the user asks to shorten/lengthen slides, REDISTRIBUTE content to maintain the same beat pattern — do NOT flatten or simplify the structure.
+            5. When the user asks for stats or data, pull from the swipe examples above — they contain real data points.
+            6. NEVER drop the structural patterns from these swipes, even when making formatting changes.
+            7. Use read_swipe_body to load full body text of any swipe for deeper analysis. The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL.
+            8. Use list_client_posts + read_client_post to access the client's post bodies on demand.
             """)
             lines.append("")
         }
 
-        // Current content state
+        // On-demand reference material (loaded via tools, persists across all turns)
+        if !cachedReferenceMaterial.isEmpty {
+            lines.append("")
+            lines.append("=== REFERENCE MATERIAL (loaded on demand — always available) ===")
+            lines.append("These full-text bodies persist across all turns. Reference them directly.")
+            lines.append("")
+            for (key, content) in cachedReferenceMaterial.sorted(by: { $0.key < $1.key }) {
+                lines.append("--- \(key.uppercased()) ---")
+                lines.append(content)
+                lines.append("")
+            }
+        }
+
+        // Experience buffer (pre-fetched during initialize)
+        if !cachedExperienceBuffer.isEmpty {
+            lines.append("")
+            lines.append(cachedExperienceBuffer)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    /// Block 3B: Mutable per-turn context.
+    private func assembleDynamicBlock3() -> String {
+        guard let atom = contentAtom else { return "" }
+
+        var lines: [String] = []
+        lines.append("=== DYNAMIC CONTEXT ===")
+        lines.append("")
+        lines.append(buildDynamicContextInstruction())
+        lines.append("")
+
         lines.append("--- CURRENT CONTENT STATE ---")
         lines.append("Title: \(atom.title ?? "Untitled")")
         let contentMeta = atom.metadataValue(as: ContentAtomMetadata.self)
@@ -1059,7 +1184,6 @@ final class UnifiedWritingEngine: ObservableObject {
                 }
             }
             if !focusState.draftContent.isEmpty {
-                // 6000 chars covers ~25-slide carousels. Full text available via read_draft tool.
                 let draftExcerpt = focusState.draftContent.count > 6000
                     ? String(focusState.draftContent.prefix(6000)) + "\n... [truncated, \(focusState.draftContent.count) chars total. Use read_draft for full text.]"
                     : focusState.draftContent
@@ -1067,38 +1191,11 @@ final class UnifiedWritingEngine: ObservableObject {
             }
         }
 
-        // Inherited context from idea activation
         if let framework = contentMeta?.inheritedFramework {
             lines.append("Selected Framework: \(framework)")
         }
         if let hooks = contentMeta?.inheritedHooks, !hooks.isEmpty {
             lines.append("Inherited Hooks: \(hooks.joined(separator: " | "))")
-        }
-
-        // Beat patterns (top 3 for niche)
-        // NOTE: findTopPatterns is async but Block 3 assembly is synchronous.
-        // Beat patterns are pre-fetched during initialize() and stored on selectedSwipes metadata.
-
-        // Knowledge context (connections) — assembled lazily if budget allows
-        // Omitted from Block 3 to save tokens; available via explicit search_connections tool
-
-        // On-demand reference material (loaded via tools, persists across all turns)
-        if !cachedReferenceMaterial.isEmpty {
-            lines.append("")
-            lines.append("=== REFERENCE MATERIAL (loaded on demand — always available) ===")
-            lines.append("These full-text bodies persist across all turns. Reference them directly.")
-            lines.append("")
-            for (key, content) in cachedReferenceMaterial.sorted(by: { $0.key < $1.key }) {
-                lines.append("--- \(key.uppercased()) ---")
-                lines.append(content)
-                lines.append("")
-            }
-        }
-
-        // Experience buffer (pre-fetched during initialize)
-        if !cachedExperienceBuffer.isEmpty {
-            lines.append("")
-            lines.append(cachedExperienceBuffer)
         }
 
         // Conversation summary (if history was summarized)
@@ -1109,6 +1206,22 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private func buildDynamicContextInstruction() -> String {
+        var parts: [String] = []
+        parts.append("[SESSION DIRECTIVE]")
+        parts.append("Use the loaded same-type swipe set before making any writing decision.")
+        if selectedSwipes.contains(where: { $0.isPrimary }) {
+            parts.append("Treat the PRIMARY BLUEPRINT as the structural anchor. Supporting swipes are evidence for what works in this exact format.")
+        }
+        if let meta = clientMeta {
+            parts.append("Client profile is already loaded for \(meta.clientName). Do not call get_client_profile again unless the user explicitly switches creators.")
+        } else {
+            parts.append("No client profile is loaded. Use get_client_profile only if the user identifies a creator.")
+        }
+        parts.append("Do not search or load cross-format swipes for this piece.")
+        return parts.joined(separator: " ")
     }
 
     // MARK: - Tool Definitions
@@ -1242,7 +1355,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // search_swipes — always available
         tools.append(buildTool(
             name: "search_swipes",
-            description: "Search the swipe file library for relevant examples. Returns compressed swipe summaries with UUIDs. Use read_swipe_body to load the full body text of any result.",
+            description: "Search the swipe file library for relevant same-type examples. Returns compressed swipe summaries with UUIDs. Defaults to the current writing format unless an explicit format filter is provided. Use read_swipe_body to load the full body text of any result.",
             properties: [
                 "query": ["type": "string", "description": "Search query for finding relevant swipes"],
                 "format": ["type": "string", "description": "Filter by format (optional)"],
@@ -1744,7 +1857,27 @@ final class UnifiedWritingEngine: ObservableObject {
         // Voice verification — lightweight heuristic check against brand voice
         let voiceNote = verifyVoiceCompliance(draft: content)
 
-        var result = "Draft written (\(wordCount) words, format: \(formatStr))\(evalSummary)\(validationNote)\(voiceNote)"
+        // Deterministic hard-rule compliance check (~50ms, no API call)
+        var complianceNote = ""
+        let contentMeta2 = contentAtom?.metadataValue(as: ContentAtomMetadata.self)
+        let clientUUID2 = contentMeta2?.clientProfileUUID
+        let policy = await LessonPolicyResolver.resolveForWritingEngine(
+            clientUUID: clientUUID2,
+            intent: "draft",
+            format: formatStr
+        )
+        if !policy.hardRules.isEmpty {
+            let violations = DeterministicWritingValidatorRunner.validate(
+                draft: renderedContent,
+                format: formatStr,
+                hardRules: policy.hardRules
+            )
+            if let violationMessage = DeterministicWritingValidatorRunner.formatViolationMessage(violations) {
+                complianceNote = "\n\n\(violationMessage)"
+            }
+        }
+
+        var result = "Draft written (\(wordCount) words, format: \(formatStr))\(evalSummary)\(validationNote)\(voiceNote)\(complianceNote)"
 
         // Auto-refine: evaluate and improve if needed
         if refinementIterations < 2, let atom = contentAtom {
@@ -1908,16 +2041,19 @@ final class UnifiedWritingEngine: ObservableObject {
                     """, arguments: [ftsQuery])
             }
 
+            let allowedFormats = formatFilter.flatMap { WritingContentFormat.matchingSwipeFormats(for: $0) }
+                ?? detectContentFormat().swipeFormatFamily
             var swipeResults: [String] = []
             for atom in atoms {
                 guard atom.isSwipeFileAtom else { continue }
 
                 let analysis = atom.swipeAnalysis
+                guard let swipeFormat = analysis?.swipeContentFormat,
+                      allowedFormats.contains(swipeFormat) else { continue }
                 let hookScore = analysis?.hookScore ?? 0
 
                 // Apply filters
                 if let minScore = minScore, hookScore < minScore { continue }
-                if let formatFilter = formatFilter, !(analysis?.frameworkType?.displayName.lowercased().contains(formatFilter.lowercased()) ?? false) { continue }
                 if let hookTypeFilter = hookTypeFilter, analysis?.hookType?.rawValue != hookTypeFilter { continue }
 
                 let compressed = compressSwipe(atom)
@@ -1953,13 +2089,7 @@ final class UnifiedWritingEngine: ObservableObject {
         if let currentMeta = clientMeta {
             let currentName = currentMeta.clientName.lowercased()
             if currentName.contains(queryLower) || queryLower.contains(currentName) {
-                return """
-                '\(currentMeta.clientName)' is already loaded in your system context. \
-                You have full access to their intelligence model, voice fingerprint, \
-                top-performing posts, brand context, and failure rules. \
-                All of this data is in the system prompt above — read it directly. \
-                Do NOT call get_client_profile again for this client.
-                """
+                return "Client '\(currentMeta.clientName)' is already loaded in system context. Do not call get_client_profile again unless the user switches creators."
             }
         }
 
@@ -2001,64 +2131,19 @@ final class UnifiedWritingEngine: ObservableObject {
         _ = assembleBlock2()
         await buildClientPostIndex(targetFormat: detectContentFormat())
 
-        // Build comprehensive response
-        var lines: [String] = []
-        lines.append("=== CLIENT PROFILE: \(meta.clientName) ===")
-        if let handle = meta.handle { lines.append("Handle: \(handle)") }
-        if let niche = meta.niche { lines.append("Niche: \(niche)") }
-        if let industry = meta.industry { lines.append("Industry: \(industry)") }
-        if let audience = meta.targetAudience { lines.append("Target Audience: \(audience)") }
-
-        let platforms = meta.platforms.map(\.displayName).joined(separator: ", ")
-        if !platforms.isEmpty { lines.append("Platforms: \(platforms)") }
-
-        // Voice & brand context
-        if let voiceNotes = meta.voiceNotes, !voiceNotes.isEmpty { lines.append("Voice & Tone: \(voiceNotes)") }
-        if let brandStory = meta.brandStory, !brandStory.isEmpty {
-            lines.append("Brand Story: \(String(brandStory.prefix(500)))")
-        }
-        if let uniqueAngle = meta.uniqueAngle, !uniqueAngle.isEmpty { lines.append("Unique Angle: \(uniqueAngle)") }
-        if let beliefs = meta.coreBeliefs, !beliefs.isEmpty { lines.append("Core Beliefs: \(beliefs.joined(separator: ", "))") }
-        if let phrases = meta.signaturePhrases, !phrases.isEmpty { lines.append("Signature Phrases: \(phrases.joined(separator: " | "))") }
-
-        // Intelligence Model
-        if meta.intelligenceModel != nil {
-            let modelSummary = ClientIntelligenceEngine.shared.getModelForDrafting(profile: profileAtom)
-            if !modelSummary.isEmpty {
-                lines.append("\n--- INTELLIGENCE MODEL ---")
-                lines.append(modelSummary)
-            }
-        }
-
-        // Client posts — metadata only, bodies available on demand via tools
-        lines.append("\n--- CLIENT POSTS (\(clientPostIndex.count) available) ---")
-        lines.append("Use list_client_posts to browse all posts with metadata.")
-        lines.append("Use read_client_post to load specific post bodies into reference material.")
-
-        // Documents
-        if let documents = meta.documents, !documents.isEmpty {
-            lines.append("--- UPLOADED DOCUMENTS (\(documents.count)) ---")
-            for doc in documents.prefix(5) {
-                lines.append("[\(doc.category.rawValue)] \(doc.title): \(String(doc.content.prefix(500)))")
-            }
-        }
-
-        // Best formats
-        if let bestFormats = meta.bestFormats, !bestFormats.isEmpty {
-            lines.append("Best Formats: \(bestFormats.joined(separator: ", "))")
-        }
-
         // Update loaded context info for UI transparency
         var info = self.loadedContext
         info.clientName = meta.clientName
         self.loadedContext = info
 
-        // Tell the AI the data persists — prevents redundant tool calls on follow-up messages
-        lines.append("")
-        lines.append("IMPORTANT: This client profile is now loaded into your system context for the rest of this conversation. All subsequent messages will include this data automatically in the system prompt. Do NOT call get_client_profile again — just reference the data directly.")
-
         print("🔧 [UnifiedWritingEngine] get_client_profile loaded: \(meta.clientName)")
-        return lines.joined(separator: "\n")
+        let documentCount = meta.documents?.count ?? 0
+        return """
+        Loaded client profile '\(meta.clientName)' into system context. \
+        Intelligence model: \(meta.intelligenceModel != nil ? "yes" : "no"). \
+        Client posts indexed: \(clientPostIndex.count). Uploaded documents: \(documentCount). \
+        Do not call get_client_profile again unless the user switches creators.
+        """
     }
 
     // MARK: - Reference Material Tool Handlers
@@ -2273,11 +2358,14 @@ final class UnifiedWritingEngine: ObservableObject {
 
     // MARK: - Swipe Selection
 
-    /// Select up to 5 diverse swipe examples using 4-axis scoring:
-    /// format match, structural fingerprint similarity, stylistic similarity, and performance score.
-    /// After library swipe selection, loads the client's top-performing posts as client examples.
+    /// Select up to 10 same-type library swipe examples using 4-axis scoring:
+    /// exact format match, structural fingerprint similarity, stylistic similarity, and performance score.
+    /// The primary blueprint remains the structural anchor across the selected library set.
     private func selectSwipes(contentAtom: Atom) async {
         let metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self)
+        let targetWritingFormat = detectContentFormat()
+        let contentFormat = targetWritingFormat.rawValue
+        var candidates: [Atom] = []
 
         // Build set of primary swipe UUIDs (inherited from idea activation + source idea's linked swipes)
         var primarySwipeUUIDs = Set<String>()
@@ -2289,11 +2377,16 @@ final class UnifiedWritingEngine: ObservableObject {
                 try Atom.filter(Column("uuid") == sourceIdeaUUID).filter(Column("is_deleted") == false).fetchOne(db)
             }), let linkedIds = ideaAtom.ideaMetadata?.linkedSwipeIds {
                 primarySwipeUUIDs.formUnion(linkedIds)
+
+                for uuid in linkedIds.prefix(20) {
+                    if let swipe = try? await database.asyncRead({ db in
+                        try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
+                    }) {
+                        candidates.append(swipe)
+                    }
+                }
             }
         }
-
-        // Collect candidate swipe atoms
-        var candidates: [Atom] = []
 
         // First: inherited swipes from idea activation
         if let swipeUUIDs = metadata?.inheritedSwipeUUIDs {
@@ -2306,68 +2399,64 @@ final class UnifiedWritingEngine: ObservableObject {
             }
         }
 
+        candidates = Self.uniqueSwipeAtoms(candidates)
+        let sameTypeCandidates = Self.filterSameTypeLibrarySwipes(candidates, targetFormat: targetWritingFormat)
+        let strictPrimarySwipeUUIDs = Set(
+            sameTypeCandidates
+                .filter { primarySwipeUUIDs.contains($0.uuid) }
+                .map(\.uuid)
+        )
+        let excludedPrimaryCount = primarySwipeUUIDs.count - strictPrimarySwipeUUIDs.count
+        if excludedPrimaryCount > 0 {
+            print("⚠️ [UnifiedWritingEngine] Excluded \(excludedPrimaryCount) primary swipe(s) due to format mismatch for \(targetWritingFormat.displayName)")
+        }
+
         // Second: search for more if needed
-        if candidates.count < 15 {
+        if sameTypeCandidates.count < 20 {
             let query = contentAtom.title ?? contentAtom.body ?? ""
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let existingUUIDs = Set(candidates.map(\.uuid))
+                let existingUUIDs = Set(sameTypeCandidates.map(\.uuid))
                 if let results = try? await HybridSearchEngine.shared.search(
                     query: query,
-                    limit: 25,
+                    limit: 40,
                     entityTypes: [.research]
                 ) {
                     for result in results {
                         guard let uuid = result.entityUUID, !existingUUIDs.contains(uuid) else { continue }
                         if let atom = try? await database.asyncRead({ db in
                             try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
-                        }), atom.isSwipeFileAtom {
+                        }), atom.isSwipeFileAtom,
+                           targetWritingFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat) {
                             candidates.append(atom)
                         }
-                        if candidates.count >= 35 { break }
+                        if candidates.count >= 50 { break }
                     }
                 }
             }
         }
 
+        candidates = Self.uniqueSwipeAtoms(candidates)
+        let exactTypeCandidates = Self.filterSameTypeLibrarySwipes(candidates, targetFormat: targetWritingFormat)
+
         // Filter: must have analysis with hook type
-        let analyzed = candidates.filter { $0.swipeAnalysis?.hookType != nil }
-
-        // Detect target format for filtering and scoring
-        let targetWritingFormat = detectContentFormat()
-        let targetFormatFamily = targetWritingFormat.swipeFormatFamily
-        let contentFormat = targetWritingFormat.rawValue
-
-        // C1: Increased limits — up to 8 library swipes, minimum 5 for quality
-        let maxSwipes = 8
-        let minSwipes = 5
+        let analyzed = exactTypeCandidates.filter { $0.swipeAnalysis?.hookType != nil }
+        let targetSwipeCount = 10
 
         guard !analyzed.isEmpty else {
-            // C1: Even with no analyzed swipes, try broader fallback before giving up
+            // Same-type-only fallback when we have no analyzed matches.
             selectedSwipes = await selectSwipesFallback(
                 contentAtom: contentAtom,
                 targetFormat: targetWritingFormat,
-                needed: minSwipes,
+                needed: targetSwipeCount,
                 existingUUIDs: Set()
             )
+            promotePrimaryBlueprintIfNeeded(preferredUUIDs: strictPrimarySwipeUUIDs)
+            if selectedSwipes.count < targetSwipeCount {
+                print("⚠️ [UnifiedWritingEngine] Same-type swipe shortfall: loaded \(selectedSwipes.count)/\(targetSwipeCount) for \(targetWritingFormat.displayName)")
+            }
             await buildClientPostIndex(targetFormat: targetWritingFormat)
             await autoLoadPrimarySwipeBody()
             return
-        }
-
-        // Hard-filter: exclude cross-format swipes when target format is known
-        var formatFiltered: [Atom]
-        if targetWritingFormat != .staticPost {  // .staticPost is the generic fallback — don't filter on it
-            formatFiltered = analyzed.filter { atom in
-                guard let swipeFormat = atom.swipeAnalysis?.swipeContentFormat else { return true }  // keep unknowns
-                // Allow: exact family match OR both video
-                if targetFormatFamily.contains(swipeFormat) { return true }
-                if swipeFormat.isVideoFormat && targetWritingFormat.isVideoFormat { return true }
-                return false  // reject cross-format (e.g., carousel when target is reel)
-            }
-            // Fallback: if hard-filter leaves nothing, use all analyzed (better than nothing)
-            if formatFiltered.isEmpty { formatFiltered = analyzed }
-        } else {
-            formatFiltered = analyzed
         }
 
         // Pre-fetch top patterns for this content format
@@ -2376,19 +2465,13 @@ final class UnifiedWritingEngine: ObservableObject {
 
         var scored: [(atom: Atom, finalScore: Double, hookType: String)] = []
 
-        for atom in formatFiltered {
+        for atom in analyzed {
             let analysis = atom.swipeAnalysis!
 
-            // Axis 1: Format match — compare swipeContentFormat against target format family
-            var formatScore = 0.3  // default when swipe has no format data
+            // Axis 1: Exact type match
+            var formatScore = 0.0
             if let swipeFormat = analysis.swipeContentFormat {
-                if targetFormatFamily.contains(swipeFormat) {
-                    formatScore = 1.0  // exact family match (reel swipe for reel content)
-                } else if swipeFormat.isVideoFormat && targetWritingFormat.isVideoFormat {
-                    formatScore = 0.4  // both video but different family
-                } else {
-                    formatScore = 0.1  // cross-format mismatch (carousel swipe for reel content)
-                }
+                formatScore = targetWritingFormat.matchesSwipeFormat(swipeFormat) ? 1.0 : 0.0
             }
 
             // Axis 2: Structural score via BeatPatternService (0.0-1.0)
@@ -2408,7 +2491,7 @@ final class UnifiedWritingEngine: ObservableObject {
             var finalScore = 0.3 * formatScore + 0.25 * structuralScore + 0.2 * stylisticScore + 0.25 * perfScore
 
             // Priority boost for primary swipes (inherited from idea activation or linked by user)
-            if primarySwipeUUIDs.contains(atom.uuid) {
+            if strictPrimarySwipeUUIDs.contains(atom.uuid) {
                 finalScore += 0.5
             }
 
@@ -2425,14 +2508,21 @@ final class UnifiedWritingEngine: ObservableObject {
         var selectedHookTypes = Set<String>()
         var usedFingerprints: Set<String> = []
 
+        if let primaryCandidate = sortedCandidates.first(where: { strictPrimarySwipeUUIDs.contains($0.atom.uuid) }) {
+            selected.append(primaryCandidate.atom)
+            selectedHookTypes.insert(primaryCandidate.hookType)
+            usedFingerprints.insert(primaryCandidate.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString)
+        }
+
         for candidate in sortedCandidates {
-            if selected.count >= maxSwipes { break }
+            if selected.count >= targetSwipeCount { break }
+            if selected.contains(where: { $0.uuid == candidate.atom.uuid }) { continue }
             let fp = candidate.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString
             let hookType = candidate.hookType
 
             // Prefer diverse fingerprints and hook types
             if usedFingerprints.contains(fp) && selected.count > 0 { continue }
-            if selectedHookTypes.count >= 2 && !selectedHookTypes.contains(hookType) && selected.count >= maxSwipes - 1 { continue }
+            if selectedHookTypes.count >= 2 && !selectedHookTypes.contains(hookType) && selected.count >= targetSwipeCount - 1 { continue }
 
             selected.append(candidate.atom)
             selectedHookTypes.insert(hookType)
@@ -2441,40 +2531,44 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Fill remaining slots with top scorers
         for candidate in sortedCandidates {
-            if selected.count >= maxSwipes { break }
+            if selected.count >= targetSwipeCount { break }
             if !selected.contains(where: { $0.uuid == candidate.atom.uuid }) {
                 selected.append(candidate.atom)
             }
         }
 
-        // C1: If below minimum, do broader fallback search
-        if selected.count < minSwipes {
+        // If below target, backfill with same-type fallback swipes only.
+        if selected.count < targetSwipeCount {
             let existingUUIDs = Set(selected.map(\.uuid))
             let fallbacks = await selectSwipesFallback(
                 contentAtom: contentAtom,
                 targetFormat: targetWritingFormat,
-                needed: minSwipes - selected.count,
+                needed: targetSwipeCount - selected.count,
                 existingUUIDs: existingUUIDs
             )
-            // Fallbacks are already compressed — we'll merge them after compressing `selected`
-            // Compress selected swipes and mark primary ones
             selectedSwipes = selected.compactMap { atom in
                 guard var compressed = compressSwipe(atom) else { return nil }
-                if primarySwipeUUIDs.contains(atom.uuid) {
+                if strictPrimarySwipeUUIDs.contains(atom.uuid) {
                     compressed.isPrimary = true
                 }
                 return compressed
             }
             selectedSwipes.append(contentsOf: fallbacks)
         } else {
-            // Compress selected swipes and mark primary ones
             selectedSwipes = selected.compactMap { atom in
                 guard var compressed = compressSwipe(atom) else { return nil }
-                if primarySwipeUUIDs.contains(atom.uuid) {
+                if strictPrimarySwipeUUIDs.contains(atom.uuid) {
                     compressed.isPrimary = true
                 }
                 return compressed
             }
+        }
+
+        promotePrimaryBlueprintIfNeeded(preferredUUIDs: strictPrimarySwipeUUIDs)
+        if selectedSwipes.count < targetSwipeCount {
+            print("⚠️ [UnifiedWritingEngine] Same-type swipe shortfall: loaded \(selectedSwipes.count)/\(targetSwipeCount) for \(targetWritingFormat.displayName)")
+        } else {
+            print("🔧 [UnifiedWritingEngine] Loaded \(selectedSwipes.count) same-type library swipes for \(targetWritingFormat.displayName)")
         }
 
         // Build metadata-only client post index (bodies loaded on demand via tools)
@@ -2482,9 +2576,9 @@ final class UnifiedWritingEngine: ObservableObject {
         await autoLoadPrimarySwipeBody()
     }
 
-    /// C1: Broader fallback search when scored selection doesn't meet minimum.
-    /// Searches HybridSearchEngine by format name (e.g., "carousel", "reel") and includes
-    /// format-matching swipes even without hookType analysis.
+    /// Same-type fallback search when scored selection does not fill the target set.
+    /// Searches HybridSearchEngine using exact format-family terms and includes only
+    /// same-type library swipes, even if they lack hookType analysis.
     private func selectSwipesFallback(
         contentAtom: Atom,
         targetFormat: WritingContentFormat,
@@ -2493,49 +2587,74 @@ final class UnifiedWritingEngine: ObservableObject {
     ) async -> [CompressedSwipe] {
         guard needed > 0 else { return [] }
 
-        let formatQuery = targetFormat.displayName.lowercased()
         var fallbackSwipes: [CompressedSwipe] = []
+        var seenUUIDs = existingUUIDs
+        var queries: [String] = targetFormat.swipeSearchTerms
+        let topicQuery = contentAtom.title ?? contentAtom.body ?? ""
+        if !topicQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queries.insert(topicQuery, at: 0)
+        }
 
-        // Search by format name as query
-        if let results = try? await HybridSearchEngine.shared.search(
-            query: formatQuery,
-            limit: 15,
-            entityTypes: [.research]
-        ) {
+        for query in queries where fallbackSwipes.count < needed {
+            guard let results = try? await HybridSearchEngine.shared.search(
+                query: query,
+                limit: 25,
+                entityTypes: [.research]
+            ) else { continue }
+
             for result in results {
                 guard fallbackSwipes.count < needed else { break }
-                guard let uuid = result.entityUUID, !existingUUIDs.contains(uuid) else { continue }
+                guard let uuid = result.entityUUID, !seenUUIDs.contains(uuid) else { continue }
                 guard let atom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
                 }), atom.isSwipeFileAtom else { continue }
+                guard targetFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat) else { continue }
+                guard var compressed = compressSwipe(atom) else { continue }
 
-                // C1: Include format-matching swipes even without hookType analysis
-                if let compressed = compressSwipe(atom) {
-                    fallbackSwipes.append(compressed)
-                } else {
-                    // Minimal compression for swipes without full analysis
-                    let body = atom.body ?? ""
-                    guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                    let title = atom.title ?? "Untitled"
-                    let hookText = String(body.prefix(200))
-                    fallbackSwipes.append(CompressedSwipe(
-                        id: UUID(uuidString: atom.uuid) ?? UUID(),
-                        title: title,
-                        hookText: hookText,
-                        hookType: "Unknown",
-                        hookScore: 0,
-                        beatSequence: [],
-                        keyTransitions: [],
-                        ctaText: "",
-                        framework: "Unknown",
-                        format: formatQuery
-                    ))
+                seenUUIDs.insert(uuid)
+                if !fallbackSwipes.isEmpty {
+                    compressed.isPrimary = false
                 }
+                fallbackSwipes.append(compressed)
             }
         }
 
-        print("🔧 [UnifiedWritingEngine] Fallback search found \(fallbackSwipes.count) additional swipes for format '\(formatQuery)'")
+        print("🔧 [UnifiedWritingEngine] Same-type fallback found \(fallbackSwipes.count) additional swipes for format '\(targetFormat.displayName)'")
         return fallbackSwipes
+    }
+
+    nonisolated static func filterSameTypeLibrarySwipes(
+        _ atoms: [Atom],
+        targetFormat: WritingContentFormat
+    ) -> [Atom] {
+        atoms.filter { atom in
+            guard atom.isSwipeFileAtom else { return false }
+            return targetFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat)
+        }
+    }
+
+    nonisolated private static func uniqueSwipeAtoms(_ atoms: [Atom]) -> [Atom] {
+        var seen = Set<String>()
+        var unique: [Atom] = []
+        for atom in atoms where !seen.contains(atom.uuid) {
+            seen.insert(atom.uuid)
+            unique.append(atom)
+        }
+        return unique
+    }
+
+    private func promotePrimaryBlueprintIfNeeded(preferredUUIDs: Set<String>) {
+        if let preferredIndex = selectedSwipes.firstIndex(where: { preferredUUIDs.contains($0.id.uuidString) }) {
+            for idx in selectedSwipes.indices {
+                selectedSwipes[idx].isPrimary = (idx == preferredIndex)
+            }
+            return
+        }
+
+        guard !selectedSwipes.isEmpty else { return }
+        for idx in selectedSwipes.indices {
+            selectedSwipes[idx].isPrimary = (idx == 0)
+        }
     }
 
     /// C2: Load client's top-performing posts in the target format and append as client examples.
@@ -2742,7 +2861,7 @@ final class UnifiedWritingEngine: ObservableObject {
             keyTransitions: transitions,
             ctaText: String(ctaText.prefix(150)),
             framework: analysis.frameworkType?.displayName ?? "Unknown",
-            format: analysis.frameworkType?.displayName ?? "Unknown",
+            format: analysis.swipeContentFormat?.displayName ?? "Unknown",
             structuralBreakdown: buildStructuralBreakdown(analysis: analysis, body: body)
         )
     }
@@ -2909,42 +3028,7 @@ final class UnifiedWritingEngine: ObservableObject {
         guard let atom = contentAtom else {
             return .staticPost
         }
-
-        // Check for explicit format set by agent tool (contentFormat parameter)
-        if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String {
-            switch explicitFormat {
-            case "reel": return .instagramReel
-            case "carousel": return .instagramCarousel
-            case "thread": return .twitterThread
-            case "post": return .staticPost
-            default: break
-            }
-        }
-
-        guard let meta = atom.metadataValue(as: ContentAtomMetadata.self) else {
-            return .staticPost
-        }
-
-        switch meta.platform {
-        case .instagram:
-            // Determine carousel vs reel vs story from content format hints
-            let focusState = ContentFocusModeState.from(atom: atom)
-            let draft = focusState?.draftContent ?? ""
-            if draft.contains("\"slides\"") { return .instagramCarousel }
-            if draft.contains("[VISUAL:") { return .instagramReel }
-            return .instagramReel // Default for Instagram
-
-        case .twitter:
-            let focusState = ContentFocusModeState.from(atom: atom)
-            let draft = focusState?.draftContent ?? ""
-            if draft.contains("\"tweets\"") { return .twitterThread }
-            return .twitterSingle
-
-        case .linkedin: return .linkedinPost
-        case .youtube: return .youtubeLongForm
-        case .tiktok: return .tiktokScript
-        default: return .staticPost
-        }
+        return WritingContentFormat.detect(from: atom)
     }
 
     // MARK: - Memory Management
@@ -3073,7 +3157,8 @@ final class UnifiedWritingEngine: ObservableObject {
 
     // MARK: - Learning Bridge
 
-    private func loadLearnedPreferences(clientUUID: String) async -> [(key: String, value: String)] {
+    /// Load simple key-value user preferences (NOT lessons — those come from LessonPolicyResolver).
+    private func loadUserPreferences(clientUUID: String) async -> [(key: String, value: String)] {
         var prefs: [(key: String, value: String)] = []
 
         // Query .userPreference atoms scoped to this client
@@ -3088,68 +3173,6 @@ final class UnifiedWritingEngine: ObservableObject {
                    let key = metadata["key"],
                    let value = metadata["value"] {
                     prefs.append((key: key, value: value))
-                }
-            }
-        }
-
-        // Load inferred lessons from agent learning atoms.
-        // Use [String: Any] decode (not [String: String]) because confidence is stored as Double.
-        // Match "lessonType" key (not "type") — matches what storeLesson() writes.
-        // Include BOTH client-scoped AND universal lessons (empty clientUUID).
-        if let lessons = try? await database.asyncRead({ db in
-            try Atom.filter(Column("type") == AtomType.agentLearning.rawValue)
-                .order(Column("created_at").desc)
-                .limit(30)
-                .fetchAll(db)
-        }) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-
-            for atom in lessons {
-                guard let metaStr = atom.metadata,
-                      let metaData = metaStr.data(using: .utf8),
-                      let metaDict = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
-                      let lessonType = metaDict["lessonType"] as? String,
-                      lessonType == "inferred_lesson" else {
-                    continue
-                }
-
-                // Match client-scoped lessons + universal lessons (empty clientUUID)
-                let lessonClientUUID = metaDict["clientUUID"] as? String ?? ""
-                guard lessonClientUUID == clientUUID || lessonClientUUID.isEmpty else {
-                    continue
-                }
-
-                // Check confidence (stored as Double or NSNumber)
-                let confidence: Double
-                if let confDouble = metaDict["confidence"] as? Double {
-                    confidence = confDouble
-                } else if let confStr = metaDict["confidence"] as? String {
-                    confidence = Double(confStr) ?? 0
-                } else {
-                    confidence = 0.6
-                }
-                guard confidence >= 0.5 else { continue }
-
-                // Try to decode the full InferredLesson for optimizedInstruction
-                let scope = lessonClientUUID.isEmpty ? "[universal]" : "[client-specific]"
-                if let structuredStr = atom.structured,
-                   let structuredData = structuredStr.data(using: .utf8),
-                   let lesson = try? decoder.decode(InferredLesson.self, from: structuredData) {
-                    if let optimized = lesson.optimizedInstruction, !optimized.isEmpty {
-                        // Best path: use the optimized instruction (has RULE/BAD/GOOD/WHY format)
-                        prefs.append((key: "writing_rule", value: "\(scope) \(optimized)"))
-                    } else {
-                        // Structured fallback: format as RULE/EVIDENCE/CATEGORY
-                        let formatted = "RULE: \(lesson.rule)\nEVIDENCE: \(lesson.evidence)\nCATEGORY: \(lesson.category)"
-                        prefs.append((key: "writing_rule", value: "\(scope) \(formatted)"))
-                    }
-                } else {
-                    // Last resort: prefix raw body with RULE:
-                    let rule = atom.body ?? ""
-                    if !rule.isEmpty {
-                        prefs.append((key: "writing_rule", value: "\(scope) RULE: \(rule)"))
-                    }
                 }
             }
         }
@@ -3327,10 +3350,6 @@ final class UnifiedWritingEngine: ObservableObject {
 
     // MARK: - Token Budget Constants (C5)
 
-    /// Maximum character budget for Block 1 (methodology + platform constraints + Voice DNA).
-    /// ~24K chars ≈ ~6K tokens at 4 chars/token.
-    private let block1MaxChars = 24_000
-
     /// Maximum character budget for Block 2 (client intelligence model + brand story + voice guide + top posts).
     /// Opus 4.6 has 1M token context — no reason to truncate client intelligence data.
     private let block2MaxChars = 200_000
@@ -3341,118 +3360,35 @@ final class UnifiedWritingEngine: ObservableObject {
         enforceTokenBudgets()
     }
 
-    /// C5: Enforce token budgets on cached blocks. Truncates verbose sections to stay within limits.
-    /// Block 1: truncate methodology theory first. Block 2: truncate verbose profile sections.
-    /// Block 3 is unlimited and never truncated below minimums.
+    /// C5: Enforce token budgets on cached blocks.
+    /// Block 1 is never truncated; Block 2 is still bounded to avoid runaway profile payloads.
     private func enforceTokenBudgets() {
-        // Enforce Block 1 budget
-        if var block1 = cachedBlock1, block1.count > block1MaxChars {
-            print("⚠️ [UnifiedWritingEngine] Block 1 exceeds budget: \(block1.count)/\(block1MaxChars) chars — truncating methodology theory")
-            // Truncate from the end (methodology theory is typically at the tail)
-            block1 = String(block1.prefix(block1MaxChars))
-            // Find last complete section boundary (double newline) to avoid mid-sentence cuts
-            if let lastBreak = block1.range(of: "\n\n", options: .backwards, range: block1.startIndex..<block1.endIndex) {
-                block1 = String(block1[block1.startIndex..<lastBreak.upperBound])
-            }
-            block1 += "\n[... methodology truncated for token budget]"
-            cachedBlock1 = block1
-        }
+        let adjusted = Self.applyBlockBudgets(block1: cachedBlock1, block2: cachedBlock2, block2MaxChars: block2MaxChars)
+        cachedBlock1 = adjusted.block1
+        cachedBlock2 = adjusted.block2
 
-        // Enforce Block 2 budget
-        if var block2 = cachedBlock2, block2.count > block2MaxChars {
+        // Log actual sizes for monitoring
+        let b1Size = cachedBlock1?.count ?? 0
+        let b2Size = cachedBlock2?.count ?? 0
+        print("📊 [UnifiedWritingEngine] Block sizes — B1: \(b1Size) chars (full prompt retained), B2: \(b2Size) chars (\(b2Size * 100 / max(block2MaxChars, 1))% of budget)")
+    }
+
+    static func applyBlockBudgets(
+        block1: String?,
+        block2: String?,
+        block2MaxChars: Int
+    ) -> (block1: String?, block2: String?) {
+        var adjustedBlock2 = block2
+        if var block2 = adjustedBlock2, block2.count > block2MaxChars {
             print("⚠️ [UnifiedWritingEngine] Block 2 exceeds budget: \(block2.count)/\(block2MaxChars) chars — truncating verbose profile sections")
             block2 = String(block2.prefix(block2MaxChars))
             if let lastBreak = block2.range(of: "\n\n", options: .backwards, range: block2.startIndex..<block2.endIndex) {
                 block2 = String(block2[block2.startIndex..<lastBreak.upperBound])
             }
             block2 += "\n[... profile data truncated for token budget]"
-            cachedBlock2 = block2
+            adjustedBlock2 = block2
         }
-
-        // Log actual sizes for monitoring
-        let b1Size = cachedBlock1?.count ?? 0
-        let b2Size = cachedBlock2?.count ?? 0
-        print("📊 [UnifiedWritingEngine] Block sizes — B1: \(b1Size) chars (\(b1Size * 100 / max(block1MaxChars, 1))% of budget), B2: \(b2Size) chars (\(b2Size * 100 / max(block2MaxChars, 1))% of budget)")
-    }
-
-    /// Build a context reminder message injected before the first user message.
-    /// This tells the AI EXACTLY what context is loaded and demands it use it.
-    private func buildContextReminder() -> String {
-        var parts: [String] = []
-        parts.append("[CONTEXT LOADED — You MUST analyze ALL of this before responding]")
-        parts.append("")
-
-        // Swipe library
-        if !selectedSwipes.isEmpty {
-            let titles = selectedSwipes.map { "\"\($0.title)\"" }.joined(separator: ", ")
-            let hasPrimaryBody = selectedSwipes.contains(where: { $0.isPrimary }) && cachedReferenceMaterial.keys.contains(where: { $0.hasPrefix("swipe:") })
-            parts.append("SWIPE EXAMPLES (\(selectedSwipes.count) loaded): \(titles)")
-            parts.append("→ You MUST use the think tool to analyze these swipes first. Reference specific hooks, structures, and scores from the swipe data in your response.")
-            if hasPrimaryBody {
-                parts.append("→ The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL. Use read_swipe_body to load other swipe bodies.")
-            } else {
-                parts.append("→ Use read_swipe_body to load full body text of any swipe for deeper analysis.")
-            }
-        } else {
-            parts.append("SWIPE EXAMPLES: None loaded. Use the search_swipes tool to find relevant examples before making recommendations.")
-        }
-        parts.append("")
-
-        // Client posts
-        if !clientPostIndex.isEmpty {
-            let sameFormatCount = clientPostIndex.filter { $0.format == "same_format" }.count
-            let crossFormatCount = clientPostIndex.filter { $0.format == "cross_format" }.count
-            parts.append("CLIENT POSTS AVAILABLE: \(clientPostIndex.count) posts (\(sameFormatCount) same-format, \(crossFormatCount) cross-format)")
-            parts.append("→ Use list_client_posts to browse, read_client_post to load bodies")
-            parts.append("→ Recommended: load 4-5 same-format posts + 1-2 underperforming for voice reference")
-        }
-        parts.append("")
-
-        // Client profile
-        if let meta = clientMeta {
-            var profileParts: [String] = []
-            profileParts.append("Client: \(meta.clientName)")
-            if let niche = meta.niche { profileParts.append("Niche: \(niche)") }
-            if let beliefs = meta.coreBeliefs, !beliefs.isEmpty {
-                profileParts.append("Core Beliefs: \(beliefs.joined(separator: ", "))")
-            }
-            if let phrases = meta.signaturePhrases, !phrases.isEmpty {
-                profileParts.append("Signature Phrases: \(phrases.joined(separator: " | "))")
-            }
-            let hasIntelligenceModel = meta.intelligenceModel != nil
-            parts.append("CONTENT PROFILE: \(profileParts.joined(separator: " | "))")
-            if hasIntelligenceModel {
-                parts.append("→ Intelligence Model loaded with voice fingerprint, failure rules, and performance data.")
-            }
-            parts.append("→ You MUST reference the client's voice, beliefs, and stance in every response. Do NOT respond as a generic AI — respond as someone who deeply knows this creator.")
-        } else {
-            parts.append("CONTENT PROFILE: None linked. Use the get_client_profile tool to search for and load a client profile by name. If the user mentions a creator name, search for it immediately.")
-        }
-        parts.append("")
-
-        // Platform
-        if let atom = contentAtom {
-            let contentMeta = atom.metadataValue(as: ContentAtomMetadata.self)
-            if let platform = contentMeta?.platform {
-                parts.append("TARGET PLATFORM: \(platform.displayName) — Hard format constraints apply.")
-            }
-        }
-
-        parts.append("")
-        parts.append("MANDATORY FIRST STEP: Before answering, use the think tool to:")
-        parts.append("1. Review all loaded swipe examples — note their hook types, scores, and structural patterns")
-        parts.append("2. Review the client profile — note their voice, beliefs, stances, and what makes their content unique")
-        parts.append("3. Review top-performing posts — identify what patterns drove their success")
-        parts.append("4. Only THEN respond to the user's request, citing specific evidence from this analysis")
-        parts.append("")
-        parts.append("When in BRAINSTORM phase: After analyzing context, you MUST:")
-        parts.append("1. Use add_hooks to generate 3-5 hook variants")
-        parts.append("2. Use set_title to set the content title to your best hook")
-        parts.append("3. Use set_description to set the content description")
-        parts.append("4. Use update_outline to create the structural outline")
-        parts.append("Then respond conversationally with a brief summary.")
-
-        return parts.joined(separator: "\n")
+        return (block1, adjustedBlock2)
     }
 
     private func labelForTool(_ name: String) -> String {

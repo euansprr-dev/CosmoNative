@@ -55,7 +55,8 @@ struct CommandCenterDashboard: View {
                 selectedMode: $viewModel.viewMode,
                 todayCount: viewModel.todayActiveCount,
                 upcomingCount: viewModel.upcomingTotalCount,
-                completedCount: viewModel.completedTodayTasks.count
+                completedCount: viewModel.completedTodayTasks.count,
+                completedArrivalToken: viewModel.completedArrivalToken
             )
 
             // Task list (scrollable)

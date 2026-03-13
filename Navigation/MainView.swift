@@ -57,6 +57,10 @@ struct MainView: View {
     // Track last-used thinkspace for T-key shortcut
     @State private var lastThinkspaceId: String?
 
+    // Sticky canvas thinkspace ID — persists when navigating to non-canvas destinations
+    // so the CanvasView stays alive and doesn't reload on return
+    @State private var canvasThinkspaceId: String? = nil
+
     var body: some View {
         ZStack {
             // Main layout: sidebar + content area
@@ -415,6 +419,7 @@ struct MainView: View {
             // Track last-used thinkspace for T-key navigation
             if case .thinkspace(let id) = newDest {
                 lastThinkspaceId = id
+                canvasThinkspaceId = id
             }
             if !newDest.isDimension {
                 previousNonDimensionDestination = newDest
@@ -435,7 +440,9 @@ struct MainView: View {
             // Update Cosmo Window context (panel is now system-wide, always update)
             let vm = CosmoWindowViewModel.shared
             switch newDest {
-            case .commandCenter, .inbox:
+            case .commandCenter:
+                vm.updateContextManually(type: .commandCenter)
+            case .inbox:
                 vm.updateContextManually(type: .sanctuary)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
@@ -706,40 +713,52 @@ struct MainView: View {
         }
     }
 
+    /// Whether the current destination is a thinkspace canvas
+    private var isCanvasDestination: Bool {
+        if case .thinkspace = currentDestination { return true }
+        return false
+    }
+
     @ViewBuilder
     private var destinationContent: some View {
-        if case .inbox = currentDestination {
-            Text("Inbox")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
+        ZStack {
+            // Canvas layer — ALWAYS alive, hidden when a non-canvas destination is active.
+            // Preserves all @StateObject engines, loaded blocks, zoom/pan state, and
+            // notification observers so returning to a thinkspace is instant.
+            if canvasThinkspaceId != nil {
+                CanvasView(thinkspaceId: canvasThinkspaceId, isActive: isCanvasDestination)
+                    .environmentObject(appState)
+                    .environmentObject(database)
+                    .environmentObject(voiceEngine)
+                    .environmentObject(blockFrameTracker)
+                    .environmentObject(crossDragManager)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(isCanvasDestination && appState.focusedEntity == nil ? 1.0 : 0)
+                    .allowsHitTesting(isCanvasDestination && appState.focusedEntity == nil)
+            }
+
+            // Non-canvas destinations rendered on top when active
+            if case .inbox = currentDestination {
+                Text("Inbox")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(DS.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .transition(.opacity)
+            } else if case .commandCenter = currentDestination {
+                CommandCenterDashboard()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .transition(.opacity)
+            } else if case .dimension(let dimension) = currentDestination {
+                DimensionWorkspaceView(
+                    dimension: dimension,
+                    onBack: restoreFromDimension
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DS.bg)
                 .transition(.opacity)
-        } else if case .commandCenter = currentDestination {
-            CommandCenterDashboard()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DS.bg)
-                .transition(.opacity)
-        } else if case .dimension(let dimension) = currentDestination {
-            DimensionWorkspaceView(
-                dimension: dimension,
-                onBack: restoreFromDimension
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(DS.bg)
-            .transition(.opacity)
-        } else {
-            // Thinkspaces use CanvasView
-            CanvasView(thinkspaceId: activeCanvasThinkspaceId)
-                .environmentObject(appState)
-                .environmentObject(database)
-                .environmentObject(voiceEngine)
-                .environmentObject(blockFrameTracker)
-                .environmentObject(crossDragManager)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(appState.focusedEntity == nil ? 1.0 : 0)
-                .allowsHitTesting(appState.focusedEntity == nil)
-                .transition(.opacity)
+            }
         }
     }
 

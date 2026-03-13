@@ -1,6 +1,6 @@
 // CosmoOS/UI/CommandK/UnifiedSearchResultsView.swift
 // Unified cross-library search results view for Command-K
-// Shows results from all sources (database, swipes, ideas, readwise) grouped by type
+// Pinterest-style masonry grid using actual library cards
 
 import SwiftUI
 
@@ -10,33 +10,144 @@ struct UnifiedSearchResultsView: View {
 
     @ObservedObject var viewModel: CommandKViewModel
 
+    private let minCardWidth: CGFloat = 248
+    private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing
+
     var body: some View {
         if viewModel.unifiedFlatResults.isEmpty && viewModel.currentPhase != .searching {
             emptyState
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        toolbarRow
+            GeometryReader { geometry in
+                let columnCount = max(2, Int(geometry.size.width / (minCardWidth + cardSpacing)))
+                let totalSpacing = CGFloat(columnCount - 1) * cardSpacing + (CommandKMetrics.contentPadding * 2)
+                let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
 
-                        ForEach(viewModel.unifiedGroupedResults, id: \.source) { group in
-                            sectionView(source: group.source, results: group.results)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            toolbarRow
+                                .padding(.horizontal, CommandKMetrics.contentPadding)
+
+                            MasonryLayout(columnCount: columnCount, spacing: cardSpacing) {
+                                ForEach(Array(viewModel.unifiedCardItems.enumerated()), id: \.element.id) { index, item in
+                                    let isSelected = viewModel.selectedNodeId == item.uuid
+
+                                    LibraryCardView(
+                                        item: item,
+                                        cardWidth: cardWidth,
+                                        isSelected: isSelected
+                                    )
+                                    .id(item.uuid)
+                                    .onTapGesture {
+                                        openItem(item)
+                                    }
+                                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                                    .animation(
+                                        ProMotionSprings.cardEntrance.delay(Double(index % 16) * 0.03),
+                                        value: viewModel.unifiedCardItems.count
+                                    )
+                                }
+
+                                ForEach(readwiseResults) { result in
+                                    readwiseCard(result, cardWidth: cardWidth)
+                                        .id(result.id)
+                                }
+                            }
+                            .padding(.horizontal, CommandKMetrics.contentPadding)
                         }
+                        .padding(.vertical, 16)
                     }
-                    .padding(.horizontal, CommandKMetrics.contentPadding)
-                    .padding(.vertical, 16)
-                }
-                .onChange(of: viewModel.selectedResultIndex) { _, _ in
-                    if viewModel.selectedResultIndex >= 0,
-                       viewModel.selectedResultIndex < viewModel.unifiedFlatResults.count {
-                        let result = viewModel.unifiedFlatResults[viewModel.selectedResultIndex]
-                        withAnimation(ProMotionSprings.snappy) {
-                            proxy.scrollTo(result.id, anchor: .center)
+                    .onChange(of: viewModel.selectedResultIndex) { _, _ in
+                        if viewModel.selectedResultIndex >= 0,
+                           viewModel.selectedResultIndex < viewModel.unifiedFlatResults.count {
+                            let result = viewModel.unifiedFlatResults[viewModel.selectedResultIndex]
+                            let scrollId = result.atomUUID ?? result.id
+                            withAnimation(ProMotionSprings.snappy) {
+                                proxy.scrollTo(scrollId, anchor: .center)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    // MARK: - Readwise Card
+
+    private var readwiseResults: [UnifiedSearchResult] {
+        viewModel.unifiedFlatResults.filter { $0.source == .readwise }
+    }
+
+    @ViewBuilder
+    private func readwiseCard(_ result: UnifiedSearchResult, cardWidth: CGFloat) -> some View {
+        let isSelected = viewModel.selectedNodeId == result.id
+        let cornerRadius = CommandKMetrics.cardCornerRadius
+
+        Button {
+            if let bookId = result.readwiseBookId {
+                viewModel.selectedReadwiseBookId = bookId
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack {
+                    DS.entityReadwise.opacity(0.08)
+
+                    Image(systemName: result.icon)
+                        .font(.system(size: 30))
+                        .foregroundColor(DS.entityReadwise.opacity(0.6))
+                }
+                .frame(height: 100)
+
+                Rectangle()
+                    .fill(DS.entityReadwise.opacity(0.18))
+                    .frame(height: 1)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(result.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(DS.text)
+                        .lineLimit(2)
+
+                    if let snippet = result.snippet, !snippet.isEmpty {
+                        Text(snippet)
+                            .font(.system(size: 12))
+                            .foregroundColor(DS.textMuted)
+                            .lineLimit(2)
+                    }
+
+                    HStack {
+                        HStack(spacing: 4) {
+                            Image(systemName: "books.vertical.fill")
+                                .font(.system(size: 10))
+                            Text("Readwise")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(DS.entityReadwise)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(DS.entityReadwise.opacity(0.10))
+                        .clipShape(Capsule())
+
+                        Spacer()
+
+                        if let subtitle = result.subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 11))
+                                .foregroundColor(DS.textMuted)
+                        }
+                    }
+                }
+                .padding(14)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .commandKGalleryCardChrome(
+                isHovered: false,
+                isSelected: isSelected,
+                accentColor: DS.entityReadwise,
+                cornerRadius: cornerRadius
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Toolbar
@@ -65,121 +176,6 @@ struct UnifiedSearchResultsView: View {
             Spacer()
         }
         .padding(.bottom, 4)
-    }
-
-    // MARK: - Section
-
-    @ViewBuilder
-    private func sectionView(source: UnifiedSearchSource, results: [UnifiedSearchResult]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Section header
-            HStack(spacing: 8) {
-                Image(systemName: source.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(source.accentColor)
-
-                Text(source.displayName.uppercased())
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(DS.textSecondary)
-                    .tracking(0.8)
-
-                Text("\(results.count)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundColor(source.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(source.accentColor.opacity(0.12))
-                    .clipShape(Capsule())
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
-            // Result rows
-            VStack(spacing: 2) {
-                ForEach(results.prefix(8)) { result in
-                    resultRow(result)
-                        .id(result.id)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 10)
-        }
-        .commandKSectionChrome()
-    }
-
-    // MARK: - Result Row
-
-    @ViewBuilder
-    private func resultRow(_ result: UnifiedSearchResult) -> some View {
-        let isSelected = isResultSelected(result)
-
-        Button {
-            openResult(result)
-        } label: {
-            resultRowContent(result, isSelected: isSelected)
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func resultRowContent(_ result: UnifiedSearchResult, isSelected: Bool) -> some View {
-        HStack(spacing: 12) {
-            // Type icon
-            Image(systemName: result.icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(result.accentColor)
-                .frame(width: 28, height: 28)
-                .background(result.accentColor.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-            // Title + snippet
-            VStack(alignment: .leading, spacing: 2) {
-                Text(result.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
-
-                if let snippet = result.snippet, !snippet.isEmpty {
-                    Text(snippet)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            // Subtitle badge
-            if let subtitle = result.subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(result.accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(result.accentColor.opacity(0.08))
-                    .clipShape(Capsule())
-            }
-
-            // Relevance indicator (for atom results with meaningful scores)
-            if result.source == .atoms, result.relevance > 0.01 {
-                Text("\(Int(result.relevance * 100))%")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? result.accentColor.opacity(0.08) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? result.accentColor.opacity(0.25) : Color.clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
     }
 
     // MARK: - Empty State
@@ -231,24 +227,15 @@ struct UnifiedSearchResultsView: View {
 
     // MARK: - Helpers
 
-    private func isResultSelected(_ result: UnifiedSearchResult) -> Bool {
-        let selectedId = result.atomUUID ?? result.id
-        return viewModel.selectedNodeId == selectedId
-    }
-
-    private func openResult(_ result: UnifiedSearchResult) {
-        if let atomUUID = result.atomUUID {
-            Task {
-                try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
-            }
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                object: nil,
-                userInfo: ["atomUUID": atomUUID]
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-        } else if let bookId = result.readwiseBookId {
-            viewModel.selectedReadwiseBookId = bookId
+    private func openItem(_ item: LibraryItem) {
+        Task {
+            try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.uuid, type: .view)
         }
+        NotificationCenter.default.post(
+            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+            object: nil,
+            userInfo: ["atomUUID": item.uuid]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 }

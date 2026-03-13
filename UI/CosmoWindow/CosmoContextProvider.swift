@@ -20,6 +20,7 @@ protocol CosmoContextProvider: AnyObject {
 
 /// Identifies which view is currently active and providing context.
 enum CosmoContextType: String, Codable, Sendable {
+    case commandCenter
     case contentFocusMode
     case swipeGallery
     case swipeStudy
@@ -37,6 +38,7 @@ enum CosmoContextType: String, Codable, Sendable {
 
     var displayName: String {
         switch self {
+        case .commandCenter: return "Command Center"
         case .contentFocusMode: return "Content"
         case .swipeGallery: return "Swipe Gallery"
         case .swipeStudy: return "Swipe Study"
@@ -56,6 +58,7 @@ enum CosmoContextType: String, Codable, Sendable {
 
     var icon: String {
         switch self {
+        case .commandCenter: return "square.grid.2x2"
         case .contentFocusMode: return "doc.text"
         case .swipeGallery: return "rectangle.stack"
         case .swipeStudy: return "magnifyingglass"

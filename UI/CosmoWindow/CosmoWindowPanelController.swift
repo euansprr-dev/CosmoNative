@@ -62,7 +62,7 @@ final class CosmoWindowPanelController: NSWindowController {
         // Appearance — fully transparent window, SwiftUI handles all visuals
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
 
@@ -92,6 +92,7 @@ final class CosmoWindowPanelController: NSWindowController {
                 .environment(\.cosmoWindowIsFloating, true)
         )
         contentView.wantsLayer = true
+        contentView.layer?.masksToBounds = false
         panel.contentView = contentView
 
         // Start hidden

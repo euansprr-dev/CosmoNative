@@ -518,6 +518,45 @@ enum ContentModelTier: String {
     }
 }
 
+// MARK: - Telegram Writer Model Selection
+
+/// Available writer models for Telegram A/B testing.
+/// Scorecard stays on Sonnet — this only affects brainstorm/draft/polish phases.
+enum TelegramWriterModel: String, CaseIterable {
+    case opus = "anthropic/claude-opus-4.6"
+    case gpt5 = "openai/gpt-5.4"
+
+    var displayName: String {
+        switch self {
+        case .opus: return "Opus 4.6"
+        case .gpt5: return "GPT 5.4"
+        }
+    }
+
+    var maxTokens: Int { 16384 }
+
+    private static let userDefaultsKey = "telegram_writer_model"
+
+    static var current: TelegramWriterModel {
+        guard let raw = UserDefaults.standard.string(forKey: userDefaultsKey),
+              let model = TelegramWriterModel(rawValue: raw) else {
+            return .opus
+        }
+        return model
+    }
+
+    static func setCurrent(_ model: TelegramWriterModel) {
+        UserDefaults.standard.set(model.rawValue, forKey: userDefaultsKey)
+    }
+
+    @discardableResult
+    static func toggle() -> TelegramWriterModel {
+        let next: TelegramWriterModel = current == .opus ? .gpt5 : .opus
+        setCurrent(next)
+        return next
+    }
+}
+
 // MARK: - Legacy Result Types (used by agent tools and ContentAICollaboratorEngine)
 
 /// A single item in an AI-generated outline

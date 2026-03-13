@@ -75,7 +75,7 @@ class PromptTemplateStore: ObservableObject {
 
     /// Bump this when the default unified system prompt changes materially.
     /// On next launch, the old cached prompt will be replaced with the new default.
-    private static let unifiedSystemPromptVersion = 7
+    private static let unifiedSystemPromptVersion = 8
 
     /// Bump when methodology default changes. Forces reset on next launch.
     private static let methodologyVersion = 3
@@ -694,6 +694,14 @@ class PromptTemplateStore: ObservableObject {
     LEARNING: Apply learned preferences proactively. After finalized content, extract lessons (VOICE/STRUCTURE/ARGUMENT/DETAIL/REMOVAL), save actionable rules scoped to client/format/universal.
 
     BATCH ANALYSIS: Every 30 swipes per content type triggers automatic cross-comparison of hooks, beats, metrics, arcs, voice, and engagement correlations. Use save_analysis to persist.
+
+    CONTEXT HIERARCHY (apply in this order when constraints conflict):
+    1. PLATFORM CONSTRAINTS (Section 3): Non-negotiable hard limits (char counts, slide counts, format rules).
+    2. FAILURE FINGERPRINT (Block 2): Patterns that caused underperformance for this client. Treat as blockers.
+    3. BLUEPRINT BEAT PATTERN (Block 3): Primary swipe's structural skeleton. Anchor for pacing and arc.
+    4. VOICE FINGERPRINT TARGETS (Block 2): Sentence length, signature phrases, contractions, power words.
+    5. LEARNED RULES (Block 2): Hard rules first (MUST apply), then advisory (PREFER when possible).
+    6. CONTENT INTELLIGENCE (Block 2): Client beliefs, audience model, positioning. Use for angle/argument selection.
 
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
     SECTION 1b: BLUEPRINT-FIRST WRITING (MANDATORY)

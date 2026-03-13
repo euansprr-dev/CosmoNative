@@ -215,6 +215,9 @@ public final class CommandKViewModel: ObservableObject {
     /// Selected Readwise book ID for navigation from unified results
     @Published var selectedReadwiseBookId: Int?
 
+    /// Card items for masonry grid display of unified search results
+    @Published var unifiedCardItems: [LibraryItem] = []
+
     // MARK: - Idea Gallery State
 
     /// Idea gallery items loaded from idea atoms
@@ -336,6 +339,7 @@ public final class CommandKViewModel: ObservableObject {
             isUnifiedSearchActive = false
             unifiedGroupedResults = []
             unifiedFlatResults = []
+            unifiedCardItems = []
             await showRecents()
             return
         }
@@ -365,7 +369,7 @@ public final class CommandKViewModel: ObservableObject {
             unfilteredResults = cached
             computeFilterCounts()
             applyFiltersToResults()
-            performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
+            await performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
             currentPhase = .instant
             return
         }
@@ -422,7 +426,7 @@ public final class CommandKViewModel: ObservableObject {
                     unfilteredResults = rankedResults
                     computeFilterCounts()
                     applyFiltersToResults()
-                    performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
+                    await performUnifiedSearch(query: effectiveQuery.isEmpty ? query : effectiveQuery)
                     currentPhase = .complete
 
                     // Cache unfiltered results
@@ -465,7 +469,7 @@ public final class CommandKViewModel: ObservableObject {
                             }
                             unfilteredResults = reRankedResults.sorted()
                             applyFiltersToResults()
-                            performUnifiedSearch(query: queryForReRank)
+                            await performUnifiedSearch(query: queryForReRank)
                             isAIRanked = true
                         }
                     }
@@ -1105,13 +1109,14 @@ public final class CommandKViewModel: ObservableObject {
     }
 
     /// Perform unified search across all libraries
-    func performUnifiedSearch(query: String) {
+    func performUnifiedSearch(query: String) async {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
 
         guard !trimmed.isEmpty, !isTaskCreationMode else {
             isUnifiedSearchActive = false
             unifiedGroupedResults = []
             unifiedFlatResults = []
+            unifiedCardItems = []
             return
         }
 
@@ -1245,6 +1250,24 @@ public final class CommandKViewModel: ObservableObject {
         if let first = unifiedFlatResults.first {
             selectedResultIndex = 0
             selectedNodeId = first.atomUUID ?? first.id
+        }
+
+        // Load atoms for masonry card display
+        let atomUUIDs = unifiedFlatResults.compactMap(\.atomUUID)
+        if !atomUUIDs.isEmpty {
+            let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: atomUUIDs)) ?? []
+            let atomMap = Dictionary(atoms.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
+
+            // Build card items preserving relevance order from unifiedFlatResults
+            var cards: [LibraryItem] = []
+            for result in unifiedFlatResults {
+                if let uuid = result.atomUUID, let atom = atomMap[uuid] {
+                    cards.append(LibraryItem(atom: atom))
+                }
+            }
+            unifiedCardItems = cards
+        } else {
+            unifiedCardItems = []
         }
     }
 

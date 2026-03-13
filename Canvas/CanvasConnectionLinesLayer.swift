@@ -15,6 +15,7 @@ struct CanvasConnectionLinesLayer: View {
     let blocks: [CanvasBlock]
     let contentOffset: CGSize
     let activeBlockDrag: ActiveCanvasDragState<String>
+    var isActive: Bool = true
 
     // MARK: - State
 
@@ -117,13 +118,21 @@ struct CanvasConnectionLinesLayer: View {
         }
         .onAppear {
             fetchEdges()
-            startPulseTimer()
+            if isActive { startPulseTimer() }
         }
         .onDisappear {
             loadTask?.cancel()
             deleteTask?.cancel()
             pulseTimer?.invalidate()
             pulseTimer = nil
+        }
+        .onChange(of: isActive) { _, active in
+            if active {
+                startPulseTimer()
+            } else {
+                pulseTimer?.invalidate()
+                pulseTimer = nil
+            }
         }
     }
 

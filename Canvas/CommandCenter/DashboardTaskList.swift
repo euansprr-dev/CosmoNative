@@ -10,6 +10,8 @@ struct DashboardTaskList: View {
     @State var expandedTaskId: String?
     @State private var selectedTaskUUIDs: Set<String> = []
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
+    @State private var showOverdueRescheduleMenu = false
+    @State private var activeTaskMenuUUID: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -175,13 +177,38 @@ struct DashboardTaskList: View {
 
             if showReschedule {
                 Button {
-                    // TODO: batch reschedule overdue tasks
+                    showOverdueRescheduleMenu.toggle()
                 } label: {
-                    Text("Reschedule")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(PlannerumColors.overdue)
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Reschedule")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(PlannerumColors.overdue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(PlannerumColors.overdue.opacity(0.08))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(PlannerumColors.overdue.opacity(0.2), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
+                .popover(isPresented: $showOverdueRescheduleMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                    CommandCenterReschedulePanel(title: "Reschedule overdue tasks") { date in
+                        showOverdueRescheduleMenu = false
+                        Task {
+                            await viewModel.rescheduleTasks(
+                                uuids: viewModel.overdueTasks.map(\.uuid),
+                                toDate: date
+                            )
+                        }
+                    }
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -279,6 +306,10 @@ struct DashboardTaskList: View {
                 // Play button
                 if !task.isCompleted && !isAnimatingCompletion {
                     playButton(task, isActive: isActiveSession)
+                }
+
+                if !isAnimatingCompletion {
+                    taskActionButton(task)
                 }
             }
             .padding(.leading, 8)
@@ -401,6 +432,7 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private func taskContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
+        let resolvedHabit = viewModel.resolvedHabit(for: task)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 if task.intent != .general {
@@ -425,6 +457,18 @@ struct DashboardTaskList: View {
                     Label(timeInfo, systemImage: "clock")
                         .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
+                }
+
+                if task.isRecurring {
+                    Label("Repeats", systemImage: "repeat")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.accent.opacity(0.85))
+                }
+
+                if let resolvedHabit {
+                    Label(resolvedHabit.title, systemImage: resolvedHabit.icon)
+                        .font(.system(size: 10))
+                        .foregroundColor(resolvedHabit.accent.opacity(0.9))
                 }
 
                 if let projectName = task.projectName {
@@ -477,6 +521,57 @@ struct DashboardTaskList: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    private func taskActionButton(_ task: TaskViewModel) -> some View {
+        Button {
+            activeTaskMenuUUID = task.uuid
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(activeTaskMenuUUID == task.uuid ? DS.accentSoft : DS.surface)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(activeTaskMenuUUID == task.uuid ? DS.accent.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: Binding(
+                get: { activeTaskMenuUUID == task.uuid },
+                set: { if !$0 { activeTaskMenuUUID = nil } }
+            ),
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .top
+        ) {
+            CommandCenterTaskActionPopover(
+                task: task,
+                currentHabit: viewModel.resolvedHabit(for: task),
+                availableHabits: viewModel.availableHabitDefinitions,
+                loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
+                onToggleCompletion: { handleTaskCompletionTap(task) },
+                onReschedule: { date in
+                    Task { await viewModel.rescheduleTask(uuid: task.uuid, toDate: date) }
+                },
+                onApplyHabit: { habitUUID in
+                    Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
+                },
+                onApplyRecurrence: { rule in
+                    Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
+                },
+                onDelete: {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                },
+                onDismiss: {
+                    activeTaskMenuUUID = nil
+                }
+            )
+        }
     }
 
     // MARK: - Add Task Field

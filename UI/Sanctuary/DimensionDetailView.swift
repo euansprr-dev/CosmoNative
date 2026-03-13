@@ -801,7 +801,7 @@ struct DimensionWorkspaceView: View {
         let provider = coordinator.creativeProvider
         let data = provider.data
         let filteredPosts = data.recentPosts.filter { post in
-            matchesSearch([post.platform.displayName, post.caption, post.type.displayName])
+            matchesSearch([post.platform.displayName, post.caption ?? "", post.type.displayName])
         }
 
         return Group {
@@ -919,7 +919,7 @@ struct DimensionWorkspaceView: View {
                         VStack(spacing: 12) {
                             ForEach(filteredPosts.prefix(8)) { post in
                                 WorkspaceListRow(
-                                    title: post.caption.isEmpty ? "\(post.platform.displayName) post" : post.caption,
+                                    title: (post.caption ?? "").isEmpty ? "\(post.platform.displayName) post" : (post.caption ?? ""),
                                     subtitle: "\(post.platform.displayName) • \(post.type.displayName) • \(post.formattedReach)",
                                     accentColor: post.platform.color
                                 ) {

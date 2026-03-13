@@ -15,19 +15,26 @@ struct TaskDetailInlineEditor: View {
     @State private var editDueDate: Date?
     @State private var editIntent: TaskIntent
     @State private var editNotes: String
+    @State private var selectedHabitUUID: String?
+    @State private var availableHabits: [HabitDefinition]
     @State private var showDatePicker: Bool = false
     @State private var showDeleteConfirm: Bool = false
     @FocusState private var titleFocused: Bool
+    private let initialResolvedHabitUUID: String?
 
     init(viewModel: CommandCenterDashboardViewModel, task: TaskViewModel, onDismiss: @escaping () -> Void) {
         self.viewModel = viewModel
         self.task = task
         self.onDismiss = onDismiss
+        let resolvedHabitUUID = viewModel.resolvedHabit(for: task)?.id
         _editTitle = State(initialValue: task.title)
         _editPriority = State(initialValue: task.priority)
         _editDueDate = State(initialValue: task.dueDate)
         _editIntent = State(initialValue: task.intent)
         _editNotes = State(initialValue: task.body ?? "")
+        _selectedHabitUUID = State(initialValue: resolvedHabitUUID)
+        _availableHabits = State(initialValue: viewModel.availableHabitDefinitions)
+        initialResolvedHabitUUID = resolvedHabitUUID
     }
 
     var body: some View {
@@ -91,7 +98,7 @@ struct TaskDetailInlineEditor: View {
                 }
             }
 
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
 
                 Menu {
@@ -111,6 +118,55 @@ struct TaskDetailInlineEditor: View {
                         Text(editIntent.displayName)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(DS.text)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(DS.textSecondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DS.surfaceElevated, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+
+                Menu {
+                    Button {
+                        selectedHabitUUID = nil
+                    } label: {
+                        Label("No habit", systemImage: "slash.circle")
+                    }
+
+                    ForEach(availableHabits, id: \.id) { habit in
+                        Button {
+                            selectedHabitUUID = habit.id
+                        } label: {
+                            Label(habit.title, systemImage: habit.icon)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if let selectedHabit = availableHabits.first(where: { $0.id == selectedHabitUUID }) {
+                            Image(systemName: selectedHabit.icon)
+                                .font(.system(size: 10))
+                                .foregroundColor(selectedHabit.accent)
+
+                            Text(selectedHabit.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DS.text)
+                        } else {
+                            Image(systemName: "repeat")
+                                .font(.system(size: 10))
+                                .foregroundColor(DS.textSecondary)
+
+                            Text("No habit")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DS.text)
+                        }
 
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -177,7 +233,14 @@ struct TaskDetailInlineEditor: View {
         )
         .padding(.horizontal, 10)
         .padding(.vertical, 2)
-        .onAppear { titleFocused = true }
+        .onAppear {
+            titleFocused = true
+            availableHabits = viewModel.availableHabitDefinitions
+        }
+        .task {
+            await viewModel.loadHabits()
+            availableHabits = viewModel.availableHabitDefinitions
+        }
         .onExitCommand { onDismiss() }
     }
 
@@ -245,6 +308,9 @@ struct TaskDetailInlineEditor: View {
                 intent: editIntent != task.intent ? editIntent : nil,
                 body: editNotes.isEmpty ? nil : editNotes
             )
+            if selectedHabitUUID != initialResolvedHabitUUID {
+                await viewModel.applyHabit(selectedHabitUUID, to: task.uuid)
+            }
             onDismiss()
         }
     }

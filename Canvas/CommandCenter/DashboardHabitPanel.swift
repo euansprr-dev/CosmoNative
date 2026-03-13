@@ -1,188 +1,252 @@
-// Canvas/CommandCenter/DashboardHabitPanel.swift
-// Forgiving habit tracking panel — "X of last 7 days" with dot grid
-// Reframes QuestEngine quests as habits
-// March 2026
-
 import SwiftUI
 
 struct DashboardHabitPanel: View {
-
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
 
+    @State private var editingHabit: HabitDefinition?
+    @State private var creatingHabit = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             sectionHeader
 
             if viewModel.habits.isEmpty {
                 emptyState
             } else {
-                habitCards
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 8) {
+                        ForEach(viewModel.habits) { habit in
+                            habitCard(habit)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+            }
+        }
+        .task {
+            await viewModel.loadHabits()
+        }
+        .popover(item: $editingHabit, attachmentAnchor: .rect(.bounds), arrowEdge: .leading) { habit in
+            CommandCenterHabitEditor(
+                habit: habit,
+                onSave: { draft in
+                    Task {
+                        var updated = habit
+                        updated.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.icon = draft.icon
+                        updated.accentColor = draft.accentColor
+                        updated.dailyTargetCount = draft.dailyTargetCount
+                        updated.keywordTriggers = draft.keywords
+                        updated.mappedIntents = draft.mappedIntents.map(\.rawValue).sorted()
+                        updated.allowManualCompletion = draft.allowManualCompletion
+                        await viewModel.updateHabit(updated)
+                    }
+                },
+                onArchive: habit.isBuiltIn ? nil : {
+                    Task { await viewModel.archiveHabit(uuid: habit.id) }
+                },
+                onMoveUp: habit.isBuiltIn ? nil : {
+                    Task { await viewModel.moveHabit(uuid: habit.id, direction: -1) }
+                },
+                onMoveDown: habit.isBuiltIn ? nil : {
+                    Task { await viewModel.moveHabit(uuid: habit.id, direction: 1) }
+                }
+            )
+        }
+        .popover(isPresented: $creatingHabit, attachmentAnchor: .rect(.bounds), arrowEdge: .leading) {
+            CommandCenterHabitEditor(habit: nil) { draft in
+                Task {
+                    await viewModel.createHabit(
+                        title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                        icon: draft.icon,
+                        accentColor: draft.accentColor,
+                        dailyTargetCount: draft.dailyTargetCount,
+                        keywordTriggers: draft.keywords,
+                        mappedIntents: Array(draft.mappedIntents).sorted { $0.displayName < $1.displayName },
+                        allowManualCompletion: draft.allowManualCompletion
+                    )
+                }
             }
         }
     }
-
-    // MARK: - Header
 
     private var sectionHeader: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "repeat")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "repeat")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
 
-            Text("HABITS")
-                .dsSectionLabel()
-        }
-    }
-
-    // MARK: - Habit Cards
-
-    private var habitCards: some View {
-        VStack(spacing: 6) {
-            ForEach(viewModel.habits) { habit in
-                habitCard(habit)
+                Text("HABITS")
+                    .dsSectionLabel()
             }
+
+            Spacer()
+
+            Button {
+                creatingHabit = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Habit")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(DS.text)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DS.surface, in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
     }
 
     @ViewBuilder
     private func habitCard(_ habit: HabitState) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                // Icon
+        let accent = habit.accentColor
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: habit.iconName)
-                    .font(.system(size: 11))
-                    .foregroundColor(habit.isTodayComplete ? habit.accentColor : DS.textMuted)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(accent)
+                    .frame(width: 28, height: 28)
+                    .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                // Title
-                Text(habit.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(habit.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(DS.text)
+
+                        if !habit.isBuiltIn {
+                            Text("Custom")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(accent.opacity(0.12), in: Capsule())
+                        }
+                    }
+
+                    Text("\(habit.todayCount)/\(habit.targetCount) today")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(habit.isTodayComplete ? accent : DS.textSecondary)
+                }
 
                 Spacer()
 
-                // Consistency label
-                Text("\(habit.consistencyCount)/7 days")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(consistencyColor(habit.consistencyCount))
-            }
-
-            HStack(spacing: 4) {
-                // 7-day dot grid
-                dotGrid(habit)
-
-                Spacer()
-
-                // Today's progress + manual complete button
-                if !habit.isTodayComplete && habit.allowManualComplete {
+                if habit.allowManualComplete {
                     Button {
-                        manualComplete(habit)
+                        Task { await viewModel.recordManualHabitCompletion(habitUUID: habit.id) }
                     } label: {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 14))
-                            .foregroundColor(DS.textMuted)
+                        Image(systemName: habit.isTodayComplete ? "checkmark.circle.fill" : "plus.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(habit.isTodayComplete ? accent : DS.textMuted)
                     }
                     .buttonStyle(.plain)
-                } else if habit.isTodayComplete {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(habit.accentColor)
+                    .disabled(habit.todayCount >= habit.targetCount)
                 }
             }
 
-            // Today's progress bar (if not complete)
-            if !habit.isTodayComplete && habit.todayProgress > 0 {
-                progressBar(habit)
+            progressStrip(habit)
+
+            HStack(spacing: 6) {
+                statPill(
+                    icon: "timer",
+                    label: habit.trackedMinutesToday > 0 ? "\(habit.trackedMinutesToday)m tracked" : "No tracked time",
+                    color: accent.opacity(habit.trackedMinutesToday > 0 ? 1 : 0.55)
+                )
+
+                if let sourceSummary = habit.sourceBreakdown.summaryText {
+                    statPill(icon: "square.stack.3d.up", label: sourceSummary, color: DS.textSecondary)
+                }
+            }
+
+            if let linkedIntentSummary = habit.linkedIntentSummary {
+                statPill(icon: "wand.and.stars", label: linkedIntentSummary, color: accent)
             }
         }
-        .padding(10)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+        .padding(12)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
-    }
-
-    // MARK: - Dot Grid
-
-    @ViewBuilder
-    private func dotGrid(_ habit: HabitState) -> some View {
-        HStack(spacing: 3) {
-            ForEach(0..<7, id: \.self) { index in
-                let isCompleted = habit.last7Days[index]
-                let isToday = index == 6
-
-                Circle()
-                    .fill(dotColor(completed: isCompleted, isToday: isToday, accentColor: habit.accentColor))
-                    .frame(width: 8, height: 8)
-                    .overlay {
-                        if isToday && !isCompleted {
-                            Circle()
-                                .stroke(habit.accentColor.opacity(0.3), lineWidth: 1)
-                        }
-                    }
+        .shadow(color: .black.opacity(0.02), radius: 4, y: 1)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture {
+            if let definition = viewModel.habitDefinition(for: habit.id) {
+                editingHabit = definition
             }
         }
     }
 
-    private func dotColor(completed: Bool, isToday: Bool, accentColor: Color) -> Color {
-        if completed {
-            return accentColor
-        }
-        if isToday {
-            return Color.clear
-        }
-        return DS.border
-    }
+    private func progressStrip(_ habit: HabitState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(DS.surface)
+                        .frame(height: 5)
 
-    // MARK: - Progress Bar
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(habit.accentColor.opacity(0.75))
+                        .frame(width: proxy.size.width * habit.todayProgress, height: 5)
+                }
+            }
+            .frame(height: 5)
 
-    private func progressBar(_ habit: HabitState) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(DS.surface)
-                    .frame(height: 3)
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(habit.accentColor.opacity(0.5))
-                    .frame(width: geo.size.width * habit.todayProgress, height: 3)
+            HStack(spacing: 5) {
+                ForEach(Array(habit.last7Days.enumerated()), id: \.offset) { index, isComplete in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(isComplete ? habit.accentColor : DS.borderSubtle)
+                        .frame(height: 6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(index == 6 && !isComplete ? habit.accentColor.opacity(0.25) : .clear, lineWidth: 1)
+                        )
+                }
             }
         }
-        .frame(height: 3)
     }
 
-    // MARK: - Consistency Color
-
-    private func consistencyColor(_ count: Int) -> Color {
-        if count >= 6 { return DS.green }
-        if count >= 4 { return DS.accent }
-        if count >= 2 { return DS.textSecondary }
-        return DS.textMuted
-    }
-
-    // MARK: - Manual Complete
-
-    private func manualComplete(_ habit: HabitState) {
-        // Trigger manual quest completion via QuestEngine
-        let questEngine = PlannerumViewModel.shared.liveQuestEngine
-        Task {
-            await questEngine.manualComplete(questId: habit.id)
+    private func statPill(icon: String, label: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
         }
+        .foregroundColor(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(DS.surface, in: Capsule())
     }
-
-    // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "repeat")
-                .font(.system(size: 20, weight: .light))
-                .foregroundColor(DS.textMuted)
+        VStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(DS.surface)
+                .frame(width: 48, height: 48)
+                .overlay(
+                    Image(systemName: "repeat")
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundColor(DS.textMuted)
+                )
 
-            Text("Habits loading...")
-                .font(.system(size: 11))
+            Text("No habits yet")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(DS.text)
+
+            Text("Create a custom habit, map it to task intents or keywords, and let completed tasks feed it automatically.")
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textMuted)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 24)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

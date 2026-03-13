@@ -51,7 +51,8 @@ private actor TelegramWritingProgressTracker {
 
     private static let milestoneTools: Set<String> = [
         // Engine context-loading
-        "load_client_profile", "select_swipes", "load_preferences", "load_skill_modules",
+        "load_client_profile", "select_swipes", "load_swipe", "load_best_performers",
+        "load_preferences", "load_skill_modules",
         // Agent-level writing tools
         "generate_outline", "generate_draft", "generate_hooks", "revise_draft", "score_draft",
         // Engine inner-loop writing tools
@@ -77,7 +78,7 @@ private actor TelegramWritingProgressTracker {
             activeLine = displayLabel
             scheduleFlush()
 
-        case .completed(let name, _, let resultPreview):
+        case .completed(let name, let displayLabel, let resultPreview):
             guard Self.milestoneTools.contains(name) else { return }
             if !isActive { isActive = true }
 
@@ -85,7 +86,7 @@ private actor TelegramWritingProgressTracker {
             if let phase = Self.phaseFor(name), completedPhases.contains(phase) { return }
             if let phase = Self.phaseFor(name) { completedPhases.insert(phase) }
 
-            completedLines.append(Self.buildCompletedLine(name: name, resultPreview: resultPreview))
+            completedLines.append(Self.buildCompletedLine(name: name, displayLabel: displayLabel, resultPreview: resultPreview))
             activeLine = nil
             scheduleFlush()
 
@@ -119,14 +120,22 @@ private actor TelegramWritingProgressTracker {
 
     // MARK: - Message Building
 
-    private static func buildCompletedLine(name: String, resultPreview: String?) -> String {
+    private static func buildCompletedLine(name: String, displayLabel: String?, resultPreview: String?) -> String {
         switch name {
         case "load_client_profile":
             if let preview = resultPreview, !preview.isEmpty { return "Loaded profile: \(preview)" }
             return "Client profile loaded"
+        case "load_swipe":
+            // Show full swipe title from displayLabel (e.g. "Swipe: FULL TITLE" or "Client post: FULL TITLE")
+            if let label = displayLabel, !label.isEmpty { return label }
+            return "Swipe loaded"
         case "select_swipes":
-            if let preview = resultPreview, !preview.isEmpty { return "Selected swipes (\(String(preview.prefix(60))))" }
+            // Summary count — individual swipes already shown above via load_swipe
+            if let preview = resultPreview, !preview.isEmpty { return "Selected \(preview.components(separatedBy: ", ").count) swipe examples" }
             return "Reference swipes selected"
+        case "load_best_performers":
+            if let preview = resultPreview, !preview.isEmpty { return "Best performers indexed (\(preview))" }
+            return "Best performers indexed"
         case "load_preferences":
             if let preview = resultPreview, !preview.isEmpty { return "Preferences loaded (\(preview))" }
             return "Preferences loaded"
@@ -620,6 +629,7 @@ class TelegramBridgeService: ObservableObject {
             I have full access to your CosmoOS knowledge graph. Ask me about your ideas, swipes, content pipeline, schedule, or just brainstorm.
 
             Say "opus mode" to enter writing mode with the full writing engine.
+            Writer model: \(TelegramWriterModel.current.displayName) — /model to switch.
 
             Try: "What ideas do I have?" or "Schedule a writing block for tomorrow at 10am"
             """
@@ -631,6 +641,26 @@ class TelegramBridgeService: ObservableObject {
         if text == "/clear" {
             await CosmoAgentService.shared.clearConversation(chatId: chatIdStr, source: .telegram)
             await sendMessage(chatId: chatIdStr, text: "Context cleared ✓\nStarting fresh — previous messages won't be used as context.")
+            return
+        }
+
+        // /model command — toggle writing model for A/B split testing
+        if text == "/model" || text.hasPrefix("/model ") {
+            let arg = String(text.dropFirst("/model".count)).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let newModel: TelegramWriterModel
+            if arg.isEmpty {
+                newModel = TelegramWriterModel.toggle()
+            } else if arg.contains("opus") || arg.contains("claude") {
+                TelegramWriterModel.setCurrent(.opus)
+                newModel = .opus
+            } else if arg.contains("gpt") || arg.contains("5.4") || arg.contains("openai") {
+                TelegramWriterModel.setCurrent(.gpt5)
+                newModel = .gpt5
+            } else {
+                await sendMessage(chatId: chatIdStr, text: "Unknown model. Use /model to toggle, or /model opus / /model gpt")
+                return
+            }
+            await sendMessage(chatId: chatIdStr, text: "Writer model → \(newModel.displayName) ✓\nApplies to new writing sessions.")
             return
         }
 

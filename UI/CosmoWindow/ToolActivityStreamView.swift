@@ -17,7 +17,7 @@ private struct ToolActivityDisplayItem: Identifiable {
     let isDone: Bool
 }
 
-private struct ToolActivityDisplayGroup: Identifiable {
+fileprivate struct ToolActivityDisplayGroup: Identifiable {
     let id: UUID
     let category: String
     let items: [ToolActivityDisplayItem]
@@ -25,7 +25,7 @@ private struct ToolActivityDisplayGroup: Identifiable {
 }
 
 struct ToolActivityStreamView: View {
-    let groups: [ToolActivityDisplayGroup]
+    fileprivate let groups: [ToolActivityDisplayGroup]
     let activeLabel: String?
     let mode: ToolActivityStreamMode
 

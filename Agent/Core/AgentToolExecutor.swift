@@ -2324,12 +2324,31 @@ class AgentToolExecutor {
     static func renderDraftForDisplay(_ draftBody: String) -> String {
         guard !draftBody.isEmpty else { return "" }
 
-        // Attempt to parse as JSON (carousel or thread format)
         guard let data = draftBody.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let jsonObject = try? JSONSerialization.jsonObject(with: data) else {
             // Not JSON — return plaintext/script as-is
             return draftBody
         }
+
+        // Raw array format: [{"number": 1, "text": "...", "visualDirection": "..."}]
+        // The LLM sometimes omits the {"slides": [...]} wrapper
+        if let rawArray = jsonObject as? [[String: Any]],
+           let first = rawArray.first,
+           first["number"] != nil, first["text"] != nil {
+            let sorted = rawArray.sorted { ($0["number"] as? Int ?? 0) < ($1["number"] as? Int ?? 0) }
+            var lines: [String] = []
+            for slide in sorted {
+                let num = slide["number"] as? Int ?? (lines.count / 2 + 1)
+                let text = slide["text"] as? String ?? ""
+                lines.append("SLIDE \(num)")
+                lines.append(text)
+                lines.append("")
+            }
+            if lines.last?.isEmpty == true { lines.removeLast() }
+            return lines.joined(separator: "\n")
+        }
+
+        guard let json = jsonObject as? [String: Any] else { return draftBody }
 
         // Carousel format: {"slides": [{"number": 1, "text": "...", "visualDirection": "..."}]}
         if let slides = json["slides"] as? [[String: Any]] {

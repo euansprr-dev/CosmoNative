@@ -93,18 +93,38 @@ private func performWritingAPICall(
     request.httpBody = try JSONSerialization.data(withJSONObject: body)
     print("🌐 [WritingAPICall] Request body: \(request.httpBody?.count ?? 0) bytes, model: \(model)")
 
-    let (data, httpResponse) = try await URLSession.shared.data(for: request)
-    let httpStatus = (httpResponse as? HTTPURLResponse)?.statusCode ?? 0
-    print("🌐 [WritingAPICall] HTTP \(httpStatus)")
+    // Retry loop for transient failures (429 rate limit, 5xx server errors)
+    var responseData: Data!
+    var lastHTTPError: Error?
+    for attempt in 0..<3 {
+        if attempt > 0 {
+            let backoff = Double(attempt) * 2.0
+            print("⏳ [WritingAPICall] Retry \(attempt)/2 after \(Int(backoff))s backoff")
+            try await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+        }
+        let (data, httpResponse) = try await URLSession.shared.data(for: request)
+        let httpStatus = (httpResponse as? HTTPURLResponse)?.statusCode ?? 0
+        print("🌐 [WritingAPICall] HTTP \(httpStatus)")
 
-    if httpStatus != 200 {
-        let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-        print("❌ [WritingAPICall] Error: \(errorText.prefix(500))")
-        throw ResearchError.apiError(statusCode: httpStatus, message: errorText)
+        if httpStatus == 429 || (httpStatus >= 500 && httpStatus < 600) {
+            let errorText = String(data: data, encoding: .utf8) ?? ""
+            print("⚠️ [WritingAPICall] Retryable error \(httpStatus): \(errorText.prefix(200))")
+            lastHTTPError = ResearchError.apiError(statusCode: httpStatus, message: errorText)
+            continue
+        }
+        if httpStatus != 200 {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ [WritingAPICall] Error: \(errorText.prefix(500))")
+            throw ResearchError.apiError(statusCode: httpStatus, message: errorText)
+        }
+        responseData = data
+        lastHTTPError = nil
+        break
     }
+    if let error = lastHTTPError { throw error }
 
     // Parse response
-    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
     let choices = json?["choices"] as? [[String: Any]]
     let firstChoice = choices?.first
     let message = firstChoice?["message"] as? [String: Any]
@@ -120,6 +140,10 @@ private func performWritingAPICall(
         print(
             "🌐 [WritingAPICall] Usage: prompt=\(promptTokens), uncached=\(uncachedPromptTokens), cached=\(cachedTokens), completion=\(completionTokens), cache_hit_rate=\(String(format: "%.1f", cacheHitRate))%"
         )
+        let inputCost = Double(uncachedPromptTokens) * 15.0 / 1_000_000
+            + Double(cachedTokens) * 1.5 / 1_000_000
+        let outputCost = Double(completionTokens) * 75.0 / 1_000_000
+        print("💰 [WritingAPICall] Est. cost: $\(String(format: "%.4f", inputCost + outputCost)) (input: $\(String(format: "%.4f", inputCost)), output: $\(String(format: "%.4f", outputCost)))")
     }
 
     var textContent = ""
@@ -212,6 +236,10 @@ final class UnifiedWritingEngine: ObservableObject {
     private let promptCacheTTL = "1h"
     private let tokenSummarizationThreshold = 100_000  // Opus 4.6 has 1M context — don't summarize mid-session
 
+    /// Optional model override for Telegram A/B testing (Opus vs GPT 5.4).
+    /// When set, replaces writerModel/brainstormModel but NOT scorecardModel.
+    var writerModelOverride: String?
+
     // MARK: - Phase-Aware Model Selection
 
     /// Returns the appropriate model for each writing phase.
@@ -220,9 +248,9 @@ final class UnifiedWritingEngine: ObservableObject {
     private func modelForPhase(_ phase: ContentStep) -> String {
         switch phase {
         case .brainstorm:
-            return brainstormModel  // Opus — outline quality matters
+            return writerModelOverride ?? brainstormModel
         case .draft, .polish:
-            return writerModel      // Opus — creative writing
+            return writerModelOverride ?? writerModel
         }
     }
 
@@ -285,6 +313,19 @@ final class UnifiedWritingEngine: ObservableObject {
         }
         onContextActivity?(.completed(name: "select_swipes", displayLabel: "Selected \(selectedSwipes.count) swipe examples", resultPreview: selectedSwipes.map(\.title).joined(separator: ", ")))
         print("🔧 [UnifiedWritingEngine] Selected \(selectedSwipes.count) swipes: \(selectedSwipes.map(\.title))")
+
+        // Emit best performers event if client posts were indexed
+        if !clientPostIndex.isEmpty {
+            let sameFormat = clientPostIndex.filter { $0.format == "same_format" }.count
+            let crossFormat = clientPostIndex.filter { $0.format == "cross_format" }.count
+            let underperforming = clientPostIndex.filter { $0.format == "underperforming" }.count
+            var parts: [String] = []
+            if sameFormat > 0 { parts.append("\(sameFormat) same-format") }
+            if crossFormat > 0 { parts.append("\(crossFormat) cross-format") }
+            if underperforming > 0 { parts.append("\(underperforming) underperforming") }
+            let preview = "\(clientPostIndex.count) posts (\(parts.joined(separator: ", ")))"
+            onContextActivity?(.completed(name: "load_best_performers", displayLabel: "Client best performers indexed", resultPreview: preview))
+        }
 
         buildCachedBlocks(contentAtom: contentAtom)
         print("🔧 [UnifiedWritingEngine] Block1 length: \(cachedBlock1?.count ?? 0) chars, Block2 length: \(cachedBlock2?.count ?? 0) chars")
@@ -701,6 +742,7 @@ final class UnifiedWritingEngine: ObservableObject {
         var pendingMessages: [WritingMessage] = []
         var lastAssistantMessage: WritingMessage?
         var consecutiveThinkOnly = 0
+        var consecutiveIncomplete = 0
         var thinkToolRemoved = false
         var activeTools = tools
 
@@ -746,6 +788,24 @@ final class UnifiedWritingEngine: ObservableObject {
             }
 
             print("🔄 [UnifiedWritingEngine] Response: text=\(response.textContent.count)chars, tools=\(response.toolCalls.count), stop=\(response.stopReason ?? "nil")")
+
+            // Detect incomplete/throttled responses: very low output with non-standard finish reason
+            let isIncomplete = (response.stopReason == nil || response.stopReason == "--" || response.stopReason == "length")
+                && response.toolCalls.isEmpty
+                && response.textContent.trimmingCharacters(in: .whitespacesAndNewlines).count < 100
+            if isIncomplete {
+                print("⚠️ [UnifiedWritingEngine] Incomplete response detected (stop=\(response.stopReason ?? "nil"), text=\(response.textContent.count)chars, tools=0) — likely timeout/throttle")
+                consecutiveIncomplete += 1
+                if consecutiveIncomplete > 3 {
+                    print("❌ [UnifiedWritingEngine] 3 consecutive incomplete responses — aborting loop")
+                    break
+                }
+                let backoffSeconds = min(pow(2.0, Double(consecutiveIncomplete)), 30.0)
+                print("⏳ [UnifiedWritingEngine] Backing off \(Int(backoffSeconds))s before retry (attempt \(consecutiveIncomplete)/3)")
+                try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
+                continue  // Retry without appending garbage to conversation
+            }
+            consecutiveIncomplete = 0
 
             // Build WritingToolCall objects from response
             var assistantToolCalls: [WritingToolCall] = []
@@ -1038,6 +1098,37 @@ final class UnifiedWritingEngine: ObservableObject {
                 lines.append("")
             }
 
+            // Actionable voice targets — concrete numeric thresholds from the voice fingerprint
+            let vf = model.voiceFingerprint
+            var voiceTargets: [String] = []
+            voiceTargets.append("--- VOICE TARGETS (check every draft against these) ---")
+            if vf.avgSentenceLength > 0 {
+                let low = Int(vf.avgSentenceLength * 0.7)
+                let high = Int(vf.avgSentenceLength * 1.3)
+                voiceTargets.append("Sentence length: target \(low)-\(high) words (client avg: \(Int(vf.avgSentenceLength))). >50% deviation = voice drift.")
+            }
+            if !vf.signaturePhrases.isEmpty {
+                let phrases = vf.signaturePhrases.prefix(5).joined(separator: "\", \"")
+                voiceTargets.append("Signature phrases (use at least 1-2 per piece): \"\(phrases)\"")
+            }
+            if !vf.ctaPattern.isEmpty {
+                voiceTargets.append("CTA style: \(vf.ctaPattern)")
+            }
+            if !vf.formattingQuirks.isEmpty {
+                voiceTargets.append("Style markers: \(vf.formattingQuirks.joined(separator: ", "))")
+            }
+            if !vf.punctuationStyle.isEmpty {
+                voiceTargets.append("Punctuation: \(vf.punctuationStyle)")
+            }
+            if !vf.powerWords.isEmpty {
+                let words = vf.powerWords.prefix(8).joined(separator: ", ")
+                voiceTargets.append("Power words (weave in naturally): \(words)")
+            }
+            if voiceTargets.count > 1 {
+                lines.append(contentsOf: voiceTargets)
+                lines.append("")
+            }
+
             // C3: Condensed failure fingerprint — HIGH severity + top 3 MEDIUM, capped at 800 chars
             appendCondensedFailureFingerprint(to: &lines, model: model)
 
@@ -1103,6 +1194,14 @@ final class UnifiedWritingEngine: ObservableObject {
                 lines.append("PRIMARY BLUEPRINT: \"\(primary.title)\"")
                 lines.append("  Beat pattern: \(primary.beatSequence.joined(separator: " > "))")
                 lines.append("  Hook type: \(primary.hookType) (score: \(String(format: "%.1f", primary.hookScore))/10)")
+                // Beat function breakdown — explains the structural ROLE of each position
+                if !primary.beatSequence.isEmpty {
+                    lines.append("  Beat functions (apply these structural roles, NOT the blueprint's topic):")
+                    for (i, beat) in primary.beatSequence.enumerated() {
+                        let transition = i < primary.keyTransitions.count ? " — \(primary.keyTransitions[i])" : ""
+                        lines.append("    \(i + 1). [\(beat)]\(transition)")
+                    }
+                }
             }
             lines.append("""
             RULES:
@@ -1316,7 +1415,7 @@ final class UnifiedWritingEngine: ObservableObject {
         if phase == .draft || phase == .polish {
             tools.append(buildTool(
                 name: "write_draft",
-                description: "Write or replace the full draft content. For carousel/thread use JSON format. IMPORTANT: When revising, include ALL slides/sections — even unchanged ones. Never reduce the slide count unless explicitly asked.",
+                description: "Write or replace the full draft content. For carousel format, output JSON as {\"slides\": [{\"number\": 1, \"text\": \"...\"}]} — do NOT include visualDirection or any other fields. For thread format, output JSON as {\"tweets\": [{\"number\": 1, \"text\": \"...\"}]}. IMPORTANT: When revising, include ALL slides/sections — even unchanged ones. Never reduce the slide count unless explicitly asked.",
                 properties: [
                     "content": ["type": "string", "description": "The full draft content"],
                     "format": [
@@ -1980,6 +2079,37 @@ final class UnifiedWritingEngine: ObservableObject {
                 } else if avgWords < targetAvg * 0.5 && targetAvg > 10 {
                     issues.append("Sentences averaging \(Int(avgWords)) words — client voice averages \(Int(targetAvg)). Consider more developed sentences.")
                 }
+            }
+        }
+
+        // Check signature phrase presence
+        if !voiceFP.signaturePhrases.isEmpty {
+            let found = voiceFP.signaturePhrases.filter { draftLower.contains($0.lowercased()) }
+            if found.isEmpty {
+                let examples = voiceFP.signaturePhrases.prefix(3).joined(separator: "\", \"")
+                issues.append("No signature phrases detected. Client uses: \"\(examples)\" — weave at least one in naturally.")
+            }
+        }
+
+        // Check banned AI verbs (from system prompt banned list)
+        let bannedVerbs = ["delve", "dive deep", "unleash", "unlock", "game-changer",
+                           "revolutionize", "supercharge", "harness", "leverage"]
+        for verb in bannedVerbs {
+            if draftLower.contains(verb) {
+                issues.append("Banned AI word: \"\(verb)\" — replace with client's natural vocabulary")
+            }
+        }
+
+        // Check contraction usage (natural voice uses contractions)
+        let formalForms = ["cannot", "will not", "do not", "does not", "is not",
+                           "are not", "would not", "should not", "could not", "have not"]
+        let totalWords = draft.split(separator: " ").count
+        if totalWords > 80 {
+            let formalCount = formalForms.reduce(0) { count, form in
+                count + draftLower.components(separatedBy: form).count - 1
+            }
+            if formalCount >= 3 {
+                issues.append("Found \(formalCount) un-contracted forms (cannot, will not, etc.) — client voice uses contractions naturally. Use can't, won't, don't.")
             }
         }
 

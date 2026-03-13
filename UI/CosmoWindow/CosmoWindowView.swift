@@ -18,7 +18,9 @@ struct CosmoWindowView: View {
     var body: some View {
         if isFloating {
             panelShell
+                .padding(10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.clear)
                 .onAppear(perform: handleAppear)
         } else {
             HStack(spacing: 0) {
@@ -55,6 +57,7 @@ struct CosmoWindowView: View {
             RoundedRectangle(cornerRadius: CosmoWindowMetrics.panelCornerRadius, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
+        .compositingGroup()
         .dsFloatingShadow()
     }
 
@@ -220,11 +223,12 @@ struct CosmoWindowView: View {
                             if !inputText.isEmpty && !inputText.hasSuffix(" ") {
                                 inputText += " "
                             }
+                        } else {
+                            inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
                         }
                     },
                     onDismiss: {
-                        viewModel.showMentionOverlay = false
-                        viewModel.mentionSearchText = ""
+                        dismissMentionOverlay(trimMentionQuery: true)
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -242,10 +246,14 @@ struct CosmoWindowView: View {
                     }
                 }
 
-                HStack(alignment: .bottom, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
                     Button {
                         withAnimation(ProMotionSprings.snappy) {
-                            viewModel.showMentionOverlay.toggle()
+                            if viewModel.showMentionOverlay {
+                                dismissMentionOverlay(trimMentionQuery: true)
+                            } else {
+                                openMentionOverlayFromComposer()
+                            }
                         }
                     } label: {
                         Image(systemName: "at")
@@ -264,19 +272,12 @@ struct CosmoWindowView: View {
                         .font(DS.body)
                         .foregroundColor(DS.text)
                         .lineLimit(1...6)
+                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .center)
+                        .padding(.vertical, 6)
                         .focused($isInputFocused)
                         .onSubmit(sendCurrentMessage)
-                        .onChange(of: inputText) { newValue in
-                            if newValue.hasSuffix("@") && !viewModel.showMentionOverlay {
-                                withAnimation(ProMotionSprings.snappy) {
-                                    viewModel.showMentionOverlay = true
-                                    viewModel.mentionSearchText = ""
-                                }
-                            }
-                            if viewModel.showMentionOverlay, let atIndex = newValue.lastIndex(of: "@") {
-                                let afterAt = String(newValue[newValue.index(after: atIndex)...])
-                                viewModel.mentionSearchText = afterAt
-                            }
+                        .onChange(of: inputText) { _ in
+                            syncMentionSearch()
                         }
 
                     modelSelector
@@ -515,6 +516,12 @@ struct CosmoWindowView: View {
         let title = viewModel.activeContext.data.currentAtomTitle ?? "what I’m looking at"
 
         switch viewModel.activeContext.type {
+        case .commandCenter:
+            return [
+                "What deserves attention in Command Center?",
+                "Summarize what changed recently",
+                "What should I tackle next?"
+            ]
         case .contentFocusMode:
             return [
                 "Tighten the angle for \(title)",
@@ -627,6 +634,53 @@ struct CosmoWindowView: View {
         isInputFocused = true
         inputText = viewModel.inputText
         Task { await viewModel.loadConversation() }
+    }
+
+    private func openMentionOverlayFromComposer() {
+        if inputText.lastIndex(of: "@") == nil {
+            if !inputText.isEmpty && !inputText.hasSuffix(" ") {
+                inputText += " "
+            }
+            inputText += "@"
+        }
+        viewModel.mentionSearchText = ""
+        viewModel.showMentionOverlay = true
+        isInputFocused = true
+    }
+
+    private func dismissMentionOverlay(trimMentionQuery: Bool) {
+        if trimMentionQuery, let atIndex = inputText.lastIndex(of: "@") {
+            let suffix = String(inputText[atIndex...])
+            if !suffix.contains(" ") {
+                inputText = String(inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        viewModel.showMentionOverlay = false
+        viewModel.mentionSearchText = ""
+    }
+
+    private func syncMentionSearch() {
+        if inputText.hasSuffix("@") && !viewModel.showMentionOverlay {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.showMentionOverlay = true
+                viewModel.mentionSearchText = ""
+            }
+        }
+
+        guard viewModel.showMentionOverlay else { return }
+
+        guard let atIndex = inputText.lastIndex(of: "@") else {
+            dismissMentionOverlay(trimMentionQuery: false)
+            return
+        }
+
+        let afterAt = String(inputText[inputText.index(after: atIndex)...])
+        if afterAt.contains(" ") {
+            dismissMentionOverlay(trimMentionQuery: false)
+            return
+        }
+
+        viewModel.mentionSearchText = afterAt
     }
 
     private func debouncedScrollToBottom(proxy: ScrollViewProxy) {
@@ -1016,7 +1070,7 @@ private struct FlowSuggestionsView: View {
     }
 }
 
-private struct FlexibleFactRow: View {
+struct FlexibleFactRow: View {
     let items: [String]
 
     var body: some View {

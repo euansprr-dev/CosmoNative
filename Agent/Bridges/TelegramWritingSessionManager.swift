@@ -157,8 +157,9 @@ class TelegramWritingSessionManager {
         }
         // ────────────────────────────────────────────────────────────────────
 
-        // Initialize the UnifiedWritingEngine
+        // Initialize the UnifiedWritingEngine with A/B model selection
         let engine = UnifiedWritingEngine()
+        engine.writerModelOverride = TelegramWriterModel.current.rawValue
         await engine.initialize(contentAtom: atom)
 
         // Create session and register notification observers
@@ -196,6 +197,7 @@ class TelegramWritingSessionManager {
         if let platform = parsed.platform {
             header += " (\(platform.displayName))"
         }
+        header += " · \(TelegramWriterModel.current.displayName)"
         var contextSummary: [String] = []
         if clientName != nil { contextSummary.append("client profile") }
         if contextBrief.contains("Lessons learnt") { contextSummary.append("lessons") }

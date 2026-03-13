@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		CBE6AEC79DC9C726746D46FF /* CommandCenterZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50DDC3ED65C2C443AB74FAD5 /* CommandCenterZone.swift */; };
+		7FA1C2D3E4F506B7C8D9EA01 /* CommandCenterHabitEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AB2D3E4F5A617C8D9EA0B12 /* CommandCenterHabitEngine.swift */; };
+		6EB0B1C2D3E4F5A6B7C8D923 /* CommandCenterHabitEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BC3E4F5A6B718D9EA0B1C34 /* CommandCenterHabitEditor.swift */; };
+		5DC9A0B1C2D3E4F5A6B7C845 /* CommandCenterTaskMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4D5E6FA7B829D0EA1B2C56 /* CommandCenterTaskMenus.swift */; };
 		B3F1A72E9D4C8B01E5672FA3 /* ZoneContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E4C91F7A3B6D52C0891E4B /* ZoneContentView.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* CommandCenterDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F071829304152 /* CommandCenterDashboard.swift */; };
 		B2C3D4E5F6071829304A5B6C /* CommandCenterDashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F0718293041526A /* CommandCenterDashboardViewModel.swift */; };
@@ -656,6 +659,9 @@
 		D8E4C91F7A3B6D52C0891E4B /* ZoneContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneContentView.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F071829304152 /* CommandCenterDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterDashboard.swift; sourceTree = "<group>"; };
 		2B3C4D5E6F0718293041526A /* CommandCenterDashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterDashboardViewModel.swift; sourceTree = "<group>"; };
+		8AB2D3E4F5A617C8D9EA0B12 /* CommandCenterHabitEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterHabitEngine.swift; sourceTree = "<group>"; };
+		9BC3E4F5A6B718D9EA0B1C34 /* CommandCenterHabitEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterHabitEditor.swift; sourceTree = "<group>"; };
+		AC4D5E6FA7B829D0EA1B2C56 /* CommandCenterTaskMenus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterTaskMenus.swift; sourceTree = "<group>"; };
 		3C4D5E6F071829304152637A /* DashboardMonthCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardMonthCalendar.swift; sourceTree = "<group>"; };
 		4D5E6F07182930415263748A /* DashboardTaskList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardTaskList.swift; sourceTree = "<group>"; };
 		5E6F0718293041526374859A /* DashboardHabitPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardHabitPanel.swift; sourceTree = "<group>"; };
@@ -1314,6 +1320,9 @@
 				CEDBDCEFE8596071829304CB /* WeeklyReportData.swift */,
 				DFECDDEAF9607182930415DC /* DashboardReportsPanel.swift */,
 				FBADCEBF071829304152D7AF /* UpcomingBoardView.swift */,
+				8AB2D3E4F5A617C8D9EA0B12 /* CommandCenterHabitEngine.swift */,
+				9BC3E4F5A6B718D9EA0B1C34 /* CommandCenterHabitEditor.swift */,
+				AC4D5E6FA7B829D0EA1B2C56 /* CommandCenterTaskMenus.swift */,
 			);
 			path = CommandCenter;
 			sourceTree = "<group>";
@@ -3141,6 +3150,9 @@
 				BFCADCFE748596071829A4DC /* WeeklyReportData.swift in Sources */,
 				CADBEDAF859607182930B5ED /* DashboardReportsPanel.swift in Sources */,
 				EAFCBDAE960718293041C6FE /* UpcomingBoardView.swift in Sources */,
+				7FA1C2D3E4F506B7C8D9EA01 /* CommandCenterHabitEngine.swift in Sources */,
+				6EB0B1C2D3E4F5A6B7C8D923 /* CommandCenterHabitEditor.swift in Sources */,
+				5DC9A0B1C2D3E4F5A6B7C845 /* CommandCenterTaskMenus.swift in Sources */,
 				2106B37624B19125687732A0 /* UnifiedSidebar.swift in Sources */,
 				56CC08058A0556B2370A7C9C /* SidebarNavSection.swift in Sources */,
 				72A2BDADD7E1E52E52B60B76 /* SidebarThinkspaceSection.swift in Sources */,

@@ -2081,6 +2081,12 @@ struct TaskMetadata: Codable, Sendable {
     /// ISO8601 timestamp of last session
     var lastSessionAt: String?
 
+    /// Explicit or derived habit attribution for the task
+    var habitUUID: String?
+
+    /// HabitAssignmentSource raw value. `manual` with a nil habitUUID means explicit "no habit".
+    var habitAssignmentSource: String?
+
     // MARK: - Recurrence (WP4)
 
     /// UUID of the template task this instance was generated from
@@ -2133,6 +2139,8 @@ struct DeepWorkSessionMetadata: Codable, Sendable {
     var focusScore: Double?             // 0-100
     var distractionCount: Int?
     var intent: String?                 // TaskIntent raw value
+    var habitUUID: String?
+    var habitTitleSnapshot: String?
     var outputAtomUUIDs: [String]?      // Atoms created during session
     var xpEarned: Int?
     var notes: String?                  // Post-session reflection

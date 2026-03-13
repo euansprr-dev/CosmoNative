@@ -49,18 +49,28 @@ struct LibraryGridView: View {
 
 // MARK: - Masonry Layout (Pinterest-style waterfall)
 
-private struct MasonryLayout: Layout {
+struct MasonryLayout: Layout {
     let columnCount: Int
     let spacing: CGFloat
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct CacheData {
+        var sizes: [CGSize] = []
+    }
+
+    func makeCache(subviews: Subviews) -> CacheData {
+        CacheData()
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {
         let width = proposal.width ?? 800
         let columnWidth = (width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount)
         var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
 
-        for subview in subviews {
+        // Measure all subviews once and cache the results
+        cache.sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)) }
+
+        for size in cache.sizes {
             let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
-            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
             columnHeights[shortestColumn] += size.height + spacing
         }
 
@@ -68,22 +78,27 @@ private struct MasonryLayout: Layout {
         return CGSize(width: width, height: max(0, maxHeight - spacing))
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) {
         let columnWidth = (bounds.width - CGFloat(columnCount - 1) * spacing) / CGFloat(columnCount)
         var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
 
-        for subview in subviews {
+        // Re-measure if cache is stale
+        if cache.sizes.count != subviews.count {
+            cache.sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)) }
+        }
+
+        for (index, subview) in subviews.enumerated() {
             let shortestColumn = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
             let x = bounds.minX + CGFloat(shortestColumn) * (columnWidth + spacing)
             let y = bounds.minY + columnHeights[shortestColumn]
 
+            let size = cache.sizes[index]
             subview.place(
                 at: CGPoint(x: x, y: y),
                 anchor: .topLeading,
-                proposal: ProposedViewSize(width: columnWidth, height: nil)
+                proposal: ProposedViewSize(width: columnWidth, height: size.height)
             )
 
-            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
             columnHeights[shortestColumn] += size.height + spacing
         }
     }
@@ -91,7 +106,7 @@ private struct MasonryLayout: Layout {
 
 // MARK: - Library Card View
 
-private struct LibraryCardView: View {
+struct LibraryCardView: View {
     let item: LibraryItem
     let cardWidth: CGFloat
     var onDelete: ((LibraryItem) -> Void)?
@@ -232,23 +247,27 @@ private struct LibraryCardView: View {
     private var previewContent: some View {
         if let thumbnailURL = item.thumbnailURL {
             if item.atomType == .image, let nsImage = NSImage(contentsOfFile: thumbnailURL) {
-                // Local image file — load directly
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: previewHeight)
-                    .clipped()
+                // Local image file — load directly, contained in GeometryReader to prevent overflow
+                GeometryReader { geo in
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+                .frame(height: previewHeight)
+                .clipped()
             } else if let url = URL(string: thumbnailURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: previewHeight)
-                            .clipped()
+                        GeometryReader { geo in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
+                        .frame(height: previewHeight)
+                        .clipped()
                     case .failure:
                         fallbackPreview
                     case .empty:

@@ -1844,6 +1844,20 @@ class CosmoAgentService: ObservableObject {
 
         if let error = json["error"] as? String { parts.append("error: \(error)") }
 
+        // Preserve writing feedback fields critical for self-correction
+        if let weakAreas = json["weakAreas"] as? [String], !weakAreas.isEmpty {
+            parts.append("needs_improvement: \(weakAreas.joined(separator: "; "))")
+        }
+        if let issues = json["complianceIssues"] as? [String], !issues.isEmpty {
+            parts.append("violations: \(issues.joined(separator: "; "))")
+        }
+        if let message = json["message"] as? String {
+            parts.append("message: \(String(message.prefix(120)))")
+        }
+        if let wordCount = json["wordCount"] as? Int {
+            parts.append("words: \(wordCount)")
+        }
+
         if parts.isEmpty {
             return "[Previously retrieved data. Full data available via tools.]"
         }

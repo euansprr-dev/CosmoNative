@@ -15,6 +15,7 @@ struct PaneCanvasView: View {
     // Canvas panning
     @State private var canvasOffset: CGSize = .zero
     @GestureState private var panOffset: CGSize = .zero
+    @State private var hasInitializedViewport = false
 
     // Canvas zoom
     @State private var canvasScale: CGFloat = 1.0
@@ -123,6 +124,13 @@ struct PaneCanvasView: View {
             .overlay(alignment: .bottomTrailing) {
                 zoomIndicator
             }
+            .task(id: thinkspaceId) {
+                await loadPaneThinkspace(in: geo.size)
+            }
+            .onChange(of: geo.size) { _, newSize in
+                guard !hasInitializedViewport, hasRenderableContent else { return }
+                applyInitialViewport(in: newSize)
+            }
         }
         .onAppear {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
@@ -141,14 +149,6 @@ struct PaneCanvasView: View {
                 keyMonitor = nil
             }
             isSpaceHeld = false
-        }
-        .task {
-            await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
-            await clusterEngine.loadUserClusters(
-                thinkspaceId: thinkspaceId,
-                blocks: spatialEngine.blocks
-            )
-            clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
         }
     }
 
@@ -203,6 +203,28 @@ struct PaneCanvasView: View {
                         }
                 )
         }
+    }
+
+    private var hasRenderableContent: Bool {
+        !spatialEngine.blocks.isEmpty || !clusterEngine.allClusters.isEmpty
+    }
+
+    private var contentBounds: CGRect? {
+        let blockRects = spatialEngine.blocks.map { block in
+            CGRect(
+                x: block.position.x - block.size.width / 2,
+                y: block.position.y - block.size.height / 2,
+                width: block.size.width,
+                height: block.size.height
+            )
+        }
+        let clusterRects = clusterEngine.allClusters.map(\.boundingRect)
+        let rects = blockRects + clusterRects
+        guard var bounds = rects.first else { return nil }
+        for rect in rects.dropFirst() {
+            bounds = bounds.union(rect)
+        }
+        return bounds
     }
 
     // MARK: - Blocks Layer
@@ -359,5 +381,42 @@ struct PaneCanvasView: View {
 
         blockDragOffsets.removeValue(forKey: blockId)
         draggingBlockId = nil
+    }
+
+    @MainActor
+    private func loadPaneThinkspace(in viewportSize: CGSize) async {
+        hasInitializedViewport = false
+        await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+        await clusterEngine.loadUserClusters(
+            thinkspaceId: thinkspaceId,
+            blocks: spatialEngine.blocks
+        )
+        clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
+        applyInitialViewport(in: viewportSize)
+    }
+
+    private func applyInitialViewport(in viewportSize: CGSize) {
+        guard viewportSize.width > 1, viewportSize.height > 1 else { return }
+
+        guard let bounds = contentBounds else {
+            canvasScale = 1.0
+            canvasOffset = .zero
+            hasInitializedViewport = true
+            return
+        }
+
+        let paddedBounds = bounds.insetBy(dx: -72, dy: -72)
+        let widthScale = viewportSize.width / max(paddedBounds.width, 1)
+        let heightScale = viewportSize.height / max(paddedBounds.height, 1)
+
+        // Panes should open with the whole thinkspace visible, but avoid zooming in past 100%.
+        let targetScale = max(min(min(widthScale, heightScale), 1.0), minScale)
+
+        canvasScale = targetScale
+        canvasOffset = CGSize(
+            width: viewportSize.width / 2 - paddedBounds.midX,
+            height: viewportSize.height / 2 - paddedBounds.midY
+        )
+        hasInitializedViewport = true
     }
 }

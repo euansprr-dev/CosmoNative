@@ -104,6 +104,25 @@ struct CosmoMentionOverlay: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .cosmoWindowChip()
+
+                Button {
+                    isVisible = false
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(DS.surfaceElevated)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(DS.borderSubtle, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)

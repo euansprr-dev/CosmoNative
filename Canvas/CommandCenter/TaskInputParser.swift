@@ -1,5 +1,5 @@
 // Canvas/CommandCenter/TaskInputParser.swift
-// Natural language task input parser — extracts priority, dates, times, and intents
+// Natural language task input parser — extracts priority, dates, times, intents, and recurrence
 // March 2026
 
 import Foundation
@@ -10,8 +10,15 @@ struct ParsedTaskInput {
     var dueDate: Date?
     var scheduledTime: Date?
     var intent: TaskIntent?
+    var recurrenceRule: RecurrenceRule?
+    var habitUUID: String?
+    var habitTitle: String?
+    var habitIcon: String?
+    var habitColorHex: String?
+    var habitAssignmentSource: HabitAssignmentSource?
 }
 
+@MainActor
 enum TaskInputParser {
 
     /// Parse a natural language task input string into structured metadata
@@ -25,6 +32,9 @@ enum TaskInputParser {
         // Extract intent keywords
         result.intent = extractIntent(&remaining)
 
+        // Extract recurrence phrases before weekday/date parsing consumes them
+        result.recurrenceRule = extractRecurrence(&remaining)
+
         // Extract time (2pm, 14:00, at 3:30pm)
         result.scheduledTime = extractTime(&remaining)
 
@@ -36,10 +46,23 @@ enum TaskInputParser {
             result.dueDate = Date()
         }
 
+        // If recurrence is present but no explicit date was provided, seed from the next occurrence.
+        if result.recurrenceRule != nil && result.dueDate == nil {
+            result.dueDate = nextOccurrenceDate(for: result.recurrenceRule!, from: Date())
+        }
+
         // Clean up title
         result.title = remaining
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "  ", with: " ")
+
+        if let resolution = CommandCenterHabitEngine.shared.resolveHabit(title: result.title, intent: result.intent) {
+            result.habitUUID = resolution.definition.id
+            result.habitTitle = resolution.definition.title
+            result.habitIcon = resolution.definition.icon
+            result.habitColorHex = resolution.definition.accentColor
+            result.habitAssignmentSource = resolution.source
+        }
 
         return result
     }
@@ -98,6 +121,45 @@ enum TaskInputParser {
     }
 
     // MARK: - Time
+
+    private static func extractRecurrence(_ input: inout String) -> RecurrenceRule? {
+        let patterns: [(String, RecurrenceRule)] = [
+            ("\\bevery\\s+day\\b", .daily()),
+            ("\\bdaily\\b", .daily()),
+            ("\\bevery\\s+weekday(?:s)?\\b", .weekdays()),
+            ("\\bweekday(?:s)?\\b", .weekdays()),
+            ("\\bevery\\s+month\\b", .monthly(onDay: Calendar.current.component(.day, from: Date()))),
+        ]
+
+        for (pattern, rule) in patterns {
+            if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                input.removeSubrange(range)
+                return rule
+            }
+        }
+
+        guard let regex = try? NSRegularExpression(
+            pattern: "\\bevery\\s+((?:(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|thur(?:s|sday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\\s*(?:,|and)\\s*|\\s+)?)+)",
+            options: .caseInsensitive
+        ) else {
+            return nil
+        }
+
+        let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, range: nsRange),
+              let daysRange = Range(match.range(at: 1), in: input) else {
+            return nil
+        }
+
+        let daysString = String(input[daysRange])
+        let days = parseWeekdayList(daysString)
+        guard !days.isEmpty, let fullRange = Range(match.range, in: input) else {
+            return nil
+        }
+
+        input.removeSubrange(fullRange)
+        return .weekly(on: days)
+    }
 
     private static func extractTime(_ input: inout String) -> Date? {
         // Match "at 2pm", "at 14:00", "2pm", "2:30pm", "14:00"
@@ -235,6 +297,98 @@ enum TaskInputParser {
     }
 
     // MARK: - Helpers
+
+    private static func parseWeekdayList(_ input: String) -> [DayOfWeek] {
+        let normalized = input
+            .lowercased()
+            .replacingOccurrences(of: "and", with: ",")
+            .replacingOccurrences(of: ".", with: "")
+
+        let parts = normalized
+            .split(separator: ",")
+            .flatMap { chunk in
+                chunk.split(whereSeparator: \.isWhitespace)
+            }
+
+        var days: [DayOfWeek] = []
+        for part in parts {
+            guard let day = weekdayFromToken(String(part)) else { continue }
+            if !days.contains(day) {
+                days.append(day)
+            }
+        }
+        return days
+    }
+
+    private static func weekdayFromToken(_ token: String) -> DayOfWeek? {
+        switch token {
+        case "mon", "monday":
+            return .monday
+        case "tue", "tues", "tuesday":
+            return .tuesday
+        case "wed", "weds", "wednesday":
+            return .wednesday
+        case "thu", "thur", "thurs", "thursday":
+            return .thursday
+        case "fri", "friday":
+            return .friday
+        case "sat", "saturday":
+            return .saturday
+        case "sun", "sunday":
+            return .sunday
+        default:
+            return nil
+        }
+    }
+
+    private static func nextOccurrenceDate(for rule: RecurrenceRule, from date: Date) -> Date? {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: date)
+
+        switch rule.frequency {
+        case .daily:
+            return start
+        case .weekdays:
+            let weekday = calendar.component(.weekday, from: start)
+            if (2...6).contains(weekday) {
+                return start
+            }
+            return nextWeekday(.monday, from: start)
+        case .weekly, .biweekly, .custom:
+            let orderedDays = (rule.daysOfWeek ?? []).sorted { $0.rawValue < $1.rawValue }
+            if orderedDays.isEmpty {
+                return start
+            }
+
+            let currentWeekday = calendar.component(.weekday, from: start)
+            if let sameOrLater = orderedDays.first(where: { $0.rawValue >= currentWeekday }) {
+                let delta = sameOrLater.rawValue - currentWeekday
+                return calendar.date(byAdding: .day, value: delta, to: start)
+            }
+
+            let next = orderedDays[0]
+            let delta = (7 - currentWeekday) + next.rawValue
+            return calendar.date(byAdding: .day, value: delta, to: start)
+        case .monthly:
+            let targetDay = rule.dayOfMonth ?? calendar.component(.day, from: start)
+            if calendar.component(.day, from: start) <= targetDay,
+               let thisMonth = calendar.date(
+                   from: calendar.dateComponents([.year, .month], from: start)
+               ).flatMap({
+                   calendar.date(byAdding: .day, value: max(0, targetDay - 1), to: $0)
+               }) {
+                return thisMonth
+            }
+
+            guard let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: start),
+                  let firstOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: nextMonthStart)) else {
+                return start
+            }
+            return calendar.date(byAdding: .day, value: max(0, targetDay - 1), to: firstOfMonth)
+        case .yearly:
+            return start
+        }
+    }
 
     private static func nextWeekday(_ weekday: Weekday, from date: Date) -> Date? {
         let cal = Calendar.current

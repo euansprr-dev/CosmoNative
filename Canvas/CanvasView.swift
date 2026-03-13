@@ -8,6 +8,13 @@ import UniformTypeIdentifiers
 struct CanvasView: View {
     /// The thinkspace ID this canvas displays — passed directly to avoid race conditions
     let thinkspaceId: String?
+    /// Whether this canvas is the active (visible) destination.
+    /// When false, event monitors and interactive notification handlers are gated.
+    var isActive: Bool = true
+
+    // Mirror isActive into @State so NSEvent monitor closures capture a mutable reference
+    // (let properties captured by closures would be stale after the struct is re-created)
+    @State private var canvasIsActive = true
 
     @StateObject private var spatialEngine = SpatialEngine()
     @StateObject private var expansionManager = BlockExpansionManager()
@@ -229,7 +236,8 @@ struct CanvasView: View {
                     CanvasConnectionLinesLayer(
                         blocks: spatialEngine.blocks,
                         contentOffset: viewportTransform.contentOffset,
-                        activeBlockDrag: blockDragState
+                        activeBlockDrag: blockDragState,
+                        isActive: canvasIsActive
                     )
 
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
@@ -643,13 +651,23 @@ struct CanvasView: View {
         forName name: Notification.Name,
         object: Any? = nil,
         queue: OperationQueue? = .main,
+        activeOnly: Bool = false,
         using block: @escaping (Notification) -> Void
     ) {
+        let handler: (Notification) -> Void
+        if activeOnly {
+            handler = { [self] notification in
+                guard canvasIsActive else { return }
+                block(notification)
+            }
+        } else {
+            handler = block
+        }
         let token = NotificationCenter.default.addObserver(
             forName: name,
             object: object,
             queue: queue,
-            using: block
+            using: handler
         )
         notificationObserverTokens.append(token)
     }
@@ -669,6 +687,7 @@ struct CanvasView: View {
             canvasContent
                 .onAppear {
                     canvasSize = geometry.size
+                    canvasIsActive = isActive
 
                 // Register context provider for global Cosmo window
                 let provider = CanvasContextProvider(spatialEngine: spatialEngine)
@@ -708,7 +727,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .placeBlocksOnCanvas,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handlePlaceBlocks(notification: notification, canvasSize: canvasSize)
@@ -718,7 +738,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .moveCanvasBlocks,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleMoveBlocks(notification: notification)
@@ -728,7 +749,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .arrangeCanvasBlocks,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleArrangeBlocks(notification: notification, canvasSize: canvasSize)
@@ -738,7 +760,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createCosmoAIBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleCreateCosmoAIBlock(notification: notification)
@@ -748,7 +771,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .createNoteBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleCreateNoteBlock(notification: notification)
@@ -758,7 +782,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.blockSelected,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     if let blockId = notification.userInfo?["blockId"] as? String {
@@ -770,7 +795,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .removeBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleRemoveBlock(notification: notification)
@@ -780,7 +806,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createEntityAtPosition,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleCreateEntityAtPosition(notification: notification)
@@ -790,7 +817,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .openCalendarWindow,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleOpenCalendarWindow(notification: notification)
@@ -800,7 +828,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createInboxBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleCreateInboxBlock(notification: notification)
@@ -880,7 +909,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .createResearchBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleCreateResearchBlock(notification: notification)
@@ -890,7 +920,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .expandSelectedBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] _ in
                     handleExpandSelectedBlock()
                 }
@@ -898,7 +929,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .collapseExpandedBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] _ in
                     Task { @MainActor in
                         withAnimation(BlockAnimations.collapse) {
@@ -910,7 +942,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .closeSelectedBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] _ in
                     if let blockId = selectedBlockId {
                         Task {
@@ -922,7 +955,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .openBlockInFocusMode,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] _ in
                     handleOpenSelectedBlockInFocusMode()
                 }
@@ -931,7 +965,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .deleteSpecificBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleDeleteSpecificBlock(notification: notification)
@@ -940,7 +975,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .duplicateBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleDuplicateBlock(notification: notification)
@@ -949,7 +985,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .moveBlockToTime,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleMoveBlockToTime(notification: notification)
@@ -959,7 +996,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .deleteBlockByContent,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleDeleteBlockByContent(notification: notification)
@@ -968,7 +1006,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .expandBlockByContent,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleExpandBlockByContent(notification: notification)
@@ -977,7 +1016,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .duplicateBlockByContent,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleDuplicateBlockByContent(notification: notification)
@@ -986,7 +1026,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .moveBlockByContentToTime,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleMoveBlockByContentToTime(notification: notification)
@@ -996,7 +1037,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .placeEntityOnCanvas,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handlePlaceEntityOnCanvas(notification: notification)
@@ -1006,7 +1048,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .resizeSelectedBlock,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleResizeSelectedBlock(notification: notification)
@@ -1016,7 +1059,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .openEntityOnCanvas,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleOpenEntityOnCanvas(notification: notification)
@@ -1026,7 +1070,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.pullAmbientToCanvas,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handlePullAmbientToCanvas(notification: notification)
@@ -1036,7 +1081,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.lassoEnclosedBlocks,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
@@ -1061,7 +1107,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.zoneDrawn,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
@@ -1086,7 +1133,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createClusterFromSelection,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
@@ -1140,7 +1188,8 @@ struct CanvasView: View {
                 addCanvasObserver(
                     forName: .performCanvasPaste,
                     object: nil,
-                    queue: .main
+                    queue: .main,
+                    activeOnly: true
                 ) { [self] _ in
                     guard !appState.isCommandKVisible else { return }
                     Task { await handleCanvasPaste() }
@@ -1150,8 +1199,7 @@ struct CanvasView: View {
                 // Set up scroll wheel event monitor for smooth mouse zoom
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
                 scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
-                    // Only handle scroll wheel zoom when Option key is held
-                    // or when using a mouse (no momentum phase means mouse wheel)
+                    guard canvasIsActive else { return event }
                     let isMouseWheel = event.momentumPhase == [] && event.phase == []
                     let isOptionHeld = event.modifierFlags.contains(.option)
 
@@ -1176,12 +1224,12 @@ struct CanvasView: View {
                 // MARK: - Space+Drag Pan (Hand Tool)
                 // Track space bar press to enable drag-to-pan over any element
                 keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
+                    guard canvasIsActive else { return event }
                     if event.keyCode == 49 { // space bar
                         let pressed = event.type == .keyDown
                         if pressed != isSpaceHeld {
                             isSpaceHeld = pressed
                         }
-                        // Don't consume — allow space for text fields etc.
                     }
                     return event
                 }
@@ -1198,6 +1246,12 @@ struct CanvasView: View {
                 }
                 isSpaceHeld = false
                 removeCanvasObservers()
+            }
+            .onChange(of: isActive) { _, newValue in
+                canvasIsActive = newValue
+                if !newValue && isSpaceHeld {
+                    isSpaceHeld = false
+                }
             }
             .onChange(of: thinkspaceId) { _, newId in
                 // Reload canvas content when switching between Command Center ↔ thinkspaces

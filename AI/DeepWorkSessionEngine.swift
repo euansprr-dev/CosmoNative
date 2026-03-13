@@ -18,6 +18,8 @@ struct ActiveDeepWorkSession: Codable, Sendable {
     let taskUUID: String?
     let taskTitle: String
     let intent: TaskIntent
+    let habitUUID: String?
+    let habitTitleSnapshot: String?
     var plannedMinutes: Int
     let startedAt: Date
 
@@ -36,12 +38,16 @@ struct ActiveDeepWorkSession: Codable, Sendable {
         taskUUID: String?,
         taskTitle: String,
         intent: TaskIntent,
+        habitUUID: String?,
+        habitTitleSnapshot: String?,
         plannedMinutes: Int
     ) {
         self.id = UUID().uuidString
         self.taskUUID = taskUUID
         self.taskTitle = taskTitle
         self.intent = intent
+        self.habitUUID = habitUUID
+        self.habitTitleSnapshot = habitTitleSnapshot
         self.plannedMinutes = plannedMinutes
         self.startedAt = Date()
         self.pausedAt = nil
@@ -125,6 +131,8 @@ class DeepWorkSessionEngine: ObservableObject {
         taskUUID: String?,
         taskTitle: String,
         intent: TaskIntent,
+        habitUUID: String? = nil,
+        habitTitleSnapshot: String? = nil,
         plannedMinutes: Int
     ) {
         // End any existing session without saving
@@ -137,6 +145,8 @@ class DeepWorkSessionEngine: ObservableObject {
             taskUUID: taskUUID,
             taskTitle: taskTitle,
             intent: intent,
+            habitUUID: habitUUID,
+            habitTitleSnapshot: habitTitleSnapshot,
             plannedMinutes: plannedMinutes
         )
 
@@ -234,6 +244,8 @@ class DeepWorkSessionEngine: ObservableObject {
             focusScore: focusScore,
             distractionCount: distractionCount,
             intent: session.intent.rawValue,
+            habitUUID: session.habitUUID,
+            habitTitleSnapshot: session.habitTitleSnapshot,
             outputAtomUUIDs: outputAtomUUIDs,
             xpEarned: xpEarned,
             notes: notes

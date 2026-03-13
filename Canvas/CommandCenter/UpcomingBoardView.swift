@@ -12,6 +12,8 @@ struct UpcomingBoardView: View {
     @State private var dropTargetDay: String?
     @State private var selectedTaskUUIDs: Set<String> = []
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
+    @State private var showOverdueRescheduleMenu = false
+    @State private var activeTaskMenuUUID: String?
     @FocusState private var addTaskFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -130,18 +132,38 @@ struct UpcomingBoardView: View {
                 Spacer()
 
                 Button {
-                    // Reschedule all overdue to today
-                    Task {
-                        for task in viewModel.overdueTasks {
-                            await viewModel.moveTask(uuid: task.uuid, toDate: Date())
-                        }
-                    }
+                    showOverdueRescheduleMenu.toggle()
                 } label: {
-                    Text("Reschedule")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(PlannerumColors.overdue)
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Reschedule")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(PlannerumColors.overdue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(PlannerumColors.overdue.opacity(0.08))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(PlannerumColors.overdue.opacity(0.2), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
+                .popover(isPresented: $showOverdueRescheduleMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                    CommandCenterReschedulePanel(title: "Reschedule overdue tasks") { date in
+                        showOverdueRescheduleMenu = false
+                        Task {
+                            await viewModel.rescheduleTasks(
+                                uuids: viewModel.overdueTasks.map(\.uuid),
+                                toDate: date
+                            )
+                        }
+                    }
+                }
             }
 
             // Task cards
@@ -243,6 +265,7 @@ struct UpcomingBoardView: View {
         let isSelected = selectedTaskUUIDs.contains(task.uuid)
         let completionState = completionStates[task.uuid]
         let isAnimatingCompletion = completionState != nil
+        let resolvedHabit = viewModel.resolvedHabit(for: task)
 
         return HStack(alignment: .top, spacing: 10) {
             // Checkbox
@@ -292,10 +315,34 @@ struct UpcomingBoardView: View {
                         }
                         .foregroundColor(task.intent.color.opacity(0.8))
                     }
+
+                    if let resolvedHabit {
+                        HStack(spacing: 3) {
+                            Image(systemName: resolvedHabit.icon)
+                                .font(.system(size: 9))
+                            Text(resolvedHabit.title)
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(resolvedHabit.accent.opacity(0.9))
+                    }
+
+                    if task.isRecurring {
+                        HStack(spacing: 3) {
+                            Image(systemName: "repeat")
+                                .font(.system(size: 9))
+                            Text("Repeats")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(DS.accent.opacity(0.85))
+                    }
                 }
             }
 
             Spacer(minLength: 0)
+
+            if !isAnimatingCompletion {
+                taskActionButton(task)
+            }
         }
         .padding(12)
         .background(
@@ -349,6 +396,57 @@ struct UpcomingBoardView: View {
                     Label("Delete", systemImage: "trash")
                 }
             }
+        }
+    }
+
+    private func taskActionButton(_ task: TaskViewModel) -> some View {
+        Button {
+            activeTaskMenuUUID = task.uuid
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(activeTaskMenuUUID == task.uuid ? DS.accentSoft : DS.surface)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(activeTaskMenuUUID == task.uuid ? DS.accent.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: Binding(
+                get: { activeTaskMenuUUID == task.uuid },
+                set: { if !$0 { activeTaskMenuUUID = nil } }
+            ),
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .top
+        ) {
+            CommandCenterTaskActionPopover(
+                task: task,
+                currentHabit: viewModel.resolvedHabit(for: task),
+                availableHabits: viewModel.availableHabitDefinitions,
+                loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
+                onToggleCompletion: { handleTaskCompletionTap(task) },
+                onReschedule: { date in
+                    Task { await viewModel.rescheduleTask(uuid: task.uuid, toDate: date) }
+                },
+                onApplyHabit: { habitUUID in
+                    Task { await viewModel.applyHabit(habitUUID, to: task.uuid) }
+                },
+                onApplyRecurrence: { rule in
+                    Task { await viewModel.setTaskRecurrence(uuid: task.uuid, rule: rule) }
+                },
+                onDelete: {
+                    Task { await viewModel.deleteTask(uuid: task.uuid) }
+                },
+                onDismiss: {
+                    activeTaskMenuUUID = nil
+                }
+            )
         }
     }
 
@@ -499,7 +597,13 @@ struct UpcomingBoardView: View {
                 priority: parsed.priority,
                 dueDate: date,
                 scheduledTime: parsed.scheduledTime,
-                intent: parsed.intent
+                intent: parsed.intent,
+                recurrenceRule: parsed.recurrenceRule,
+                habitUUID: parsed.habitUUID,
+                habitTitle: parsed.habitTitle,
+                habitIcon: parsed.habitIcon,
+                habitColorHex: parsed.habitColorHex,
+                habitAssignmentSource: parsed.habitAssignmentSource
             )
         }
 

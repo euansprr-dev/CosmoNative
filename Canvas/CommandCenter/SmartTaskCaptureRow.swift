@@ -22,7 +22,7 @@ struct SmartTaskCaptureRow: View {
 
                 ZStack(alignment: .leading) {
                     if viewModel.newTaskTitle.isEmpty {
-                        Text("Add task... (try \"Write reels p1 tomorrow 2pm\")")
+                        Text("Add task... (try \"Write at 6pm every Tue\")")
                             .font(.system(size: 13))
                             .foregroundColor(Color(hex: "767685"))
                             .allowsHitTesting(false)
@@ -106,6 +106,22 @@ struct SmartTaskCaptureRow: View {
                         color: intent.color
                     )
                 }
+
+                if let habitTitle = parsedInput.habitTitle {
+                    metadataChip(
+                        icon: parsedInput.habitIcon ?? "repeat",
+                        label: habitTitle,
+                        color: parsedInput.habitColorHex.map(Color.init(hex:)) ?? DS.accent
+                    )
+                }
+
+                if let recurrenceRule = parsedInput.recurrenceRule {
+                    metadataChip(
+                        icon: "repeat",
+                        label: recurrenceRule.shortDisplayText,
+                        color: DS.accent
+                    )
+                }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
@@ -139,6 +155,8 @@ struct SmartTaskCaptureRow: View {
             || parsedInput.dueDate != nil
             || parsedInput.scheduledTime != nil
             || parsedInput.intent != nil
+            || parsedInput.habitUUID != nil
+            || parsedInput.recurrenceRule != nil
     }
 
     private func debounceParseInput(_ text: String) {

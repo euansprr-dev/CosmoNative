@@ -12,11 +12,18 @@ struct HabitState: Identifiable, Equatable {
     let title: String
     let iconName: String
     let accentColor: Color
-    var todayProgress: Double      // 0.0–1.0
+    var todayProgress: Double
     var isTodayComplete: Bool
-    var last7Days: [Bool]          // [6 days ago ... today], true = completed
-    var consistencyCount: Int      // completed count in last 7 days
+    var last7Days: [Bool]
+    var consistencyCount: Int
     var allowManualComplete: Bool
+    var targetCount: Int
+    var todayCount: Int
+    var trackedMinutesToday: Int
+    var sourceBreakdown: HabitSourceBreakdown
+    var isBuiltIn: Bool
+    var isEditable: Bool
+    var linkedIntentSummary: String?
 }
 
 // MARK: - ViewModel
@@ -98,6 +105,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
     let sessionEngine = DeepWorkSessionEngine.shared
     private let objectiveEngine = ObjectiveEngine()
     private let calendarService = CalendarSyncService.shared
+    private let habitEngine = CommandCenterHabitEngine.shared
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Computed
@@ -187,11 +195,21 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // React to quest state changes (for habits) — debounced
-        plannerum.liveQuestEngine.$quests
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
-            .sink { [weak self] quests in
-                self?.updateHabits(from: quests)
+        AtomRepository.shared.$atoms
+            .debounce(for: .milliseconds(600), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { [weak self] in
+                    await self?.loadHabits()
+                }
+            }
+            .store(in: &cancellables)
+
+        habitEngine.$definitions
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { [weak self] in
+                    await self?.loadHabits()
+                }
             }
             .store(in: &cancellables)
 
@@ -221,12 +239,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Refresh
 
     func refreshAll() async {
+        await habitEngine.refreshDefinitions()
         await refreshTasks()
         refreshCalendarEvents()
+        await loadHabits()
         await loadTodayTimeData()
         await loadTodaySessions()
         await loadWeeklyReport()
-        updateHabits(from: plannerum.liveQuestEngine.quests)
         objectiveEngine.startTracking()
         xpProgress = plannerum.xpProgress
         currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
@@ -366,8 +385,39 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func moveTask(uuid: String, toDate: Date) async {
-        await updateTask(uuid: uuid, dueDate: toDate)
-        await loadUpcomingTasks()
+        await rescheduleTask(uuid: uuid, toDate: toDate)
+    }
+
+    func rescheduleTask(uuid: String, toDate: Date?) async {
+        do {
+            _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
+                metadata.dueDate = dateString
+                metadata.focusDate = dateString
+                atom = atom.withMetadata(metadata)
+            }
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to reschedule task: \(error)")
+        }
+    }
+
+    func rescheduleTasks(uuids: [String], toDate: Date?) async {
+        for uuid in uuids {
+            do {
+                _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
+                    var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
+                    metadata.dueDate = dateString
+                    metadata.focusDate = dateString
+                    atom = atom.withMetadata(metadata)
+                }
+            } catch {
+                print("❌ Dashboard: Failed to reschedule task: \(error)")
+            }
+        }
+        await refreshTasks()
     }
 
     func shiftUpcomingWeek(by offset: Int) {
@@ -431,48 +481,88 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     // MARK: - Habits
 
-    private func updateHabits(from quests: [QuestState]) {
-        let habitQuests = quests.filter { $0.id != "overachiever" }
-
-        habits = habitQuests.map { quest in
-            let streak = plannerum.liveQuestEngine.streaks[quest.id] ?? 0
-            let last7 = buildLast7Days(streak: streak, todayComplete: quest.isComplete)
-
-            return HabitState(
-                id: quest.id,
-                title: habitTitle(for: quest.id),
-                iconName: quest.iconName,
-                accentColor: quest.accentColor,
-                todayProgress: quest.progress,
-                isTodayComplete: quest.isComplete,
-                last7Days: last7,
-                consistencyCount: last7.filter { $0 }.count,
-                allowManualComplete: quest.allowManualComplete
+    func loadHabits() async {
+        let progressStates = await habitEngine.loadProgressStates()
+        habits = progressStates.map { state in
+            HabitState(
+                id: state.definition.id,
+                title: state.definition.title,
+                iconName: state.definition.icon,
+                accentColor: state.definition.accent,
+                todayProgress: state.todayProgress,
+                isTodayComplete: state.isTodayComplete,
+                last7Days: state.last7Days,
+                consistencyCount: state.consistencyCount,
+                allowManualComplete: state.definition.allowManualCompletion,
+                targetCount: state.targetCount,
+                todayCount: state.todayCount,
+                trackedMinutesToday: state.trackedMinutesToday,
+                sourceBreakdown: state.sourceBreakdown,
+                isBuiltIn: state.isBuiltIn,
+                isEditable: state.isEditable,
+                linkedIntentSummary: state.linkedIntentSummary
             )
         }
-
         currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
     }
 
-    private func habitTitle(for questId: String) -> String {
-        switch questId {
-        case "deepFocus":        return "Deep Focus"
-        case "dailyReflection":  return "Journal"
-        case "taskCrusher":      return "Tasks Done"
-        case "creativeBurst":    return "Create"
-        case "heartHealth":      return "Exercise"
-        default:                 return questId.capitalized
-        }
+    var availableHabitDefinitions: [HabitDefinition] {
+        habitEngine.activeDefinitions
     }
 
-    private func buildLast7Days(streak: Int, todayComplete: Bool) -> [Bool] {
-        var days = [Bool](repeating: false, count: 7)
-        days[6] = todayComplete
-        let pastStreak = todayComplete ? max(streak - 1, 0) : streak
-        for i in 0..<min(pastStreak, 6) {
-            days[5 - i] = true
-        }
-        return days
+    func habitDefinition(for id: String?) -> HabitDefinition? {
+        habitEngine.definition(for: id)
+    }
+
+    func resolvedHabit(for task: TaskViewModel) -> HabitDefinition? {
+        habitEngine.resolvedHabit(for: task)?.definition
+    }
+
+    func createHabit(
+        title: String,
+        icon: String,
+        accentColor: String,
+        dailyTargetCount: Int,
+        keywordTriggers: [String],
+        mappedIntents: [TaskIntent],
+        allowManualCompletion: Bool
+    ) async {
+        await habitEngine.createHabit(
+            title: title,
+            icon: icon,
+            accentColor: accentColor,
+            dailyTargetCount: dailyTargetCount,
+            keywordTriggers: keywordTriggers,
+            mappedIntents: mappedIntents,
+            allowManualCompletion: allowManualCompletion
+        )
+        await loadHabits()
+    }
+
+    func updateHabit(_ definition: HabitDefinition) async {
+        await habitEngine.updateHabit(definition)
+        await loadHabits()
+    }
+
+    func archiveHabit(uuid: String) async {
+        await habitEngine.archiveHabit(uuid: uuid)
+        await loadHabits()
+    }
+
+    func moveHabit(uuid: String, direction: Int) async {
+        await habitEngine.moveHabit(uuid: uuid, direction: direction)
+        await loadHabits()
+    }
+
+    func recordManualHabitCompletion(habitUUID: String) async {
+        await habitEngine.recordManualCompletion(habitUUID: habitUUID)
+        await loadHabits()
+    }
+
+    func applyHabit(_ habitUUID: String?, to taskUUID: String) async {
+        await habitEngine.assignHabit(taskUUID: taskUUID, habitUUID: habitUUID, source: .manual)
+        await refreshTasks()
+        await loadHabits()
     }
 
     // MARK: - Task Actions
@@ -487,7 +577,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func completeTask(uuid: String) async -> Bool {
         await plannerum.completeTask(taskId: uuid)
+        await habitEngine.recordTaskCompletion(taskUUID: uuid)
         await refreshTaskCollectionsAfterMutation()
+        await loadHabits()
         return true
     }
 
@@ -499,7 +591,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 metadata.completedAt = nil
                 atom = atom.withMetadata(metadata)
             }
+            await habitEngine.reverseTaskCompletion(taskUUID: uuid)
             await refreshTaskCollectionsAfterMutation()
+            await loadHabits()
             return true
         } catch {
             print("❌ Dashboard: Failed to uncomplete task: \(error)")
@@ -550,8 +644,19 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if let intent = parsed.intent {
                         metadata.intent = intent.rawValue
                     }
+                    if let habitUUID = parsed.habitUUID {
+                        metadata.habitUUID = habitUUID
+                        metadata.habitAssignmentSource = parsed.habitAssignmentSource?.rawValue
+                    } else if let derived = habitEngine.resolveHabit(title: title, intent: parsed.intent) {
+                        metadata.habitUUID = derived.definition.id
+                        metadata.habitAssignmentSource = derived.source.rawValue
+                    }
 
                     a = a.withMetadata(metadata)
+                }
+
+                if let recurrenceRule = parsed.recurrenceRule {
+                    await setTaskRecurrence(uuid: atom.uuid, rule: recurrenceRule)
                 }
             }
         } catch {
@@ -560,6 +665,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         pendingTaskDate = nil
         await refreshTasks()
+        await loadHabits()
     }
 
     func updateTask(
@@ -574,12 +680,15 @@ class CommandCenterDashboardViewModel: ObservableObject {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
                 var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                let previousAssignmentSource = HabitAssignmentSource(rawValue: metadata.habitAssignmentSource ?? "")
 
                 if let title = title { atom.title = title }
                 if let body = body { atom.body = body }
                 if let priority = priority { metadata.priority = priority.rawValue }
                 if let dueDate = dueDate {
-                    metadata.dueDate = PlannerumFormatters.iso8601.string(from: dueDate)
+                    let dateString = PlannerumFormatters.iso8601.string(from: dueDate)
+                    metadata.dueDate = dateString
+                    metadata.focusDate = dateString
                 }
                 if let time = scheduledTime {
                     metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
@@ -588,12 +697,117 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     metadata.intent = intent.rawValue
                 }
 
+                if previousAssignmentSource != .manual {
+                    let resolvedTitle = title ?? atom.title ?? ""
+                    let resolvedIntent = intent ?? metadata.intent.flatMap(TaskIntent.init(rawValue:))
+                    if let derived = habitEngine.resolveHabit(title: resolvedTitle, intent: resolvedIntent) {
+                        metadata.habitUUID = derived.definition.id
+                        metadata.habitAssignmentSource = derived.source.rawValue
+                    } else {
+                        metadata.habitUUID = nil
+                        metadata.habitAssignmentSource = nil
+                    }
+                }
+
                 atom = atom.withMetadata(metadata)
             }
             await refreshTasks()
+            await loadHabits()
         } catch {
             print("❌ Dashboard: Failed to update task: \(error)")
         }
+    }
+
+    func recurrenceRule(for task: TaskViewModel) async -> RecurrenceRule? {
+        do {
+            guard let atom = try await AtomRepository.shared.fetch(uuid: task.uuid) else {
+                return nil
+            }
+
+            if let metadata = atom.metadataValue(as: TaskMetadata.self) {
+                if let recurrenceJSON = metadata.recurrence {
+                    return RecurrenceRule.fromJSON(recurrenceJSON)
+                }
+
+                if let parentUUID = metadata.recurrenceParentUUID,
+                   let parent = try await AtomRepository.shared.fetch(uuid: parentUUID),
+                   let parentMetadata = parent.metadataValue(as: TaskMetadata.self),
+                   let recurrenceJSON = parentMetadata.recurrence {
+                    return RecurrenceRule.fromJSON(recurrenceJSON)
+                }
+            }
+        } catch {
+            print("❌ Dashboard: Failed to load recurrence rule: \(error)")
+        }
+
+        return nil
+    }
+
+    func setTaskRecurrence(uuid: String, rule: RecurrenceRule?) async {
+        do {
+            guard let atom = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            let recurrenceJSON = rule?.toJSON()
+            let metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+
+            if let parentUUID = metadata.recurrenceParentUUID {
+                if let recurrenceJSON {
+                    _ = try await AtomRepository.shared.update(uuid: parentUUID) { parent in
+                        var parentMetadata = parent.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        parentMetadata.recurrence = recurrenceJSON
+                        parent = parent.withMetadata(parentMetadata)
+                    }
+                } else {
+                    try await AtomRepository.shared.delete(uuid: parentUUID)
+                    _ = try await AtomRepository.shared.update(uuid: uuid) { current in
+                        var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        currentMetadata.recurrenceParentUUID = nil
+                        current = current.withMetadata(currentMetadata)
+                    }
+                }
+            } else if metadata.recurrence != nil {
+                _ = try await AtomRepository.shared.update(uuid: uuid) { current in
+                    var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    currentMetadata.recurrence = recurrenceJSON
+                    current = current.withMetadata(currentMetadata)
+                }
+            } else if let recurrenceJSON {
+                let template = try await createRecurringTemplate(from: atom, recurrenceJSON: recurrenceJSON)
+                _ = try await AtomRepository.shared.update(uuid: uuid) { current in
+                    var currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    currentMetadata.recurrence = nil
+                    currentMetadata.recurrenceParentUUID = template.uuid
+                    current = current.withMetadata(currentMetadata)
+                }
+            }
+
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to update recurrence: \(error)")
+        }
+    }
+
+    private func createRecurringTemplate(from atom: Atom, recurrenceJSON: String) async throws -> Atom {
+        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+        metadata.recurrence = recurrenceJSON
+        metadata.recurrenceParentUUID = nil
+        metadata.isCompleted = false
+        metadata.completedAt = nil
+
+        if metadata.dueDate == nil {
+            let today = PlannerumFormatters.iso8601.string(from: Date())
+            metadata.dueDate = today
+            metadata.focusDate = today
+        }
+
+        let template = Atom.new(
+            type: .task,
+            title: atom.title,
+            body: atom.body,
+            metadata: atom.withMetadata(metadata).metadata,
+            links: atom.linksList.isEmpty ? nil : atom.linksList
+        )
+
+        return try await AtomRepository.shared.create(template)
     }
 
     func deleteTask(uuid: String) async {
@@ -626,10 +840,13 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func startFocusSession(for task: TaskViewModel) {
+        let habit = resolvedHabit(for: task)
         sessionEngine.startSession(
             taskUUID: task.uuid,
             taskTitle: task.title,
             intent: task.intent,
+            habitUUID: habit?.id,
+            habitTitleSnapshot: habit?.title,
             plannedMinutes: 0
         )
     }
@@ -821,6 +1038,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
         case .completed:
             await loadCompletedTasks()
         }
+        await loadTodayTimeData()
+        await loadTodaySessions()
     }
 
     // MARK: - Greeting

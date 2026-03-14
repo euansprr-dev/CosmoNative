@@ -133,38 +133,41 @@ struct CanvasClusterLayer: View {
         let clusterIsResizing = resizingClusterId == cluster.id || localResizingClusterId == cluster.id
         let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
-        clusterViewDropSurface(
-            enabled: supportsClusterViewDrop,
-            cluster: cluster,
-            clusterSize: rect.size
-        ) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(
-                                isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
-                                style: StrokeStyle(
-                                    lineWidth: isSelected || isDropTarget ? 2 : 1.5,
-                                    dash: (isSelected || isDropTarget) ? [] : [4, 4]
-                                )
+        ZStack {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(cluster.color.opacity(backgroundOpacity(cluster: cluster, isDropTarget: isDropTarget, isZone: isZoneCluster)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isSelected ? cluster.color.opacity(0.55) : cluster.color.opacity(isDropTarget ? 0.5 : 0.2),
+                            style: StrokeStyle(
+                                lineWidth: isSelected || isDropTarget ? 2 : 1.5,
+                                dash: (isSelected || isDropTarget) ? [] : [4, 4]
                             )
-                    )
-                    .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
-                    .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
+                        )
+                )
+                .shadow(color: isDropTarget ? cluster.color.opacity(0.22) : .clear, radius: isDropTarget ? 10 : 0)
+                .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isDropTarget)
 
-                if showLabel || hasAltContent {
-                    VStack(spacing: 0) {
-                        if showLabel {
-                            clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster, allowDrag: hasAltContent)
-                                .frame(height: 42)
-                                .padding(.top, 8)
-                        } else {
-                            Spacer(minLength: 8)
-                        }
+            if showLabel || hasAltContent {
+                VStack(spacing: 0) {
+                    if showLabel {
+                        clusterTitleBar(cluster, isEditing: isEditing, isZone: isZoneCluster, allowDrag: hasAltContent)
+                            .frame(height: 42)
+                            .padding(.top, 8)
+                    } else {
+                        Spacer(minLength: 8)
+                    }
 
-                        if hasAltContent {
+                    if hasAltContent {
+                        clusterViewDropSurface(
+                            enabled: supportsClusterViewDrop,
+                            cluster: cluster,
+                            clusterSize: CGSize(
+                                width: max(rect.width - 16, 120),
+                                height: max(rect.height - 62, 120)
+                            )
+                        ) {
                             clusterAlternativeContent(
                                 cluster,
                                 clusterWidth: rect.width,
@@ -172,14 +175,13 @@ struct CanvasClusterLayer: View {
                                 isDropTargeted: isClusterViewDropTarget,
                                 highlightedBoardColumnValue: clusterViewPreview?.boardColumnValue
                             )
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
-                        } else {
-                            Spacer(minLength: 0)
                         }
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                    } else {
+                        Spacer(minLength: 0)
                     }
                 }
-
             }
         }
         .frame(width: rect.width, height: rect.height)
@@ -241,6 +243,11 @@ struct CanvasClusterLayer: View {
     @ViewBuilder
     private func clusterTitleBar(_ cluster: CanvasCluster, isEditing: Bool, isZone: Bool, allowDrag: Bool = false) -> some View {
         HStack(spacing: 6) {
+            if allowDrag {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.textMuted)
+            }
             if isZone, let zt = CommandCenterZoneType(rawValue: cluster.zoneType ?? "") {
                 Image(systemName: zt.iconName)
                     .font(.system(size: 12, weight: .medium))
@@ -248,19 +255,20 @@ struct CanvasClusterLayer: View {
             }
             clusterLabel(cluster, isEditing: isEditing)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .contentShape(Rectangle())
-        .gesture(
-            ((isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil)
-            ? DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 10, coordinateSpace: .named("clusterLayer"))
                 .onChanged { gesture in
+                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
                     if selectedClusterId != cluster.id { onSelectCluster?(cluster.id) }
                     onDragCluster?(cluster.id, gesture.translation)
                 }
                 .onEnded { gesture in
+                    guard (isZone || allowDrag) && !isEditing && resizingClusterId == nil && localResizingClusterId == nil else { return }
                     onDragEndCluster?(cluster.id, gesture.translation)
                 }
-            : nil
         )
     }
 
@@ -346,7 +354,13 @@ struct CanvasClusterLayer: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         if enabled {
-            content()
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.001))
+                content()
+            }
+            .frame(width: clusterSize.width, height: clusterSize.height, alignment: .topLeading)
+            .contentShape(Rectangle())
                 .onDrop(
                     of: [.text],
                     delegate: ClusterViewSurfaceDropDelegate(

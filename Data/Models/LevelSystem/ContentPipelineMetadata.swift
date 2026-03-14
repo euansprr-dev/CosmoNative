@@ -498,6 +498,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
     var leads: Int?
     /// Source Instagram URL if this document was auto-transcribed from a URL
     var sourceURL: String?
+    /// Non-fatal warning shown when import quality was degraded.
+    var warning: String?
 
     init(
         id: UUID = UUID(),
@@ -511,7 +513,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         saves: Int? = nil,
         comments: Int? = nil,
         leads: Int? = nil,
-        sourceURL: String? = nil
+        sourceURL: String? = nil,
+        warning: String? = nil
     ) {
         self.id = id
         self.category = category
@@ -525,6 +528,7 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         self.comments = comments
         self.leads = leads
         self.sourceURL = sourceURL
+        self.warning = warning
     }
 }
 

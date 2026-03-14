@@ -328,9 +328,9 @@ enum WritingContentFormat: String, CaseIterable {
         case .instagramReel, .tiktokScript, .youtubeShort:
             return [.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
         case .instagramCarousel, .instagramStory:
-            return [.carousel]
+            return [.carousel, .thread]
         case .twitterThread:
-            return [.thread]
+            return [.carousel, .thread]
         case .twitterSingle:
             return [.tweet]
         case .linkedinPost, .staticPost:
@@ -365,11 +365,11 @@ enum WritingContentFormat: String, CaseIterable {
         case .instagramReel, .tiktokScript, .youtubeShort:
             return ["reel", "short form video", "voiceover reel"]
         case .instagramCarousel:
-            return ["carousel", "slides"]
+            return ["carousel", "slides", "thread"]
         case .instagramStory:
             return ["story", "slides"]
         case .twitterThread:
-            return ["thread"]
+            return ["thread", "carousel", "slides"]
         case .twitterSingle:
             return ["tweet", "x post"]
         case .linkedinPost:
@@ -489,10 +489,25 @@ struct WritingToolChainStep: Identifiable {
 
 // MARK: - Claude Tool Use Response Parsing
 
+enum WritingLoopResponseDecision: Equatable {
+    case acceptFinal
+    case retryTransient
+    case abort
+}
+
+struct WritingLoopResponseDisposition: Equatable {
+    let decision: WritingLoopResponseDecision
+    let assistantText: String
+    let logReason: String
+}
+
 struct ClaudeToolUseResponse: @unchecked Sendable {
     let textContent: String
     let toolCalls: [ClaudeToolCall]
     let stopReason: String?
+    let responseId: String?
+    let nativeFinishReason: String?
+    let completionTokens: Int?
 
     struct ClaudeToolCall: Identifiable, @unchecked Sendable {
         let id: String

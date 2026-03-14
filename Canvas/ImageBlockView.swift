@@ -78,6 +78,10 @@ struct ImageBlockView: View {
                 userInfo: ["blockId": block.id]
             )
         }
+        .onChange(of: block.size) { _, newSize in
+            guard blockSize != newSize else { return }
+            blockSize = newSize
+        }
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) {
                 isHovered = hovering

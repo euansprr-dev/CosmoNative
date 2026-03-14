@@ -614,15 +614,15 @@ public enum SwipeContentSource: String, Codable, Sendable {
 // MARK: - TranscriptSegment
 
 /// A segment of transcribed content with timing
-struct TranscriptSegment: Codable, Identifiable, Equatable, Sendable {
-    var id: String { "\(start)-\(end)" }
-    let start: Double
-    let end: Double
-    let text: String
-    let speaker: String?
-    let confidence: Double?
+public struct TranscriptSegment: Codable, Identifiable, Equatable, Sendable {
+    public var id: String { "\(start)-\(end)" }
+    public let start: Double
+    public let end: Double
+    public let text: String
+    public let speaker: String?
+    public let confidence: Double?
 
-    init(start: Double, end: Double, text: String, speaker: String? = nil, confidence: Double? = nil) {
+    public init(start: Double, end: Double, text: String, speaker: String? = nil, confidence: Double? = nil) {
         self.start = start
         self.end = end
         self.text = text
@@ -631,11 +631,11 @@ struct TranscriptSegment: Codable, Identifiable, Equatable, Sendable {
     }
 
     // Legacy compatibility aliases
-    var startTime: Double { start }
-    var endTime: Double { end }
+    public var startTime: Double { start }
+    public var endTime: Double { end }
 
     /// Formatted time for display (e.g., "1:23")
-    var formattedTime: String {
+    public var formattedTime: String {
         let minutes = Int(start) / 60
         let seconds = Int(start) % 60
         return "\(minutes):\(String(format: "%02d", seconds))"

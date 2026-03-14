@@ -47,6 +47,8 @@ struct CanvasView: View {
 
     // PERFORMANCE: Track the active drag without mutating the published block array.
     @State private var blockDragState = ActiveCanvasDragState<String>()
+    @State private var canvasClusterDropPreview: ActiveCanvasClusterDropPreview?
+    @State private var clusterResizeSession: ActiveClusterResizeSession?
 
     // PERFORMANCE: Dedicated cluster drag state — avoids N writes to blockDragOffsets per frame,
     // preventing connection line recomputation and linear search cascades during drag.
@@ -179,11 +181,10 @@ struct CanvasView: View {
                             handleClusterDragEnd(clusterId: id, translation: translation)
                         },
                         onResizeCluster: { id, delta, edge in
-                            clusterEngine.resizeCluster(id: id, delta: delta, edge: edge, blocks: spatialEngine.blocks)
+                            handleClusterResize(clusterId: id, delta: delta, edge: edge)
                         },
                         onResizeEndCluster: { id in
-                            clearClusterDragPreview(clusterId: id)
-                            clusterEngine.commitClusterResize(id: id, blocks: spatialEngine.blocks)
+                            handleClusterResizeEnd(clusterId: id)
                         },
                         onChangeViewMode: { id, mode in
                             clusterEngine.setViewMode(for: id, mode: mode, blocks: spatialEngine.blocks)
@@ -227,6 +228,7 @@ struct CanvasView: View {
                         expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
                     )
 
+                    canvasClusterDropPreviewLayer
                     blocksLayer
                     inboxBlocksLayer
 
@@ -234,7 +236,7 @@ struct CanvasView: View {
                     // Blocks have opaque backgrounds that would completely hide lines
                     // drawn behind them. allowsHitTesting(false) prevents interaction interference.
                     CanvasConnectionLinesLayer(
-                        blocks: spatialEngine.blocks,
+                        blocks: renderedBlocks,
                         contentOffset: viewportTransform.contentOffset,
                         activeBlockDrag: blockDragState,
                         isActive: canvasIsActive
@@ -492,8 +494,38 @@ struct CanvasView: View {
         return blockDragState.translation(for: block.id)
     }
 
+    @ViewBuilder
+    private var canvasClusterDropPreviewLayer: some View {
+        if let preview = canvasClusterDropPreview,
+           let block = spatialEngine.blocks.first(where: { $0.id == preview.blockId }),
+           let cluster = clusterEngine.userClusters.first(where: { $0.id == preview.targetClusterId }) {
+            CanvasClusterDropPreviewView(
+                block: block,
+                clusterColor: cluster.color,
+                transform: viewportTransform,
+                previewPosition: preview.previewPosition
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var renderedBlocks: [CanvasBlock] {
+        spatialEngine.blocks.map(renderedBlock(for:))
+    }
+
+    private func renderedBlock(for block: CanvasBlock) -> CanvasBlock {
+        guard let geometry = clusterResizeSession?.previewGeometries[block.id] else {
+            return block
+        }
+
+        var rendered = block
+        rendered.position = geometry.position
+        rendered.size = geometry.size
+        return rendered
+    }
+
     private var blocksLayer: some View {
-        ForEach(spatialEngine.blocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
+        ForEach(renderedBlocks.filter { !clusterConsumedBlockUUIDs.contains($0.entityUuid) }, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
                 transform: viewportTransform,
@@ -556,11 +588,17 @@ struct CanvasView: View {
         return s
     }
 
-    /// While a cluster is selected, its member blocks should not steal pointer events.
-    /// This guarantees cluster drag/resize gestures receive input deterministically.
+    /// Block hit testing only needs to be suppressed while the cluster itself is actively
+    /// dragging/resizing, or when an alternate cluster mode consumes the member blocks.
     private var selectedClusterMemberUUIDs: Set<String> {
-        guard let clusterId = clusterEngine.selectedClusterId else { return [] }
-        return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+        guard let clusterId = clusterEngine.selectedClusterId,
+              let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterId }) else {
+            return []
+        }
+
+        let clusterGestureIsActive = draggingClusterId == clusterId || clusterEngine.resizingClusterId == clusterId
+        guard cluster.viewMode != .canvas || clusterGestureIsActive else { return [] }
+        return Set(cluster.blockUUIDs)
     }
 
     // blockView(for:) has been extracted into CanvasBlockContainer (see bottom of file)
@@ -1881,6 +1919,8 @@ struct CanvasView: View {
 
         // Update the spatial engine block with the new size before saving
         spatialEngine.blocks[blockIndex].size = newSize
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        clusterEngine.persistAfterMove()
 
         Task {
             await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
@@ -2063,7 +2103,9 @@ struct CanvasView: View {
                 x: block.position.x + translation.width,
                 y: block.position.y + translation.height
             )
-            clusterEngine.updateDropTarget(for: draggedPosition)
+            updateCanvasClusterDropPreview(for: block, draggedPosition: draggedPosition)
+        } else {
+            clearCanvasClusterDropPreview()
         }
     }
 
@@ -2098,6 +2140,9 @@ struct CanvasView: View {
 
     /// Optimized drag end - commits position to @Published array and database
     private func handleDragEndOptimized(blockId: String, translation: CGSize) {
+        let cachedPreview = canvasClusterDropPreview?.blockId == blockId ? canvasClusterDropPreview : nil
+        clearCanvasClusterDropPreview()
+
         // Cross-thinkspace drag: if block is over sidebar, handle transfer instead of normal drop
         if crossDragManager.isDragging && crossDragManager.isOverSidebar {
             blockDragState.clear()
@@ -2124,12 +2169,28 @@ struct CanvasView: View {
         // coalesces them into one render pass instead of three separate evaluations.
         var oldPosition: CGPoint = .zero
         var newPosition: CGPoint = .zero
+        var finalResolvedTargetClusterId: UUID?
         if let index = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
             oldPosition = spatialEngine.blocks[index].position
-            newPosition = CGPoint(
+            let rawDropPosition = CGPoint(
                 x: oldPosition.x + translation.width,
                 y: oldPosition.y + translation.height
             )
+            let resolvedPreview = cachedPreview ?? clusterEngine.resolveCanvasDrop(
+                blockUUID: spatialEngine.blocks[index].entityUuid,
+                point: rawDropPosition,
+                blockSize: spatialEngine.blocks[index].size
+            ).map {
+                ActiveCanvasClusterDropPreview(
+                    blockId: spatialEngine.blocks[index].id,
+                    blockUUID: spatialEngine.blocks[index].entityUuid,
+                    targetClusterId: $0.clusterId,
+                    previewPosition: $0.previewPosition
+                )
+            }
+
+            finalResolvedTargetClusterId = resolvedPreview?.targetClusterId
+            newPosition = resolvedPreview?.previewPosition ?? rawDropPosition
             // Batch: commit position + clear drag state in one pass
             spatialEngine.blocks[index].position = newPosition
             blockDragState.clear()
@@ -2153,52 +2214,149 @@ struct CanvasView: View {
 
         // Check cluster zone membership after drag
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
-            updateClusterMembership(for: block)
+            updateClusterMembership(for: block, resolvedTargetClusterId: finalResolvedTargetClusterId)
         }
     }
 
     /// Update cluster membership when a block is dragged into/out of a user cluster zone.
     /// Uses a generous proximity check (80pt outset) so blocks dropped near a cluster get absorbed.
-    private func updateClusterMembership(for block: CanvasBlock) {
+    private func updateClusterMembership(for block: CanvasBlock, resolvedTargetClusterId: UUID? = nil) {
         let blockUUID = block.entityUuid
         let position = block.position
 
         // Clear the visual drop target highlight
         clusterEngine.clearDropTarget()
 
-        // Check if block landed inside or near any user cluster zone (proximity-based)
-        if let targetCluster = clusterEngine.nearestDropTargetCluster(for: position) {
-            // Add to target cluster if not already a member
-            if !targetCluster.blockUUIDs.contains(blockUUID) {
-                clusterEngine.addBlockToCluster(
-                    blockUUID: blockUUID,
-                    clusterId: targetCluster.id,
-                    blocks: spatialEngine.blocks
-                )
-            }
-        }
+        if let targetClusterId = resolvedTargetClusterId {
+            let sourceClusterIds = clusterEngine.userClusters
+                .filter { $0.id != targetClusterId && $0.blockUUIDs.contains(blockUUID) }
+                .map(\.id)
 
-        // Remove from clusters where the block has been dragged far away.
-        // Use a slightly larger rect so small movements within the zone don't eject.
-        let ejectInset: CGFloat = -40  // 40pt grace zone before ejecting
-        for cluster in clusterEngine.userClusters {
-            let expandedRect = cluster.boundingRect.insetBy(dx: ejectInset, dy: ejectInset)
-            if cluster.blockUUIDs.contains(blockUUID) && !expandedRect.contains(position) {
+            for sourceClusterId in sourceClusterIds {
                 clusterEngine.removeBlockFromCluster(
                     blockUUID: blockUUID,
-                    clusterId: cluster.id,
+                    clusterId: sourceClusterId,
                     blocks: spatialEngine.blocks
                 )
             }
+
+            clusterEngine.addBlockToCluster(
+                blockUUID: blockUUID,
+                clusterId: targetClusterId,
+                blocks: spatialEngine.blocks
+            )
+        } else {
+            // Remove from clusters where the block has been dragged far away.
+            // Use a slightly larger rect so small movements within the zone don't eject.
+            let ejectInset: CGFloat = -40  // 40pt grace zone before ejecting
+            for cluster in clusterEngine.userClusters {
+                let expandedRect = cluster.boundingRect.insetBy(dx: ejectInset, dy: ejectInset)
+                if cluster.blockUUIDs.contains(blockUUID) && !expandedRect.contains(position) {
+                    clusterEngine.removeBlockFromCluster(
+                        blockUUID: blockUUID,
+                        clusterId: cluster.id,
+                        blocks: spatialEngine.blocks
+                    )
+                }
+            }
         }
 
-        // Recompute bounds so the zone visually expands to include the new block
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
-        // Recompute filtered blocks since cluster membership affects which blocks are visible
-        
+        clusterEngine.persistAfterMove()
+    }
+
+    private func updateCanvasClusterDropPreview(for block: CanvasBlock, draggedPosition: CGPoint) {
+        let resolution = clusterEngine.updateCanvasDropTarget(
+            blockUUID: block.entityUuid,
+            point: draggedPosition,
+            blockSize: block.size
+        )
+
+        let newPreview = resolution.map {
+            ActiveCanvasClusterDropPreview(
+                blockId: block.id,
+                blockUUID: block.entityUuid,
+                targetClusterId: $0.clusterId,
+                previewPosition: $0.previewPosition
+            )
+        }
+
+        guard canvasClusterDropPreview != newPreview else { return }
+        canvasClusterDropPreview = newPreview
+    }
+
+    private func clearCanvasClusterDropPreview() {
+        canvasClusterDropPreview = nil
+        clusterEngine.clearDropTarget()
     }
 
     // MARK: - Cluster Drag Handlers
+
+    private func handleClusterResize(clusterId: UUID, delta: CGSize, edge: ClusterResizeEdge) {
+        guard let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterId }) else { return }
+
+        if cluster.viewMode == .canvas {
+            if clusterResizeSession?.clusterId != clusterId {
+                let memberGeometries = Dictionary(
+                    uniqueKeysWithValues: spatialEngine.blocks
+                        .filter { cluster.blockUUIDs.contains($0.entityUuid) }
+                        .map { block in
+                            (
+                                block.id,
+                                CanvasBlockGeometry(position: block.position, size: block.size)
+                            )
+                        }
+                )
+
+                clusterResizeSession = ActiveClusterResizeSession(
+                    clusterId: clusterId,
+                    startRect: cluster.boundingRect,
+                    previewGeometries: memberGeometries,
+                    memberGeometries: memberGeometries
+                )
+            }
+        } else {
+            clusterResizeSession = nil
+        }
+
+        clusterEngine.resizeCluster(id: clusterId, delta: delta, edge: edge, blocks: spatialEngine.blocks)
+
+        guard cluster.viewMode == .canvas,
+              let currentRect = clusterEngine.userClusters.first(where: { $0.id == clusterId })?.boundingRect,
+              let session = clusterResizeSession,
+              session.clusterId == clusterId else { return }
+
+        clusterResizeSession?.previewGeometries = CanvasClusterResizeMapper.previewGeometries(
+            from: session.startRect,
+            to: currentRect,
+            edge: edge,
+            members: session.memberGeometries
+        )
+    }
+
+    private func handleClusterResizeEnd(clusterId: UUID) {
+        clearClusterDragPreview(clusterId: clusterId)
+
+        if let session = clusterResizeSession, session.clusterId == clusterId {
+            for index in spatialEngine.blocks.indices {
+                let blockId = spatialEngine.blocks[index].id
+                guard let geometry = session.previewGeometries[blockId] else { continue }
+
+                spatialEngine.blocks[index].position = geometry.position
+                spatialEngine.blocks[index].size = geometry.size
+                spatialEngine.updateBlockGeometry(
+                    blockId,
+                    position: geometry.position,
+                    size: geometry.size
+                )
+            }
+
+            blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+            clusterResizeSession = nil
+        }
+
+        clusterEngine.commitClusterResize(id: clusterId, blocks: spatialEngine.blocks)
+    }
 
     /// Handle live cluster drag — single state write instead of N per-block writes
     private func handleClusterDrag(clusterId: UUID, translation: CGSize) {
@@ -3807,6 +3965,58 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
                     tx.animation = nil
                 }
             }
+    }
+}
+
+private struct ActiveCanvasClusterDropPreview: Equatable {
+    let blockId: String
+    let blockUUID: String
+    let targetClusterId: UUID
+    let previewPosition: CGPoint
+}
+
+private struct ActiveClusterResizeSession {
+    let clusterId: UUID
+    let startRect: CGRect
+    var previewGeometries: [String: CanvasBlockGeometry]
+    let memberGeometries: [String: CanvasBlockGeometry]
+}
+
+private struct CanvasClusterDropPreviewView: View {
+    let block: CanvasBlock
+    let clusterColor: Color
+    let transform: CanvasViewportTransform
+    let previewPosition: CGPoint
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(clusterColor.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        clusterColor.opacity(0.65),
+                        style: StrokeStyle(lineWidth: 2, dash: [8, 5])
+                    )
+            )
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(block.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.text)
+                        .lineLimit(2)
+                    Text("Drop preview")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(clusterColor.opacity(0.85))
+                }
+                .padding(14)
+            }
+            .frame(width: block.size.width, height: block.size.height)
+            .position(
+                x: previewPosition.x + transform.contentOffset.width,
+                y: previewPosition.y + transform.contentOffset.height
+            )
+            .shadow(color: clusterColor.opacity(0.18), radius: 12, y: 6)
+            .transition(.opacity)
     }
 }
 

@@ -218,6 +218,10 @@ struct CosmoBlockWrapper<Content: View>: View {
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition
         .animation(ProMotionSprings.hover, value: isHovered)
         .animation(ProMotionSprings.snappy, value: isExpanded)
+        .onChange(of: block.size) { _, newSize in
+            guard !isResizing, blockSize != newSize else { return }
+            blockSize = newSize
+        }
         .onHover { hovering in
             isHovered = hovering
         }

@@ -161,7 +161,7 @@ final class QuickCaptureProcessor: ObservableObject {
 
         // Try Instagram extraction (may work for public content)
         do {
-            let mediaData = try await InstagramExtractor.shared.extract(from: URL(string: url)!)
+            let mediaData = try await InstagramMediaCache.shared.getMedia(for: URL(string: url)!)
             return try await saveInstagramResearch(url: url, mediaData: mediaData, igType: igType)
         } catch {
             // Extraction failed - save URL with basic metadata for manual review

@@ -28,6 +28,11 @@ struct InstagramTranscriptView: View {
     @State private var isAutoTranscribing = false
     @State private var autoTranscriptionProgress: String = ""
     @State private var autoTranscriptionContentType: TranscriptionContentType?
+    @State private var autoTranscribedSlides: [TranscriptSlide] = []
+    @State private var autoTranscribedRawSlides: [TranscriptSlide] = []
+    @State private var autoTranscribedSpeechSegments: [TranscriptSegment] = []
+    @State private var autoTranscriptionQuality: TranscriptionQuality?
+    @State private var autoTranscriptionWarnings: [String] = []
 
     private let gold = DS.entitySwipe
 
@@ -415,19 +420,14 @@ struct InstagramTranscriptView: View {
         }
 
         autoTranscriptionContentType = result.contentType
+        autoTranscribedSlides = result.cleanedSlides
+        autoTranscribedRawSlides = result.rawSlides
+        autoTranscribedSpeechSegments = result.speechSegments
+        autoTranscriptionQuality = result.quality
+        autoTranscriptionWarnings = result.warnings
 
         if result.contentType != .empty {
-            var slides = result.slides
-
-            // Skip Claude cleanup for Gemini results (already filtered by prompt)
-            let needsCleanup = result.contentType != .voiceoverOnly
-                && !slides.allSatisfy({ $0.source == .geminiVision })
-            if needsCleanup {
-                autoTranscriptionProgress = "Cleaning up with AI..."
-                if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: slides) {
-                    slides = cleaned
-                }
-            }
+            let slides = result.cleanedSlides
 
             // Combine slide texts into the transcript TextEditor
             transcript = slides.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
@@ -554,6 +554,29 @@ struct InstagramTranscriptView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(gold.opacity(0.15), lineWidth: 1)
+                )
+            }
+
+            if let quality = autoTranscriptionQuality, quality == .degraded || !autoTranscriptionWarnings.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "#F59E0B"))
+                    Text(
+                        autoTranscriptionWarnings.isEmpty
+                            ? "Transcript quality was degraded. Review before analyzing."
+                            : autoTranscriptionWarnings.joined(separator: " ")
+                    )
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .padding(10)
+                .background(Color(hex: "#F59E0B").opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(hex: "#F59E0B").opacity(0.2), lineWidth: 1)
                 )
             }
 
@@ -710,7 +733,11 @@ struct InstagramTranscriptView: View {
             _ = try? await AtomRepository.shared.update(updatedAtom)
 
             // Preserve existing slides/comments from prior transcription
-            let existingSlides = updatedAtom.swipeAnalysis?.transcriptSlides
+            let existingSlides = autoTranscribedSlides.isEmpty ? updatedAtom.swipeAnalysis?.transcriptSlides : autoTranscribedSlides
+            let existingRawSlides = autoTranscribedRawSlides.isEmpty ? updatedAtom.swipeAnalysis?.rawTranscriptSlides : autoTranscribedRawSlides
+            let existingSpeechSegments = autoTranscribedSpeechSegments.isEmpty ? updatedAtom.swipeAnalysis?.transcriptSpeechSegments : autoTranscribedSpeechSegments
+            let existingTranscriptionQuality = autoTranscriptionQuality ?? updatedAtom.swipeAnalysis?.transcriptionQuality
+            let existingTranscriptionWarnings = autoTranscriptionWarnings.isEmpty ? updatedAtom.swipeAnalysis?.transcriptionWarnings : autoTranscriptionWarnings
             let existingComments = updatedAtom.swipeAnalysis?.transcriptComments
 
             // c) Run analysis (SwipeAnalyzer as primary, SwipeClassificationEngine as future upgrade)
@@ -720,6 +747,10 @@ struct InstagramTranscriptView: View {
             var analysis = nlpResult
             analysis.analyzedAt = ISO8601DateFormatter().string(from: Date())
             analysis.transcriptSlides = existingSlides
+            analysis.rawTranscriptSlides = existingRawSlides
+            analysis.transcriptSpeechSegments = existingSpeechSegments
+            analysis.transcriptionQuality = existingTranscriptionQuality
+            analysis.transcriptionWarnings = existingTranscriptionWarnings
             analysis.transcriptComments = existingComments
 
             // e) Save the updated atom with analysis
@@ -735,6 +766,10 @@ struct InstagramTranscriptView: View {
             if let deepResult = deepResult {
                 var enriched = SwipeAnalyzer.shared.mergeDeepAnalysis(deepResult, into: analysis)
                 enriched.transcriptSlides = existingSlides
+                enriched.rawTranscriptSlides = existingRawSlides
+                enriched.transcriptSpeechSegments = existingSpeechSegments
+                enriched.transcriptionQuality = existingTranscriptionQuality
+                enriched.transcriptionWarnings = existingTranscriptionWarnings
                 enriched.transcriptComments = existingComments
                 updatedAtom = updatedAtom.withSwipeAnalysis(enriched)
                 _ = try? await AtomRepository.shared.update(updatedAtom)
@@ -748,4 +783,3 @@ struct InstagramTranscriptView: View {
         }
     }
 }
-

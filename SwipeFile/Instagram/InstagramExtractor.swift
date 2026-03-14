@@ -107,6 +107,41 @@ final class InstagramExtractor: Sendable {
         )
     }
 
+    /// Resolve the most complete available carousel media for an Instagram post.
+    /// This compares the normal extractor output against a direct GraphQL sidecar fetch
+    /// and prefers the richer carousel result so short/partial picker payloads do not win.
+    func extractBestAvailableCarouselMedia(
+        from url: URL,
+        seed initialMediaData: InstagramMediaData? = nil
+    ) async throws -> InstagramMediaData {
+        let normalizedURL = normalizeInstagramURL(url)
+        let contentType = detectContentType(from: normalizedURL)
+
+        var best = initialMediaData
+
+        if best == nil || (best?.carouselItems?.isEmpty ?? true) {
+            let extracted = try await extract(from: normalizedURL)
+            best = betterCarouselResult(current: best, candidate: extracted)
+        }
+
+        do {
+            let graphQL = try await extractFromGraphQL(url: normalizedURL, contentType: contentType)
+            best = betterCarouselResult(current: best, candidate: graphQL)
+        } catch {
+            print("InstagramExtractor: Best-carousel GraphQL refresh failed: \(error.localizedDescription)")
+        }
+
+        if let best {
+            return best
+        }
+
+        return InstagramMediaData(
+            originalURL: normalizedURL,
+            contentType: contentType,
+            extractedAt: Date()
+        )
+    }
+
     private func shouldReturnImmediately(
         _ mediaData: InstagramMediaData,
         requestedType: InstagramContentType
@@ -139,6 +174,14 @@ final class InstagramExtractor: Sendable {
         return partialScore(candidate) >= partialScore(current) ? candidate : current
     }
 
+    func betterCarouselResult(
+        current: InstagramMediaData?,
+        candidate: InstagramMediaData
+    ) -> InstagramMediaData {
+        guard let current else { return candidate }
+        return carouselScore(candidate) >= carouselScore(current) ? candidate : current
+    }
+
     private func partialScore(_ mediaData: InstagramMediaData) -> Int {
         var score = 0
         if mediaData.videoURL != nil { score += 100 }
@@ -146,6 +189,20 @@ final class InstagramExtractor: Sendable {
         if !(mediaData.caption?.isEmpty ?? true) { score += 10 }
         if !(mediaData.authorUsername?.isEmpty ?? true) { score += 5 }
         score += (mediaData.carouselItems?.count ?? 0) * 3
+        return score
+    }
+
+    private func carouselScore(_ mediaData: InstagramMediaData) -> Int {
+        var score = partialScore(mediaData)
+        let items = mediaData.carouselItems ?? []
+        score += items.count * 100
+        score += items.filter { $0.mediaType == .image }.count * 10
+        score += items.filter { $0.mediaType == .video }.count * 5
+
+        if !items.isEmpty {
+            score += 250
+        }
+
         return score
     }
 
@@ -1430,27 +1487,64 @@ final class InstagramExtractor: Sendable {
 @MainActor
 final class InstagramMediaCache {
     static let shared = InstagramMediaCache()
+    private static let incompleteRefreshCooldown: TimeInterval = 60
 
     private var cache: [URL: InstagramMediaData] = [:]
+    private var inFlight: [URL: Task<InstagramMediaData, Error>] = [:]
+    private var lastIncompleteRefreshAt: [URL: Date] = [:]
 
     private init() {}
 
     /// Get media for an Instagram URL, extracting or refreshing as needed
     func getMedia(for originalURL: URL) async throws -> InstagramMediaData {
         let cacheKey = normalizedCacheKey(for: originalURL)
+        let cached = cache[cacheKey]
 
-        // Check cache
-        if let cached = cache[cacheKey], !cached.isExpired {
-            if isUsableCachedResult(cached) {
-                return cached
-            }
+        if let cached, shouldReuseCachedResult(cached, for: cacheKey) {
+            return cached
+        }
+
+        if let task = inFlight[cacheKey] {
+            return try await task.value
+        }
+
+        if let cached, !cached.isExpired, !isUsableCachedResult(cached) {
             print("InstagramCache: Cached media is incomplete for \(cacheKey.absoluteString), refreshing")
         }
 
-        // Re-extract if expired or missing
-        let fresh = try await InstagramExtractor.shared.extract(from: originalURL)
-        cache[cacheKey] = fresh
-        return fresh
+        let shouldUseBestCarouselResolver = shouldResolveBestCarouselMedia(for: cacheKey, cached: cached)
+        let task = Task<InstagramMediaData, Error> {
+            if shouldUseBestCarouselResolver {
+                return try await InstagramExtractor.shared.extractBestAvailableCarouselMedia(
+                    from: originalURL,
+                    seed: cached
+                )
+            }
+
+            return try await InstagramExtractor.shared.extract(from: originalURL)
+        }
+
+        inFlight[cacheKey] = task
+        defer { inFlight.removeValue(forKey: cacheKey) }
+
+        do {
+            let fresh = try await task.value
+            cache[cacheKey] = fresh
+
+            if isUsableCachedResult(fresh) {
+                lastIncompleteRefreshAt.removeValue(forKey: cacheKey)
+            } else {
+                lastIncompleteRefreshAt[cacheKey] = Date()
+            }
+
+            return fresh
+        } catch {
+            if let cached {
+                lastIncompleteRefreshAt[cacheKey] = Date()
+                return cached
+            }
+            throw error
+        }
     }
 
     /// Preemptively refresh media before expiration
@@ -1460,6 +1554,11 @@ final class InstagramMediaCache {
             do {
                 let fresh = try await InstagramExtractor.shared.extract(from: originalURL)
                 cache[cacheKey] = fresh
+                if isUsableCachedResult(fresh) {
+                    lastIncompleteRefreshAt.removeValue(forKey: cacheKey)
+                } else {
+                    lastIncompleteRefreshAt[cacheKey] = Date()
+                }
             } catch {
                 print("InstagramCache: Preemptive refresh failed: \(error)")
             }
@@ -1468,12 +1567,21 @@ final class InstagramMediaCache {
 
     /// Clear cached data for a URL
     func invalidate(for originalURL: URL) {
-        cache.removeValue(forKey: normalizedCacheKey(for: originalURL))
+        let cacheKey = normalizedCacheKey(for: originalURL)
+        inFlight[cacheKey]?.cancel()
+        inFlight.removeValue(forKey: cacheKey)
+        cache.removeValue(forKey: cacheKey)
+        lastIncompleteRefreshAt.removeValue(forKey: cacheKey)
     }
 
     /// Clear all cached data
     func clearAll() {
+        for task in inFlight.values {
+            task.cancel()
+        }
+        inFlight.removeAll()
         cache.removeAll()
+        lastIncompleteRefreshAt.removeAll()
     }
 
     private func isUsableCachedResult(_ mediaData: InstagramMediaData) -> Bool {
@@ -1497,6 +1605,18 @@ final class InstagramMediaCache {
                 !(mediaData.caption?.isEmpty ?? true) ||
                 !(mediaData.authorUsername?.isEmpty ?? true)
         }
+    }
+
+    private func shouldReuseCachedResult(_ cached: InstagramMediaData, for cacheKey: URL) -> Bool {
+        guard !cached.isExpired else { return false }
+
+        if isUsableCachedResult(cached) {
+            return true
+        }
+
+        return Self.shouldReuseRecentIncompleteCachedResult(
+            lastAttemptAt: lastIncompleteRefreshAt[cacheKey]
+        )
     }
 
     private func normalizedCacheKey(for input: URL) -> URL {
@@ -1539,6 +1659,26 @@ final class InstagramMediaCache {
         components.fragment = nil
 
         return components.url ?? input
+    }
+
+    func shouldResolveBestCarouselMedia(for cacheKey: URL, cached: InstagramMediaData?) -> Bool {
+        let path = cacheKey.path.lowercased()
+        if path.contains("/p/") || path.contains("/share/p/") {
+            guard let cached else { return true }
+            return cached.isExpired || !isUsableCachedResult(cached)
+        }
+
+        if let cached {
+            let isCarousel = cached.contentType == .carousel || !(cached.carouselItems?.isEmpty ?? true)
+            return isCarousel && (cached.isExpired || !isUsableCachedResult(cached))
+        }
+
+        return false
+    }
+
+    static func shouldReuseRecentIncompleteCachedResult(lastAttemptAt: Date?, now: Date = Date()) -> Bool {
+        guard let lastAttemptAt else { return false }
+        return now.timeIntervalSince(lastAttemptAt) < incompleteRefreshCooldown
     }
 }
 

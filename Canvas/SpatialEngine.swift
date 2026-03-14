@@ -213,6 +213,31 @@ class SpatialEngine: ObservableObject {
         }
     }
 
+    func updateBlockGeometry(_ blockId: String, position: CGPoint, size: CGSize) {
+        if let index = blocks.firstIndex(where: { $0.id == blockId }) {
+            blocks[index].position = position
+            blocks[index].size = size
+        }
+
+        let db = database
+        Task.detached(priority: .background) {
+            do {
+                try await db.asyncWrite { database in
+                    try database.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET position_x = ?, position_y = ?, width = ?, height = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        arguments: [Int(position.x), Int(position.y), Int(size.width), Int(size.height), blockId]
+                    )
+                }
+            } catch {
+                print("❌ Failed to update block geometry: \(error)")
+            }
+        }
+    }
+
     // MARK: - Move Block to Another Thinkspace
     func moveBlockToThinkspace(_ blockId: String, newThinkspaceId: String, position: CGPoint) async {
         // Remove from in-memory array (it belongs to the new thinkspace now)

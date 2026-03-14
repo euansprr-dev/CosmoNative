@@ -459,15 +459,30 @@ struct NewProfileFlowView: View {
                     .foregroundColor(DS.orange.opacity(0.9))
                     .lineLimit(2)
             }
-        } else if !doc.content.isEmpty {
-            // Transcript preview — clickable for URL-transcribed docs
-            if doc.sourceURL != nil {
-                documentCardPreviewButton(doc)
-            } else {
-                Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
-                    .font(DS.timestamp)
-                    .foregroundColor(DS.textMuted)
-                    .lineLimit(2)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if let warning = txState?.warning ?? doc.warning {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.accent.opacity(0.8))
+                        Text(warning)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.accent.opacity(0.85))
+                            .lineLimit(2)
+                    }
+                }
+
+                if !doc.content.isEmpty {
+                    if doc.sourceURL != nil {
+                        documentCardPreviewButton(doc)
+                    } else {
+                        Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
+                            .font(DS.timestamp)
+                            .foregroundColor(DS.textMuted)
+                            .lineLimit(2)
+                    }
+                }
             }
         }
     }

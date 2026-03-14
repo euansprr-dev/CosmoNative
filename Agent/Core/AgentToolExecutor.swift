@@ -2277,8 +2277,9 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let draftBody = updatedAtom?.body ?? ""
 
-        // Surface swipe count from the inner writing engine for context trace visibility
+        // Surface swipe info from the inner writing engine for context trace visibility
         let swipeCount = await engine.loadedContext.swipeCount
+        let swipeTitles = await engine.loadedContext.swipeTitles
 
         return jsonEncode([
             "success": true,
@@ -2286,7 +2287,8 @@ class AgentToolExecutor {
             "message": "Here is the draft. Display the text below to the user exactly as-is:",
             "formattedDraft": Self.renderDraftForDisplay(draftBody),
             "engineNotes": String(engineNotes.prefix(300)),
-            "swipeCount": swipeCount
+            "swipeCount": swipeCount,
+            "swipesUsed": swipeTitles
         ] as [String: Any])
     }
 
@@ -2457,8 +2459,9 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let revisedDraft = updatedAtom?.body ?? ""
 
-        // Surface swipe count from the inner writing engine for context trace visibility
+        // Surface swipe info from the inner writing engine for context trace visibility
         let swipeCount = await engine.loadedContext.swipeCount
+        let swipeTitles = await engine.loadedContext.swipeTitles
 
         let revisedFormatted = Self.renderDraftForDisplay(revisedDraft)
         return jsonEncode([
@@ -2467,7 +2470,8 @@ class AgentToolExecutor {
             "message": "Here is the revised draft. Display the text below to the user exactly as-is:",
             "formattedDraft": revisedFormatted,
             "engineNotes": String(engineNotes.prefix(300)),
-            "swipeCount": swipeCount
+            "swipeCount": swipeCount,
+            "swipesUsed": swipeTitles
         ] as [String: Any])
     }
 

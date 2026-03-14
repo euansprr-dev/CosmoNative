@@ -483,12 +483,11 @@ class TelegramWritingSessionManager {
         cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Parse platform from keywords
-        if cleaned.contains("carousel") {
+        // "thread" = Instagram carousel (slides with text), not Twitter
+        if cleaned.contains("carousel") || cleaned.contains("thread") {
             intent.platform = .instagram
         } else if cleaned.contains("reel") {
             intent.platform = .instagram
-        } else if cleaned.contains("thread") {
-            intent.platform = .twitter
         } else if cleaned.contains("linkedin") {
             intent.platform = .linkedin
         } else if cleaned.contains("tiktok") || cleaned.contains("tik tok") {

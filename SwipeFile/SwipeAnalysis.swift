@@ -65,6 +65,10 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     // Inline Transcript Data
     public var transcriptComments: [TranscriptComment]?
     public var transcriptSlides: [TranscriptSlide]?
+    public var rawTranscriptSlides: [TranscriptSlide]?
+    public var transcriptSpeechSegments: [TranscriptSegment]?
+    public var transcriptionQuality: TranscriptionQuality?
+    public var transcriptionWarnings: [String]?
 
     public init(
         hookText: String? = nil,
@@ -100,7 +104,11 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         normalizedBeats: [String]? = nil,
         beatFingerprint: String? = nil,
         transcriptComments: [TranscriptComment]? = nil,
-        transcriptSlides: [TranscriptSlide]? = nil
+        transcriptSlides: [TranscriptSlide]? = nil,
+        rawTranscriptSlides: [TranscriptSlide]? = nil,
+        transcriptSpeechSegments: [TranscriptSegment]? = nil,
+        transcriptionQuality: TranscriptionQuality? = nil,
+        transcriptionWarnings: [String]? = nil
     ) {
         self.hookText = hookText
         self.hookType = hookType
@@ -136,6 +144,10 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         self.beatFingerprint = beatFingerprint
         self.transcriptComments = transcriptComments
         self.transcriptSlides = transcriptSlides
+        self.rawTranscriptSlides = rawTranscriptSlides
+        self.transcriptSpeechSegments = transcriptSpeechSegments
+        self.transcriptionQuality = transcriptionQuality
+        self.transcriptionWarnings = transcriptionWarnings
     }
 
     /// Mark as studied now
@@ -952,6 +964,12 @@ public enum TranscriptionContentType: String, Codable, Sendable, Equatable {
     case empty              // Nothing detected
 }
 
+/// High-level quality marker for Instagram transcript capture.
+public enum TranscriptionQuality: String, Codable, Sendable, Equatable {
+    case accurate
+    case degraded
+}
+
 // MARK: - TranscriptSlide
 
 /// A single slide in a slide-based transcript (Instagram carousel/reel visual cuts)
@@ -1180,4 +1198,3 @@ public func buildClusteredSections(
 
     return sections
 }
-

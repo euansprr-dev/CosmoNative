@@ -482,16 +482,31 @@ struct ContentProfileEditor: View {
                     .foregroundColor(.orange.opacity(0.8))
                     .lineLimit(2)
             }
-        } else if !doc.content.isEmpty {
-            // Transcript preview — clickable to open review overlay
-            Button(action: { openReviewOverlay(doc) }) {
-                Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if let warning = state?.warning ?? doc.warning {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow)
+                        Text(warning)
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow.opacity(0.85))
+                            .lineLimit(2)
+                    }
+                }
+
+                if !doc.content.isEmpty {
+                    Button(action: { openReviewOverlay(doc) }) {
+                        Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.6))
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .buttonStyle(.plain)
         }
     }
 

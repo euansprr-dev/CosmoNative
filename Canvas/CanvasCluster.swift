@@ -4,13 +4,33 @@
 import SwiftUI
 
 /// Edge/corner used during cluster resize
-enum ClusterResizeEdge: Sendable {
+enum ClusterResizeEdge: Hashable, Sendable {
     case top, bottom, left, right
     case topLeft, topRight, bottomLeft, bottomRight
 }
 
+extension ClusterResizeEdge {
+    var resizesWidth: Bool {
+        switch self {
+        case .left, .right, .topLeft, .topRight, .bottomLeft, .bottomRight:
+            return true
+        case .top, .bottom:
+            return false
+        }
+    }
+
+    var resizesHeight: Bool {
+        switch self {
+        case .top, .bottom, .topLeft, .topRight, .bottomLeft, .bottomRight:
+            return true
+        case .left, .right:
+            return false
+        }
+    }
+}
+
 /// How blocks inside a cluster are displayed
-enum ClusterViewMode: String, Codable, CaseIterable, Sendable {
+enum ClusterViewMode: String, Codable, CaseIterable, Hashable, Sendable {
     case canvas   // Default — blocks float freely at canvas positions
     case list     // Compact scannable rows inside the cluster zone
     case board    // Kanban columns grouped by status/phase/type
@@ -18,14 +38,14 @@ enum ClusterViewMode: String, Codable, CaseIterable, Sendable {
 }
 
 /// Sort order for list mode rows
-enum ClusterSortOrder: String, Codable, CaseIterable, Sendable {
+enum ClusterSortOrder: String, Codable, CaseIterable, Hashable, Sendable {
     case dateUpdated
     case type
     case status
 }
 
 /// Grouping strategy for board mode columns.
-enum ClusterBoardGrouping: String, Codable, CaseIterable, Sendable {
+enum ClusterBoardGrouping: String, Codable, CaseIterable, Hashable, Sendable {
     case auto
     case type
     case pipeline
@@ -154,9 +174,76 @@ struct CanvasCluster: Identifiable {
         )
     }
 
+    /// Expand the cluster just enough to contain its current members, while preserving
+    /// the existing rect when every member already fits inside it.
+    mutating func expandBoundsToContainMembers(blocks: [CanvasBlock], padding: CGFloat = 40) {
+        updateBoundingRect(blocks: blocks, padding: padding, growOnly: true)
+    }
+
     /// Clear the manual size override, allowing the cluster to auto-fit blocks again
     mutating func clearManualSize() {
         manualSizeOverride = nil
+    }
+}
+
+struct CanvasBlockGeometry: Equatable {
+    var position: CGPoint
+    var size: CGSize
+}
+
+enum CanvasClusterResizeMapper {
+    static func previewGeometries(
+        from startRect: CGRect,
+        to currentRect: CGRect,
+        edge: ClusterResizeEdge,
+        members: [String: CanvasBlockGeometry]
+    ) -> [String: CanvasBlockGeometry] {
+        guard startRect.width > 0, startRect.height > 0 else { return members }
+
+        let scaleX = edge.resizesWidth ? (currentRect.width / startRect.width) : 1
+        let scaleY = edge.resizesHeight ? (currentRect.height / startRect.height) : 1
+        let startAnchor = anchorPoint(for: startRect, edge: edge)
+        let currentAnchor = anchorPoint(for: currentRect, edge: edge)
+
+        return members.mapValues { geometry in
+            var next = geometry
+
+            if edge.resizesWidth {
+                next.position.x = currentAnchor.x + ((geometry.position.x - startAnchor.x) * scaleX)
+                next.size.width = geometry.size.width * scaleX
+            }
+
+            if edge.resizesHeight {
+                next.position.y = currentAnchor.y + ((geometry.position.y - startAnchor.y) * scaleY)
+                next.size.height = geometry.size.height * scaleY
+            }
+
+            return next
+        }
+    }
+
+    private static func anchorPoint(for rect: CGRect, edge: ClusterResizeEdge) -> CGPoint {
+        let x: CGFloat
+        switch edge {
+        case .left, .topLeft, .bottomLeft:
+            x = rect.maxX
+        case .right, .topRight, .bottomRight:
+            x = rect.minX
+        case .top, .bottom:
+            x = rect.midX
+        }
+
+        let y: CGFloat
+        switch edge {
+        case .top, .topLeft, .topRight:
+            y = rect.maxY
+        case .bottom, .bottomLeft, .bottomRight:
+            y = rect.minY
+        case .left, .right:
+            y = rect.midY
+        }
+
+        return CGPoint(x: x, y: y)
     }
 }
 
@@ -256,7 +343,7 @@ struct CodableCluster: Codable, Sendable {
     }
 
     func toCanvasCluster(blocks: [CanvasBlock], thinkspaceId: String?) -> CanvasCluster {
-        // Restore persisted rect as fallback
+        // Restore persisted rect as fallback / authoritative container geometry for user clusters
         let persistedRect: CGRect
         if let ox = originX, let oy = originY, let w = rectWidth, let h = rectHeight, w > 0, h > 0 {
             persistedRect = CGRect(x: ox, y: oy, width: w, height: h)
@@ -290,10 +377,18 @@ struct CodableCluster: Codable, Sendable {
             sortOrder: sortOrder.flatMap { ClusterSortOrder(rawValue: $0) } ?? .dateUpdated,
             boardGrouping: boardGrouping.flatMap { ClusterBoardGrouping(rawValue: $0) } ?? .auto
         )
-        // Recompute from blocks if matching members are found; otherwise keep persisted rect
+
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
         if !memberBlocks.isEmpty {
-            cluster.updateBoundingRect(blocks: blocks)
+            if cluster.viewMode == .canvas {
+                if persistedRect.width > 0, persistedRect.height > 0 {
+                    cluster.expandBoundsToContainMembers(blocks: blocks)
+                } else {
+                    cluster.updateBoundingRect(blocks: blocks, growOnly: false)
+                }
+            } else {
+                cluster.updateBoundingRect(blocks: blocks)
+            }
         }
         return cluster
     }

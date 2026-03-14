@@ -129,6 +129,11 @@ private func performWritingAPICall(
     let firstChoice = choices?.first
     let message = firstChoice?["message"] as? [String: Any]
     let finishReason = firstChoice?["finish_reason"] as? String
+    let nativeFinishReason = firstChoice?["native_finish_reason"] as? String
+        ?? message?["stop_reason"] as? String
+        ?? message?["finish_reason"] as? String
+    let responseId = json?["id"] as? String
+    let completionTokens = (json?["usage"] as? [String: Any])?["completion_tokens"] as? Int
 
     if let usage = json?["usage"] as? [String: Any] {
         let promptTokens = usage["prompt_tokens"] as? Int ?? 0
@@ -180,8 +185,17 @@ private func performWritingAPICall(
         }
     }
 
-    print("🌐 [WritingAPICall] Parsed: text=\(textContent.count) chars, tools=\(toolCalls.count)")
-    return ClaudeToolUseResponse(textContent: textContent, toolCalls: toolCalls, stopReason: finishReason)
+    print(
+        "🌐 [WritingAPICall] Parsed: text=\(textContent.count) chars, tools=\(toolCalls.count), id=\(responseId ?? "nil"), finish=\(finishReason ?? "nil"), native_finish=\(nativeFinishReason ?? "nil"), completion=\(completionTokens.map { String($0) } ?? "nil")"
+    )
+    return ClaudeToolUseResponse(
+        textContent: textContent,
+        toolCalls: toolCalls,
+        stopReason: finishReason,
+        responseId: responseId,
+        nativeFinishReason: nativeFinishReason,
+        completionTokens: completionTokens
+    )
 }
 
 // MARK: - Unified Writing Engine
@@ -318,11 +332,9 @@ final class UnifiedWritingEngine: ObservableObject {
         if !clientPostIndex.isEmpty {
             let sameFormat = clientPostIndex.filter { $0.format == "same_format" }.count
             let crossFormat = clientPostIndex.filter { $0.format == "cross_format" }.count
-            let underperforming = clientPostIndex.filter { $0.format == "underperforming" }.count
             var parts: [String] = []
             if sameFormat > 0 { parts.append("\(sameFormat) same-format") }
             if crossFormat > 0 { parts.append("\(crossFormat) cross-format") }
-            if underperforming > 0 { parts.append("\(underperforming) underperforming") }
             let preview = "\(clientPostIndex.count) posts (\(parts.joined(separator: ", ")))"
             onContextActivity?(.completed(name: "load_best_performers", displayLabel: "Client best performers indexed", resultPreview: preview))
         }
@@ -477,18 +489,27 @@ final class UnifiedWritingEngine: ObservableObject {
                 phase: phase
             )
 
+            var committedMessages = result.newMessages
+            var finalMessage = result.lastMessage
+            if finalMessage == nil {
+                let fallback = WritingMessage(role: .assistant, content: Self.noFinalResponseMessage)
+                committedMessages.append(fallback)
+                finalMessage = fallback
+                print("⚠️ [UnifiedWritingEngine] Loop ended without a final assistant message — injecting fallback response")
+            }
+
             // Commit results on main actor (single batch update)
-            if !result.newMessages.isEmpty {
-                messages.append(contentsOf: result.newMessages)
-                print("💬 [UnifiedWritingEngine] Committed \(result.newMessages.count) messages (total: \(messages.count))")
+            if !committedMessages.isEmpty {
+                messages.append(contentsOf: committedMessages)
+                print("💬 [UnifiedWritingEngine] Committed \(committedMessages.count) messages (total: \(messages.count))")
             }
 
             // B1: Persist conversation to atom.structured for cross-session restoration
             await persistConversation()
 
             isProcessing = false
-            print("💬 [UnifiedWritingEngine] ✅ sendMessage complete. Response: \(result.lastMessage?.content.prefix(100) ?? "nil")")
-            return result.lastMessage
+            print("💬 [UnifiedWritingEngine] ✅ sendMessage complete. Response: \(finalMessage?.content.prefix(100) ?? "nil")")
+            return finalMessage
         } catch is CancellationError {
             isProcessing = false
             print("⚠️ [UnifiedWritingEngine] sendMessage CANCELLED by user")
@@ -723,6 +744,74 @@ final class UnifiedWritingEngine: ObservableObject {
         let lastMessage: WritingMessage?
     }
 
+    nonisolated private static let maxTransientEmptyNoToolRetries = 1
+    nonisolated private static let truncatedResponseWarning =
+        "\n\n[System] The model hit its output limit before finishing. Ask me to continue from where it left off."
+    nonisolated private static let emptyResponseAbortMessage =
+        "The writing engine stopped after empty provider responses. I stopped retrying so this does not keep burning tokens. Please try again or ask me to continue."
+    nonisolated private static let noFinalResponseMessage =
+        "The writing engine stopped without a final response. No further automatic retries were attempted."
+
+    nonisolated static func classifyLoopResponse(
+        response: ClaudeToolUseResponse,
+        cleanedText: String,
+        emptyNoToolResponseCount: Int,
+        maxTransientRetries: Int = UnifiedWritingEngine.maxTransientEmptyNoToolRetries
+    ) -> WritingLoopResponseDisposition {
+        let trimmedText = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard response.toolCalls.isEmpty else {
+            return WritingLoopResponseDisposition(
+                decision: .acceptFinal,
+                assistantText: cleanedText,
+                logReason: "tool-calling response"
+            )
+        }
+
+        if !trimmedText.isEmpty {
+            if response.stopReason == "length" {
+                return WritingLoopResponseDisposition(
+                    decision: .acceptFinal,
+                    assistantText: cleanedText + truncatedResponseWarning,
+                    logReason: "accepted truncated no-tool response"
+                )
+            }
+
+            return WritingLoopResponseDisposition(
+                decision: .acceptFinal,
+                assistantText: cleanedText,
+                logReason: "accepted non-empty no-tool response"
+            )
+        }
+
+        if emptyNoToolResponseCount < maxTransientRetries {
+            return WritingLoopResponseDisposition(
+                decision: .retryTransient,
+                assistantText: "",
+                logReason: "empty no-tool response \(emptyNoToolResponseCount + 1)/\(maxTransientRetries) — retrying"
+            )
+        }
+
+        return WritingLoopResponseDisposition(
+            decision: .abort,
+            assistantText: emptyResponseAbortMessage,
+            logReason: "empty no-tool response repeated after retry budget"
+        )
+    }
+
+    nonisolated private static func noProgressSignature(
+        for response: ClaudeToolUseResponse,
+        cleanedText: String
+    ) -> String {
+        let trimmedText = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            response.stopReason ?? "nil",
+            response.nativeFinishReason ?? "nil",
+            response.completionTokens.map { String($0) } ?? "nil",
+            trimmedText
+        ].joined(separator: "|")
+    }
+
     /// Core conversation loop — runs OFF the main actor.
     ///
     /// This is `nonisolated` so that API call continuations resume on the cooperative
@@ -742,14 +831,16 @@ final class UnifiedWritingEngine: ObservableObject {
         var pendingMessages: [WritingMessage] = []
         var lastAssistantMessage: WritingMessage?
         var consecutiveThinkOnly = 0
-        var consecutiveIncomplete = 0
+        var consecutiveTransientNoToolResponses = 0
+        var consecutiveNoProgressResponses = 0
+        var lastNoProgressSignature: String?
         var thinkToolRemoved = false
         var activeTools = tools
 
         let toolNames = tools.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
         print("🔄 [UnifiedWritingEngine] Starting conversation loop (nonisolated). System blocks: \(systemBlocks.count), tools: \(toolNames)")
 
-        for iteration in 0..<10 {
+        conversationLoop: for iteration in 0..<10 {
             // Check cancellation (brief main actor hop)
             let cancelled = await self.isCancelled
             guard !cancelled else {
@@ -787,25 +878,9 @@ final class UnifiedWritingEngine: ObservableObject {
                 throw CancellationError()
             }
 
-            print("🔄 [UnifiedWritingEngine] Response: text=\(response.textContent.count)chars, tools=\(response.toolCalls.count), stop=\(response.stopReason ?? "nil")")
-
-            // Detect incomplete/throttled responses: very low output with non-standard finish reason
-            let isIncomplete = (response.stopReason == nil || response.stopReason == "--" || response.stopReason == "length")
-                && response.toolCalls.isEmpty
-                && response.textContent.trimmingCharacters(in: .whitespacesAndNewlines).count < 100
-            if isIncomplete {
-                print("⚠️ [UnifiedWritingEngine] Incomplete response detected (stop=\(response.stopReason ?? "nil"), text=\(response.textContent.count)chars, tools=0) — likely timeout/throttle")
-                consecutiveIncomplete += 1
-                if consecutiveIncomplete > 3 {
-                    print("❌ [UnifiedWritingEngine] 3 consecutive incomplete responses — aborting loop")
-                    break
-                }
-                let backoffSeconds = min(pow(2.0, Double(consecutiveIncomplete)), 30.0)
-                print("⏳ [UnifiedWritingEngine] Backing off \(Int(backoffSeconds))s before retry (attempt \(consecutiveIncomplete)/3)")
-                try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
-                continue  // Retry without appending garbage to conversation
-            }
-            consecutiveIncomplete = 0
+            print(
+                "🔄 [UnifiedWritingEngine] Response: text=\(response.textContent.count)chars, tools=\(response.toolCalls.count), stop=\(response.stopReason ?? "nil"), native=\(response.nativeFinishReason ?? "nil"), completion=\(response.completionTokens.map { String($0) } ?? "nil"), id=\(response.responseId ?? "nil")"
+            )
 
             // Build WritingToolCall objects from response
             var assistantToolCalls: [WritingToolCall] = []
@@ -826,15 +901,73 @@ final class UnifiedWritingEngine: ObservableObject {
 
             // Strip thinking/analysis tags from response text
             let cleanedText = stripThinkingTags(response.textContent)
-
-            let hasText = !cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            var finalAssistantText = cleanedText
             let hasToolCalls = !response.toolCalls.isEmpty
+
+            if !hasToolCalls {
+                var disposition = Self.classifyLoopResponse(
+                    response: response,
+                    cleanedText: cleanedText,
+                    emptyNoToolResponseCount: consecutiveTransientNoToolResponses
+                )
+
+                let trimmedText = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedText.isEmpty {
+                    let signature = Self.noProgressSignature(for: response, cleanedText: cleanedText)
+                    if signature == lastNoProgressSignature {
+                        consecutiveNoProgressResponses += 1
+                    } else {
+                        lastNoProgressSignature = signature
+                        consecutiveNoProgressResponses = 1
+                    }
+                } else {
+                    lastNoProgressSignature = nil
+                    consecutiveNoProgressResponses = 0
+                }
+
+                if disposition.decision == .retryTransient && consecutiveNoProgressResponses > 1 {
+                    disposition = WritingLoopResponseDisposition(
+                        decision: .abort,
+                        assistantText: Self.emptyResponseAbortMessage,
+                        logReason: "repeated no-progress response with identical signature — aborting to avoid replay loop"
+                    )
+                }
+
+                switch disposition.decision {
+                case .retryTransient:
+                    consecutiveTransientNoToolResponses += 1
+                    let backoffSeconds = min(pow(2.0, Double(consecutiveTransientNoToolResponses)), 4.0)
+                    print("⚠️ [UnifiedWritingEngine] No-tool response retry: \(disposition.logReason)")
+                    print("⏳ [UnifiedWritingEngine] Backing off \(Int(backoffSeconds))s before retry (attempt \(consecutiveTransientNoToolResponses)/\(Self.maxTransientEmptyNoToolRetries))")
+                    try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
+                    continue conversationLoop
+
+                case .abort:
+                    consecutiveTransientNoToolResponses = 0
+                    let abortMsg = WritingMessage(role: .assistant, content: disposition.assistantText)
+                    pendingMessages.append(abortMsg)
+                    lastAssistantMessage = abortMsg
+                    print("❌ [UnifiedWritingEngine] \(disposition.logReason)")
+                    break conversationLoop
+
+                case .acceptFinal:
+                    consecutiveTransientNoToolResponses = 0
+                    finalAssistantText = disposition.assistantText
+                    print("🔄 [UnifiedWritingEngine] Accepting no-tool response: \(disposition.logReason)")
+                }
+            } else {
+                consecutiveTransientNoToolResponses = 0
+                consecutiveNoProgressResponses = 0
+                lastNoProgressSignature = nil
+            }
+
+            let hasText = !finalAssistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
             // Build assistant message
             if hasText || !hasToolCalls {
                 let assistantMsg = WritingMessage(
                     role: .assistant,
-                    content: cleanedText,
+                    content: finalAssistantText,
                     toolCalls: assistantToolCalls.isEmpty ? nil : assistantToolCalls
                 )
                 pendingMessages.append(assistantMsg)
@@ -852,7 +985,7 @@ final class UnifiedWritingEngine: ObservableObject {
             // If no tool calls, conversation is done
             if !hasToolCalls {
                 print("🔄 [UnifiedWritingEngine] No tool calls — conversation complete at iteration \(iteration)")
-                break
+                break conversationLoop
             }
 
             // Execute tool calls — hops to main actor briefly for notifications + @Published updates.
@@ -2580,6 +2713,19 @@ final class UnifiedWritingEngine: ObservableObject {
                 needed: targetSwipeCount,
                 existingUUIDs: Set()
             )
+            // Safety net: if still empty and we weren't searching for reels, retry with reel format
+            if selectedSwipes.isEmpty && !targetWritingFormat.swipeFormatFamily.contains(.reel) {
+                let reelFallback = await selectSwipesFallback(
+                    contentAtom: contentAtom,
+                    targetFormat: .instagramReel,
+                    needed: targetSwipeCount,
+                    existingUUIDs: Set()
+                )
+                selectedSwipes.append(contentsOf: reelFallback)
+                if !reelFallback.isEmpty {
+                    print("⚠️ [UnifiedWritingEngine] Format fallback to reels: loaded \(reelFallback.count) swipes")
+                }
+            }
             promotePrimaryBlueprintIfNeeded(preferredUUIDs: strictPrimarySwipeUUIDs)
             if selectedSwipes.count < targetSwipeCount {
                 print("⚠️ [UnifiedWritingEngine] Same-type swipe shortfall: loaded \(selectedSwipes.count)/\(targetSwipeCount) for \(targetWritingFormat.displayName)")
@@ -2691,6 +2837,20 @@ final class UnifiedWritingEngine: ObservableObject {
                     compressed.isPrimary = true
                 }
                 return compressed
+            }
+        }
+
+        // Safety net: if still empty and we weren't searching for reels, retry with reel format
+        if selectedSwipes.isEmpty && !targetWritingFormat.swipeFormatFamily.contains(.reel) {
+            let reelFallback = await selectSwipesFallback(
+                contentAtom: contentAtom,
+                targetFormat: .instagramReel,
+                needed: targetSwipeCount,
+                existingUUIDs: Set()
+            )
+            selectedSwipes.append(contentsOf: reelFallback)
+            if !reelFallback.isEmpty {
+                print("⚠️ [UnifiedWritingEngine] Format fallback to reels: loaded \(reelFallback.count) swipes")
             }
         }
 
@@ -2877,16 +3037,23 @@ final class UnifiedWritingEngine: ObservableObject {
             return
         }
         let targetCategory: ProfileDocumentCategory = targetFormat.isVideoFormat ? .reel : .thread
-        var index: [(id: UUID, title: String, category: String, engagement: String, charCount: Int, format: String)] = []
-        for doc in documents {
-            let isSameFormat = doc.category == targetCategory
-            let isUnderperformer = doc.category == .underperformingReel || doc.category == .underperformingThread
-            let formatLabel = isUnderperformer ? "underperforming" : (isSameFormat ? "same_format" : "cross_format")
-            index.append((id: doc.id, title: doc.title, category: doc.category.displayName,
-                           engagement: formatEngagement(doc: doc), charCount: doc.content.count, format: formatLabel))
+        // Only index top-performing content posts — skip brand story, voice guide, underperforming
+        let topPerformerCategories: Set<ProfileDocumentCategory> = [.reel, .thread]
+        var sameFormatIndex: [(id: UUID, title: String, category: String, engagement: String, charCount: Int, format: String)] = []
+        var crossFormatIndex: [(id: UUID, title: String, category: String, engagement: String, charCount: Int, format: String)] = []
+        for doc in documents where topPerformerCategories.contains(doc.category) {
+            let entry = (id: doc.id, title: doc.title, category: doc.category.displayName,
+                         engagement: formatEngagement(doc: doc), charCount: doc.content.count,
+                         format: doc.category == targetCategory ? "same_format" : "cross_format")
+            if doc.category == targetCategory {
+                sameFormatIndex.append(entry)
+            } else {
+                crossFormatIndex.append(entry)
+            }
         }
-        clientPostIndex = index
-        print("🔧 [UnifiedWritingEngine] Built client post index: \(index.count) posts")
+        // All same-format, cap cross-format at 3
+        clientPostIndex = sameFormatIndex + Array(crossFormatIndex.prefix(3))
+        print("🔧 [UnifiedWritingEngine] Built client post index: \(clientPostIndex.count) posts (\(sameFormatIndex.count) same-format, \(min(crossFormatIndex.count, 3)) cross-format)")
     }
 
     /// Auto-load the primary (blueprint) swipe body into reference material so it's always available.

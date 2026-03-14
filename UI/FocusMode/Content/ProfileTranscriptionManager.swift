@@ -17,6 +17,7 @@ final class ProfileTranscriptionManager: ObservableObject {
         var isTranscribing: Bool = false
         var progressText: String = ""
         var error: String?
+        var warning: String?
     }
 
     /// Tracks state by ProfileDocument.id
@@ -62,7 +63,7 @@ final class ProfileTranscriptionManager: ObservableObject {
         // Step 3: Transcribe based on content type
         states[documentId]?.progressText = "Transcribing..."
 
-        let transcriptionResult: TranscriptionResult
+        var transcriptionResult: TranscriptionResult
         var isCarousel = false
 
         if let items = carouselItems, !items.isEmpty {
@@ -105,14 +106,11 @@ final class ProfileTranscriptionManager: ObservableObject {
                     self?.updateProgress(documentId: documentId, progress: progress)
                 }
             }
-            // If result seems thin and this was a video, set a warning
             if isVideoContent {
-                let totalText = transcriptionResult.slides.map(\.text).joined()
-                if totalText.count < 50 {
-                    states[documentId] = TranscriptionState(
-                        error: "Could not extract video — only thumbnail text captured. Try pasting the transcript manually."
-                    )
-                    return nil
+                transcriptionResult.quality = .degraded
+                let warning = "Video extraction failed; transcript was generated from a thumbnail only."
+                if !transcriptionResult.warnings.contains(warning) {
+                    transcriptionResult.warnings.append(warning)
                 }
             }
         } else {
@@ -127,18 +125,11 @@ final class ProfileTranscriptionManager: ObservableObject {
             return nil
         }
 
-        // Step 5: Claude cleanup (skip for Gemini-only results)
-        states[documentId]?.progressText = "Cleaning up..."
-        var finalSlides = transcriptionResult.slides
-        let needsCleanup = transcriptionResult.contentType != .voiceoverOnly
-            && !finalSlides.allSatisfy({ $0.source == .geminiVision })
-        if needsCleanup {
-            if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(
-                slides: finalSlides, isCarousel: isCarousel
-            ) {
-                finalSlides = cleaned
-            }
-        }
+        // Step 5: Use transcriber-owned cleaned output and surface any degradation warning.
+        let finalSlides = transcriptionResult.cleanedSlides
+        let warningText = transcriptionResult.warnings.isEmpty && transcriptionResult.quality == .degraded
+            ? "Transcript quality was degraded. Review the import before using it as a profile reference."
+            : transcriptionResult.warnings.joined(separator: " ")
 
         // Step 6: Build combined transcript with slide numbering
         let nonEmptySlides = finalSlides.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -179,10 +170,14 @@ final class ProfileTranscriptionManager: ObservableObject {
             title: title,
             content: combined,
             platform: "instagram",
-            sourceURL: url.absoluteString
+            sourceURL: url.absoluteString,
+            warning: warningText.isEmpty ? nil : warningText
         )
 
-        states[documentId] = TranscriptionState(isTranscribing: false)
+        states[documentId] = TranscriptionState(
+            isTranscribing: false,
+            warning: warningText.isEmpty ? nil : warningText
+        )
         return doc
     }
 

@@ -141,6 +141,15 @@ final class SwipeProcessingService {
                 default: break
                 }
             }
+
+            let isVideoContent = mediaData.contentType == .reel || mediaData.contentType == .videoPost
+            if isVideoContent {
+                transcriptionResult.quality = .degraded
+                let warning = "Video extraction failed; transcript was generated from a thumbnail only."
+                if !transcriptionResult.warnings.contains(warning) {
+                    transcriptionResult.warnings.append(warning)
+                }
+            }
         } else {
             // No video, no carousel items, no thumbnail — nothing to transcribe
             print("SwipeProcessingService: No transcribable content for \(uuid)")
@@ -182,16 +191,12 @@ final class SwipeProcessingService {
             return
         }
 
-        // Step 6: Claude cleanup (skip for Gemini-only results)
-        var finalSlides = transcriptionResult.slides
-        let needsCleanup = transcriptionResult.contentType != .voiceoverOnly
-            && !finalSlides.allSatisfy({ $0.source == .geminiVision })
-        if needsCleanup {
-            let isCarousel = carouselItems != nil && !carouselItems!.isEmpty
-            if let cleaned = await InstagramAutoTranscriber.shared.cleanupWithClaude(slides: finalSlides, isCarousel: isCarousel) {
-                finalSlides = cleaned
-            }
-        }
+        // Step 6: Persist the transcriber-owned cleaned/raw outputs as-is.
+        let finalSlides = transcriptionResult.cleanedSlides
+        let rawSlides = transcriptionResult.rawSlides
+        let speechSegments = transcriptionResult.speechSegments
+        let transcriptionWarnings = transcriptionResult.warnings
+        let transcriptionQuality = transcriptionResult.quality
 
         // Step 7: Save transcript to atom
         let combined = finalSlides
@@ -215,7 +220,16 @@ final class SwipeProcessingService {
                 originalURL: url,
                 contentType: .carousel
             )
-            if igData.carouselItems == nil || igData.carouselItems?.isEmpty == true {
+            let existingCarouselCount = igData.carouselItems?.count ?? 0
+            let existingSignature = (igData.carouselItems ?? []).map {
+                "\($0.index)|\($0.mediaType.rawValue)|\($0.mediaURL.absoluteString)"
+            }
+            let incomingSignature = items.map {
+                "\($0.index)|\($0.mediaType.rawValue)|\($0.mediaURL.absoluteString)"
+            }
+            if existingCarouselCount < items.count ||
+                igData.carouselItems?.isEmpty == true ||
+                existingSignature != incomingSignature {
                 igData.carouselItems = items
             }
             richContent.instagramData = igData
@@ -247,6 +261,10 @@ final class SwipeProcessingService {
         // Save slides into swipeAnalysis
         var sa = atom.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
         sa.transcriptSlides = finalSlides
+        sa.rawTranscriptSlides = rawSlides
+        sa.transcriptSpeechSegments = speechSegments
+        sa.transcriptionQuality = transcriptionQuality
+        sa.transcriptionWarnings = transcriptionWarnings
         atom = atom.withSwipeAnalysis(sa)
 
         atom.processingStatus = "analyzing"
@@ -260,6 +278,10 @@ final class SwipeProcessingService {
         print("SwipeProcessingService: Running analysis for \(uuid)")
         var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atom)
         nlpResult.transcriptSlides = finalSlides
+        nlpResult.rawTranscriptSlides = rawSlides
+        nlpResult.transcriptSpeechSegments = speechSegments
+        nlpResult.transcriptionQuality = transcriptionQuality
+        nlpResult.transcriptionWarnings = transcriptionWarnings
         atom = atom.withSwipeAnalysis(nlpResult)
         do {
             atom = try await AtomRepository.shared.update(atom)
@@ -272,6 +294,10 @@ final class SwipeProcessingService {
         if classifiedResult.isFullyAnalyzed {
             var enriched = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: nlpResult)
             enriched.transcriptSlides = finalSlides
+            enriched.rawTranscriptSlides = rawSlides
+            enriched.transcriptSpeechSegments = speechSegments
+            enriched.transcriptionQuality = transcriptionQuality
+            enriched.transcriptionWarnings = transcriptionWarnings
             atom = atom.withSwipeAnalysis(enriched)
             do {
                 atom = try await AtomRepository.shared.update(atom)

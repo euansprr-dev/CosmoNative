@@ -5,6 +5,11 @@
 import SwiftUI
 import NaturalLanguage
 
+struct CanvasClusterDropResolution: Equatable {
+    let clusterId: UUID
+    let previewPosition: CGPoint
+}
+
 @MainActor
 class CanvasClusterEngine: ObservableObject {
 
@@ -340,7 +345,7 @@ class CanvasClusterEngine: ObservableObject {
                 userClusters[index].boundingRect = fitted
             }
         } else {
-            userClusters[index].updateBoundingRect(blocks: blocks)
+            userClusters[index].expandBoundsToContainMembers(blocks: blocks)
         }
         persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
     }
@@ -364,8 +369,6 @@ class CanvasClusterEngine: ObservableObject {
                 ) {
                     userClusters[index].boundingRect = fitted
                 }
-            } else {
-                userClusters[index].updateBoundingRect(blocks: blocks)
             }
             persistUserClusters(thinkspaceId: userClusters[index].thinkspaceId)
         }
@@ -381,6 +384,10 @@ class CanvasClusterEngine: ObservableObject {
         userClusters.first(where: { $0.id == clusterId })?.blockUUIDs ?? []
     }
 
+    func clusterContaining(blockUUID: String) -> CanvasCluster? {
+        userClusters.first(where: { $0.blockUUIDs.contains(blockUUID) })
+    }
+
     /// Update bounding rects for all user clusters (call after block positions change)
     func updateUserClusterBounds(blocks: [CanvasBlock]) {
         for index in userClusters.indices {
@@ -389,7 +396,7 @@ class CanvasClusterEngine: ObservableObject {
             // Zones with no blocks keep their manually-set boundingRect
             let hasMembers = blocks.contains { userClusters[index].blockUUIDs.contains($0.entityUuid) }
             if hasMembers {
-                userClusters[index].updateBoundingRect(blocks: blocks, growOnly: true)
+                userClusters[index].expandBoundsToContainMembers(blocks: blocks)
             }
         }
     }
@@ -593,8 +600,6 @@ class CanvasClusterEngine: ObservableObject {
             userClusters[sourceIndex].blockUUIDs.removeAll { $0 == event.blockUUID }
             if userClusters[sourceIndex].blockUUIDs.isEmpty && !userClusters[sourceIndex].isZone {
                 userClusters.remove(at: sourceIndex)
-            } else if userClusters[sourceIndex].viewMode == .canvas {
-                userClusters[sourceIndex].updateBoundingRect(blocks: blocks, growOnly: true)
             }
         }
 
@@ -603,7 +608,7 @@ class CanvasClusterEngine: ObservableObject {
                 userClusters[targetIndex].blockUUIDs.append(event.blockUUID)
             }
             if userClusters[targetIndex].viewMode == .canvas {
-                userClusters[targetIndex].updateBoundingRect(blocks: blocks, growOnly: true)
+                userClusters[targetIndex].expandBoundsToContainMembers(blocks: blocks)
             }
         }
 
@@ -704,14 +709,61 @@ class CanvasClusterEngine: ObservableObject {
 
     /// Find which user cluster a canvas position falls within (exact bounds)
     func userCluster(containing point: CGPoint) -> CanvasCluster? {
-        userClusters.first { $0.boundingRect.contains(point) }
+        resolvedDropTargetCluster(for: point, proximity: 0)
     }
 
     /// Find the nearest user cluster within drop proximity of a point.
     /// Uses an expanded hit zone (80pt outset) so blocks dropped near a cluster get absorbed.
     func nearestDropTargetCluster(for point: CGPoint) -> CanvasCluster? {
-        let dropInset: CGFloat = -80  // negative = outset
-        return userClusters.first { $0.boundingRect.insetBy(dx: dropInset, dy: dropInset).contains(point) }
+        resolvedDropTargetCluster(for: point, proximity: 80)
+    }
+
+    /// Resolve a cross-cluster canvas transfer target and the exact preview position to show/commit.
+    /// The source cluster is excluded so transfers remain stable even if cluster bounds overlap.
+    func resolveCanvasDrop(
+        blockUUID: String,
+        point: CGPoint,
+        blockSize: CGSize,
+        proximity: CGFloat = 80
+    ) -> CanvasClusterDropResolution? {
+        let sourceClusterId = clusterContaining(blockUUID: blockUUID)?.id
+        guard let target = resolvedDropTargetCluster(
+            for: point,
+            excludingClusterId: sourceClusterId,
+            proximity: proximity,
+            eligibleModes: [.canvas]
+        ) else {
+            return nil
+        }
+
+        return CanvasClusterDropResolution(
+            clusterId: target.id,
+            previewPosition: clampedPreviewPosition(
+                for: point,
+                blockSize: blockSize,
+                in: target
+            )
+        )
+    }
+
+    /// Update canvas transfer preview/highlight during a drag and return the resolved target.
+    func updateCanvasDropTarget(
+        blockUUID: String,
+        point: CGPoint,
+        blockSize: CGSize,
+        proximity: CGFloat = 80
+    ) -> CanvasClusterDropResolution? {
+        let resolution = resolveCanvasDrop(
+            blockUUID: blockUUID,
+            point: point,
+            blockSize: blockSize,
+            proximity: proximity
+        )
+        let targetId = resolution?.clusterId
+        if dropTargetClusterId != targetId {
+            dropTargetClusterId = targetId
+        }
+        return resolution
     }
 
     /// Update the drop target highlight during a drag. Call on every drag move.
@@ -725,6 +777,100 @@ class CanvasClusterEngine: ObservableObject {
     /// Clear the drop target (call on drag end / cancel)
     func clearDropTarget() {
         dropTargetClusterId = nil
+    }
+
+    private func resolvedDropTargetCluster(
+        for point: CGPoint,
+        excludingClusterId: UUID? = nil,
+        proximity: CGFloat,
+        eligibleModes: Set<ClusterViewMode>? = nil
+    ) -> CanvasCluster? {
+        let candidates = userClusters.filter { cluster in
+            guard cluster.id != excludingClusterId else { return false }
+            if let eligibleModes, !eligibleModes.contains(cluster.viewMode) {
+                return false
+            }
+            return distance(from: point, to: cluster.boundingRect) <= proximity
+        }
+
+        return candidates.min { lhs, rhs in
+            let lhsDistance = distance(from: point, to: lhs.boundingRect)
+            let rhsDistance = distance(from: point, to: rhs.boundingRect)
+            if abs(lhsDistance - rhsDistance) > 0.001 {
+                return lhsDistance < rhsDistance
+            }
+
+            let lhsCenterDistance = squaredDistance(from: point, to: rectCenter(lhs.boundingRect))
+            let rhsCenterDistance = squaredDistance(from: point, to: rectCenter(rhs.boundingRect))
+            if abs(lhsCenterDistance - rhsCenterDistance) > 0.001 {
+                return lhsCenterDistance < rhsCenterDistance
+            }
+
+            let lhsArea = lhs.boundingRect.width * lhs.boundingRect.height
+            let rhsArea = rhs.boundingRect.width * rhs.boundingRect.height
+            if abs(lhsArea - rhsArea) > 0.001 {
+                return lhsArea < rhsArea
+            }
+
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private func clampedPreviewPosition(
+        for point: CGPoint,
+        blockSize: CGSize,
+        in cluster: CanvasCluster
+    ) -> CGPoint {
+        let horizontalInset = max(24, blockSize.width / 2 + 20)
+        let bottomInset = max(24, blockSize.height / 2 + 20)
+        let topInset = max(bottomInset, blockSize.height / 2 + CanvasCluster.titleTopPadding + 20)
+
+        let minX = cluster.boundingRect.minX + horizontalInset
+        let maxX = cluster.boundingRect.maxX - horizontalInset
+        let minY = cluster.boundingRect.minY + topInset
+        let maxY = cluster.boundingRect.maxY - bottomInset
+
+        let resolvedX = clamp(point.x, min: minX, max: maxX)
+        let resolvedY = clamp(point.y, min: minY, max: maxY)
+
+        return CGPoint(x: resolvedX, y: resolvedY)
+    }
+
+    private func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let dx: CGFloat
+        if point.x < rect.minX {
+            dx = rect.minX - point.x
+        } else if point.x > rect.maxX {
+            dx = point.x - rect.maxX
+        } else {
+            dx = 0
+        }
+
+        let dy: CGFloat
+        if point.y < rect.minY {
+            dy = rect.minY - point.y
+        } else if point.y > rect.maxY {
+            dy = point.y - rect.maxY
+        } else {
+            dy = 0
+        }
+
+        return hypot(dx, dy)
+    }
+
+    private func rectCenter(_ rect: CGRect) -> CGPoint {
+        CGPoint(x: rect.midX, y: rect.midY)
+    }
+
+    private func squaredDistance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        let dx = lhs.x - rhs.x
+        let dy = lhs.y - rhs.y
+        return (dx * dx) + (dy * dy)
+    }
+
+    private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
+        guard minValue <= maxValue else { return (minValue + maxValue) / 2 }
+        return Swift.min(Swift.max(value, minValue), maxValue)
     }
 
     /// Load user clusters from ThinkspaceMetadata

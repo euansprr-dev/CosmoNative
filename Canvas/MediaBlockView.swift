@@ -31,6 +31,7 @@ struct MediaBlockView: View {
     @State private var carouselIndex: Int = 0
     // Resizable block size
     @State private var blockSize: CGSize
+    @State private var isSyncingBlockSizeFromModel = false
     @State private var loadTask: Task<Void, Never>?
 
     @EnvironmentObject private var expansionManager: BlockExpansionManager
@@ -211,11 +212,20 @@ struct MediaBlockView: View {
                   uuid == atom?.uuid || uuid == block.entityUuid else { return }
             syncViewportActivity(forceReload: true)
         }
+        .onChange(of: block.size) { _, newSize in
+            guard blockSize != newSize else { return }
+            isSyncingBlockSizeFromModel = true
+            blockSize = newSize
+            DispatchQueue.main.async {
+                isSyncingBlockSizeFromModel = false
+            }
+        }
         .onDisappear {
             deactivateViewportContent()
         }
         // Enforce aspect ratio during resize for reel/carousel/youtube
         .onChange(of: blockSize) { _, newSize in
+            guard !isSyncingBlockSizeFromModel else { return }
             let ratio = mediaAspectRatio
             guard ratio > 0 else { return }
             // Width-primary: compute ideal height from width

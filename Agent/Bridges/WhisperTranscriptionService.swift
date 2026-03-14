@@ -37,6 +37,38 @@ enum TranscriptionError: Error, LocalizedError {
     }
 }
 
+public struct WhisperVerboseSegment: Codable, Sendable, Equatable {
+    public let id: Int?
+    public let start: Double
+    public let end: Double
+    public let text: String
+    public let avgLogprob: Double?
+    public let compressionRatio: Double?
+    public let noSpeechProb: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case start
+        case end
+        case text
+        case avgLogprob = "avg_logprob"
+        case compressionRatio = "compression_ratio"
+        case noSpeechProb = "no_speech_prob"
+    }
+
+    public var confidence: Double? {
+        guard let avgLogprob else { return nil }
+        return max(0, min(1, exp(avgLogprob)))
+    }
+}
+
+public struct WhisperVerboseTranscription: Codable, Sendable, Equatable {
+    public let text: String
+    public let language: String?
+    public let duration: Double?
+    public let segments: [WhisperVerboseSegment]
+}
+
 @MainActor
 class WhisperTranscriptionService {
     static let shared = WhisperTranscriptionService()
@@ -47,13 +79,18 @@ class WhisperTranscriptionService {
 
     private init() {}
 
-    /// Transcribe audio data to text using OpenAI Whisper
+    /// Transcribe audio data to text using OpenAI Whisper.
+    /// This wrapper is preserved for legacy callers that only need plain text.
     func transcribe(audioData: Data, format: AudioFormat) async throws -> String {
+        try await transcribeVerbose(audioData: audioData, format: format).text
+    }
+
+    /// Transcribe audio and return segment timestamps for downstream alignment.
+    func transcribeVerbose(audioData: Data, format: AudioFormat) async throws -> WhisperVerboseTranscription {
         guard let apiKey = apiKey, !apiKey.isEmpty else {
             throw TranscriptionError.noAPIKey
         }
 
-        // Build multipart/form-data request
         let boundary = UUID().uuidString
         var request = URLRequest(url: URL(string: whisperURL)!)
         request.httpMethod = "POST"
@@ -61,24 +98,13 @@ class WhisperTranscriptionService {
         request.addValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
-
-        // Add file field
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.\(format.fileExtension)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(format.mimeType)\r\n\r\n".data(using: .utf8)!)
-        body.append(audioData)
-        body.append("\r\n".data(using: .utf8)!)
-
-        // Add model field
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("whisper-1\r\n".data(using: .utf8)!)
-
+        body.appendFormField(named: "file", filename: "audio.\(format.fileExtension)", mimeType: format.mimeType, data: audioData, boundary: boundary)
+        body.appendFormValue("whisper-1", for: "model", boundary: boundary)
+        body.appendFormValue("verbose_json", for: "response_format", boundary: boundary)
+        body.appendFormValue("segment", for: "timestamp_granularities[]", boundary: boundary)
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-
         request.httpBody = body
 
-        // Make request
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -91,19 +117,33 @@ class WhisperTranscriptionService {
                 throw TranscriptionError.transcriptionFailed("HTTP \(httpResponse.statusCode): \(errorBody)")
             }
 
-            // Parse response
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let text = json["text"] as? String else {
+            let decoder = JSONDecoder()
+            guard let parsed = try? decoder.decode(WhisperVerboseTranscription.self, from: data) else {
                 throw TranscriptionError.invalidResponse
             }
 
-            print("[Whisper] Transcription: \(text.prefix(100))...")
-            return text
-
+            print("[Whisper] Transcription: \(parsed.text.prefix(100))...")
+            return parsed
         } catch let error as TranscriptionError {
             throw error
         } catch {
             throw TranscriptionError.networkError(error)
         }
+    }
+}
+
+private extension Data {
+    mutating func appendFormField(named name: String, filename: String, mimeType: String, data: Data, boundary: String) {
+        append("--\(boundary)\r\n".data(using: .utf8)!)
+        append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        append(data)
+        append("\r\n".data(using: .utf8)!)
+    }
+
+    mutating func appendFormValue(_ value: String, for name: String, boundary: String) {
+        append("--\(boundary)\r\n".data(using: .utf8)!)
+        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+        append("\(value)\r\n".data(using: .utf8)!)
     }
 }

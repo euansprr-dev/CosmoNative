@@ -30,9 +30,9 @@ final class UnifiedWritingEngineCostTests: XCTestCase {
     }
 
     func testWritingContentFormatUsesExactSwipeFamilies() {
-        XCTAssertEqual(WritingContentFormat.instagramCarousel.swipeFormatFamily, Set([.carousel]))
+        XCTAssertEqual(WritingContentFormat.instagramCarousel.swipeFormatFamily, Set([.carousel, .thread]))
         XCTAssertEqual(WritingContentFormat.instagramStory.swipeFormatFamily, Set([.carousel]))
-        XCTAssertEqual(WritingContentFormat.twitterThread.swipeFormatFamily, Set([.thread]))
+        XCTAssertEqual(WritingContentFormat.twitterThread.swipeFormatFamily, Set([.carousel, .thread]))
         XCTAssertEqual(WritingContentFormat.twitterSingle.swipeFormatFamily, Set([.tweet]))
         XCTAssertEqual(WritingContentFormat.linkedinPost.swipeFormatFamily, Set([.post]))
         XCTAssertEqual(WritingContentFormat.staticPost.swipeFormatFamily, Set([.post]))
@@ -57,7 +57,7 @@ final class UnifiedWritingEngineCostTests: XCTestCase {
             targetFormat: .instagramCarousel
         )
 
-        XCTAssertEqual(filtered.compactMap(\.title), ["Carousel"])
+        XCTAssertEqual(filtered.compactMap(\.title), ["Carousel", "Thread"])
     }
 
     func testWritingContextAssemblerFiltersSameTypeSwipesForLayer3() {
@@ -134,6 +134,100 @@ final class UnifiedWritingEngineCostTests: XCTestCase {
         XCTAssertEqual(
             WritingContentFormat.matchingSwipeFormats(for: "reel") ?? [],
             Set([.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA])
+        )
+    }
+
+    func testClassifyLoopResponseAcceptsShortBlankFinishTextAsFinal() {
+        let response = makeToolUseResponse(text: "Draft complete.", stopReason: nil, completionTokens: 18)
+
+        let disposition = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 0
+        )
+
+        XCTAssertEqual(disposition.decision, .acceptFinal)
+        XCTAssertEqual(disposition.assistantText, "Draft complete.")
+    }
+
+    func testClassifyLoopResponseAcceptsTruncatedTextWithoutRetry() {
+        let response = makeToolUseResponse(text: "Partial draft", stopReason: "length", completionTokens: 42)
+
+        let disposition = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 0
+        )
+
+        XCTAssertEqual(disposition.decision, .acceptFinal)
+        XCTAssertTrue(disposition.assistantText.contains("Partial draft"))
+        XCTAssertTrue(disposition.assistantText.contains("continue"))
+    }
+
+    func testClassifyLoopResponseRetriesThenAbortsEmptyNoToolResponses() {
+        let response = makeToolUseResponse(text: "", stopReason: nil, completionTokens: 0)
+
+        let firstDisposition = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 0
+        )
+        let secondDisposition = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 1
+        )
+
+        XCTAssertEqual(firstDisposition.decision, .retryTransient)
+        XCTAssertEqual(secondDisposition.decision, .abort)
+        XCTAssertTrue(secondDisposition.assistantText.contains("burning tokens"))
+    }
+
+    func testClassifyLoopResponseAcceptsShortWriteDraftAcknowledgement() {
+        let response = makeToolUseResponse(text: "Draft written.", stopReason: "--", completionTokens: 18)
+
+        let disposition = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 0
+        )
+
+        XCTAssertEqual(disposition.decision, .acceptFinal)
+        XCTAssertEqual(disposition.assistantText, "Draft written.")
+    }
+
+    func testClassifyLoopResponseUsesExactRetryBudget() {
+        let response = makeToolUseResponse(text: "", stopReason: nil, completionTokens: 0)
+
+        let stillRetrying = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 1,
+            maxTransientRetries: 2
+        )
+        let exhaustedBudget = UnifiedWritingEngine.classifyLoopResponse(
+            response: response,
+            cleanedText: response.textContent,
+            emptyNoToolResponseCount: 2,
+            maxTransientRetries: 2
+        )
+
+        XCTAssertEqual(stillRetrying.decision, .retryTransient)
+        XCTAssertEqual(exhaustedBudget.decision, .abort)
+    }
+
+    private func makeToolUseResponse(
+        text: String,
+        stopReason: String?,
+        completionTokens: Int
+    ) -> ClaudeToolUseResponse {
+        ClaudeToolUseResponse(
+            textContent: text,
+            toolCalls: [],
+            stopReason: stopReason,
+            responseId: "resp_test",
+            nativeFinishReason: nil,
+            completionTokens: completionTokens
         )
     }
 

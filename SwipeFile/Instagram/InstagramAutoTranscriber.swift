@@ -6,7 +6,7 @@
 import Foundation
 import AVFoundation
 import Vision
-import Speech
+@preconcurrency import Speech
 import ImageIO
 
 // MARK: - Transcription Progress
@@ -25,15 +25,21 @@ enum TranscriptionProgress: Sendable {
 
 /// Result of the auto-transcription process
 struct TranscriptionResult: Sendable {
-    let slides: [TranscriptSlide]
-    let contentType: TranscriptionContentType
-    let averageOCRConfidence: Float
+    var rawSlides: [TranscriptSlide]
+    var cleanedSlides: [TranscriptSlide]
+    var speechSegments: [TranscriptSegment]
+    var contentType: TranscriptionContentType
+    var averageOCRConfidence: Float
+    var quality: TranscriptionQuality
+    var warnings: [String]
+
+    var slides: [TranscriptSlide] { cleanedSlides }
 }
 
 // MARK: - OCR Frame Result
 
 /// Text recognized in a single video frame
-private struct OCRFrameResult: Sendable {
+struct OCRFrameResult: Sendable {
     let timestamp: TimeInterval
     let lines: [String]
     let normalizedLineSet: Set<String>
@@ -52,10 +58,37 @@ private struct OCRLineAggregate: Sendable {
 // MARK: - Speech Segment
 
 /// A segment of recognized speech
-private struct SpeechSegment: Sendable {
+struct SpeechSegment: Sendable {
     let text: String
     let timestamp: TimeInterval
     let duration: TimeInterval
+}
+
+private struct SpeechPipelineResult: Sendable {
+    let speech: [SpeechSegment]
+    let transcriptSegments: [TranscriptSegment]
+    let quality: TranscriptionQuality
+    let warnings: [String]
+    let source: SpeechPipelineSource
+
+    var hasTimestamps: Bool {
+        transcriptSegments.contains { $0.end > $0.start }
+    }
+
+    static let empty = SpeechPipelineResult(
+        speech: [],
+        transcriptSegments: [],
+        quality: .accurate,
+        warnings: [],
+        source: .none
+    )
+}
+
+private enum SpeechPipelineSource: Sendable {
+    case none
+    case whisperAPI
+    case daemonWhisper
+    case appleSpeech
 }
 
 // MARK: - Instagram Auto Transcriber
@@ -64,15 +97,15 @@ private struct SpeechSegment: Sendable {
 final class InstagramAutoTranscriber {
     static let shared = InstagramAutoTranscriber()
 
-    private let framesPerSecond: Double = 2.0
+    private let framesPerSecond: Double = 4.0
     private let jaccardThreshold: Double = 0.62
-    private let minLineConfidence: Float = 0.22
-    private let minStableLineRatio: Double = 0.30
+    private let minLineConfidence: Float = 0.18
+    private let minStableLineRatio: Double = 0.18
 
     // Gemini Vision pipeline constants
     private let geminiModel = "google/gemini-2.0-flash-001"
-    private let geminiFPS: Double = 2.0           // 2fps — each 2-3s slide gets 4-6 frames
-    private let maxGeminiFrames: Int = 120         // Cap for cost/memory control (~$0.015/reel)
+    private let geminiFPS: Double = 4.0           // 4fps to catch short 1-frame text transitions
+    private let maxGeminiFrames: Int = 240         // Accuracy-first cap for short reels with fast cuts
     private let geminiBatchSize: Int = 20          // Frames per API call
     private let geminiBatchOverlap: Int = 2        // Overlap frames between batches
 
@@ -103,6 +136,9 @@ final class InstagramAutoTranscriber {
         }
         print("InstagramAutoTranscriber: Starting transcription (duration: \(actualDuration)s)")
 
+        var warnings: [String] = []
+        var quality: TranscriptionQuality = .accurate
+
         // Step 1: Extract frames as lightweight JPEG (~1.5MB total, not raw CGImages).
         let jpegFrames = await extractFramesAsJPEG(
             videoURL: videoURL,
@@ -132,7 +168,7 @@ final class InstagramAutoTranscriber {
             print("InstagramAutoTranscriber: Gemini vision produced \(slides.count) slides")
         } else {
             print("InstagramAutoTranscriber: Gemini unavailable/failed, falling back to Apple Vision OCR")
-            ocrFrameResults = await runOCRPipeline(videoURL: videoURL, duration: actualDuration, progressHandler: progressHandler)
+            ocrFrameResults = await runOCRPipeline(jpegFrames: jpegFrames, progressHandler: progressHandler)
             visualSlides = ocrToSlides(ocr: ocrFrameResults)
         }
 
@@ -140,28 +176,47 @@ final class InstagramAutoTranscriber {
         // Running in parallel caused AVFoundation resource contention and memory pressure.
         // Sequential is safer — the video file is only used by one subsystem at a time.
         print("InstagramAutoTranscriber: Starting speech pipeline...")
-        let speech: [SpeechSegment]
-        if APIKeys.hasWhisper {
-            // Prefer OpenAI Whisper API — higher quality, handles full audio without truncation
-            speech = await runWhisperPipeline(videoURL: videoURL, progressHandler: progressHandler)
-        } else {
-            // Fallback: on-device Apple Speech (can truncate long audio)
-            speech = await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
+        let speechResult = await runSpeechPipelineWithFallback(videoURL: videoURL, progressHandler: progressHandler)
+        print("InstagramAutoTranscriber: Speech pipeline returned \(speechResult.speech.count) segments")
+        warnings.append(contentsOf: speechResult.warnings)
+        if speechResult.quality == .degraded {
+            quality = .degraded
         }
-        print("InstagramAutoTranscriber: Speech pipeline returned \(speech.count) segments")
 
         // Step 5: Merge results
         progressHandler(.mergingResults)
 
-        let result: TranscriptionResult
+        var result: TranscriptionResult
         if !visualSlides.isEmpty && visualSlides.first?.source == .geminiVision {
-            result = mergeGeminiWithSpeech(geminiSlides: visualSlides, speech: speech, duration: actualDuration)
+            result = mergeGeminiWithSpeech(
+                geminiSlides: visualSlides,
+                speech: speechResult.speech,
+                duration: actualDuration,
+                allowSpeechAlignment: speechResult.hasTimestamps
+            )
         } else {
-            result = mergeResults(ocr: ocrFrameResults, speech: speech, duration: actualDuration)
+            result = mergeResults(
+                ocr: ocrFrameResults,
+                speech: speechResult.speech,
+                duration: actualDuration,
+                allowSpeechAlignment: speechResult.hasTimestamps
+            )
         }
 
+        result.speechSegments = speechResult.transcriptSegments
+        result.cleanedSlides = await cleanedSlides(
+            from: result.rawSlides,
+            contentType: result.contentType,
+            isCarousel: false
+        )
+        result.warnings.append(contentsOf: warnings)
+        result.warnings = deduplicatedWarnings(result.warnings)
+        result.quality = (result.quality == .degraded || quality == .degraded || !result.warnings.isEmpty)
+            ? .degraded
+            : .accurate
+
         progressHandler(.complete)
-        print("InstagramAutoTranscriber: Transcription complete — \(result.slides.count) slides, type: \(result.contentType)")
+        print("InstagramAutoTranscriber: Transcription complete — \(result.cleanedSlides.count) slides, type: \(result.contentType)")
 
         return result
     }
@@ -180,8 +235,8 @@ final class InstagramAutoTranscriber {
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.25, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.25, preferredTimescale: 600)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.08, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.08, preferredTimescale: 600)
         // Downscale to 540px wide (half of 1080) — sufficient for text OCR, saves ~75% memory during encoding
         generator.maximumSize = CGSize(width: 540, height: 960)
 
@@ -230,7 +285,7 @@ final class InstagramAutoTranscriber {
         // AVAssetImageGenerator can miss frame 0 if the first keyframe is offset.
         if jpegFrames.isEmpty || jpegFrames[0].timestamp > 0.5 {
             generator.requestedTimeToleranceBefore = CMTime(seconds: 0, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 1.0, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.25, preferredTimescale: 600)
             if let (cgImage, _) = try? await generator.image(at: .zero) {
                 autoreleasepool {
                     let mutableData = NSMutableData()
@@ -252,8 +307,8 @@ final class InstagramAutoTranscriber {
         let lastTs = jpegFrames.last?.timestamp ?? 0
         if duration - lastTs > 0.75 {
             let endTime = CMTime(seconds: max(0, duration - 0.15), preferredTimescale: 600)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.15, preferredTimescale: 600)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.2, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.08, preferredTimescale: 600)
             if let (cgImage, _) = try? await generator.image(at: endTime) {
                 autoreleasepool {
                     let mutableData = NSMutableData()
@@ -368,7 +423,7 @@ final class InstagramAutoTranscriber {
         let timestampList = timestamps.enumerated().map { "Frame \($0.offset)=\(String(format: "%.1f", $0.element))s" }.joined(separator: ", ")
 
         let prompt = """
-        You are analyzing \(frameImages.count) sequential frames from an Instagram reel, captured at ~2fps.
+        You are analyzing \(frameImages.count) sequential frames from an Instagram reel, captured at ~4fps.
         Frame mapping: \(timestampList)
 
         TASK: Extract ALL creator-placed text overlays and segment them into slides (distinct text screens).
@@ -570,7 +625,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Merge slides from multiple Gemini batches, deduplicating at boundaries
-    private nonisolated func mergeGeminiBatchResults(batches: [[TranscriptSlide]]) -> [TranscriptSlide] {
+    nonisolated func mergeGeminiBatchResults(batches: [[TranscriptSlide]]) -> [TranscriptSlide] {
         guard !batches.isEmpty else { return [] }
 
         var merged: [TranscriptSlide] = []
@@ -580,35 +635,15 @@ final class InstagramAutoTranscriber {
                 let trimmedText = slide.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedText.isEmpty else { continue }
 
-                // Check overlap with last merged slide
-                if var lastSlide = merged.last {
-                    let lastNorm = lastSlide.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-                    let currentNorm = trimmedText.lowercased()
-
-                    // Split on ALL whitespace (spaces, newlines, tabs) so that
-                    // "home\nand" tokenizes the same as "home and"
-                    let lastTokens = Set(lastNorm.split(whereSeparator: { $0.isWhitespace }).map(String.init))
-                    let currentTokens = Set(currentNorm.split(whereSeparator: { $0.isWhitespace }).map(String.init))
-
-                    // Use Jaccard similarity (intersection/union) — NOT subset overlap.
-                    // Subset overlap falsely merges short slides into longer ones
-                    // (e.g., "2016" would get 100% subset match against "2016 We started a business").
-                    let union = lastTokens.union(currentTokens).count
-                    let overlap = union > 0
-                        ? Double(lastTokens.intersection(currentTokens).count) / Double(union)
-                        : 0
-
-                    if overlap >= 0.80 {
-                        // Merge: extend timestamp range, keep longer text
-                        if trimmedText.count > lastSlide.text.count {
-                            lastSlide.text = trimmedText
-                        }
-                        if let newEnd = slide.endTimestamp ?? slide.timestamp {
-                            lastSlide.endTimestamp = newEnd
-                        }
-                        merged[merged.count - 1] = lastSlide
-                        continue
+                if var lastSlide = merged.last, shouldMergeGeminiBoundarySlides(lastSlide, slide) {
+                    if trimmedText.count > lastSlide.text.count {
+                        lastSlide.text = trimmedText
                     }
+                    if let newEnd = slide.endTimestamp ?? slide.timestamp {
+                        lastSlide.endTimestamp = newEnd
+                    }
+                    merged[merged.count - 1] = lastSlide
+                    continue
                 }
 
                 merged.append(slide)
@@ -627,7 +662,8 @@ final class InstagramAutoTranscriber {
     private func mergeGeminiWithSpeech(
         geminiSlides: [TranscriptSlide],
         speech: [SpeechSegment],
-        duration: TimeInterval
+        duration: TimeInterval,
+        allowSpeechAlignment: Bool
     ) -> TranscriptionResult {
         let hasGemini = !geminiSlides.isEmpty
         let hasSpeech = !speech.isEmpty
@@ -641,62 +677,38 @@ final class InstagramAutoTranscriber {
 
             if isVoiceoverDominant(visualWordCount: geminiWordCount, speechWordCount: speechWordCount, visualSlideCount: geminiSlides.count) {
                 print("InstagramAutoTranscriber: Voiceover dominant over Gemini (\(geminiWordCount) visual words in \(geminiSlides.count) slides vs \(speechWordCount) speech words) — treating as voiceover-only")
-                return TranscriptionResult(
-                    slides: speechToSlides(speech: speech),
+                return transcriptionResult(
+                    rawSlides: speechToSlides(speech: speech),
                     contentType: .voiceoverOnly,
                     averageOCRConfidence: 1.0
                 )
             }
+            let slides = mergeVisualSlidesWithSpeech(
+                visualSlides: geminiSlides,
+                speech: speech,
+                allowSpeechAlignment: allowSpeechAlignment
+            )
 
-            // Deduplicate adjacent slides first (Gemini can return dupes at batch boundaries)
-            var slides = collapseNearDuplicateAdjacentSlides(geminiSlides)
-
-            // Append speech as annotation where it overlaps
-            for (idx, slide) in slides.enumerated() {
-                let slideStart = slide.timestamp ?? 0
-                let slideEnd = slide.endTimestamp ?? slideStart + 3
-
-                let overlapping = speech.filter { segment in
-                    segment.timestamp >= slideStart - 0.5 &&
-                    segment.timestamp <= slideEnd + 0.5
-                }
-
-                if !overlapping.isEmpty {
-                    let spokenText = overlapping.map(\.text).joined(separator: " ")
-                    let slideNorm = normalizedLineKey(slide.text)
-                    let speechNorm = normalizedLineKey(spokenText)
-                    if !slideNorm.contains(speechNorm) && !speechNorm.contains(slideNorm) {
-                        slides[idx].text += "\n[Voiceover: \(spokenText)]"
-                        slides[idx].source = .merged
-                    }
-                }
-            }
-
-            for i in slides.indices { slides[i].slideNumber = i + 1 }
-
-            return TranscriptionResult(
-                slides: slides,
+            return transcriptionResult(
+                rawSlides: slides,
                 contentType: .voiceoverPlusText,
                 averageOCRConfidence: 0.95
             )
         } else if hasGemini {
-            var slides = collapseNearDuplicateAdjacentSlides(geminiSlides)
-            for i in slides.indices { slides[i].slideNumber = i + 1 }
-
-            return TranscriptionResult(
-                slides: slides,
+            return transcriptionResult(
+                rawSlides: renumberedSlides(geminiSlides),
                 contentType: .textOnly,
                 averageOCRConfidence: 0.95
             )
         } else if hasSpeech {
-            return TranscriptionResult(
-                slides: speechToSlides(speech: speech),
+            return transcriptionResult(
+                rawSlides: speechToSlides(speech: speech),
                 contentType: .voiceoverOnly,
                 averageOCRConfidence: 1.0
             )
         } else {
-            return TranscriptionResult(
-                slides: [TranscriptSlide(text: "", slideNumber: 1, source: .manual)],
+            return transcriptionResult(
+                rawSlides: [TranscriptSlide(text: "", slideNumber: 1, source: .manual)],
                 contentType: .empty,
                 averageOCRConfidence: 0
             )
@@ -707,43 +719,28 @@ final class InstagramAutoTranscriber {
 
     /// Extract frames and run text recognition
     private func runOCRPipeline(
-        videoURL: URL,
-        duration: TimeInterval,
+        jpegFrames: [(jpegData: Data, timestamp: TimeInterval)],
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
     ) async -> [OCRFrameResult] {
-        let asset = AVURLAsset(url: videoURL)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.25, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.25, preferredTimescale: 600)
-
-        // Calculate frame times at 2fps
-        let frameCount = Int(duration * framesPerSecond)
-        guard frameCount > 0 else { return [] }
-
-        let frameTimes: [CMTime] = (0..<frameCount).map { i in
-            CMTime(seconds: Double(i) / framesPerSecond, preferredTimescale: 600)
-        }
+        guard !jpegFrames.isEmpty else { return [] }
 
         var results: [OCRFrameResult] = []
 
-        for (index, time) in frameTimes.enumerated() {
-            let progress = Double(index) / Double(frameTimes.count)
-            await MainActor.run { progressHandler(.extractingFrames(progress)) }
+        for (index, frame) in jpegFrames.enumerated() {
+            let progress = Double(index + 1) / Double(jpegFrames.count)
+            progressHandler(.recognizingText(progress))
 
-            do {
-                let (cgImage, _) = try await generator.image(at: time)
-                let ocrResult = await recognizeText(in: cgImage, at: time.seconds)
-                if let result = ocrResult {
-                    results.append(result)
-                }
-            } catch {
-                // Skip frames that fail to extract
+            guard let cgImage = createCGImage(from: frame.jpegData) else {
                 continue
+            }
+
+            let ocrResult = await recognizeText(in: cgImage, at: frame.timestamp)
+            if let result = ocrResult {
+                results.append(result)
             }
         }
 
-        await MainActor.run { progressHandler(.recognizingText(1.0)) }
+        progressHandler(.recognizingText(1.0))
 
         return results
     }
@@ -751,7 +748,7 @@ final class InstagramAutoTranscriber {
     /// Minimum bounding box height (normalized 0-1) for an OCR observation to be considered main text.
     /// Instagram reel overlays typically have heights > 3-4% of the frame. Background text, watermarks,
     /// and incidental text in images tend to be much smaller.
-    private let minBoundingBoxHeight: CGFloat = 0.035
+    private let minBoundingBoxHeight: CGFloat = 0.025
 
     /// Run VNRecognizeTextRequest on a single frame
     private func recognizeText(in image: CGImage, at timestamp: TimeInterval, minBoxOverride: CGFloat? = nil) async -> OCRFrameResult? {
@@ -833,56 +830,90 @@ final class InstagramAutoTranscriber {
         }
     }
 
-    // MARK: - Whisper API Pipeline (Preferred)
+    // MARK: - Speech Pipeline
 
-    /// Extract audio from video and transcribe via OpenAI Whisper API.
-    /// Returns sentence-level SpeechSegments for the existing merge pipeline.
-    /// Falls back to Apple SFSpeechRecognizer if Whisper fails.
-    private func runWhisperPipeline(
+    private func runSpeechPipelineWithFallback(
         videoURL: URL,
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
-    ) async -> [SpeechSegment] {
+    ) async -> SpeechPipelineResult {
         guard await hasUsableAudioTrack(videoURL) else {
-            print("InstagramAutoTranscriber: Skipping Whisper pipeline (no audio track)")
-            return []
+            print("InstagramAutoTranscriber: Skipping speech pipeline (no audio track)")
+            return .empty
         }
 
         progressHandler(.recognizingSpeech(0.1))
 
-        // Step 1: Extract audio as M4A
-        guard let audioData = await extractAudioAsM4A(from: videoURL) else {
-            print("InstagramAutoTranscriber: Audio extraction failed, falling back to Apple Speech")
-            return await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
-        }
-
-        print("InstagramAutoTranscriber: Extracted audio (\(audioData.count / 1024)KB), sending to Whisper API...")
-        progressHandler(.recognizingSpeech(0.3))
-
-        // Step 2: Transcribe via Whisper API
-        do {
-            let transcript = try await WhisperTranscriptionService.shared.transcribe(
-                audioData: audioData,
-                format: .m4a
+        guard let audioURL = await extractAudioToTemporaryM4A(from: videoURL) else {
+            print("InstagramAutoTranscriber: Audio extraction failed, using Apple Speech fallback")
+            return await runAppleSpeechPipeline(
+                videoURL: videoURL,
+                progressHandler: progressHandler,
+                extraWarnings: ["Audio export failed; using lower-accuracy Apple Speech fallback."]
             )
-
-            guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                print("InstagramAutoTranscriber: Whisper returned empty transcript")
-                return []
-            }
-
-            print("InstagramAutoTranscriber: Whisper transcription complete (\(transcript.count) chars)")
-            progressHandler(.recognizingSpeech(1.0))
-
-            // Step 3: Split into sentence-level segments for the merge pipeline
-            return splitIntoSentenceSegments(transcript)
-        } catch {
-            print("InstagramAutoTranscriber: Whisper API failed: \(error.localizedDescription), falling back to Apple Speech")
-            return await runSpeechPipeline(videoURL: videoURL, progressHandler: progressHandler)
         }
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let audioData = try? Data(contentsOf: audioURL)
+        var apiFallbackWithoutTimestamps: SpeechPipelineResult?
+
+        if APIKeys.hasWhisper, let audioData, !audioData.isEmpty {
+            print("InstagramAutoTranscriber: Extracted audio (\(audioData.count / 1024)KB), sending to Whisper API...")
+            progressHandler(.recognizingSpeech(0.3))
+
+            do {
+                let verbose = try await WhisperTranscriptionService.shared.transcribeVerbose(
+                    audioData: audioData,
+                    format: .m4a
+                )
+                let transcriptSegments = transcriptSegments(from: verbose)
+                let speech = speechSegments(from: transcriptSegments)
+
+                if !speech.isEmpty {
+                    if transcriptSegments.contains(where: { $0.end > $0.start }) {
+                        progressHandler(.recognizingSpeech(1.0))
+                        return SpeechPipelineResult(
+                            speech: speech,
+                            transcriptSegments: transcriptSegments,
+                            quality: .accurate,
+                            warnings: [],
+                            source: .whisperAPI
+                        )
+                    }
+
+                    apiFallbackWithoutTimestamps = SpeechPipelineResult(
+                        speech: speech,
+                        transcriptSegments: transcriptSegments,
+                        quality: .degraded,
+                        warnings: ["Whisper API returned transcript text without usable timestamps."],
+                        source: .whisperAPI
+                    )
+                }
+            } catch {
+                print("InstagramAutoTranscriber: Whisper API failed: \(error.localizedDescription)")
+            }
+        }
+
+        progressHandler(.recognizingSpeech(0.55))
+
+        if let daemonResult = await runDaemonWhisperPipeline(audioURL: audioURL, progressHandler: progressHandler) {
+            return daemonResult
+        }
+
+        if let apiFallbackWithoutTimestamps {
+            progressHandler(.recognizingSpeech(1.0))
+            return apiFallbackWithoutTimestamps
+        }
+
+        return await runAppleSpeechPipeline(
+            videoURL: videoURL,
+            progressHandler: progressHandler,
+            extraWarnings: ["Used Apple Speech fallback; transcript quality may be degraded."]
+        )
     }
 
-    /// Extract audio track from video file as M4A data.
-    private func extractAudioAsM4A(from videoURL: URL) async -> Data? {
+    /// Extract audio track from video file to a temporary M4A file so the same export can be reused
+    /// by Whisper API and local daemon fallback paths.
+    private func extractAudioToTemporaryM4A(from videoURL: URL) async -> URL? {
         let asset = AVURLAsset(url: videoURL)
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("whisper_\(UUID().uuidString).m4a")
@@ -898,55 +929,165 @@ final class InstagramAutoTranscriber {
 
         guard exporter.status == .completed else {
             print("InstagramAutoTranscriber: Audio export failed: \(exporter.error?.localizedDescription ?? "unknown")")
+            try? FileManager.default.removeItem(at: outputURL)
             return nil
         }
 
-        defer { try? FileManager.default.removeItem(at: outputURL) }
-        return try? Data(contentsOf: outputURL)
+        return outputURL
     }
 
-    /// Split a Whisper transcript (fully punctuated text) into sentence-level SpeechSegments.
-    /// Timestamps are not available from the basic Whisper API, so they're set to 0.
-    private func splitIntoSentenceSegments(_ text: String) -> [SpeechSegment] {
-        var segments: [SpeechSegment] = []
-        var current = ""
+    private func runDaemonWhisperPipeline(
+        audioURL: URL,
+        progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async -> SpeechPipelineResult? {
+        guard let audioSamples = extractWhisperSamples(from: audioURL) else {
+            print("InstagramAutoTranscriber: Could not extract 16kHz samples for daemon Whisper")
+            return nil
+        }
 
-        for char in text {
-            current.append(char)
-            if char == "." || char == "!" || char == "?" {
-                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    segments.append(SpeechSegment(text: trimmed, timestamp: 0, duration: 0))
-                }
-                current = ""
+        do {
+            progressHandler(.recognizingSpeech(0.75))
+            let whisper = try await L2WhisperASR().transcribe(audioSamples: audioSamples, language: "en")
+            let transcriptSegments = whisper.segments.map {
+                TranscriptSegment(
+                    start: $0.start,
+                    end: $0.end,
+                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    confidence: $0.confidence
+                )
+            }.filter { !$0.text.isEmpty }
+            let speech = speechSegments(from: transcriptSegments)
+            guard !speech.isEmpty else { return nil }
+            progressHandler(.recognizingSpeech(1.0))
+            return SpeechPipelineResult(
+                speech: speech,
+                transcriptSegments: transcriptSegments,
+                quality: .accurate,
+                warnings: [],
+                source: .daemonWhisper
+            )
+        } catch {
+            print("InstagramAutoTranscriber: Daemon Whisper fallback failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func transcriptSegments(from verbose: WhisperVerboseTranscription) -> [TranscriptSegment] {
+        let cleanedSegments = verbose.segments.compactMap { segment -> TranscriptSegment? in
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return TranscriptSegment(
+                start: segment.start,
+                end: segment.end,
+                text: text,
+                confidence: segment.confidence
+            )
+        }
+
+        if !cleanedSegments.isEmpty {
+            return cleanedSegments
+        }
+
+        let fallbackText = verbose.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallbackText.isEmpty else { return [] }
+        return [TranscriptSegment(start: 0, end: 0, text: fallbackText, confidence: nil)]
+    }
+
+    private func speechSegments(from transcriptSegments: [TranscriptSegment]) -> [SpeechSegment] {
+        transcriptSegments.map {
+            SpeechSegment(
+                text: $0.text,
+                timestamp: $0.start,
+                duration: max(0, $0.end - $0.start)
+            )
+        }
+    }
+
+    private func extractWhisperSamples(from audioURL: URL) -> Data? {
+        guard let audioFile = try? AVAudioFile(forReading: audioURL) else {
+            return nil
+        }
+
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: false
+        ) else {
+            return nil
+        }
+
+        let sourceFormat = audioFile.processingFormat
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            return nil
+        }
+
+        let frameCapacity = AVAudioFrameCount(audioFile.length)
+        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: max(frameCapacity, 1)) else {
+            return nil
+        }
+
+        do {
+            try audioFile.read(into: inputBuffer)
+        } catch {
+            print("InstagramAutoTranscriber: Failed reading audio file for Whisper fallback: \(error.localizedDescription)")
+            return nil
+        }
+
+        let outputCapacity = AVAudioFrameCount(
+            Double(inputBuffer.frameLength) * targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
+        ) + 1024
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(outputCapacity, 1)) else {
+            return nil
+        }
+
+        var didConsumeInput = false
+        var conversionError: NSError?
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            if didConsumeInput {
+                outStatus.pointee = .endOfStream
+                return nil
             }
+            didConsumeInput = true
+            outStatus.pointee = .haveData
+            return inputBuffer
         }
 
-        // Flush remaining text
-        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            segments.append(SpeechSegment(text: trimmed, timestamp: 0, duration: 0))
+        let status = converter.convert(to: outputBuffer, error: &conversionError, withInputFrom: inputBlock)
+        guard conversionError == nil, status == .haveData || status == .inputRanDry else {
+            print("InstagramAutoTranscriber: Audio conversion for Whisper fallback failed: \(conversionError?.localizedDescription ?? "unknown")")
+            return nil
         }
 
-        return segments
+        guard let channelData = outputBuffer.floatChannelData?[0] else { return nil }
+        let samples = UnsafeBufferPointer(start: channelData, count: Int(outputBuffer.frameLength))
+        guard let baseAddress = samples.baseAddress else { return nil }
+        return Data(bytes: baseAddress, count: samples.count * MemoryLayout<Float>.size)
     }
 
     // MARK: - Speech Recognition Pipeline (Fallback)
 
     /// Run speech recognition on the video (with 45-second timeout to prevent hangs)
-    private func runSpeechPipeline(
+    private func runAppleSpeechPipeline(
         videoURL: URL,
-        progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
-    ) async -> [SpeechSegment] {
+        progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void,
+        extraWarnings: [String] = []
+    ) async -> SpeechPipelineResult {
         guard await hasUsableAudioTrack(videoURL) else {
             print("InstagramAutoTranscriber: Skipping speech pipeline (no audio track)")
-            return []
+            return .empty
         }
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
               recognizer.isAvailable else {
             print("InstagramAutoTranscriber: SFSpeechRecognizer unavailable")
-            return []
+            return SpeechPipelineResult(
+                speech: [],
+                transcriptSegments: [],
+                quality: .degraded,
+                warnings: deduplicatedWarnings(extraWarnings + ["Apple Speech recognizer was unavailable."]),
+                source: .appleSpeech
+            )
         }
 
         let authStatus = await withCheckedContinuation { (continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
@@ -957,7 +1098,13 @@ final class InstagramAutoTranscriber {
 
         guard authStatus == .authorized else {
             print("InstagramAutoTranscriber: Speech recognition not authorized")
-            return []
+            return SpeechPipelineResult(
+                speech: [],
+                transcriptSegments: [],
+                quality: .degraded,
+                warnings: deduplicatedWarnings(extraWarnings + ["Speech recognition permission was not granted."]),
+                source: .appleSpeech
+            )
         }
 
         // Thread-safe gate ensures the continuation is resumed exactly once,
@@ -977,7 +1124,7 @@ final class InstagramAutoTranscriber {
 
         print("InstagramAutoTranscriber: Starting speech recognition...")
 
-        return await withCheckedContinuation { continuation in
+        let speech = await withCheckedContinuation { continuation in
             let resumeGate = ResumeGate()
             let request = SFSpeechURLRecognitionRequest(url: videoURL)
             request.requiresOnDeviceRecognition = true
@@ -997,7 +1144,7 @@ final class InstagramAutoTranscriber {
                 } else if let error = error {
                     print("InstagramAutoTranscriber: Speech recognition error: \(error.localizedDescription)")
                     resumeGate.run {
-                        continuation.resume(returning: [])
+                        continuation.resume(returning: [SpeechSegment]())
                     }
                 }
                 // If result is partial or (nil result + nil error), wait for next callback
@@ -1016,11 +1163,28 @@ final class InstagramAutoTranscriber {
                 DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
                     resumeGate.run {
                         print("InstagramAutoTranscriber: Force-resuming speech continuation after timeout")
-                        continuation.resume(returning: [])
+                        continuation.resume(returning: [SpeechSegment]())
                     }
                 }
             }
         }
+
+        let transcriptSegments = speech.map {
+            TranscriptSegment(
+                start: $0.timestamp,
+                end: $0.timestamp + $0.duration,
+                text: $0.text,
+                confidence: nil
+            )
+        }
+
+        return SpeechPipelineResult(
+            speech: speech,
+            transcriptSegments: transcriptSegments,
+            quality: .degraded,
+            warnings: deduplicatedWarnings(extraWarnings),
+            source: .appleSpeech
+        )
     }
 
     private func hasUsableAudioTrack(_ videoURL: URL) async -> Bool {
@@ -1116,7 +1280,8 @@ final class InstagramAutoTranscriber {
     private func mergeResults(
         ocr: [OCRFrameResult],
         speech: [SpeechSegment],
-        duration: TimeInterval
+        duration: TimeInterval,
+        allowSpeechAlignment: Bool
     ) -> TranscriptionResult {
         let hasOCR = !ocr.isEmpty
         let hasSpeech = !speech.isEmpty
@@ -1141,7 +1306,11 @@ final class InstagramAutoTranscriber {
                 avgConfidence = 1.0
             } else {
                 contentType = .voiceoverPlusText
-                slides = mergeVoiceoverPlusText(ocr: ocr, speech: speech)
+                slides = mergeVoiceoverPlusText(
+                    ocr: ocr,
+                    speech: speech,
+                    allowSpeechAlignment: allowSpeechAlignment
+                )
                 avgConfidence = ocr.map(\.confidence).reduce(0, +) / Float(ocr.count)
             }
         } else if hasOCR {
@@ -1158,21 +1327,20 @@ final class InstagramAutoTranscriber {
             avgConfidence = 0
         }
 
-        slides = postProcessSlides(slides, contentType: contentType)
         if slides.isEmpty {
             contentType = .empty
             slides = [TranscriptSlide(text: "", slideNumber: 1, source: .manual)]
         }
 
-        return TranscriptionResult(
-            slides: slides,
+        return transcriptionResult(
+            rawSlides: slides,
             contentType: contentType,
             averageOCRConfidence: avgConfidence
         )
     }
 
     /// Convert OCR results into slides by detecting slide changes via Jaccard similarity
-    private func ocrToSlides(ocr: [OCRFrameResult]) -> [TranscriptSlide] {
+    func ocrToSlides(ocr: [OCRFrameResult]) -> [TranscriptSlide] {
         guard !ocr.isEmpty else { return [] }
 
         let sortedFrames = ocr.sorted { $0.timestamp < $1.timestamp }
@@ -1274,7 +1442,8 @@ final class InstagramAutoTranscriber {
     /// Consistent with the Gemini merge path — visual text defines the slide structure.
     private func mergeVoiceoverPlusText(
         ocr: [OCRFrameResult],
-        speech: [SpeechSegment]
+        speech: [SpeechSegment],
+        allowSpeechAlignment: Bool
     ) -> [TranscriptSlide] {
         let visualSlides = ocrToSlides(ocr: ocr)
         guard !visualSlides.isEmpty else {
@@ -1282,36 +1451,143 @@ final class InstagramAutoTranscriber {
             return speechToSlides(speech: speech)
         }
 
-        var merged = visualSlides
-        for (idx, slide) in merged.enumerated() {
-            let slideStart = slide.timestamp ?? 0
-            let slideEnd = slide.endTimestamp ?? slideStart + 3
+        return mergeVisualSlidesWithSpeech(
+            visualSlides: visualSlides,
+            speech: speech,
+            allowSpeechAlignment: allowSpeechAlignment
+        )
+    }
 
-            let overlapping = speech.filter { segment in
-                segment.timestamp >= slideStart - 0.5 &&
-                segment.timestamp <= slideEnd + 0.5
+    func mergeVisualSlidesWithSpeech(
+        visualSlides: [TranscriptSlide],
+        speech: [SpeechSegment],
+        allowSpeechAlignment: Bool
+    ) -> [TranscriptSlide] {
+        guard !allowSpeechAlignment else {
+            var merged = renumberedSlides(visualSlides)
+            for (idx, slide) in merged.enumerated() {
+                let slideStart = slide.timestamp ?? 0
+                let slideEnd = slide.endTimestamp ?? slideStart + 3
+
+                let overlapping = speech.filter { segment in
+                    let segmentEnd = segment.timestamp + max(segment.duration, 0)
+                    return segment.timestamp <= slideEnd + 0.5 && segmentEnd >= slideStart - 0.5
+                }
+
+                if !overlapping.isEmpty {
+                    let spokenText = overlapping.map(\.text).joined(separator: " ")
+                    let slideNorm = normalizedLineKey(slide.text)
+                    let speechNorm = normalizedLineKey(spokenText)
+                    if !slideNorm.isEmpty, !speechNorm.isEmpty,
+                       !slideNorm.contains(speechNorm), !speechNorm.contains(slideNorm) {
+                        merged[idx].text += "\n[Voiceover: \(spokenText)]"
+                        merged[idx].source = .merged
+                    }
+                }
             }
 
-            if !overlapping.isEmpty {
-                let spokenText = overlapping.map(\.text).joined(separator: " ")
-                let slideNorm = normalizedLineKey(slide.text)
-                let speechNorm = normalizedLineKey(spokenText)
-                if !slideNorm.contains(speechNorm) && !speechNorm.contains(slideNorm) {
-                    merged[idx].text += "\n[Voiceover: \(spokenText)]"
-                    merged[idx].source = .merged
-                }
+            return renumberedSlides(merged)
+        }
+
+        var appended = renumberedSlides(visualSlides)
+        let speechSlides = speechToSlides(speech: speech)
+        appended.append(contentsOf: speechSlides)
+        return renumberedSlides(appended)
+    }
+
+    private func transcriptionResult(
+        rawSlides: [TranscriptSlide],
+        contentType: TranscriptionContentType,
+        averageOCRConfidence: Float
+    ) -> TranscriptionResult {
+        let slides = renumberedSlides(rawSlides)
+        return TranscriptionResult(
+            rawSlides: slides,
+            cleanedSlides: slides,
+            speechSegments: [],
+            contentType: contentType,
+            averageOCRConfidence: averageOCRConfidence,
+            quality: .accurate,
+            warnings: []
+        )
+    }
+
+    private func cleanedSlides(
+        from rawSlides: [TranscriptSlide],
+        contentType: TranscriptionContentType,
+        isCarousel: Bool
+    ) async -> [TranscriptSlide] {
+        guard !rawSlides.isEmpty else { return [] }
+
+        let postProcessed = postProcessSlides(rawSlides, contentType: contentType)
+        let needsAIRefinement = contentType != .voiceoverOnly &&
+            postProcessed.contains { ($0.source ?? .manual) != .speechAudio }
+
+        guard needsAIRefinement else {
+            return renumberedSlides(postProcessed)
+        }
+
+        if let refined = await cleanupWithClaude(slides: postProcessed, isCarousel: isCarousel) {
+            return renumberedSlides(refined)
+        }
+
+        return renumberedSlides(postProcessed)
+    }
+
+    private func renumberedSlides(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
+        var updated = slides
+        for index in updated.indices {
+            updated[index].slideNumber = index + 1
+        }
+        return updated
+    }
+
+    nonisolated func shouldMergeGeminiBoundarySlides(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
+        let lhsFingerprint = normalizedTextFingerprint(lhs.text)
+        let rhsFingerprint = normalizedTextFingerprint(rhs.text)
+        guard !lhsFingerprint.isEmpty, !rhsFingerprint.isEmpty else { return false }
+
+        if lhsFingerprint == rhsFingerprint {
+            return geminiSlidesOverlapInTime(lhs, rhs)
+        }
+
+        let lhsTokens = Set(lhsFingerprint.split(separator: " ").map(String.init))
+        let rhsTokens = Set(rhsFingerprint.split(separator: " ").map(String.init))
+        let overlap = jaccardSimilarity(lhsTokens, rhsTokens)
+
+        return overlap >= 0.92 && geminiSlidesOverlapInTime(lhs, rhs)
+    }
+
+    private nonisolated func geminiSlidesOverlapInTime(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
+        guard let lhsStart = lhs.timestamp,
+              let lhsEnd = lhs.endTimestamp ?? lhs.timestamp,
+              let rhsStart = rhs.timestamp else {
+            return false
+        }
+
+        return rhsStart <= lhsEnd + 0.35 && rhsStart >= lhsStart - 0.35
+    }
+
+    private func deduplicatedWarnings(_ warnings: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+
+        for warning in warnings.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }) where !warning.isEmpty {
+            if seen.insert(warning).inserted {
+                ordered.append(warning)
             }
         }
 
-        for i in merged.indices { merged[i].slideNumber = i + 1 }
-        return merged
+        return ordered
     }
 
     // MARK: - Claude Cleanup
 
-    /// Clean up and deduplicate OCR slides using Claude.
-    /// Always called for Instagram reels to filter background noise and fix artifacts.
+    /// Non-destructive refinement pass for OCR/Gemini slides.
+    /// The response must preserve slide count and order.
     func cleanupWithClaude(slides: [TranscriptSlide], isCarousel: Bool = false) async -> [TranscriptSlide]? {
+        guard !slides.isEmpty else { return nil }
+
         let slideTexts = slides.map(\.text)
 
         let lineBreakRule: String
@@ -1335,24 +1611,28 @@ final class InstagramAutoTranscriber {
         let prompt = """
         You are cleaning up auto-transcribed text from Instagram \(contentLabel). The OCR \
         captured ALL visible text from each slide image. Your job is to extract ONLY the \
-        main text overlays that the creator intended viewers to read.
+        main text overlays that the creator intended viewers to read, while preserving the \
+        original slide structure exactly.
 
         RULES:
         1. REMOVE background text: brand names, watermarks, URLs, UI elements, text visible \
         in background images, or any text that is clearly not the main overlay.
-        2. REMOVE duplicate slides: if two consecutive slides say essentially the same thing \
-        (even with slight OCR variations), keep only the better/more complete version.
+        2. DO NOT merge, delete, reorder, or add slides. Output exactly one cleaned string for \
+        every input slide, in the same order.
         3. FIX OCR artifacts: truncated words, random symbols, garbled characters, wrong \
         numbers/letters from OCR misreads.
-        4. FIX incomplete sentences: if a sentence is clearly cut off mid-word due to OCR, \
-        complete the word naturally or remove the fragment.
+        4. FIX incomplete sentences only when the correction is obvious. If uncertain, keep the \
+        original raw text for that slide.
         5. KEEP the creator's original wording — do not rephrase or add new content.
         \(lineBreakRule)
         7. Each slide should contain the COMPLETE text from that slide — do not \
         truncate or summarize.
 
-        Return ONLY a JSON array of strings — one string per cleaned slide. You may return \
-        FEWER slides than the input if you removed duplicates. Empty slides should be omitted.
+        Return ONLY valid JSON in this format:
+        {"slides":[{"index":1,"text":"cleaned text for slide 1"}, {"index":2,"text":"slide 2"}]}
+
+        The number of slides in your output MUST equal the number of input slides.
+        If a slide is uncertain, return the raw text for that slide.
 
         Raw OCR slides:
         \(slideTexts.enumerated().map { "[\($0.offset + 1)] \($0.element)" }.joined(separator: "\n"))
@@ -1360,20 +1640,19 @@ final class InstagramAutoTranscriber {
 
         do {
             let response = try await ResearchService.shared.analyzeContent(prompt: prompt)
-            let cleaned = parseCleanedSlides(from: response).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            guard !cleaned.isEmpty else { return nil }
+            guard let cleaned = parseCleanedSlides(from: response, expectedCount: slides.count) else {
+                return nil
+            }
 
-            // Claude may return fewer slides (duplicates removed) — build new slide array
-            return cleaned.enumerated().map { index, text in
-                // Try to carry over timestamp from matching original slide
-                let originalSlide = index < slides.count ? slides[index] : nil
-                return TranscriptSlide(
-                    text: text,
-                    slideNumber: index + 1,
-                    timestamp: originalSlide?.timestamp,
-                    endTimestamp: originalSlide?.endTimestamp,
-                    source: .aiCleaned
-                )
+            return slides.enumerated().map { index, original in
+                var updated = original
+                let cleanedText = cleaned[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                updated.text = cleanedText.isEmpty ? original.text : cleanedText
+                if updated.source != .speechAudio {
+                    updated.source = .aiCleaned
+                }
+                updated.slideNumber = index + 1
+                return updated
             }
         } catch {
             print("InstagramAutoTranscriber: Claude cleanup failed: \(error)")
@@ -1381,45 +1660,74 @@ final class InstagramAutoTranscriber {
         }
     }
 
-    /// Parse a JSON array of strings from Claude's response
-    private func parseCleanedSlides(from response: String) -> [String] {
-        // Try to find JSON array in response
+    /// Parse a JSON array/object of cleaned slides from Claude's response.
+    func parseCleanedSlides(from response: String, expectedCount: Int) -> [String]? {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Try direct parse first
-        if let data = trimmed.data(using: .utf8),
-           let array = try? JSONDecoder().decode([String].self, from: data) {
-            return array
+        if let parsed = decodeCleanedSlidesPayload(trimmed, expectedCount: expectedCount) {
+            return parsed
         }
 
-        // Try extracting JSON from markdown code block
-        if let jsonStart = trimmed.range(of: "["),
-           let jsonEnd = trimmed.range(of: "]", options: .backwards) {
-            let jsonString = String(trimmed[jsonStart.lowerBound...jsonEnd.upperBound])
-            if let data = jsonString.data(using: .utf8),
-               let array = try? JSONDecoder().decode([String].self, from: data) {
-                return array
+        if let braceStart = trimmed.range(of: "{"),
+           let braceEnd = trimmed.range(of: "}", options: .backwards) {
+            let jsonString = String(trimmed[braceStart.lowerBound...braceEnd.upperBound])
+            if let parsed = decodeCleanedSlidesPayload(jsonString, expectedCount: expectedCount) {
+                return parsed
             }
         }
 
-        return []
+        if let arrayStart = trimmed.range(of: "["),
+           let arrayEnd = trimmed.range(of: "]", options: .backwards) {
+            let jsonString = String(trimmed[arrayStart.lowerBound...arrayEnd.upperBound])
+            if let parsed = decodeCleanedSlidesPayload(jsonString, expectedCount: expectedCount) {
+                return parsed
+            }
+        }
+
+        return nil
+    }
+
+    private func decodeCleanedSlidesPayload(_ jsonString: String, expectedCount: Int) -> [String]? {
+        struct SlidePayload: Codable {
+            let index: Int?
+            let text: String
+        }
+
+        struct Payload: Codable {
+            let slides: [SlidePayload]
+        }
+
+        guard let data = jsonString.data(using: .utf8) else { return nil }
+
+        if let payload = try? JSONDecoder().decode(Payload.self, from: data) {
+            let sorted = payload.slides.sorted { ($0.index ?? 0) < ($1.index ?? 0) }
+            let texts = sorted.map(\.text)
+            return texts.count == expectedCount ? texts : nil
+        }
+
+        if let array = try? JSONDecoder().decode([String].self, from: data), array.count == expectedCount {
+            return array
+        }
+
+        return nil
     }
 
     // MARK: - Text Helpers
 
-    private func postProcessSlides(
+    func postProcessSlides(
         _ slides: [TranscriptSlide],
         contentType: TranscriptionContentType
     ) -> [TranscriptSlide] {
         guard !slides.isEmpty else { return [] }
 
-        var sanitized: [TranscriptSlide] = slides.compactMap { slide in
+        var sanitized: [TranscriptSlide] = slides.map { slide in
             var updated = slide
-            updated.text = sanitizeSlideText(slide.text)
-            return updated.text.isEmpty ? nil : updated
+            let cleaned = sanitizeSlideText(slide.text)
+            updated.text = cleaned.isEmpty
+                ? slide.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                : cleaned
+            return updated
         }
-
-        sanitized = collapseNearDuplicateAdjacentSlides(sanitized)
         sanitized = correctLikelyYearOutliers(in: sanitized)
 
         for index in sanitized.indices {
@@ -1488,65 +1796,7 @@ final class InstagramAutoTranscriber {
         return false
     }
 
-    private func collapseNearDuplicateAdjacentSlides(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
-        guard !slides.isEmpty else { return [] }
-
-        var collapsed: [TranscriptSlide] = []
-        for slide in slides {
-            guard var last = collapsed.last else {
-                collapsed.append(slide)
-                continue
-            }
-
-            if areLikelyDuplicateSlides(last, slide) {
-                if slide.text.count > last.text.count {
-                    last.text = slide.text
-                }
-                if let newerEnd = slide.endTimestamp {
-                    last.endTimestamp = newerEnd
-                } else if let newerTimestamp = slide.timestamp {
-                    last.endTimestamp = newerTimestamp
-                }
-                collapsed[collapsed.count - 1] = last
-            } else {
-                collapsed.append(slide)
-            }
-        }
-
-        return collapsed
-    }
-
-    private func areLikelyDuplicateSlides(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
-        let lhsFingerprint = normalizedTextFingerprint(lhs.text)
-        let rhsFingerprint = normalizedTextFingerprint(rhs.text)
-        guard !lhsFingerprint.isEmpty, !rhsFingerprint.isEmpty else { return false }
-
-        if lhsFingerprint == rhsFingerprint { return true }
-
-        let lhsTokens = Set(lhsFingerprint.split(separator: " ").map(String.init))
-        let rhsTokens = Set(rhsFingerprint.split(separator: " ").map(String.init))
-
-        // Check if one slide's text is a subset of the other (handles partial OCR reads).
-        // Only apply when BOTH slides have enough tokens — prevents short slides
-        // (e.g., "2016" or a brief hook) from being absorbed into longer neighbors.
-        if lhsTokens.count >= 6 && rhsTokens.count >= 6 {
-            let smaller = min(lhsTokens.count, rhsTokens.count)
-            let intersection = lhsTokens.intersection(rhsTokens).count
-            if smaller > 0 && Double(intersection) / Double(smaller) >= 0.85 {
-                return true
-            }
-        }
-
-        let overlap = jaccardSimilarity(lhsTokens, rhsTokens)
-
-        let lhsTime = lhs.endTimestamp ?? lhs.timestamp ?? 0
-        let rhsTime = rhs.timestamp ?? rhs.endTimestamp ?? lhsTime
-        let timeGap = max(0, rhsTime - lhsTime)
-
-        return overlap >= 0.75 && timeGap <= 5.0
-    }
-
-    private func normalizedTextFingerprint(_ text: String) -> String {
+    private nonisolated func normalizedTextFingerprint(_ text: String) -> String {
         normalizedLineKey(text)
     }
 
@@ -1746,7 +1996,7 @@ final class InstagramAutoTranscriber {
         return unique
     }
 
-    private func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
+    private nonisolated func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
         let intersection = lhs.intersection(rhs).count
         let union = lhs.union(rhs).count
         return union > 0 ? Double(intersection) / Double(union) : 0
@@ -1765,7 +2015,7 @@ final class InstagramAutoTranscriber {
     ) async -> TranscriptionResult {
         let imageItems = items.filter { $0.mediaType == .image }
         guard !imageItems.isEmpty else {
-            return TranscriptionResult(slides: [], contentType: .empty, averageOCRConfidence: 0)
+            return transcriptionResult(rawSlides: [], contentType: .empty, averageOCRConfidence: 0)
         }
 
         print("InstagramAutoTranscriber: Starting carousel transcription (\(imageItems.count) images)")
@@ -1773,6 +2023,7 @@ final class InstagramAutoTranscriber {
         var slides: [TranscriptSlide] = []
         var totalConfidence: Float = 0
         var lowOCRItems: [(index: Int, jpegData: Data, slideIndex: Int)] = []
+        var warnings: [String] = []
 
         // Phase 1: Download images and run Vision OCR
         for (idx, item) in imageItems.enumerated() {
@@ -1782,12 +2033,14 @@ final class InstagramAutoTranscriber {
             // Download image
             guard let imageData = await downloadImage(url: item.mediaURL) else {
                 slides.append(TranscriptSlide(text: "", slideNumber: idx + 1, source: .visionOCR))
+                warnings.append("Some carousel slides could not be downloaded.")
                 continue
             }
 
             // Create CGImage
             guard let cgImage = createCGImage(from: imageData) else {
                 slides.append(TranscriptSlide(text: "", slideNumber: idx + 1, source: .visionOCR))
+                warnings.append("Some carousel slides could not be decoded.")
                 continue
             }
 
@@ -1852,11 +2105,15 @@ final class InstagramAutoTranscriber {
 
         print("InstagramAutoTranscriber: Carousel transcription complete — \(nonEmptySlides.count)/\(imageItems.count) slides with text")
 
-        return TranscriptionResult(
-            slides: slides,
+        var result = transcriptionResult(
+            rawSlides: slides,
             contentType: contentType,
             averageOCRConfidence: avgConfidence
         )
+        result.cleanedSlides = await cleanedSlides(from: result.rawSlides, contentType: contentType, isCarousel: true)
+        result.warnings = deduplicatedWarnings(warnings)
+        result.quality = result.warnings.isEmpty ? .accurate : .degraded
+        return result
     }
 
     // MARK: - Carousel Helpers

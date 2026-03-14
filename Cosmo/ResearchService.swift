@@ -450,7 +450,14 @@ final class ResearchService {
                 print("⚠️ [ResearchService.generateWithTools] WARNING: Both textContent and toolCalls are empty!")
             }
 
-            return ClaudeToolUseResponse(textContent: textContent, toolCalls: toolCalls, stopReason: finishReason)
+            return ClaudeToolUseResponse(
+                textContent: textContent,
+                toolCalls: toolCalls,
+                stopReason: finishReason,
+                responseId: json?["id"] as? String,
+                nativeFinishReason: firstChoice?["native_finish_reason"] as? String,
+                completionTokens: (json?["usage"] as? [String: Any])?["completion_tokens"] as? Int
+            )
         }.value
 
         // Back on main actor — call onToken handler (needs main thread for UI updates)

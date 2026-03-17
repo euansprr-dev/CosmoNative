@@ -52,67 +52,10 @@ struct CanvasClusterLayer: View {
             ForEach(clusters) { cluster in
                 clusterZone(cluster)
             }
-            inspectorPanelOverlay
+            // Cluster inspector panel moved to CanvasView unified top-right slot
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .coordinateSpace(name: "clusterLayer")
-    }
-
-    // MARK: - Inspector Panel Overlay
-
-    @ViewBuilder
-    private var inspectorPanelOverlay: some View {
-        if let selected = selectedUserCluster, clusterDragOffset == nil {
-            inspectorPanel(for: selected)
-        }
-    }
-
-    @ViewBuilder
-    private func inspectorPanel(for cluster: CanvasCluster) -> some View {
-        let baseRect = clusterScreenRect(cluster)
-        let drag = (selectedClusterId == cluster.id) ? (clusterDragOffset ?? .zero) : .zero
-        let rect = baseRect.offsetBy(dx: drag.width, dy: drag.height)
-        let panelSize = CGSize(width: 276, height: cluster.viewMode == .board ? 286 : 242)
-        let margin: CGFloat = 16
-
-        let desiredX = rect.maxX + 12
-        let desiredY = rect.minY
-        let maxX = max(margin, canvasSize.width - panelSize.width - margin)
-        let maxY = max(margin, canvasSize.height - panelSize.height - margin)
-        let clampedX = min(max(desiredX, margin), maxX)
-        let clampedY = min(max(desiredY, margin), maxY)
-
-        ClusterInspectorPanel(
-            cluster: cluster,
-            onChangeColor: { colorIndex in
-                onChangeColor?(cluster.id, colorIndex)
-            },
-            onChangeViewMode: { mode in
-                onChangeViewMode?(cluster.id, mode)
-            },
-            onChangeBoardGrouping: { grouping in
-                onChangeBoardGrouping?(cluster.id, grouping)
-            },
-            onDelete: {
-                onRemoveCluster?(cluster.id)
-                onSelectCluster?(nil)
-            },
-            onDismiss: {
-                onSelectCluster?(nil)
-            }
-        )
-        .frame(width: panelSize.width)
-        .position(
-            x: clampedX + panelSize.width / 2,
-            y: clampedY + panelSize.height / 2
-        )
-        .transition(.opacity)
-        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: selectedClusterId)
-    }
-
-    private var selectedUserCluster: CanvasCluster? {
-        guard let id = selectedClusterId else { return nil }
-        return clusters.first(where: { $0.id == id && $0.isUserCreated })
     }
 
     // MARK: - Cluster Zone
@@ -160,22 +103,13 @@ struct CanvasClusterLayer: View {
                     }
 
                     if hasAltContent {
-                        clusterViewDropSurface(
-                            enabled: supportsClusterViewDrop,
-                            cluster: cluster,
-                            clusterSize: CGSize(
-                                width: max(rect.width - 16, 120),
-                                height: max(rect.height - 62, 120)
-                            )
-                        ) {
-                            clusterAlternativeContent(
-                                cluster,
-                                clusterWidth: rect.width,
-                                clusterHeight: rect.height - 54,
-                                isDropTargeted: isClusterViewDropTarget,
-                                highlightedBoardColumnValue: clusterViewPreview?.boardColumnValue
-                            )
-                        }
+                        clusterAlternativeContent(
+                            cluster,
+                            clusterWidth: rect.width,
+                            clusterHeight: rect.height - 54,
+                            isDropTargeted: isClusterViewDropTarget,
+                            highlightedBoardColumnValue: clusterViewPreview?.boardColumnValue
+                        )
                         .padding(.horizontal, 8)
                         .padding(.bottom, 8)
                     } else {
@@ -187,6 +121,19 @@ struct CanvasClusterLayer: View {
         .frame(width: rect.width, height: rect.height)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onDrop(
+            of: [.text],
+            delegate: ClusterViewSurfaceDropDelegate(
+                enabled: supportsClusterViewDrop,
+                cluster: cluster,
+                blocks: blocks,
+                clusterSize: CGSize(width: rect.width, height: rect.height),
+                contentPaddingH: 8,
+                preview: $clusterViewDropPreview,
+                onBoardColumnDrop: onBoardColumnDrop,
+                onClusterViewDrop: onClusterViewDrop
+            )
+        )
         // Resize handles rendered OUTSIDE the clip shape so edge/corner
         // handles aren't clipped and remain fully interactive in grid/list/board modes
         .overlay {
@@ -346,37 +293,6 @@ struct CanvasClusterLayer: View {
         }
     }
 
-    @ViewBuilder
-    private func clusterViewDropSurface<Content: View>(
-        enabled: Bool,
-        cluster: CanvasCluster,
-        clusterSize: CGSize,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        if enabled {
-            ZStack(alignment: .topLeading) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.001))
-                content()
-            }
-            .frame(width: clusterSize.width, height: clusterSize.height, alignment: .topLeading)
-            .contentShape(Rectangle())
-                .onDrop(
-                    of: [.text],
-                    delegate: ClusterViewSurfaceDropDelegate(
-                        cluster: cluster,
-                        blocks: blocks,
-                        clusterSize: clusterSize,
-                        preview: $clusterViewDropPreview,
-                        onBoardColumnDrop: onBoardColumnDrop,
-                        onClusterViewDrop: onClusterViewDrop
-                    )
-                )
-        } else {
-            content()
-        }
-    }
-
     // MARK: - Resize Handles
 
     @ViewBuilder
@@ -522,16 +438,24 @@ private struct ClusterViewDropPreview: Equatable {
     let boardColumnValue: String?
 }
 
+@MainActor
+enum ClusterViewDragSession {
+    static var sourceClusterId: UUID?
+}
+
 private struct ClusterViewSurfaceDropDelegate: DropDelegate {
+    let enabled: Bool
     let cluster: CanvasCluster
     let blocks: [CanvasBlock]
     let clusterSize: CGSize
+    /// Horizontal padding between the cluster edge and the content area (for board column calculation)
+    let contentPaddingH: CGFloat
     @Binding var preview: ClusterViewDropPreview?
     let onBoardColumnDrop: ((BoardDropEvent) -> Void)?
     let onClusterViewDrop: ((ClusterTransferEvent) -> Void)?
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.text])
+        enabled && info.hasItemsConforming(to: [.text])
     }
 
     func dropEntered(info: DropInfo) {
@@ -548,6 +472,12 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        guard previewTarget(for: info) != nil else {
+            clearPreview(animated: true)
+            ClusterViewDragSession.sourceClusterId = nil
+            return false
+        }
+
         let target = previewTarget(for: info)
         clearPreview(animated: true)
 
@@ -581,6 +511,7 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
             }
         }
 
+        ClusterViewDragSession.sourceClusterId = nil
         return true
     }
 
@@ -606,14 +537,17 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
 
     private func previewTarget(for info: DropInfo) -> ClusterViewDropPreview? {
         guard validateDrop(info: info) else { return nil }
+        guard ClusterViewDragSession.sourceClusterId != cluster.id else { return nil }
 
         switch cluster.viewMode {
         case .board:
+            let adjustedX = info.location.x - contentPaddingH
+            let contentWidth = max(clusterSize.width - contentPaddingH * 2, 1)
             return ClusterViewDropPreview(
                 clusterId: cluster.id,
                 boardColumnValue: cluster.boardDropColumnValue(
-                    for: info.location.x,
-                    clusterWidth: clusterSize.width,
+                    for: adjustedX,
+                    clusterWidth: contentWidth,
                     blocks: blocks
                 )
             )

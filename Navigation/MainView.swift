@@ -31,6 +31,10 @@ struct MainView: View {
     @State private var showBlockContextMenu = false
     @State private var blockContextMenuPosition: CGPoint = .zero
 
+    // Database picker (from radial menu "Database" option)
+    @State private var showDatabasePicker = false
+    @State private var databasePickerPosition: CGPoint = .zero
+
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
     @State private var previousNonDimensionDestination: SidebarDestination = .commandCenter
@@ -161,6 +165,33 @@ struct MainView: View {
                     onDismiss: {
                         withAnimation(.spring(response: 0.2)) {
                             showRadialMenu = false
+                        }
+                    }
+                )
+                .zIndex(150)
+            }
+
+            // Database Picker (from radial menu "Database" option)
+            if showDatabasePicker {
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.2)) {
+                            showDatabasePicker = false
+                        }
+                    }
+                    .zIndex(149)
+
+                CanvasDatabasePicker(
+                    position: databasePickerPosition,
+                    onSelect: { atom in
+                        showDatabasePicker = false
+                        placeAtomOnCanvas(atom, at: databasePickerPosition)
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.2)) {
+                            showDatabasePicker = false
                         }
                     }
                 )
@@ -672,9 +703,11 @@ struct MainView: View {
         crossDragManager.onDropComplete = { (block: CanvasBlock, targetThinkspaceId: String, dropPosition: CGPoint) in
             // Move the block in the database
             let hasSwitched = crossDragManager.hasThinkspaceSwitched
-            Task {
+            Task { @MainActor in
                 let engine = SpatialEngine()
-                let finalPosition = hasSwitched ? dropPosition : .zero
+                // Persist a safe placeholder; the target canvas resolves window-space drops
+                // after its own zoom/pan state is active.
+                let finalPosition: CGPoint = .zero
                 await engine.moveBlockToThinkspace(
                     block.id,
                     newThinkspaceId: targetThinkspaceId,
@@ -682,16 +715,21 @@ struct MainView: View {
                 )
 
                 // Post notification so the target CanvasView can reload
+                var userInfo: [String: Any] = [
+                    "blockId": block.id,
+                    "entityUuid": block.entityUuid,
+                    "thinkspaceId": targetThinkspaceId,
+                    "positionX": finalPosition.x,
+                    "positionY": finalPosition.y
+                ]
+                if hasSwitched {
+                    userInfo["positionSpace"] = "screen"
+                    userInfo["screenPosition"] = dropPosition
+                }
                 NotificationCenter.default.post(
                     name: CosmoNotification.Canvas.crossThinkspaceDropBlock,
                     object: nil,
-                    userInfo: [
-                        "blockId": block.id,
-                        "entityUuid": block.entityUuid,
-                        "thinkspaceId": targetThinkspaceId,
-                        "positionX": finalPosition.x,
-                        "positionY": finalPosition.y
-                    ]
+                    userInfo: userInfo
                 )
 
                 // Navigate to the target thinkspace if not already there
@@ -739,9 +777,7 @@ struct MainView: View {
 
             // Non-canvas destinations rendered on top when active
             if case .inbox = currentDestination {
-                Text("Inbox")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
+                InboxView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
@@ -766,6 +802,7 @@ struct MainView: View {
     private var focusModeOverlay: some View {
         if let focusEntity = appState.focusedEntity {
             FocusModeView(entity: focusEntity)
+                .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
@@ -1215,6 +1252,16 @@ struct MainView: View {
                 return event
             }
 
+            // Don't intercept right-clicks in the pane column — let the pane's own monitor handle them
+            if paneManager.isActive {
+                let containerWidth = window.frame.width - sidebarWidth
+                let mainContentWidth = containerWidth * paneManager.mainSplitRatio
+                let paneColumnStart = sidebarWidth + mainContentWidth
+                if screenPoint.x > paneColumnStart {
+                    return event
+                }
+            }
+
             // Don't show menus when overlays are active or not on a thinkspace
             guard isThinkspaceActive, !showCommandK, appState.focusedEntity == nil else {
                 return event
@@ -1264,11 +1311,13 @@ struct MainView: View {
             createNewEntity(type: .research, at: radialMenuPosition)
         case .createConnection:
             createNewEntity(type: .connection, at: radialMenuPosition)
+        case .createStickyNote:
+            createNewEntity(type: .stickyNote, at: radialMenuPosition)
         case .researchAgent:
             createCosmoAIBlock(at: radialMenuPosition)
         case .fromDatabase:
-            // From Database opens Command-K, handled in Focus Mode views
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openCommandK, object: nil)
+            databasePickerPosition = radialMenuPosition
+            showDatabasePicker = true
         }
     }
 
@@ -1278,6 +1327,18 @@ struct MainView: View {
             name: CosmoNotification.Canvas.createEntityAtPosition,
             object: nil,
             userInfo: ["type": type, "position": position]
+        )
+    }
+
+    private func placeAtomOnCanvas(_ atom: Atom, at position: CGPoint) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.createEntityAtPosition,
+            object: nil,
+            userInfo: [
+                "type": EntityType(rawValue: atom.type.rawValue) ?? .note,
+                "position": position,
+                "existingAtomUUID": atom.uuid
+            ]
         )
     }
 

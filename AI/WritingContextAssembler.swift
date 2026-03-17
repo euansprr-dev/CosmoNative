@@ -460,7 +460,7 @@ enum WritingContextAssembler {
 
                         if let swipe = try? await AtomRepository.shared.fetch(uuid: uuid),
                            swipe.isSwipeFileAtom,
-                           targetFormat.matchesSwipeFormat(swipe.swipeAnalysis?.swipeContentFormat) {
+                           targetFormat.matchesSwipeAtom(swipe) {
                             swipes.append(swipe)
                             seenUUIDs.insert(uuid)
                         }
@@ -482,7 +482,7 @@ enum WritingContextAssembler {
         return swipes.filter { swipe in
             guard !seen.contains(swipe.uuid) else { return false }
             guard swipe.isSwipeFileAtom else { return false }
-            guard targetFormat.matchesSwipeFormat(swipe.swipeAnalysis?.swipeContentFormat) else { return false }
+            guard targetFormat.matchesSwipeAtom(swipe) else { return false }
             seen.insert(swipe.uuid)
             return true
         }

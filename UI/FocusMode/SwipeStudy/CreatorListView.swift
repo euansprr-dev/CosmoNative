@@ -33,6 +33,7 @@ struct CreatorListView: View {
     @State private var platformFilter: String?
     @State private var nicheFilter: String?
     @State private var hasAppeared = false
+    @State private var showingImport = false
 
     // Derived unique values for filter chips
     private var allPlatforms: [String] {
@@ -45,7 +46,7 @@ struct CreatorListView: View {
         return Array(Set(values)).sorted()
     }
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     var body: some View {
         ZStack {
@@ -134,11 +135,26 @@ struct CreatorListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(width: 240)
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .strokeBorder(DS.borderSubtle, lineWidth: 1)
             )
+
+            // Import new creator button
+            Button { showingImport = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 11))
+                    Text("Import")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(gold, in: Capsule())
+            }
+            .buttonStyle(.plain)
 
             // Compare button
             Button {
@@ -160,6 +176,9 @@ struct CreatorListView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+        .sheet(isPresented: $showingImport) {
+            CreatorImportSheet()
+        }
     }
 
     // MARK: - Filter Row
@@ -230,10 +249,10 @@ struct CreatorListView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(DS.surfaceHover)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .strokeBorder(DS.border, lineWidth: 1)
                 )
         )
@@ -268,10 +287,10 @@ struct CreatorListView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(nicheFilter != nil ? gold.opacity(0.15) : DS.surfaceHover)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .strokeBorder(
                             nicheFilter != nil ? gold.opacity(0.5) : DS.border,
                             lineWidth: 1
@@ -294,10 +313,10 @@ struct CreatorListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(isSelected ? gold.opacity(0.15) : DS.surfaceHover)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
                             .strokeBorder(
                                 isSelected ? gold.opacity(0.5) : DS.border,
                                 lineWidth: 1
@@ -443,7 +462,7 @@ private struct CreatorCard: View {
 
     @State private var isHovered = false
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
     private let cardWidth: CGFloat = 260
 
     private var meta: CreatorMetadata? {
@@ -510,11 +529,11 @@ private struct CreatorCard: View {
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .fill(DS.surfaceElevated)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .strokeBorder(
                     isHovered ? gold.opacity(0.3) : DS.border,
                     lineWidth: 1
@@ -612,10 +631,10 @@ private struct CreatorCard: View {
     }
 
     private func hookScoreColor(_ score: Double?) -> Color {
-        guard let score = score else { return Color(hex: "#64748B") }
-        if score >= 8.0 { return Color(hex: "#10B981") }
-        if score >= 5.0 { return Color(hex: "#3B82F6") }
-        return Color(hex: "#64748B")
+        guard let score = score else { return DS.textMuted }
+        if score >= 8.0 { return DS.green }
+        if score >= 5.0 { return DS.info }
+        return DS.textMuted
     }
 
     private func formatFollowers(_ count: Int) -> String {

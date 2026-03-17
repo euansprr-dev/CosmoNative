@@ -28,44 +28,13 @@ struct RadialMenuView: View {
         self.customActions = customActions
     }
 
-    // Default 6 block types for canvas creation
+    // Default 5 block types for canvas creation
     private static let defaultActions: [RadialAction] = [
-        RadialAction(
-            icon: "note.text",
-            label: "Note",
-            color: DS.entityNote,
-            type: .createNote
-        ),
-        RadialAction(
-            icon: "doc.text.fill",
-            label: "Content",
-            color: DS.entityContent,
-            type: .createContent
-        ),
-        RadialAction(
-            icon: "magnifyingglass",
-            label: "Research",
-            color: DS.entityResearch,
-            type: .createResearch
-        ),
-        RadialAction(
-            icon: "link.circle.fill",
-            label: "Connection",
-            color: DS.entityConnection,
-            type: .createConnection
-        ),
-        RadialAction(
-            icon: "brain.head.profile",
-            label: "Agent",
-            color: DS.accent,
-            type: .researchAgent
-        ),
-        RadialAction(
-            icon: "tray.full.fill",
-            label: "Database",
-            color: DS.textSecondary,
-            type: .fromDatabase
-        ),
+        RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
+        RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
+        RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
+        RadialAction(icon: "person.2.fill", label: "Connection", color: DS.entityConnection, type: .createConnection),
+        RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textSecondary, type: .fromDatabase),
     ]
 
     private var actions: [RadialAction] {
@@ -77,6 +46,13 @@ struct RadialMenuView: View {
 
     var body: some View {
         ZStack {
+            // Expanding circle backdrop
+            Circle()
+                .fill(DS.border.opacity(isAnimating ? 0.06 : 0))
+                .frame(width: isAnimating ? 230 : 60, height: isAnimating ? 230 : 60)
+                .animation(.easeOut(duration: 0.35), value: isAnimating)
+                .allowsHitTesting(false)
+
             // Center dismiss button - dark glass with hover state
             Button(action: { onDismiss() }) {
                 ZStack {
@@ -183,14 +159,21 @@ struct RadialMenuButton: View {
     let onHover: (Bool) -> Void
 
     @State private var itemAnimated = false
+    @State private var didTap = false
 
-    /// Staggered delay for stagger animation (50ms per item)
+    /// Staggered delay for stagger animation (30ms per item)
     private var animationDelay: Double {
-        Double(index) * 0.05
+        Double(index) * 0.03
     }
 
     var body: some View {
-        Button(action: onTap) {
+        Button(action: {
+            didTap = true
+            withAnimation(ProMotionSprings.press) { }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                onTap()
+            }
+        }) {
             VStack(spacing: 6) {
                 // Icon pill with dark glass styling
                 ZStack {
@@ -239,7 +222,7 @@ struct RadialMenuButton: View {
         .buttonStyle(.plain)
         .contentShape(Rectangle())
         .onHover(perform: onHover)
-        .scaleEffect(itemAnimated ? (isHovered ? 1.1 : 1.0) : 0.5)
+        .scaleEffect(didTap ? 0.85 : (itemAnimated ? (isHovered ? 1.1 : 1.0) : 0.5))
         .opacity(itemAnimated ? 1 : 0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
         .onAppear {
@@ -283,8 +266,9 @@ enum RadialActionType {
     case createContent
     case createResearch
     case createConnection
+    case createStickyNote   // Creates a sticky note block
     case researchAgent      // Opens Research Agent panel (Perplexity AI)
-    case fromDatabase       // Opens Cmd-K to select atom from database
+    case fromDatabase       // Opens database picker overlay
 }
 
 // MARK: - Preview

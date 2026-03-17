@@ -40,9 +40,9 @@ struct StructureMapView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {

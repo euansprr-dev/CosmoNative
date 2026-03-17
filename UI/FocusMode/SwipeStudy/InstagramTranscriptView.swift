@@ -75,7 +75,7 @@ struct InstagramTranscriptView: View {
         HStack(spacing: 12) {
             Image(systemName: "camera.fill")
                 .font(.system(size: 14))
-                .foregroundColor(Color(hex: "#E879F9"))
+                .foregroundColor(DS.entityConnection)
 
             if let url = atom.url {
                 Text(url)
@@ -123,7 +123,7 @@ struct InstagramTranscriptView: View {
                     // Extracting state — thumbnail placeholder + spinner
                     igThumbnailPlaceholder
                         .frame(width: 280, height: 498)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                         .overlay(
                             VStack(spacing: 8) {
                                 ProgressView()
@@ -134,7 +134,7 @@ struct InstagramTranscriptView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(DS.bg.opacity(0.7))
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                         )
                 } else if let player = igPlayer {
                     // Success — native AVPlayer with macOS controls
@@ -155,16 +155,16 @@ struct InstagramTranscriptView: View {
                         }
                     }
                     .frame(width: 280, height: 498)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: DS.radiusLarge)
                             .strokeBorder(DS.borderActive, lineWidth: 0.5)
                     )
                 } else if igVideoFailed {
                     // Failed — thumbnail + open in browser
                     igThumbnailPlaceholder
                         .frame(width: 280, height: 498)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                         .overlay(
                             VStack(spacing: 12) {
                                 Image(systemName: "video.slash")
@@ -186,19 +186,19 @@ struct InstagramTranscriptView: View {
                                         .foregroundColor(.white)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
-                                        .background(Color(hex: "#E4405F"), in: Capsule())
+                                        .background(DS.red, in: Capsule())
                                     }
                                     .buttonStyle(.plain)
                                 }
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                         )
                 } else {
                     igThumbnailPlaceholder
                         .frame(width: 280, height: 498)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusLarge))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -329,7 +329,7 @@ struct InstagramTranscriptView: View {
 
             Text("Reel")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color(hex: "#E4405F"))
+                .foregroundColor(DS.red)
         }
         .frame(width: 280)
         .padding(.horizontal, 8)
@@ -550,9 +550,9 @@ struct InstagramTranscriptView: View {
                     Spacer()
                 }
                 .padding(10)
-                .background(gold.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                .background(gold.opacity(0.06), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .stroke(gold.opacity(0.15), lineWidth: 1)
                 )
             }
@@ -561,7 +561,7 @@ struct InstagramTranscriptView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(Color(hex: "#F59E0B"))
+                        .foregroundColor(DS.orange)
                     Text(
                         autoTranscriptionWarnings.isEmpty
                             ? "Transcript quality was degraded. Review before analyzing."
@@ -573,10 +573,10 @@ struct InstagramTranscriptView: View {
                     Spacer()
                 }
                 .padding(10)
-                .background(Color(hex: "#F59E0B").opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(hex: "#F59E0B").opacity(0.2), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .stroke(DS.orange.opacity(0.2), lineWidth: 1)
                 )
             }
 
@@ -616,12 +616,12 @@ struct InstagramTranscriptView: View {
                 Text("\(wordCount) words")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(wordCount >= 10 ? DS.textSecondary : Color(hex: "#F97316").opacity(0.8))
+            .foregroundColor(wordCount >= 10 ? DS.textSecondary : DS.orange.opacity(0.8))
 
             if wordCount > 0 && wordCount < 10 {
                 Text("(need at least 10 words)")
                     .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#F97316").opacity(0.6))
+                    .foregroundColor(DS.orange.opacity(0.6))
             }
 
             Spacer()
@@ -629,7 +629,7 @@ struct InstagramTranscriptView: View {
             if let error = analysisError {
                 Text(error)
                     .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#EF4444").opacity(0.8))
+                    .foregroundColor(DS.red.opacity(0.8))
                     .lineLimit(1)
             }
 

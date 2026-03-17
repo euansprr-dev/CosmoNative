@@ -138,6 +138,9 @@ enum DS {
     /// Images — muted teal
     static let entityImage = Color(hex: "5A9BA0")
 
+    /// Sticky notes — warm yellow
+    static let entityStickyNote = Color(hex: "D4C36A")
+
     // ═══════════════════════════════════════════════════════════════
     // CLIENT COLORS — Deterministic palette for content profiles
     // ═══════════════════════════════════════════════════════════════

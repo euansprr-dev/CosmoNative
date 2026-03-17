@@ -21,39 +21,27 @@ struct FocusBlockContextMenuModifier: ViewModifier {
                 // Create new atom blocks
                 Section("Create New") {
                     Button {
-                        createAndAddBlock(type: .note, title: "New Note")
-                    } label: {
-                        Label("Add Note", systemImage: "note.text")
-                    }
-
-                    Button {
-                        createAndAddBlock(type: .idea, title: "New Idea")
-                    } label: {
-                        Label("Add Idea", systemImage: "lightbulb.fill")
-                    }
-
-                    Button {
-                        createAndAddBlock(type: .task, title: "New Task")
-                    } label: {
-                        Label("Add Task", systemImage: "checkmark.circle.fill")
-                    }
-
-                    Button {
                         createAndAddBlock(type: .content, title: "New Content")
                     } label: {
                         Label("Add Content", systemImage: "doc.text.fill")
                     }
 
                     Button {
-                        createAndAddBlock(type: .research, title: "New Research")
+                        createAndAddBlock(type: .note, title: "New Note")
                     } label: {
-                        Label("Add Research", systemImage: "magnifyingglass")
+                        Label("Add Note", systemImage: "note.text")
+                    }
+
+                    Button {
+                        createAndAddBlock(type: .stickyNote, title: "")
+                    } label: {
+                        Label("Add Sticky Note", systemImage: "square.and.pencil")
                     }
 
                     Button {
                         createAndAddBlock(type: .connection, title: "New Connection")
                     } label: {
-                        Label("Add Connection", systemImage: "link.circle.fill")
+                        Label("Add Connection", systemImage: "person.2.fill")
                     }
                 }
 

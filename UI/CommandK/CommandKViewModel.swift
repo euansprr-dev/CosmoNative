@@ -36,6 +36,52 @@ enum SwipeViewMode: String, CaseIterable {
     }
 }
 
+// MARK: - CommandKSearchMatcher
+
+enum CommandKSearchMatcher {
+    static func normalize(_ text: String) -> String {
+        text
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    static func normalizeQuery(_ query: String) -> String {
+        normalize(query.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    static func searchableText(from values: [String?]) -> String {
+        values
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return normalize(value)
+            }
+            .joined(separator: " ")
+    }
+
+    static func matches(_ query: String, in value: String?) -> Bool {
+        matches(normalizedQuery: normalizeQuery(query), in: value)
+    }
+
+    static func matches(normalizedQuery: String, in value: String?) -> Bool {
+        guard !normalizedQuery.isEmpty, let value, !value.isEmpty else { return false }
+        return normalize(value).contains(normalizedQuery)
+    }
+
+    static func matches(normalizedQuery: String, inNormalizedText normalizedText: String) -> Bool {
+        guard !normalizedQuery.isEmpty, !normalizedText.isEmpty else { return false }
+        return normalizedText.contains(normalizedQuery)
+    }
+
+    static func matches(_ query: String, inAny values: [String?]) -> Bool {
+        let normalizedQuery = normalizeQuery(query)
+        guard !normalizedQuery.isEmpty else { return false }
+        return values.contains { matches(normalizedQuery: normalizedQuery, in: $0) }
+    }
+}
+
 // MARK: - Unified Search Types
 
 /// Source category for unified cross-library search results
@@ -73,10 +119,18 @@ enum UnifiedSearchSource: String, CaseIterable {
     }
 }
 
+enum UnifiedSearchResultKind: String {
+    case atom
+    case project
+    case thinkspace
+    case readwise
+}
+
 /// A single result in the unified cross-library search
 struct UnifiedSearchResult: Identifiable {
     let id: String
     let source: UnifiedSearchSource
+    let resultKind: UnifiedSearchResultKind
     let title: String
     let subtitle: String?
     let snippet: String?
@@ -85,7 +139,295 @@ struct UnifiedSearchResult: Identifiable {
     let relevance: Double
     let atomUUID: String?
     let atomType: AtomType?
+    let thinkspaceId: String?
+    let projectUUID: String?
+    let projectName: String?
+    let thinkspaceNames: [String]
     let readwiseBookId: Int?
+
+    var selectionID: String {
+        atomUUID ?? thinkspaceId ?? id
+    }
+
+    var libraryLookupKey: String? {
+        switch resultKind {
+        case .atom:
+            return atomUUID
+        case .project:
+            return atomUUID
+        case .thinkspace:
+            return thinkspaceId
+        case .readwise:
+            return nil
+        }
+    }
+}
+
+enum UnifiedCardItem: Identifiable {
+    case library(LibraryItem)
+    case swipe(SwipeGalleryItem)
+    case readwise(UnifiedSearchResult)
+
+    var id: String {
+        switch self {
+        case .library(let item):
+            return item.id
+        case .swipe(let item):
+            return item.id
+        case .readwise(let result):
+            return result.id
+        }
+    }
+
+    var selectionID: String {
+        switch self {
+        case .library(let item):
+            return item.uuid
+        case .swipe(let item):
+            return item.atomUUID
+        case .readwise(let result):
+            return result.id
+        }
+    }
+}
+
+struct UnifiedSearchOutput {
+    let groupedResults: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])]
+    let flatResults: [UnifiedSearchResult]
+}
+
+enum CommandKUnifiedSearchComposer {
+    private static let hybridLimit = 15
+    private static let swipeLimit = 8
+    private static let ideaLimit = 8
+    private static let readwiseLimit = 8
+
+    static func buildOutput(
+        query: String,
+        hybridResults: [RankedResult],
+        swipeGalleryItems: [SwipeGalleryItem],
+        ideaGalleryItems: [IdeaGalleryItem],
+        readwiseBooks: [ReadwiseLibraryBook]
+    ) -> UnifiedSearchOutput {
+        let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
+        guard !normalizedQuery.isEmpty else {
+            return UnifiedSearchOutput(groupedResults: [], flatResults: [])
+        }
+
+        let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
+        var includedAtomUUIDs = Set<String>()
+        var allResults: [UnifiedSearchResult] = []
+
+        for result in hybridResults.prefix(hybridLimit) {
+            includedAtomUUIDs.insert(result.atomUUID)
+
+            if result.atomType == .research, let swipeItem = swipeItemsByUUID[result.atomUUID] {
+                allResults.append(swipeResult(for: swipeItem, relevance: max(result.relevance, swipeRelevance(for: swipeItem))))
+            } else {
+                allResults.append(atomResult(for: result))
+            }
+        }
+
+        var addedSwipes = 0
+        for item in swipeGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
+            guard CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inNormalizedText: item.searchableText) else {
+                continue
+            }
+            allResults.append(swipeResult(for: item, relevance: swipeRelevance(for: item)))
+            includedAtomUUIDs.insert(item.atomUUID)
+            addedSwipes += 1
+            if addedSwipes >= swipeLimit { break }
+        }
+
+        var addedIdeas = 0
+        for item in ideaGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
+            guard IdeasTab.matchesSearch(item, query: query) else { continue }
+            allResults.append(ideaResult(for: item))
+            includedAtomUUIDs.insert(item.atomUUID)
+            addedIdeas += 1
+            if addedIdeas >= ideaLimit { break }
+        }
+
+        var addedBooks = 0
+        for book in readwiseBooks where ReadwiseBookStore.matchesSearch(book, query: query) {
+            let matchingHighlight = book.highlights.first {
+                ReadwiseLibraryTab.matchesSearch($0, query: query)
+            }
+            let snippet = matchingHighlight?.text.prefix(120).description
+                ?? "\(book.numHighlights) highlight\(book.numHighlights == 1 ? "" : "s")"
+
+            allResults.append(UnifiedSearchResult(
+                id: "readwise-\(book.id)",
+                source: .readwise,
+                resultKind: .readwise,
+                title: "\(book.title)\(book.author.map { " — \($0)" } ?? "")",
+                subtitle: book.category.displayName,
+                snippet: snippet,
+                icon: book.category.icon,
+                accentColor: DS.entityReadwise,
+                relevance: matchingHighlight != nil ? 0.5 : 0.35,
+                atomUUID: nil,
+                atomType: nil,
+                thinkspaceId: nil,
+                projectUUID: nil,
+                projectName: nil,
+                thinkspaceNames: [],
+                readwiseBookId: book.id
+            ))
+            addedBooks += 1
+            if addedBooks >= readwiseLimit { break }
+        }
+
+        let groupedResults = groupedResults(from: allResults)
+        return UnifiedSearchOutput(
+            groupedResults: groupedResults,
+            flatResults: groupedResults.flatMap(\.results)
+        )
+    }
+
+    static func buildCardItems(
+        flatResults: [UnifiedSearchResult],
+        libraryItemsByID: [String: LibraryItem],
+        swipeItemsByUUID: [String: SwipeGalleryItem]
+    ) -> [UnifiedCardItem] {
+        flatResults.compactMap { result in
+            switch result.source {
+            case .swipes:
+                guard let uuid = result.atomUUID, let item = swipeItemsByUUID[uuid] else { return nil }
+                return .swipe(item)
+            case .readwise:
+                return .readwise(result)
+            case .atoms, .ideas:
+                guard let key = result.libraryLookupKey,
+                      let item = libraryItemsByID[key] else { return nil }
+                return .library(item)
+            }
+        }
+    }
+
+    static func regroup(_ results: [UnifiedSearchResult]) -> UnifiedSearchOutput {
+        let groupedResults = groupedResults(from: results)
+        return UnifiedSearchOutput(
+            groupedResults: groupedResults,
+            flatResults: groupedResults.flatMap(\.results)
+        )
+    }
+
+    private static func groupedResults(from allResults: [UnifiedSearchResult]) -> [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] {
+        var grouped: [UnifiedSearchSource: [UnifiedSearchResult]] = [:]
+        for result in allResults {
+            grouped[result.source, default: []].append(result)
+        }
+
+        for key in grouped.keys {
+            grouped[key]?.sort { $0.relevance > $1.relevance }
+        }
+
+        return grouped.sorted { lhs, rhs in
+            let lhsBest = lhs.value.first?.relevance ?? 0
+            let rhsBest = rhs.value.first?.relevance ?? 0
+            return lhsBest > rhsBest
+        }.map { (source: $0.key, results: $0.value) }
+    }
+
+    private static func atomResult(for result: RankedResult) -> UnifiedSearchResult {
+        UnifiedSearchResult(
+            id: "atom-\(result.atomUUID)",
+            source: .atoms,
+            resultKind: .atom,
+            title: result.title,
+            subtitle: result.atomType.displayName,
+            snippet: result.snippet,
+            icon: result.atomType.iconName,
+            accentColor: accentColor(for: result.atomType),
+            relevance: result.relevance,
+            atomUUID: result.atomUUID,
+            atomType: result.atomType,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+    }
+
+    private static func swipeResult(for item: SwipeGalleryItem, relevance: Double) -> UnifiedSearchResult {
+        let scoreText = item.hookScore.map { "Score: \(Int($0))" }
+        return UnifiedSearchResult(
+            id: "swipe-\(item.atomUUID)",
+            source: .swipes,
+            resultKind: .atom,
+            title: item.title,
+            subtitle: [item.platformName, scoreText].compactMap { $0 }.joined(separator: " · "),
+            snippet: item.hookText,
+            icon: "bolt.fill",
+            accentColor: DS.entitySwipe,
+            relevance: relevance,
+            atomUUID: item.atomUUID,
+            atomType: .research,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+    }
+
+    private static func ideaResult(for item: IdeaGalleryItem) -> UnifiedSearchResult {
+        UnifiedSearchResult(
+            id: "idea-\(item.atomUUID)",
+            source: .ideas,
+            resultKind: .atom,
+            title: item.title,
+            subtitle: [item.status.displayName, item.contentFormat?.displayName].compactMap { $0 }.joined(separator: " · "),
+            snippet: item.body?.prefix(120).description,
+            icon: "lightbulb.fill",
+            accentColor: DS.entityIdea,
+            relevance: item.insightScore ?? 0.4,
+            atomUUID: item.atomUUID,
+            atomType: .idea,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+    }
+
+    static func thinkspaceResult(for item: LibraryItem, relevance: Double) -> UnifiedSearchResult {
+        UnifiedSearchResult(
+            id: "thinkspace-\(item.uuid)",
+            source: .atoms,
+            resultKind: .thinkspace,
+            title: item.title,
+            subtitle: item.projectName ?? item.typeName,
+            snippet: item.preview,
+            icon: item.icon,
+            accentColor: item.color,
+            relevance: relevance,
+            atomUUID: nil,
+            atomType: .thinkspace,
+            thinkspaceId: item.uuid,
+            projectUUID: item.projectUUID,
+            projectName: item.projectName,
+            thinkspaceNames: item.thinkspaceNames,
+            readwiseBookId: nil
+        )
+    }
+
+    private static func swipeRelevance(for item: SwipeGalleryItem) -> Double {
+        (item.hookScore ?? 50) / 100.0
+    }
+    private static func accentColor(for type: AtomType) -> Color {
+        switch type {
+        case .idea: return DS.entityIdea
+        case .task: return DS.entityTask
+        case .research: return DS.entityResearch
+        case .content: return DS.entityContent
+        case .connection: return DS.entityConnection
+        default: return DS.textSecondary
+        }
+    }
 }
 
 // MARK: - CommandKViewModel
@@ -216,7 +558,7 @@ public final class CommandKViewModel: ObservableObject {
     @Published var selectedReadwiseBookId: Int?
 
     /// Card items for masonry grid display of unified search results
-    @Published var unifiedCardItems: [LibraryItem] = []
+    @Published var unifiedCardItems: [UnifiedCardItem] = []
 
     // MARK: - Idea Gallery State
 
@@ -251,6 +593,9 @@ public final class CommandKViewModel: ObservableObject {
 
     /// Active #type prefix filter parsed from query
     @Published var activeTypePrefix: AtomType? = nil
+
+    /// Monotonic request token so slower unified searches cannot overwrite newer ones.
+    private var unifiedSearchRequestID: Int = 0
 
     // MARK: - Dependencies
 
@@ -738,7 +1083,14 @@ public final class CommandKViewModel: ObservableObject {
         if isUnifiedSearchActive, selectedResultIndex >= 0,
            selectedResultIndex < unifiedFlatResults.count {
             let result = unifiedFlatResults[selectedResultIndex]
-            if let atomUUID = result.atomUUID {
+            if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                    object: nil,
+                    userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: thinkspaceId).userInfo
+                )
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            } else if let atomUUID = result.atomUUID {
                 Task {
                     try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
                 }
@@ -782,7 +1134,7 @@ public final class CommandKViewModel: ObservableObject {
                 selectedResultIndex = unifiedFlatResults.count - 1
             }
             let result = unifiedFlatResults[selectedResultIndex]
-            selectedNodeId = result.atomUUID ?? result.id
+            selectedNodeId = result.selectionID
             return
         }
 
@@ -806,7 +1158,7 @@ public final class CommandKViewModel: ObservableObject {
                 selectedResultIndex = 0
             }
             let result = unifiedFlatResults[selectedResultIndex]
-            selectedNodeId = result.atomUUID ?? result.id
+            selectedNodeId = result.selectionID
             return
         }
 
@@ -951,8 +1303,8 @@ public final class CommandKViewModel: ObservableObject {
             var items = sourceItems
 
             if !query.isEmpty {
-                let q = query.lowercased()
-                items = items.filter { $0.searchableText.contains(q) }
+                let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
+                items = items.filter { Self.matchesSwipeGallerySearch($0, normalizedQuery: normalizedQuery) }
             }
 
             if let platformFilter {
@@ -1001,6 +1353,14 @@ public final class CommandKViewModel: ObservableObject {
                 self?.cachedClusteredSections = sections
             }
         }
+    }
+
+    nonisolated static func matchesSwipeGallerySearch(_ item: SwipeGalleryItem, query: String) -> Bool {
+        matchesSwipeGallerySearch(item, normalizedQuery: CommandKSearchMatcher.normalizeQuery(query))
+    }
+
+    nonisolated static func matchesSwipeGallerySearch(_ item: SwipeGalleryItem, normalizedQuery: String) -> Bool {
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inNormalizedText: item.searchableText)
     }
 
     /// Listen for new swipe creation to auto-refresh gallery
@@ -1098,204 +1458,236 @@ public final class CommandKViewModel: ObservableObject {
 
     // MARK: - Unified Search
 
-    /// Ensure swipe and idea galleries are loaded for unified search
-    private func ensureGalleriesLoaded() {
-        if !swipeGalleryLoaded {
-            Task { await loadSwipeGallery() }
-        }
-        if !ideaGalleryLoaded {
-            Task { await loadIdeaGallery() }
-        }
+    static func preloadUnifiedSearchSupportData(
+        swipeGalleryLoaded: Bool,
+        ideaGalleryLoaded: Bool,
+        loadSwipeGallery: @escaping () async -> Void,
+        loadIdeaGallery: @escaping () async -> Void
+    ) async {
+        async let swipeTask: Void = {
+            guard !swipeGalleryLoaded else { return }
+            await loadSwipeGallery()
+        }()
+        async let ideaTask: Void = {
+            guard !ideaGalleryLoaded else { return }
+            await loadIdeaGallery()
+        }()
+        _ = await (swipeTask, ideaTask)
+    }
+
+    /// Ensure swipe and idea galleries are loaded before unified search composes results.
+    private func preloadUnifiedSearchSupportData() async {
+        await Self.preloadUnifiedSearchSupportData(
+            swipeGalleryLoaded: swipeGalleryLoaded,
+            ideaGalleryLoaded: ideaGalleryLoaded,
+            loadSwipeGallery: { await self.loadSwipeGallery() },
+            loadIdeaGallery: { await self.loadIdeaGallery() }
+        )
+    }
+
+    private func nextUnifiedSearchRequestID() -> Int {
+        unifiedSearchRequestID += 1
+        return unifiedSearchRequestID
+    }
+
+    private func isCurrentUnifiedSearchRequest(_ requestID: Int) -> Bool {
+        requestID == unifiedSearchRequestID
     }
 
     /// Perform unified search across all libraries
     func performUnifiedSearch(query: String) async {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let requestID = nextUnifiedSearchRequestID()
 
         guard !trimmed.isEmpty, !isTaskCreationMode else {
             isUnifiedSearchActive = false
             unifiedGroupedResults = []
             unifiedFlatResults = []
             unifiedCardItems = []
+            selectedResultIndex = -1
+            selectedNodeId = nil
             return
         }
 
         // If #prefix is active, don't show unified — let the existing tab filter handle it
         if activeTypePrefix != nil {
             isUnifiedSearchActive = false
+            unifiedGroupedResults = []
+            unifiedFlatResults = []
+            unifiedCardItems = []
+            selectedResultIndex = -1
+            selectedNodeId = nil
             return
         }
 
         isUnifiedSearchActive = true
-        ensureGalleriesLoaded()
-
-        let lowerQuery = trimmed.lowercased()
-
-        // Collect atomUUIDs already in hybrid results to avoid duplicates
-        let hybridUUIDs = Set(unfilteredResults.map(\.atomUUID))
-
-        var allResults: [UnifiedSearchResult] = []
-
-        // 1. Atom results from HybridSearchEngine (already computed in performSearch)
-        for result in unfilteredResults.prefix(15) {
-            allResults.append(UnifiedSearchResult(
-                id: "atom-\(result.atomUUID)",
-                source: .atoms,
-                title: result.title,
-                subtitle: result.atomType.displayName,
-                snippet: result.snippet,
-                icon: iconForAtomType(result.atomType),
-                accentColor: colorForAtomType(result.atomType),
-                relevance: result.relevance,
-                atomUUID: result.atomUUID,
-                atomType: result.atomType,
-                readwiseBookId: nil
-            ))
+        await preloadUnifiedSearchSupportData()
+        if ThinkspaceManager.shared.thinkspaces.isEmpty {
+            await ThinkspaceManager.shared.loadThinkspaces()
         }
+        guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
-        // 2. Swipe gallery matches (deduplicated)
-        let matchingSwipes = swipeGalleryItems.filter { item in
-            guard !hybridUUIDs.contains(item.atomUUID) else { return false }
-            return item.title.lowercased().contains(lowerQuery) ||
-                (item.hookText?.lowercased().contains(lowerQuery) ?? false) ||
-                (item.author?.lowercased().contains(lowerQuery) ?? false) ||
-                (item.niche?.lowercased().contains(lowerQuery) ?? false) ||
-                (item.creatorName?.lowercased().contains(lowerQuery) ?? false)
-        }
-        for item in matchingSwipes.prefix(8) {
-            let scoreText = item.hookScore.map { "Score: \(Int($0))" }
-            allResults.append(UnifiedSearchResult(
-                id: "swipe-\(item.atomUUID)",
-                source: .swipes,
-                title: item.title,
-                subtitle: [item.platformName, scoreText].compactMap { $0 }.joined(separator: " · "),
-                snippet: item.hookText,
-                icon: "bolt.fill",
-                accentColor: DS.entitySwipe,
-                relevance: (item.hookScore ?? 50) / 100.0,
-                atomUUID: item.atomUUID,
-                atomType: .research,
-                readwiseBookId: nil
-            ))
-        }
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: trimmed,
+            hybridResults: unfilteredResults,
+            swipeGalleryItems: swipeGalleryItems,
+            ideaGalleryItems: ideaGalleryItems,
+            readwiseBooks: ReadwiseBookStore.shared.books
+        )
+        guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
-        // 3. Idea gallery matches (deduplicated)
-        let matchingIdeas = ideaGalleryItems.filter { item in
-            guard !hybridUUIDs.contains(item.atomUUID) else { return false }
-            return item.title.lowercased().contains(lowerQuery) ||
-                (item.body?.lowercased().contains(lowerQuery) ?? false)
+        let projectAtoms = (try? await AtomRepository.shared.fetchAll(type: .project)) ?? []
+        let projectsByUUID = Dictionary(uniqueKeysWithValues: projectAtoms.map { ($0.uuid, $0) })
+        let thinkspaceLibraryItems = ThinkspaceManager.shared.sidebarThinkspaces.map { thinkspace in
+            LibraryItem(
+                thinkspace: thinkspace,
+                project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
+                nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
+            )
         }
-        for item in matchingIdeas.prefix(8) {
-            allResults.append(UnifiedSearchResult(
-                id: "idea-\(item.atomUUID)",
-                source: .ideas,
-                title: item.title,
-                subtitle: [item.status.displayName, item.contentFormat?.displayName].compactMap { $0 }.joined(separator: " · "),
-                snippet: item.body?.prefix(120).description,
-                icon: "lightbulb.fill",
-                accentColor: DS.entityIdea,
-                relevance: item.insightScore ?? 0.4,
-                atomUUID: item.atomUUID,
-                atomType: .idea,
-                readwiseBookId: nil
-            ))
-        }
-
-        // 4. Readwise book matches
-        let matchingBooks = ReadwiseBookStore.shared.search(query: trimmed)
-        for book in matchingBooks.prefix(8) {
-            let matchingHighlight = book.highlights.first { h in
-                h.text.localizedCaseInsensitiveContains(trimmed)
+        let matchingThinkspaceResults = thinkspaceLibraryItems
+            .filter { matchesUnifiedLibrarySearch($0, query: trimmed) }
+            .prefix(8)
+            .map { item in
+                CommandKUnifiedSearchComposer.thinkspaceResult(
+                    for: item,
+                    relevance: thinkspaceRelevance(for: item, query: trimmed)
+                )
             }
-            let snippet = matchingHighlight?.text.prefix(120).description
-                ?? "\(book.numHighlights) highlight\(book.numHighlights == 1 ? "" : "s")"
 
-            allResults.append(UnifiedSearchResult(
-                id: "readwise-\(book.id)",
-                source: .readwise,
-                title: "\(book.title)\(book.author.map { " — \($0)" } ?? "")",
-                subtitle: book.category.displayName,
-                snippet: snippet,
-                icon: book.category.icon,
-                accentColor: DS.entityReadwise,
-                relevance: matchingHighlight != nil ? 0.5 : 0.35,
-                atomUUID: nil,
-                atomType: nil,
-                readwiseBookId: book.id
-            ))
+        let combinedResults = output.flatResults + matchingThinkspaceResults
+        let atomUUIDs = combinedResults.compactMap { result -> String? in
+            guard result.resultKind != .thinkspace,
+                  result.source != .swipes else { return nil }
+            return result.atomUUID
+        }
+        let thinkspacesByID = Dictionary(uniqueKeysWithValues: ThinkspaceManager.shared.sidebarThinkspaces.map { ($0.id, $0) })
+        var libraryItemsByID = await buildUnifiedAtomLibraryItems(
+            atomUUIDs: atomUUIDs,
+            projectsByUUID: projectsByUUID,
+            thinkspacesByID: thinkspacesByID
+        )
+        for item in thinkspaceLibraryItems {
+            libraryItemsByID[item.uuid] = item
         }
 
-        // Group by source, ordered by best relevance in each group
-        var grouped: [UnifiedSearchSource: [UnifiedSearchResult]] = [:]
-        for result in allResults {
-            grouped[result.source, default: []].append(result)
+        let enrichedResults = combinedResults.map { result in
+            enrichUnifiedSearchResult(result, with: result.libraryLookupKey.flatMap { libraryItemsByID[$0] })
         }
+        let regrouped = CommandKUnifiedSearchComposer.regroup(enrichedResults)
+        guard isCurrentUnifiedSearchRequest(requestID) else { return }
 
-        // Sort each group by relevance
-        for key in grouped.keys {
-            grouped[key]?.sort { $0.relevance > $1.relevance }
-        }
-
-        // Order sections by best score
-        let sortedGroups = grouped.sorted { lhs, rhs in
-            let lhsBest = lhs.value.first?.relevance ?? 0
-            let rhsBest = rhs.value.first?.relevance ?? 0
-            return lhsBest > rhsBest
-        }
-
-        unifiedGroupedResults = sortedGroups.map { (source: $0.key, results: $0.value) }
-        unifiedFlatResults = sortedGroups.flatMap(\.value)
+        unifiedGroupedResults = regrouped.groupedResults
+        unifiedFlatResults = regrouped.flatResults
 
         // Reset keyboard selection to first result
         if let first = unifiedFlatResults.first {
             selectedResultIndex = 0
-            selectedNodeId = first.atomUUID ?? first.id
-        }
-
-        // Load atoms for masonry card display
-        let atomUUIDs = unifiedFlatResults.compactMap(\.atomUUID)
-        if !atomUUIDs.isEmpty {
-            let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: atomUUIDs)) ?? []
-            let atomMap = Dictionary(atoms.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
-
-            // Build card items preserving relevance order from unifiedFlatResults
-            var cards: [LibraryItem] = []
-            for result in unifiedFlatResults {
-                if let uuid = result.atomUUID, let atom = atomMap[uuid] {
-                    cards.append(LibraryItem(atom: atom))
-                }
-            }
-            unifiedCardItems = cards
+            selectedNodeId = first.selectionID
         } else {
-            unifiedCardItems = []
+            selectedResultIndex = -1
+            selectedNodeId = nil
+        }
+
+        let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
+        unifiedCardItems = CommandKUnifiedSearchComposer.buildCardItems(
+            flatResults: unifiedFlatResults,
+            libraryItemsByID: libraryItemsByID,
+            swipeItemsByUUID: swipeItemsByUUID
+        )
+    }
+
+    private func buildUnifiedAtomLibraryItems(
+        atomUUIDs: [String],
+        projectsByUUID: [String: Atom],
+        thinkspacesByID: [String: Thinkspace]
+    ) async -> [String: LibraryItem] {
+        guard !atomUUIDs.isEmpty else { return [:] }
+
+        let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: atomUUIDs)) ?? []
+        let memberships = (try? await AtomRepository.shared.fetchThinkspaceMembership(for: atomUUIDs)) ?? [:]
+
+        return atoms.reduce(into: [String: LibraryItem]()) { result, atom in
+            let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
+            let project = resolveProject(
+                for: atom,
+                thinkspaces: atomThinkspaces,
+                projectsByUUID: projectsByUUID
+            )
+            result[atom.uuid] = LibraryItem(
+                atom: atom,
+                project: project,
+                thinkspaces: atomThinkspaces
+            )
         }
     }
 
-    /// Helper: SF Symbol for atom type
-    private func iconForAtomType(_ type: AtomType) -> String {
-        switch type {
-        case .idea: return "lightbulb.fill"
-        case .task: return "checkmark.circle.fill"
-        case .research: return "book.fill"
-        case .content: return "doc.text.fill"
-        case .connection: return "link"
-        case .project: return "folder.fill"
-        case .image: return "photo.fill"
-        case .note: return "note.text"
-        default: return "circle.fill"
+    private func resolveProject(
+        for atom: Atom,
+        thinkspaces: [Thinkspace],
+        projectsByUUID: [String: Atom]
+    ) -> Atom? {
+        if atom.type == .project {
+            return atom
         }
+        if let explicitProjectUUID = atom.link(ofType: .project)?.uuid,
+           let project = projectsByUUID[explicitProjectUUID] {
+            return project
+        }
+        if let thinkspaceProjectUUID = thinkspaces.compactMap(\.projectUuid).first,
+           let project = projectsByUUID[thinkspaceProjectUUID] {
+            return project
+        }
+        return nil
     }
 
-    /// Helper: accent color for atom type
-    private func colorForAtomType(_ type: AtomType) -> Color {
-        switch type {
-        case .idea: return DS.entityIdea
-        case .task: return DS.entityTask
-        case .research: return DS.entityResearch
-        case .content: return DS.entityContent
-        case .connection: return DS.entityConnection
-        default: return DS.textSecondary
+    private func matchesUnifiedLibrarySearch(_ item: LibraryItem, query: String) -> Bool {
+        CommandKSearchMatcher.matches(query, inAny: [item.title, item.preview, item.typeName, item.provenanceSummary])
+    }
+
+    private func thinkspaceRelevance(for item: LibraryItem, query: String) -> Double {
+        let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
+        let normalizedTitle = CommandKSearchMatcher.normalize(item.title)
+        if normalizedTitle == normalizedQuery {
+            return 0.98
         }
+        if normalizedTitle.hasPrefix(normalizedQuery) {
+            return 0.82
+        }
+        return 0.62
+    }
+
+    private func enrichUnifiedSearchResult(_ result: UnifiedSearchResult, with item: LibraryItem?) -> UnifiedSearchResult {
+        guard let item else { return result }
+
+        let resultKind: UnifiedSearchResultKind
+        switch item.kind {
+        case .atom:
+            resultKind = .atom
+        case .project:
+            resultKind = .project
+        case .thinkspace:
+            resultKind = .thinkspace
+        }
+
+        return UnifiedSearchResult(
+            id: result.id,
+            source: result.source,
+            resultKind: resultKind,
+            title: result.title,
+            subtitle: result.subtitle ?? item.typeName,
+            snippet: result.snippet ?? item.preview,
+            icon: result.icon,
+            accentColor: item.color,
+            relevance: result.relevance,
+            atomUUID: result.atomUUID,
+            atomType: result.atomType,
+            thinkspaceId: result.thinkspaceId ?? (item.kind == .thinkspace ? item.uuid : nil),
+            projectUUID: item.projectUUID,
+            projectName: item.projectName,
+            thinkspaceNames: item.thinkspaceNames,
+            readwiseBookId: result.readwiseBookId
+        )
     }
 
     // MARK: - Cleanup

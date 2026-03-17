@@ -99,7 +99,7 @@ struct ClusterListContent: View {
                                 onDoubleTap: { onOpenFocusMode(block.entityUuid) }
                             )
                             .id(block.entityUuid)
-                            .onDrag { NSItemProvider(object: block.entityUuid as NSString) }
+                            .onDrag { dragProvider(for: block) }
 
                             if block.id != sortedBlocks.last?.id {
                                 Rectangle()
@@ -271,6 +271,11 @@ struct ClusterListContent: View {
         default:
             return block.entityType.rawValue
         }
+    }
+
+    private func dragProvider(for block: CanvasBlock) -> NSItemProvider {
+        ClusterViewDragSession.sourceClusterId = cluster.id
+        return NSItemProvider(object: block.entityUuid as NSString)
     }
 }
 

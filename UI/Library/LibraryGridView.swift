@@ -128,6 +128,7 @@ struct LibraryCardView: View {
         }
         switch item.atomType {
         case .project: return 104
+        case .thinkspace: return 104
         case .connection: return 96
         default: return 118
         }
@@ -146,6 +147,13 @@ struct LibraryCardView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(DS.text)
                     .lineLimit(2)
+
+                if let provenance = item.provenanceSummary, !provenance.isEmpty {
+                    Text(provenance)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .lineLimit(1)
+                }
 
                 if let preview = item.preview, !preview.isEmpty, item.thumbnailURL != nil, item.atomType != .research {
                     // Only show body snippet if there's a thumbnail (otherwise it's already in preview area)
@@ -182,17 +190,19 @@ struct LibraryCardView: View {
             Button {
                 openInFocusMode()
             } label: {
-                Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
+                Label(item.kind == .thinkspace ? "Open Thinkspace" : "Open in Focus Mode", systemImage: item.kind == .thinkspace ? "rectangle.3.group" : "arrow.up.left.and.arrow.down.right")
             }
             Button {
                 openAsPane()
             } label: {
                 Label("Open as Pane", systemImage: "rectangle.split.2x1")
             }
-            Button {
-                addToCanvas()
-            } label: {
-                Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+            if item.kind == .atom {
+                Button {
+                    addToCanvas()
+                } label: {
+                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+                }
             }
             Divider()
             Button(role: .destructive) {
@@ -299,6 +309,8 @@ struct LibraryCardView: View {
             connectionPreview
         case .project:
             projectPreview
+        case .thinkspace:
+            thinkspacePreview
         default:
             defaultPreview
         }
@@ -416,6 +428,31 @@ struct LibraryCardView: View {
     }
 
     @ViewBuilder
+    private var thinkspacePreview: some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 0)
+
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DS.surfaceElevated.opacity(0.72))
+                .frame(width: 68, height: 52)
+                .overlay(
+                    Image(systemName: "rectangle.3.group")
+                        .font(.system(size: 24))
+                        .foregroundColor(item.color)
+                )
+
+            HStack(spacing: 10) {
+                Label("\(item.nestedThinkspaceCount)", systemImage: "rectangle.stack")
+                Label("\(item.blockCount)", systemImage: "square.on.square")
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(DS.textMuted)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
     private var defaultPreview: some View {
         VStack {
             Spacer(minLength: 0)
@@ -429,25 +466,37 @@ struct LibraryCardView: View {
     // MARK: - Actions
 
     private func openInFocusMode() {
-        let entityType: String
-        switch item.atomType {
-        case .idea: entityType = "idea"
-        case .task: entityType = "task"
-        case .content: entityType = "content"
-        case .research: entityType = "research"
-        case .connection: entityType = "connection"
-        case .project: entityType = "project"
-        default: entityType = "idea"
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: item.uuid).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
         }
+
+        guard let entityType = EntityType(rawValue: item.atomType.rawValue),
+              item.entityId > 0 else { return }
 
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
-            userInfo: ["type": entityType, "id": item.uuid]
+            userInfo: ["type": entityType, "id": item.entityId]
         )
     }
 
     private func openAsPane() {
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["thinkspaceId": item.uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
+        }
+
         if let entityType = EntityType(rawValue: item.atomType.rawValue) {
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.openAsPane,
@@ -459,6 +508,7 @@ struct LibraryCardView: View {
     }
 
     private func addToCanvas() {
+        guard item.kind == .atom else { return }
         NotificationCenter.default.post(
             name: CosmoNotification.NodeGraph.addToCanvas,
             object: nil,

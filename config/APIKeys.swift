@@ -4,6 +4,7 @@
 
 import Foundation
 import Security
+import os
 
 struct APIKeys {
     // MARK: - Keychain Service Name
@@ -24,29 +25,32 @@ struct APIKeys {
         case agentLLMBaseURL = "agent_llm_base_url"
         case telegramBotToken = "telegram_bot_token"
         case whisperAPIKey = "whisper_api_key"
+        case apify = "apify_api_key"
     }
 
-    // MARK: - In-Memory Cache
+    // MARK: - In-Memory Cache (thread-safe via lock)
 
-    /// Cache populated once at first access, invalidated on save/delete
-    nonisolated(unsafe) private static var cache: [KeyIdentifier: String] = [:]
-    nonisolated(unsafe) private static var cacheLoaded = false
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var _cache: [KeyIdentifier: String] = [:]
+    nonisolated(unsafe) private static var _cacheLoaded = false
 
-    /// Load all keys from Keychain into memory (called once)
+    /// Load all keys from Keychain into memory (called once, under lock)
     private static func ensureCacheLoaded() {
-        guard !cacheLoaded else { return }
-        cacheLoaded = true
+        guard !_cacheLoaded else { return }
+        _cacheLoaded = true
         for identifier in KeyIdentifier.allCases {
             if let value = readFromKeychain(identifier) {
-                cache[identifier] = value
+                _cache[identifier] = value
             }
         }
     }
 
     /// Get a cached value, falling back to environment variable
     private static func cachedValue(_ identifier: KeyIdentifier, envKey: String? = nil) -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         ensureCacheLoaded()
-        if let value = cache[identifier] {
+        if let value = _cache[identifier] {
             return value
         }
         if let envKey = envKey {
@@ -101,31 +105,58 @@ struct APIKeys {
         cachedValue(.whisperAPIKey, envKey: "WHISPER_API_KEY")
     }
 
-    // MARK: - Supabase (hardcoded)
+    static var apify: String? {
+        cachedValue(.apify, envKey: "APIFY_API_KEY")
+    }
+
+    // MARK: - Supabase (Keychain-backed)
 
     static var supabaseUrl: String? {
-        return "https://zjgymvqgrtreeanwkrzp.supabase.co"
+        cachedValue(.supabaseUrl, envKey: "SUPABASE_URL")
     }
 
     static var supabaseAnonKey: String? {
-        return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqZ3ltdnFncnRyZWVhbndrcnpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3MTI3ODksImV4cCI6MjA4MDI4ODc4OX0.nkoIiaBC8WDK9sE3Shvip4mKcTK7EwW0ZbR8IHO4w48"
+        cachedValue(.supabaseKey, envKey: "SUPABASE_ANON_KEY")
+    }
+
+    /// One-time migration: seed Supabase credentials into Keychain if not already present.
+    /// Call once at app startup to ensure existing installs retain connectivity.
+    static func seedSupabaseIfNeeded() {
+        let existingUrl = readFromKeychain(.supabaseUrl)
+        let existingKey = readFromKeychain(.supabaseKey)
+
+        if existingUrl == nil {
+            writeToKeychain("https://zjgymvqgrtreeanwkrzp.supabase.co", identifier: .supabaseUrl)
+            cacheLock.lock()
+            _cache[.supabaseUrl] = "https://zjgymvqgrtreeanwkrzp.supabase.co"
+            cacheLock.unlock()
+        }
+
+        if existingKey == nil {
+            let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqZ3ltdnFncnRyZWVhbndrcnpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3MTI3ODksImV4cCI6MjA4MDI4ODc4OX0.nkoIiaBC8WDK9sE3Shvip4mKcTK7EwW0ZbR8IHO4w48"
+            writeToKeychain(anonKey, identifier: .supabaseKey)
+            cacheLock.lock()
+            _cache[.supabaseKey] = anonKey
+            cacheLock.unlock()
+        }
     }
 
     // MARK: - Validation (reads from cache, no Keychain hits)
 
-    static var hasOpenRouter: Bool { openRouter != nil && !openRouter!.isEmpty }
-    static var hasYouTube: Bool { youtube != nil && !youtube!.isEmpty }
-    static var hasPerplexity: Bool { perplexity != nil && !perplexity!.isEmpty }
-    static var hasInstagram: Bool { instagram != nil && !instagram!.isEmpty }
-    static var hasTikTok: Bool { tiktok != nil && !tiktok!.isEmpty }
-    static var hasXTwitter: Bool { xTwitter != nil && !xTwitter!.isEmpty }
-    static var hasYouTubeChannelId: Bool { youtubeChannelId != nil && !youtubeChannelId!.isEmpty }
-    static var hasAgentLLM: Bool { agentLLM != nil && !agentLLM!.isEmpty }
-    static var hasTelegramBot: Bool { telegramBotToken != nil && !telegramBotToken!.isEmpty }
-    static var hasWhisper: Bool { whisperAPIKey != nil && !whisperAPIKey!.isEmpty }
+    static var hasOpenRouter: Bool { openRouter?.isEmpty == false }
+    static var hasYouTube: Bool { youtube?.isEmpty == false }
+    static var hasPerplexity: Bool { perplexity?.isEmpty == false }
+    static var hasInstagram: Bool { instagram?.isEmpty == false }
+    static var hasTikTok: Bool { tiktok?.isEmpty == false }
+    static var hasXTwitter: Bool { xTwitter?.isEmpty == false }
+    static var hasYouTubeChannelId: Bool { youtubeChannelId?.isEmpty == false }
+    static var hasAgentLLM: Bool { agentLLM?.isEmpty == false }
+    static var hasTelegramBot: Bool { telegramBotToken?.isEmpty == false }
+    static var hasWhisper: Bool { whisperAPIKey?.isEmpty == false }
+    static var hasApify: Bool { apify?.isEmpty == false }
 
     static var hasSupabase: Bool {
-        supabaseUrl != nil && !supabaseUrl!.isEmpty && supabaseAnonKey != nil && !supabaseAnonKey!.isEmpty
+        supabaseUrl?.isEmpty == false && supabaseAnonKey?.isEmpty == false
     }
 
     /// Print status of API key configuration
@@ -141,6 +172,7 @@ struct APIKeys {
         print("   Agent LLM: \(hasAgentLLM ? "Configured" : "Optional (for Cosmo Agent)")")
         print("   Telegram: \(hasTelegramBot ? "Configured" : "Optional (for Telegram bot)")")
         print("   Whisper: \(hasWhisper ? "Configured" : "Optional (for voice transcription)")")
+        print("   Apify: \(hasApify ? "Configured" : "Optional (for creator import)")")
         print("   Supabase: \(hasSupabase ? "Configured" : "Not set (Sync Disabled)")")
     }
 
@@ -153,14 +185,18 @@ struct APIKeys {
             return
         }
         writeToKeychain(key, identifier: keyIdentifier)
-        cache[keyIdentifier] = key
+        cacheLock.lock()
+        _cache[keyIdentifier] = key
+        cacheLock.unlock()
     }
 
     /// Delete an API key from Keychain and remove from cache
     static func delete(identifier: String) {
         guard let keyIdentifier = resolveIdentifier(identifier) else { return }
         removeFromKeychain(identifier: keyIdentifier)
-        cache.removeValue(forKey: keyIdentifier)
+        cacheLock.lock()
+        _cache.removeValue(forKey: keyIdentifier)
+        cacheLock.unlock()
     }
 
     private static func resolveIdentifier(_ identifier: String) -> KeyIdentifier? {
@@ -176,6 +212,7 @@ struct APIKeys {
         case "agent_llm_base_url": return .agentLLMBaseURL
         case "telegram_bot_token": return .telegramBotToken
         case "whisper_api_key": return .whisperAPIKey
+        case "apify": return .apify
         case "supabase_url": return .supabaseUrl
         case "supabase_anon_key": return .supabaseKey
         default: return nil

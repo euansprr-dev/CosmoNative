@@ -7,6 +7,8 @@ import SwiftUI
 struct DashboardReportsPanel: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @State private var chartAnimated = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -43,24 +45,31 @@ struct DashboardReportsPanel: View {
 
         VStack(spacing: 4) {
             HStack(alignment: .bottom, spacing: 6) {
-                ForEach(report.days) { day in
+                ForEach(Array(report.days.enumerated()), id: \.element.id) { index, day in
+                    let targetHeight = max(CGFloat(day.trackedMinutes) / CGFloat(maxMinutes) * 80, day.trackedMinutes > 0 ? 8 : 2)
+
                     VStack(spacing: 3) {
                         // Hours label
                         if day.trackedMinutes > 0 {
                             Text(formatHours(day.trackedMinutes))
                                 .font(.system(size: 8, weight: .medium))
                                 .foregroundColor(DS.textMuted)
+                                .opacity(chartAnimated ? 1 : 0)
                         }
 
                         // Bar
                         RoundedRectangle(cornerRadius: 4)
                             .fill(day.dominantIntent?.color ?? DS.accent)
                             .frame(
-                                height: max(CGFloat(day.trackedMinutes) / CGFloat(maxMinutes) * 80, day.trackedMinutes > 0 ? 8 : 2)
+                                height: chartAnimated ? targetHeight : 2
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 4)
                                     .stroke(day.isToday ? DS.accent : Color.clear, lineWidth: 1.5)
+                            )
+                            .animation(
+                                reduceMotion ? .none : .spring(response: 0.5, dampingFraction: 0.75).delay(Double(index) * 0.06),
+                                value: chartAnimated
                             )
 
                         // Day label
@@ -75,6 +84,16 @@ struct DashboardReportsPanel: View {
         }
         .padding(10)
         .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .onAppear {
+            guard !chartAnimated else { return }
+            if reduceMotion {
+                chartAnimated = true
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    chartAnimated = true
+                }
+            }
+        }
     }
 
     // MARK: - Stats Grid

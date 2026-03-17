@@ -381,14 +381,16 @@ struct CodableCluster: Codable, Sendable {
         let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
         if !memberBlocks.isEmpty {
             if cluster.viewMode == .canvas {
+                // Canvas mode: size from block positions
                 if persistedRect.width > 0, persistedRect.height > 0 {
                     cluster.expandBoundsToContainMembers(blocks: blocks)
                 } else {
                     cluster.updateBoundingRect(blocks: blocks, growOnly: false)
                 }
-            } else {
-                cluster.updateBoundingRect(blocks: blocks)
             }
+            // Non-canvas modes (board/list/grid): keep persisted rect as-is.
+            // Block canvas positions are irrelevant — these modes use internal layouts.
+            // fitClusterRectForMode() in loadUserClusters() handles adaptive sizing.
         }
         return cluster
     }

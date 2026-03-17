@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Combine
+import GRDB
 
 // MARK: - Connection Focus Mode View
 
@@ -32,7 +33,10 @@ struct ConnectionFocusModeView: View {
     @State private var sidebarLocked = false
     @State private var showSettings = false
     @State private var activeRelationArea: RelationAreaState?
+    @State private var rightClickMonitor: Any?
+    @State private var viewFrameInWindow: CGRect = .zero
     @State private var editableTitle: String
+    @State private var titleDocument: RichDocument = .empty
     @StateObject private var coDevEngine = ConnectionCoDevEngine()
 
     @Environment(\.isPaneContext) private var isPaneContext
@@ -44,6 +48,11 @@ struct ConnectionFocusModeView: View {
         self.atom = atom
         self.onClose = onClose
         self._editableTitle = State(initialValue: atom.title ?? "New Connection")
+        self._titleDocument = State(initialValue: RichDocumentPersistence.loadAtomDocument(
+            field: .title,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.title ?? "New Connection"
+        ))
         self._viewModel = StateObject(wrappedValue: ConnectionFocusModeViewModel(atom: atom))
         self._panelManager = StateObject(wrappedValue: FloatingPanelManager(focusAtomUUID: atom.uuid))
         self._floatingBlocksManager = StateObject(wrappedValue: FocusFloatingBlocksManager(ownerAtomUUID: atom.uuid))
@@ -75,7 +84,17 @@ struct ConnectionFocusModeView: View {
 
                 // Relation area overlay for dropped blocks
                 if let relationState = activeRelationArea {
-                    relationAreaOverlay(relationState)
+                    RelationAreaOverlayCard(
+                        state: relationState,
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.snappy) {
+                                activeRelationArea = nil
+                            }
+                        },
+                        onChipTap: { sectionType in
+                            handleChipTap(sectionType, state: relationState)
+                        }
+                    )
                 }
 
                 // Top bar overlay
@@ -100,6 +119,7 @@ struct ConnectionFocusModeView: View {
                 ownerAtomUUID: atom.uuid
             )
         }
+        .focusBlockInspector(manager: floatingBlocksManager)
         .overlay(alignment: .topLeading) {
             FocusSidebarTrigger(isVisible: $sidebarVisible)
                 .frame(maxHeight: .infinity)
@@ -125,34 +145,23 @@ struct ConnectionFocusModeView: View {
             .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                // Pane close button
-                if isPaneContext {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(DS.textMuted)
-                            .frame(width: 28, height: 28)
-                            .background(DS.border, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .regular))
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.textMuted)
                         .frame(width: 28, height: 28)
-                        .contentShape(Circle())
+                        .background(DS.border, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .padding(.trailing, 16)
+                .padding(.top, 16)
             }
-            .padding(.trailing, 16)
-            .padding(.top, 16)
         }
         .onAppear {
             loadState()
             listenForAtomPicker()
+            setupRightClickMonitor()
             Task {
                 await viewModel.generateGhostSuggestions()
             }
@@ -168,12 +177,21 @@ struct ConnectionFocusModeView: View {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { viewFrameInWindow = geo.frame(in: .global) }
+                    .onChange(of: geo.frame(in: .global)) { _, newFrame in viewFrameInWindow = newFrame }
+            }
+        )
         .onDisappear {
             viewModel.flushTitleSave(editableTitle)
+            viewModel.saveToAtom()
             saveState()
             floatingBlocksManager.saveImmediately()
+            removeRightClickMonitor()
         }
-        // Right-click for radial menu
+        // Deselect panels on background click
         .onTapGesture(count: 1) {
             panelManager.deselectAll()
             if activeRelationArea != nil {
@@ -183,13 +201,6 @@ struct ConnectionFocusModeView: View {
                 }
             }
         }
-        .gesture(
-            TapGesture(count: 1)
-                .modifiers(.control)
-                .onEnded { _ in
-                    viewModel.radialMenuPosition = CGPoint(x: 400, y: 300)
-                }
-        )
         // Keyboard shortcuts
         .onKeyPress(.escape) {
             if activeRelationArea != nil {
@@ -252,14 +263,15 @@ struct ConnectionFocusModeView: View {
         VStack(spacing: 16) {
             // Floating title header (no background container)
             connectionTitleHeader
+                .frame(width: 420)
                 .padding(.bottom, 8)
 
             // Section cards - each is its own card directly on canvas
             ForEach($viewModel.state.sections) { $section in
                 ConnectionSectionView(
                     section: $section,
-                    onAddItem: { content in
-                        viewModel.addItem(content, toSection: section.type)
+                    onAddItem: { document, plainText in
+                        viewModel.addItem(document: document, plainText: plainText, toSection: section.type)
                     },
                     onEditItem: { item in
                         viewModel.editItem(item, inSection: section.type)
@@ -294,15 +306,25 @@ struct ConnectionFocusModeView: View {
     private var connectionTitleHeader: some View {
         VStack(spacing: 8) {
             // Title (centered)
-            TextField("New Connection", text: $editableTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(DS.text)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .onChange(of: editableTitle) { _, newTitle in
-                    viewModel.updateTitle(newTitle)
+            CosmoDocumentEditor(
+                document: $titleDocument,
+                fontSize: 22,
+                compact: true,
+                placeholder: "New Connection",
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                singleLine: true,
+                baseFontWeight: .semibold,
+                textAlignment: .center,
+                onDocumentChange: { document, _ in
+                    editableTitle = RichDocumentPersistence.titlePlainText(from: document)
+                    viewModel.updateTitleDocument(document, plainTitle: editableTitle)
                 }
+            )
+            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(height: 44)
 
             // Stats (centered)
             HStack(spacing: 12) {
@@ -355,20 +377,22 @@ struct ConnectionFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            // Back button
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+            // Back button (hidden in pane mode — X button handles close)
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.surfaceElevated, in: Capsule())
                 }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.surfaceElevated, in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Type badge (right next to back button)
             HStack(spacing: 4) {
@@ -384,6 +408,25 @@ struct ConnectionFocusModeView: View {
             .background(CosmoColors.blockConnection.opacity(0.15), in: Capsule())
 
             Spacer()
+
+            // Sidebar toggle (pane mode)
+            if isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        sidebarVisible.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13))
+                        .foregroundStyle(sidebarVisible ? DS.entityConnection : DS.textSecondary)
+                        .padding(8)
+                        .background(
+                            sidebarVisible ? DS.entityConnection.opacity(0.15) : DS.border,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -478,6 +521,50 @@ struct ConnectionFocusModeView: View {
         } // ZStack
     }
 
+    // MARK: - Right-Click Monitor
+
+    private func setupRightClickMonitor() {
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            guard let window = event.window else { return event }
+
+            let windowPoint = event.locationInWindow
+            let windowHeight = window.frame.height
+
+            // Convert to SwiftUI coordinates (flip Y, origin top-left)
+            let screenPoint = CGPoint(
+                x: windowPoint.x,
+                y: windowHeight - windowPoint.y
+            )
+
+            // Only handle clicks within this view's frame
+            guard viewFrameInWindow.contains(screenPoint) else { return event }
+
+            // Convert to view-local coordinates
+            let localPoint = CGPoint(
+                x: screenPoint.x - viewFrameInWindow.minX,
+                y: screenPoint.y - viewFrameInWindow.minY
+            )
+
+            // Convert local coordinates to canvas coordinates
+            let canvasPoint = CGPoint(
+                x: (localPoint.x - viewportState.offset.x) / viewportState.zoomScale,
+                y: (localPoint.y - viewportState.offset.y) / viewportState.zoomScale
+            )
+
+            viewModel.lastTapPosition = canvasPoint
+            viewModel.radialMenuPosition = localPoint
+
+            return nil // Consume the event
+        }
+    }
+
+    private func removeRightClickMonitor() {
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitor = nil
+        }
+    }
+
     // MARK: - Helpers
 
     private func handleRadialAction(_ action: RadialAction) {
@@ -516,8 +603,15 @@ struct ConnectionFocusModeView: View {
                 }
             }
 
+        case .createStickyNote:
+            Task {
+                let stickyAtom = Atom.new(type: .stickyNote, title: "", body: "")
+                if let created = try? await AtomRepository.shared.create(stickyAtom) {
+                    addPanelForAtom(created, at: viewModel.lastTapPosition)
+                }
+            }
+
         case .researchAgent:
-            // Connection doesn't use research agent directly
             break
 
         case .fromDatabase:
@@ -628,142 +722,12 @@ struct ConnectionFocusModeView: View {
                     connection: atom
                 )
                 withAnimation(ProMotionSprings.snappy) {
-                    activeRelationArea?.suggestion = suggestion
-                    activeRelationArea?.highlightedSections = suggestion.suggestedSections
-                    activeRelationArea?.relationNote = suggestion.relationNote
+                    activeRelationArea?.applySuggestion(suggestion)
                 }
             } catch {
                 // Fallback: no pre-suggestion
             }
         }
-    }
-
-    // MARK: - Relation Area Overlay
-
-    @ViewBuilder
-    private func relationAreaOverlay(_ state: RelationAreaState) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Source info header
-            relationAreaHeader(state)
-
-            // Relation note field
-            relationNoteField(state)
-
-            // Category chips
-            relationChips(state)
-        }
-        .padding(16)
-        .frame(width: 400)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsFloatingShadow()
-        .position(x: state.position.x, y: state.position.y + 220)
-    }
-
-    @ViewBuilder
-    private func relationAreaHeader(_ state: RelationAreaState) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: sourceIconName(state.sourceAtom.type))
-                .font(.system(size: 12))
-                .foregroundColor(sourceColor(state.sourceAtom.type))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.sourceAtom.title ?? "Untitled")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
-
-                Text(sourceTypeLabel(state.sourceAtom.type))
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(0.4)
-                    .foregroundColor(sourceColor(state.sourceAtom.type))
-            }
-
-            Spacer()
-
-            // Dismiss
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    activeRelationArea = nil
-                }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .padding(6)
-                    .background(DS.glassCardFill, in: Circle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    @ViewBuilder
-    private func relationNoteField(_ state: RelationAreaState) -> some View {
-        let noteBinding = Binding<String>(
-            get: { activeRelationArea?.relationNote ?? "" },
-            set: { activeRelationArea?.relationNote = $0 }
-        )
-
-        TextField("How does this relate?", text: noteBinding, axis: .vertical)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundColor(DS.text)
-            .lineLimit(1...3)
-            .padding(10)
-            .dsGlassInput(cornerRadius: 8)
-    }
-
-    @ViewBuilder
-    private func relationChips(_ state: RelationAreaState) -> some View {
-        let columns = [
-            GridItem(.flexible()),
-            GridItem(.flexible()),
-            GridItem(.flexible()),
-            GridItem(.flexible())
-        ]
-
-        LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(ConnectionSectionType.allCases, id: \.rawValue) { sectionType in
-                relationChipButton(sectionType, state: state)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func relationChipButton(_ sectionType: ConnectionSectionType, state: RelationAreaState) -> some View {
-        let isHighlighted = state.highlightedSections.contains(sectionType)
-
-        Button {
-            handleChipTap(sectionType, state: state)
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: sectionType.icon)
-                    .font(.system(size: 11))
-
-                Text(sectionType.displayName)
-                    .font(.system(size: 8, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .foregroundColor(isHighlighted ? sectionType.accentColor : DS.textSecondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.glassCardFill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isHighlighted ? sectionType.accentColor.opacity(0.4) : DS.glassBorder,
-                                lineWidth: 0.5
-                            )
-                    )
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     private func handleChipTap(_ sectionType: ConnectionSectionType, state: RelationAreaState) {
@@ -820,12 +784,161 @@ struct ConnectionFocusModeView: View {
 
 // MARK: - Relation Area State
 
+private struct RelationAreaOverlayCard: View {
+    @ObservedObject var state: RelationAreaState
+    let onDismiss: () -> Void
+    let onChipTap: (ConnectionSectionType) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            relationAreaHeader
+            relationNoteField
+            relationChips
+        }
+        .padding(16)
+        .frame(width: 400)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsFloatingShadow()
+        .position(x: state.position.x, y: state.position.y + 220)
+    }
+
+    private var relationAreaHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: sourceIconName(state.sourceAtom.type))
+                .font(.system(size: 12))
+                .foregroundColor(sourceColor(state.sourceAtom.type))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.sourceAtom.title ?? "Untitled")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                Text(sourceTypeLabel(state.sourceAtom.type))
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.4)
+                    .foregroundColor(sourceColor(state.sourceAtom.type))
+            }
+
+            Spacer()
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textMuted)
+                    .padding(6)
+                    .background(DS.glassCardFill, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var relationNoteField: some View {
+        CosmoDocumentEditor(
+            document: $state.relationNoteDocument,
+            fontSize: 12,
+            compact: true,
+            placeholder: "How does this relate?",
+            allowSlashCommands: false,
+            allowMentions: true,
+            allowSelectionMenu: false,
+            allowImages: false,
+            onDocumentChange: { document, _ in
+                state.updateRelationNoteDocument(document)
+            }
+        )
+        .frame(minHeight: 44, maxHeight: 88)
+        .padding(10)
+        .dsGlassInput(cornerRadius: 8)
+    }
+
+    private var relationChips: some View {
+        let columns = [
+            GridItem(.flexible()),
+            GridItem(.flexible()),
+            GridItem(.flexible()),
+            GridItem(.flexible())
+        ]
+
+        return LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(ConnectionSectionType.allCases, id: \.rawValue) { sectionType in
+                relationChipButton(sectionType)
+            }
+        }
+    }
+
+    private func relationChipButton(_ sectionType: ConnectionSectionType) -> some View {
+        let isHighlighted = state.highlightedSections.contains(sectionType)
+
+        return Button {
+            onChipTap(sectionType)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: sectionType.icon)
+                    .font(.system(size: 11))
+
+                Text(sectionType.displayName)
+                    .font(.system(size: 8, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundColor(isHighlighted ? sectionType.accentColor : DS.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.glassCardFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHighlighted ? sectionType.accentColor.opacity(0.4) : DS.glassBorder,
+                                lineWidth: 0.5
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sourceIconName(_ type: AtomType) -> String {
+        switch type {
+        case .research: return "magnifyingglass"
+        case .idea: return "lightbulb.fill"
+        case .connection: return "link.circle.fill"
+        default: return "doc.fill"
+        }
+    }
+
+    private func sourceColor(_ type: AtomType) -> Color {
+        switch type {
+        case .research: return CosmoColors.blockResearch
+        case .idea: return CosmoColors.lavender
+        case .connection: return CosmoColors.blockConnection
+        default: return CosmoColors.slate
+        }
+    }
+
+    private func sourceTypeLabel(_ type: AtomType) -> String {
+        switch type {
+        case .research: return "Research"
+        case .idea: return "Insight"
+        case .connection: return "Connection"
+        default: return type.rawValue.capitalized
+        }
+    }
+}
+
+@MainActor
 class RelationAreaState: ObservableObject {
     let sourceAtom: Atom
     let position: CGPoint
-    var relationNote: String
-    var highlightedSections: [ConnectionSectionType]
-    var suggestion: RelationSuggestion?
+    @Published var relationNoteDocument: RichDocument
+    @Published var highlightedSections: [ConnectionSectionType]
+    @Published var suggestion: RelationSuggestion?
 
     init(
         sourceAtom: Atom,
@@ -835,8 +948,24 @@ class RelationAreaState: ObservableObject {
     ) {
         self.sourceAtom = sourceAtom
         self.position = position
-        self.relationNote = relationNote
+        self.relationNoteDocument = RichDocument.migrateLegacy(relationNote)
         self.highlightedSections = highlightedSections
+    }
+
+    var relationNote: String {
+        relationNoteDocument.plainText
+    }
+
+    func updateRelationNoteDocument(_ document: RichDocument) {
+        relationNoteDocument = document
+    }
+
+    func applySuggestion(_ suggestion: RelationSuggestion) {
+        self.suggestion = suggestion
+        self.highlightedSections = suggestion.suggestedSections
+        if !suggestion.relationNote.isEmpty {
+            self.relationNoteDocument = RichDocument.migrateLegacy(suggestion.relationNote)
+        }
     }
 }
 
@@ -853,6 +982,7 @@ class ConnectionFocusModeViewModel: ObservableObject {
     // MARK: - Properties
 
     private let atom: Atom
+    private var terminationCancellable: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -860,6 +990,17 @@ class ConnectionFocusModeViewModel: ObservableObject {
         self.atom = atom
         self.state = ConnectionFocusModeState(atomUUID: atom.uuid)
         parseAtomStructuredData()
+
+        // Flush pending saves synchronously when the app is about to terminate
+        terminationCancellable = NotificationCenter.default
+            .publisher(for: .cosmoAppWillTerminate)
+            .sink { [weak self] _ in
+                self?.saveToAtom()
+            }
+    }
+
+    deinit {
+        terminationCancellable?.cancel()
     }
 
     // MARK: - State Management
@@ -881,8 +1022,10 @@ class ConnectionFocusModeViewModel: ObservableObject {
     private var titleSaveTask: Task<Void, Never>?
 
     func updateTitle(_ newTitle: String) {
-        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        updateTitleDocument(RichDocument.migrateLegacy(newTitle), plainTitle: newTitle)
+    }
+
+    func updateTitleDocument(_ document: RichDocument, plainTitle: String) {
         let atomUUID = atom.uuid
 
         // Cancel previous debounced save
@@ -892,35 +1035,49 @@ class ConnectionFocusModeViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             do {
                 try await CosmoDatabase.shared.asyncWrite { db in
+                    var existingMetadata: String?
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {
+                        existingMetadata = row["metadata"]
+                    }
+                    let titleDocument = document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: existingMetadata,
+                        titleDocument: titleDocument
+                    )
                     try db.execute(
-                        sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                        sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                        arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
                     )
                 }
-                print("✅ Connection title saved: \(trimmed.prefix(30))")
+                print("✅ Connection title saved")
             } catch {
                 print("❌ Connection title save failed: \(error)")
             }
         }
     }
 
-    /// Force immediate title save (called on view disappear)
+    /// Force immediate synchronous title save (called on view disappear) — blocks until DB write completes.
     func flushTitleSave(_ title: String) {
         titleSaveTask?.cancel()
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let titleDocument = RichDocument.migrateLegacy(title)
         let atomUUID = atom.uuid
-        Task {
-            do {
-                try await CosmoDatabase.shared.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), atomUUID]
-                    )
+        do {
+            try CosmoDatabase.shared.write { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {
+                    existingMetadata = row["metadata"]
                 }
-            } catch {
-                print("❌ Connection title flush failed: \(error)")
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: titleDocument
+                )
+                try db.execute(
+                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                )
             }
+        } catch {
+            print("❌ Connection title flush failed: \(error)")
         }
     }
 
@@ -938,28 +1095,27 @@ class ConnectionFocusModeViewModel: ObservableObject {
         }
     }
 
-    private func saveToAtom() {
+    func saveToAtom() {
         let structuredData = ConnectionStructuredData(sections: state.sections)
         if let json = structuredData.toJSON() {
             var updatedAtom = atom
             updatedAtom.structured = json
-            Task {
-                _ = try? await AtomRepository.shared.update(updatedAtom)
-            }
+            updatedAtom.body = state.flattenedBodyText
+            _ = try? AtomRepository.shared.updateSync(updatedAtom)
         }
     }
 
     // MARK: - Item Management
 
-    func addItem(_ content: String, toSection type: ConnectionSectionType) {
-        let item = ConnectionItem(content: content)
+    func addItem(document: RichDocument, plainText: String, toSection type: ConnectionSectionType) {
+        let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
         state.addItem(item, toSection: type)
         saveState()
     }
 
     func editItem(_ item: ConnectionItem, inSection type: ConnectionSectionType) {
-        // Would open edit sheet
-        print("Edit item: \(item.content)")
+        state.updateItem(item, inSection: type)
+        saveState()
     }
 
     func deleteItem(_ id: UUID, fromSection type: ConnectionSectionType) {

@@ -12,6 +12,7 @@ struct ContentPipelineBar: View {
     let currentPhase: ContentPhase      // Currently displayed/active phase
     let reachedPhase: ContentPhase?     // Furthest pipeline phase reached (nil = same as current)
     let phaseEnteredAt: Date?
+    var compact: Bool = false
     let onPhaseSelected: (ContentPhase) -> Void
 
     /// The furthest phase the content has reached in the pipeline
@@ -43,7 +44,7 @@ struct ContentPipelineBar: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 32)
+        .padding(.vertical, compact ? 12 : 32)
         .background(DS.bg)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -56,18 +57,20 @@ struct ContentPipelineBar: View {
 
     @ViewBuilder
     private func phaseContent(_ phase: ContentPhase) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: compact ? 2 : 4) {
             phaseDot(for: phase)
 
-            Text(phase.displayName)
-                .font(.system(size: 10, weight: phase == currentPhase ? .semibold : .regular))
-                .foregroundColor(phaseLabelColor(phase))
+            if !compact {
+                Text(phase.displayName)
+                    .font(.system(size: 10, weight: phase == currentPhase ? .semibold : .regular))
+                    .foregroundColor(phaseLabelColor(phase))
 
-            // Duration badge for current phase
-            if phase == currentPhase, let enteredAt = phaseEnteredAt {
-                Text(durationString(from: enteredAt))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                // Duration badge for current phase
+                if phase == currentPhase, let enteredAt = phaseEnteredAt {
+                    Text(durationString(from: enteredAt))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                }
             }
         }
     }
@@ -82,15 +85,18 @@ struct ContentPipelineBar: View {
 
     @ViewBuilder
     private func phaseDot(for phase: ContentPhase) -> some View {
+        let activeSize: CGFloat = compact ? 18 : 22
+        let inactiveSize: CGFloat = compact ? 14 : 18
+
         if phase == currentPhase {
             // Active phase: DS.accent fill, white icon, 12px accentGlow shadow
             ZStack {
                 Circle()
                     .fill(DS.accent)
-                    .frame(width: 22, height: 22)
-                    .shadow(color: DS.accentGlow, radius: 12, x: 0, y: 0)
+                    .frame(width: activeSize, height: activeSize)
+                    .shadow(color: DS.accentGlow, radius: compact ? 6 : 12, x: 0, y: 0)
                 Image(systemName: phase.iconName)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: compact ? 8 : 10, weight: .bold))
                     .foregroundColor(.white)
             }
         } else if phaseIndex(phase) <= phaseIndex(maxPhase) {
@@ -98,10 +104,10 @@ struct ContentPipelineBar: View {
             ZStack {
                 Circle()
                     .fill(DS.green)
-                    .frame(width: 18, height: 18)
-                    .shadow(color: DS.greenGlow, radius: 8, x: 0, y: 0)
+                    .frame(width: inactiveSize, height: inactiveSize)
+                    .shadow(color: DS.greenGlow, radius: compact ? 4 : 8, x: 0, y: 0)
                 Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: compact ? 6 : 8, weight: .bold))
                     .foregroundColor(.white)
             }
         } else {
@@ -109,13 +115,13 @@ struct ContentPipelineBar: View {
             ZStack {
                 Circle()
                     .fill(Color.clear)
-                    .frame(width: 18, height: 18)
+                    .frame(width: inactiveSize, height: inactiveSize)
                     .overlay(
                         Circle()
                             .stroke(DS.textMuted, lineWidth: 1)
                     )
                 Text("\(phaseIndex(phase) + 1)")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .font(.system(size: compact ? 7 : 9, weight: .medium).monospacedDigit())
                     .foregroundColor(DS.textMuted)
             }
         }

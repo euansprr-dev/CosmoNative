@@ -76,20 +76,24 @@ private struct CommandKGalleryCardModifier: ViewModifier {
                         lineWidth: 1
                     )
             )
+            .overlay(alignment: .top) {
+                accentColor
+                    .frame(height: 2)
+                    .opacity(isHovered ? 1.0 : 0)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .shadow(
-                color: .black.opacity(isHovered ? 0.06 : 0.04),
-                radius: isHovered ? 16 : 8,
+                color: .black.opacity(isHovered ? 0.07 : 0.04),
+                radius: isHovered ? 20 : 8,
                 x: 0,
-                y: isHovered ? 4 : 2
+                y: isHovered ? 6 : 2
             )
             .shadow(
-                color: .black.opacity(isHovered ? 0.03 : 0.02),
-                radius: isHovered ? 4 : 2,
+                color: .black.opacity(isHovered ? 0.04 : 0.02),
+                radius: isHovered ? 6 : 2,
                 x: 0,
-                y: 1
+                y: isHovered ? 2 : 1
             )
-            .scaleEffect(isHovered ? 1.008 : 1.0)
-            .offset(y: isHovered ? -1 : 0)
     }
 }
 

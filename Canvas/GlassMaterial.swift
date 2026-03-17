@@ -254,10 +254,11 @@ extension View {
     }
 
     /// Add an accent seam to indicate entity type
-    func withAccentSeam(_ color: Color, position: Edge = .leading) -> some View {
+    func withAccentSeam(_ color: Color, position: Edge = .leading, cornerRadius: CGFloat = 0) -> some View {
         overlay(alignment: position.alignment) {
             AccentSeam(color: color, position: position)
         }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 
@@ -314,7 +315,7 @@ struct GlassMaterial_Previews: PreviewProvider {
                     .padding(20)
                     .background(CosmoColors.softWhite)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .withAccentSeam(CosmoMentionColors.idea)
+                    .withAccentSeam(CosmoMentionColors.idea, cornerRadius: 8)
             }
             .padding(40)
         }

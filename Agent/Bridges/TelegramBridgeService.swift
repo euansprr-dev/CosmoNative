@@ -458,7 +458,7 @@ class TelegramBridgeService: ObservableObject {
         components.queryItems = [
             URLQueryItem(name: "offset", value: "\(offset)"),
             URLQueryItem(name: "timeout", value: "\(timeout)"),
-            URLQueryItem(name: "allowed_updates", value: "[\"message\",\"callback_query\"]")
+            URLQueryItem(name: "allowed_updates", value: "[\"message\",\"channel_post\",\"callback_query\",\"my_chat_member\"]")
         ]
 
         guard let url = components.url else {
@@ -498,9 +498,15 @@ class TelegramBridgeService: ObservableObject {
     }
 
     private func handleUpdate(_ update: [String: Any]) async {
-        // Handle regular messages
+        // Handle regular messages (DMs, groups, supergroups)
         if let message = update["message"] as? [String: Any] {
             await handleMessage(message)
+        }
+
+        // Handle channel posts (Telegram Channels — broadcast chats)
+        // Channel posts use "channel_post" key, not "message".
+        if let channelPost = update["channel_post"] as? [String: Any] {
+            await handleMessage(channelPost)
         }
 
         // Handle callback queries (inline button presses)
@@ -538,24 +544,33 @@ class TelegramBridgeService: ObservableObject {
     /// Check if the bot is @mentioned in the message entities.
     private func isBotMentioned(message: [String: Any], text: String) -> Bool {
         guard let botName = botUsername else { return true } // if unknown, allow all
-        guard let entities = message["entities"] as? [[String: Any]] else { return false }
-        let lowerText = text.lowercased()
-        for entity in entities {
-            guard let type = entity["type"] as? String else { continue }
-            if type == "mention",
-               let offset = entity["offset"] as? Int,
-               let length = entity["length"] as? Int {
-                let start = lowerText.index(lowerText.startIndex, offsetBy: offset, limitedBy: lowerText.endIndex) ?? lowerText.startIndex
-                let end = lowerText.index(start, offsetBy: length, limitedBy: lowerText.endIndex) ?? lowerText.endIndex
-                let mention = String(lowerText[start..<end]).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-                if mention == botName { return true }
-            }
-            if type == "text_mention",
-               let user = entity["user"] as? [String: Any],
-               user["is_bot"] as? Bool == true {
-                return true
+
+        // Primary: Check Telegram entity metadata (most reliable)
+        if let entities = message["entities"] as? [[String: Any]] {
+            let lowerText = text.lowercased()
+            for entity in entities {
+                guard let type = entity["type"] as? String else { continue }
+                if type == "mention",
+                   let offset = entity["offset"] as? Int,
+                   let length = entity["length"] as? Int {
+                    let start = lowerText.index(lowerText.startIndex, offsetBy: offset, limitedBy: lowerText.endIndex) ?? lowerText.startIndex
+                    let end = lowerText.index(start, offsetBy: length, limitedBy: lowerText.endIndex) ?? lowerText.endIndex
+                    let mention = String(lowerText[start..<end]).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+                    if mention == botName { return true }
+                }
+                if type == "text_mention",
+                   let user = entity["user"] as? [String: Any],
+                   user["is_bot"] as? Bool == true {
+                    return true
+                }
             }
         }
+
+        // Fallback: Plain text @mention check (catches edge cases where entities are missing)
+        if text.lowercased().contains("@\(botName)") {
+            return true
+        }
+
         return false
     }
 
@@ -608,13 +623,18 @@ class TelegramBridgeService: ObservableObject {
 
         guard let rawText = message["text"] as? String else { return }
 
-        // In groups/supergroups, only respond to @mentions or replies to the bot
+        // In groups/supergroups, only respond to @mentions or replies to the bot.
+        // In channels, process all messages (the bot must be an admin to see them).
         let chatType = chat["type"] as? String ?? "private"
         if chatType == "group" || chatType == "supergroup" {
             let mentioned = isBotMentioned(message: message, text: rawText)
             let replying = isReplyToBot(message: message)
+            print("[Telegram] Group message in \(chatIdStr) — mentioned: \(mentioned), reply: \(replying), botUsername: \(botUsername ?? "nil")")
             guard mentioned || replying else { return }
+        } else if chatType == "channel" {
+            print("[Telegram] Channel message in \(chatIdStr): \(rawText.prefix(60))...")
         }
+        print("[Telegram] Processing message from \(chatType) chat \(chatIdStr): \(rawText.prefix(60))...")
 
         // Strip bot @mention from text so it doesn't confuse the LLM
         let text = (chatType == "group" || chatType == "supergroup")
@@ -1254,53 +1274,20 @@ class TelegramBridgeService: ObservableObject {
                 return
             }
 
-            // ── VoiceToContentPipeline for substantial idea-expression voice memos ──
-            // Messages ≥50 words that look like idea expression (not short commands or
-            // questions) get routed through the full 7-step pipeline:
-            // transcribe → NLP → swipe match → framework → content atom → draft.
-            let wordCount = text.split(separator: " ").count
-            let lowerText = text.lowercased()
-            let isShortCommand = wordCount < 15
-            let isQuestion = lowerText.hasSuffix("?") && wordCount < 25
-            let isIdeaExpression = wordCount >= 50 &&
-                !isShortCommand && !isQuestion &&
-                !lowerText.hasPrefix("what") && !lowerText.hasPrefix("how") &&
-                !lowerText.hasPrefix("can you") && !lowerText.hasPrefix("please")
-
-            if isIdeaExpression {
-                // Send progress header
-                await sendMessage(
-                    chatId: chatId,
-                    text: "🎙 *Voice idea detected* — running full pipeline...",
-                    parseMode: "Markdown"
-                )
-                let pipeline = VoiceToContentPipeline(chatId: chatId)
-                let result = await pipeline.execute(transcribedText: text)
-
-                // Build the confirmation message
-                var confirmLines = ["✅ *Idea processed*"]
-                if let draftBody = result.draftBody, !draftBody.isEmpty {
-                    confirmLines.append("\n*Draft preview:*\n" + String(draftBody.prefix(600)))
-                } else {
-                    confirmLines.append("Draft is ready in your content pipeline.")
+            // ── FlashLiteRouter for voice memos ──
+            // Route transcribed voice through the same LLM router as text messages.
+            // Handles: content ideas → pipeline, general thoughts → inbox, swipes, tasks, etc.
+            // Questions and multi-turn requests fall through to the general agent.
+            if !FlashLiteRouter.shouldForceAgentFallback(text) {
+                if let (flashResponse, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
+                    await sendLongMessage(chatId: chatId, text: flashResponse)
+                    // Save to conversation memory for follow-up context
+                    await saveFlashRouterResult(text: text, response: flashResponse, toolName: toolName, chatId: chatId)
+                    return
                 }
-                if result.matchingSwipeCount > 0 {
-                    let count = result.matchingSwipeCount
-                    confirmLines.append("📎 \(count) matching swipe\(count == 1 ? "" : "s") referenced")
-                }
-                if let framework = result.recommendedFramework {
-                    confirmLines.append("🏗 Framework: \(framework)")
-                }
-                await sendLongMessage(chatId: chatId, text: confirmLines.joined(separator: "\n"))
-                notifyDesktopContentCreated(
-                    contentUUID: result.contentUUID.flatMap({ UUID(uuidString: $0) }),
-                    title: result.summary ?? "Voice idea from Telegram"
-                )
-                return
             }
-            // ──────────────────────────────────────────────────────────────────
 
-            // Short messages and questions fall through to the general agent
+            // Fall through to the general agent for questions, commands, multi-turn
             let typingTask = Task { await self.keepTyping(chatId: chatId) }
             let (response, trace) = await CosmoAgentService.shared.processMessage(
                 text,
@@ -1421,7 +1408,7 @@ class TelegramBridgeService: ObservableObject {
             }
         }
 
-        print("[Telegram] sendMessage retries exhausted after \(maxSendRetries) attempts")
+        print("[Telegram] sendMessage retries exhausted after \(maxSendRetries) attempts for chat \(rawChatId)")
         return false
     }
 

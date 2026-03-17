@@ -64,6 +64,11 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let scheduledStart: Date?
     public let scheduledEnd: Date?
 
+    // MARK: - Manual Sort Order
+
+    /// Manual sort order for drag-to-reorder (lower = higher in list)
+    public let manualSortOrder: Int?
+
     // MARK: - Recommendation Engine
 
     public let taskType: TaskCategoryType?
@@ -166,6 +171,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         isRecurring: Bool = false,
         scheduledStart: Date? = nil,
         scheduledEnd: Date? = nil,
+        manualSortOrder: Int? = nil,
         taskType: TaskCategoryType? = nil,
         energyLevel: EnergyLevel? = nil,
         cognitiveLoad: CognitiveLoad? = nil,
@@ -200,6 +206,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.isRecurring = isRecurring
         self.scheduledStart = scheduledStart
         self.scheduledEnd = scheduledEnd
+        self.manualSortOrder = manualSortOrder
         self.taskType = taskType
         self.energyLevel = energyLevel
         self.cognitiveLoad = cognitiveLoad
@@ -380,6 +387,7 @@ extension TaskViewModel {
             isRecurring: metadata?.recurrence != nil || metadata?.recurrenceParentUUID != nil,
             scheduledStart: scheduledStart,
             scheduledEnd: scheduledEnd,
+            manualSortOrder: metadata?.manualSortOrder,
             taskType: taskType,
             energyLevel: energyLevel,
             cognitiveLoad: cognitiveLoad,

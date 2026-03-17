@@ -18,7 +18,7 @@ struct TranscriptSpineView: View {
 
     let onSectionTap: (TranscriptSection) -> Void
     let onAddAnnotation: (TranscriptSection, AnnotationType) -> Void
-    let onAnnotationEdit: (ResearchAnnotation, String) -> Void
+    let onAnnotationEdit: (ResearchAnnotation, RichDocument) -> Void
     let onAnnotationDelete: (ResearchAnnotation) -> Void
     let onCreateHighlightAnnotation: (UUID, AnnotationType, String, NSRange) -> Void
     let onPromoteToBlock: (ResearchAnnotation) -> Void
@@ -132,7 +132,7 @@ struct TranscriptSectionRow: View {
 
     let onTap: () -> Void
     let onAddAnnotation: (AnnotationType) -> Void
-    let onAnnotationEdit: (ResearchAnnotation, String) -> Void
+    let onAnnotationEdit: (ResearchAnnotation, RichDocument) -> Void
     let onAnnotationDelete: (ResearchAnnotation) -> Void
     let onCreateHighlightAnnotation: (UUID, AnnotationType, String, NSRange) -> Void
     let onPromoteToBlock: (ResearchAnnotation) -> Void
@@ -221,8 +221,8 @@ struct TranscriptSectionRow: View {
                 AnnotationDetailPopover(
                     annotations: filteredAnnotationsForPopover,
                     sectionText: section.text,
-                    onEdit: { annotation, newContent in
-                        onAnnotationEdit(annotation, newContent)
+                    onEdit: { annotation, document in
+                        onAnnotationEdit(annotation, document)
                     },
                     onDelete: { annotation in
                         onAnnotationDelete(annotation)
@@ -309,8 +309,8 @@ struct TranscriptSectionRow: View {
             AnnotationDetailPopover(
                 annotations: filteredAnnotationsForPopover,
                 sectionText: section.text,
-                onEdit: { annotation, newContent in
-                    onAnnotationEdit(annotation, newContent)
+                onEdit: { annotation, document in
+                    onAnnotationEdit(annotation, document)
                 },
                 onDelete: { annotation in
                     onAnnotationDelete(annotation)
@@ -391,12 +391,13 @@ struct TranscriptSectionRow: View {
 struct AnnotationDetailPopover: View {
     let annotations: [ResearchAnnotation]
     let sectionText: String
-    let onEdit: (ResearchAnnotation, String) -> Void
+    let onEdit: (ResearchAnnotation, RichDocument) -> Void
     let onDelete: (ResearchAnnotation) -> Void
     let onPromoteToBlock: (ResearchAnnotation) -> Void
 
     @State private var editingID: UUID? = nil
     @State private var editContent: String = ""
+    @State private var editDocument: RichDocument = .empty
     @FocusState private var isEditing: Bool
 
     var body: some View {
@@ -478,10 +479,8 @@ struct AnnotationDetailPopover: View {
     @ViewBuilder
     private func staticContent(_ annotation: ResearchAnnotation) -> some View {
         if !annotation.content.isEmpty {
-            Text(annotation.content)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
-                .fixedSize(horizontal: false, vertical: true)
+            CosmoDocumentRenderer(document: annotation.resolvedDocument, fontSize: 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .onTapGesture {
                     enterEditMode(annotation)
                 }
@@ -507,12 +506,20 @@ struct AnnotationDetailPopover: View {
                     .padding(.leading, 4)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: $editContent)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
-                .scrollContentBackground(.hidden)
-                .focused($isEditing)
-                .frame(minHeight: 36, maxHeight: 100)
+            CosmoDocumentEditor(
+                document: $editDocument,
+                fontSize: 12,
+                compact: true,
+                placeholder: "Add a note...",
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                onDocumentChange: { _, plainText in
+                    editContent = plainText
+                }
+            )
+            .frame(minHeight: 36, maxHeight: 100)
         }
         .padding(4)
         .background(
@@ -580,6 +587,7 @@ struct AnnotationDetailPopover: View {
 
     private func enterEditMode(_ annotation: ResearchAnnotation) {
         editContent = annotation.content
+        editDocument = annotation.resolvedDocument
         editingID = annotation.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             isEditing = true
@@ -590,7 +598,7 @@ struct AnnotationDetailPopover: View {
         let newContent = editContent
         editingID = nil
         if newContent != annotation.content {
-            onEdit(annotation, newContent)
+            onEdit(annotation, editDocument)
         }
     }
 
@@ -652,7 +660,7 @@ struct TranscriptSpineView_Previews: PreviewProvider {
                 currentTimestamp: 40,
                 onSectionTap: { section in print("Tap: \(section.startTimeString)") },
                 onAddAnnotation: { section, type in print("Add \(type) to \(section.startTimeString)") },
-                onAnnotationEdit: { annotation, newContent in print("Edit: \(annotation.content) -> \(newContent)") },
+                onAnnotationEdit: { annotation, document in print("Edit: \(annotation.content) -> \(document.plainText)") },
                 onAnnotationDelete: { annotation in print("Delete: \(annotation.content)") },
                 onCreateHighlightAnnotation: { sectionID, type, text, range in print("Highlight: \(type.label) on '\(text)' in section \(sectionID)") },
                 onPromoteToBlock: { annotation in print("Promote: \(annotation.content)") }

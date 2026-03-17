@@ -20,10 +20,7 @@ struct SimilarSwipesSection: View {
         VStack(alignment: .leading, spacing: 12) {
             // Section header
             Text("SIMILAR IN COLLECTION")
-                .font(.system(size: 13, weight: .bold))
-                .tracking(1.2)
-                .foregroundColor(DS.textMuted)
-                .textCase(.uppercase)
+                .dsSectionLabel()
 
             if !hasLoaded {
                 ProgressView()
@@ -42,9 +39,9 @@ struct SimilarSwipesSection: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
         )
         .onAppear { loadSimilarSwipes() }
@@ -124,9 +121,9 @@ struct SimilarSwipesSection: View {
         }
         .padding(8)
         .frame(width: 156, height: 110)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(DS.border, lineWidth: 1)
         )
     }
@@ -142,9 +139,9 @@ struct SimilarSwipesSection: View {
     }
 
     private func similarityColor(_ similarity: Double) -> Color {
-        if similarity >= 0.8 { return Color(hex: "#10B981") }  // Emerald
-        if similarity >= 0.5 { return Color(hex: "#3B82F6") }  // Blue
-        return Color(hex: "#64748B")                             // Slate
+        if similarity >= 0.8 { return DS.green }
+        if similarity >= 0.5 { return DS.info }
+        return DS.textMuted
     }
 
     // MARK: - Pattern Formula Card
@@ -155,11 +152,11 @@ struct SimilarSwipesSection: View {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "#FFD700"))
+                    .foregroundColor(DS.entitySwipe)
                 Text("YOUR WINNING FORMULA")
                     .font(.system(size: 10, weight: .bold))
                     .tracking(1.0)
-                    .foregroundColor(Color(hex: "#FFD700"))
+                    .foregroundColor(DS.entitySwipe)
             }
 
             // Formula pills
@@ -222,10 +219,10 @@ struct SimilarSwipesSection: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#FFD700").opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .background(DS.entitySwipe.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(hex: "#FFD700").opacity(0.15), lineWidth: 1)
+                .stroke(DS.entitySwipe.opacity(0.15), lineWidth: 1)
         )
     }
 

@@ -382,6 +382,7 @@ struct ContentFocusModeState: Codable {
     var outline: [OutlineItem]
     var relatedAtoms: [RelatedAtomRef]
     var draftContent: String
+    var richDraftDocument: RichDocument?
     var polishAnalysis: PolishAnalysis?
     var aiSuggestions: [AISuggestion]
     var polishSystemPrompt: String
@@ -413,7 +414,7 @@ struct ContentFocusModeState: Codable {
     // Exclude transient fields from Codable synthesis
     enum CodingKeys: String, CodingKey {
         case atomUUID, currentStep, coreIdea, hooks, contentDescription, outline, relatedAtoms
-        case draftContent, polishAnalysis, aiSuggestions, polishSystemPrompt
+        case draftContent, richDraftDocument, polishAnalysis, aiSuggestions, polishSystemPrompt
         case isContextPanelVisible, isAISuggestedOutline, generationHistory, lastModified
         case conversationHistory, conversationSummary
     }
@@ -427,6 +428,7 @@ struct ContentFocusModeState: Codable {
         self.outline = []
         self.relatedAtoms = []
         self.draftContent = ""
+        self.richDraftDocument = nil
         self.polishAnalysis = nil
         self.aiSuggestions = []
         self.polishSystemPrompt = ""
@@ -615,7 +617,12 @@ extension ContentFocusModeState {
         state.coreIdea = dict["coreIdea"] as? String ?? ""
         state.hooks = dict["hooks"] as? [String] ?? dict["inheritedHooks"] as? [String] ?? []
         state.contentDescription = dict["contentDescription"] as? String ?? ""
-        state.draftContent = atom.body ?? ""
+        let richDraftDocument = RichDocumentMetadataStorage.readDocument(
+            from: atom.metadata,
+            key: RichDocumentMetadataKeys.contentDraftDocument
+        )
+        state.richDraftDocument = richDraftDocument
+        state.draftContent = richDraftDocument?.plainText ?? (atom.body ?? "")
         state.polishSystemPrompt = dict["polishSystemPrompt"] as? String ?? ""
         state.isContextPanelVisible = dict["isContextPanelVisible"] as? Bool ?? true
         state.isAISuggestedOutline = dict["isAISuggestedOutline"] as? Bool ?? false
@@ -734,6 +741,12 @@ extension ContentFocusModeState {
             metadataString = nil
         }
 
-        return (body: draftContent.isEmpty ? nil : draftContent, metadata: metadataString)
+        let richDraftDocument = richDraftDocument ?? RichDocument.migrateLegacy(draftContent)
+        let fields = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: metadataString,
+            draftDocument: richDraftDocument
+        )
+
+        return (body: fields.body, metadata: fields.metadata)
     }
 }

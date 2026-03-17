@@ -894,7 +894,8 @@ class CanvasClusterEngine: ObservableObject {
                 let mode = userClusters[idx].viewMode
                 if let fitted = fitClusterRectForMode(clusterId: id, mode: mode, blocks: blocks, viewportInCanvas: nil) {
                     userClusters[idx].boundingRect = fitted
-                    userClusters[idx].manualSizeOverride = fitted.size
+                    // Don't overwrite manualSizeOverride — it should only be set by
+                    // explicit user resize, not recalculated on every load.
                 }
             }
         } catch {

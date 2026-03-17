@@ -146,13 +146,7 @@ struct IdeasTab: View {
         var items = viewModel.ideaGalleryItems.filter { !Self.activatedStatuses.contains($0.status) }
 
         if !searchQuery.isEmpty {
-            let q = searchQuery.lowercased()
-            items = items.filter { item in
-                item.title.lowercased().contains(q) ||
-                (item.body?.lowercased().contains(q) ?? false) ||
-                (item.clientName?.lowercased().contains(q) ?? false) ||
-                item.tags.contains { $0.lowercased().contains(q) }
-            }
+            items = items.filter { Self.matchesSearch($0, query: searchQuery) }
         }
 
         if let statusFilter = ideaStatusFilter {
@@ -242,6 +236,10 @@ struct IdeasTab: View {
         return counts
             .map { (status: $0.key, count: $0.value) }
             .sorted { $0.status.sortOrder < $1.status.sortOrder }
+    }
+
+    nonisolated static func matchesSearch(_ item: IdeaGalleryItem, query: String) -> Bool {
+        CommandKSearchMatcher.matches(query, inAny: [item.title, item.body, item.clientName] + item.tags.map(Optional.some))
     }
 
     // MARK: - Dropdown Helper

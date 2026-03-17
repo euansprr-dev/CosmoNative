@@ -18,7 +18,7 @@ struct CompareCreatorsView: View {
     @State private var showPicker = false
     @State private var hasAppeared = false
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
     private let maxCompare = 3
 
     init(availableCreators: [Atom], initialSelection: [Atom] = [], onClose: @escaping () -> Void) {
@@ -260,9 +260,9 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .strokeBorder(DS.border, lineWidth: 1)
         )
     }
@@ -646,7 +646,7 @@ struct CompareCreatorsView: View {
             }
             .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(isSelected ? gold.opacity(0.1) : DS.borderSubtle)
             )
         }

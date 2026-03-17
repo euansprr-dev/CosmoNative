@@ -33,13 +33,27 @@ struct DashboardShortcutBar: View {
     }
 
     private func shortcutHint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Text(key)
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundColor(DS.textMuted)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-                .background(DS.surface, in: RoundedRectangle(cornerRadius: 3))
+                .foregroundColor(DS.textSecondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(DS.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+                .overlay(alignment: .bottom) {
+                    // Inset shadow for keycap depth
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(DS.borderActive, lineWidth: 0.5)
+                        .offset(y: 1)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
 
             Text(label)
                 .font(.system(size: 9))

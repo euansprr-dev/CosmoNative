@@ -28,6 +28,7 @@ struct CosmoApp: App {
     var body: some Scene {
         WindowGroup {
             MainView()
+                .preferredColorScheme(.light) // Greenhouse is light-only — prevents dark-mode NSTextField placeholder issues
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
@@ -50,6 +51,19 @@ struct CosmoApp: App {
     }
 
     private func initializeApp() {
+        // Migrate Supabase credentials from hardcoded to Keychain (one-time)
+        APIKeys.seedSupabaseIfNeeded()
+
+        // Observe app termination to flush pending saves before exit
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            // Give active focus modes a chance to flush pending saves synchronously
+            NotificationCenter.default.post(name: .cosmoAppWillTerminate, object: nil)
+        }
+
         // Restore UI state
         restoreUIState()
 
@@ -406,6 +420,7 @@ public enum EntityType: String, Codable, Sendable {
     case journal
     case swipeFile = "swipe_file"  // Curated content swipe file
     case image                     // Native image blocks on canvas
+    case stickyNote = "sticky_note" // Square sticky note blocks on canvas
 
     public var icon: String {
         switch self {
@@ -416,6 +431,7 @@ public enum EntityType: String, Codable, Sendable {
         case .task: return "checkmark.circle.fill"
         case .project: return "folder.fill"
         case .note: return "note.text"
+        case .stickyNote: return "square.and.pencil"
         case .thinkspace: return "rectangle.3.group"
         case .cosmo, .cosmoAI: return "brain.head.profile"
         case .calendar: return "calendar"
@@ -434,6 +450,7 @@ public enum EntityType: String, Codable, Sendable {
         case .task: return DS.entityTask
         case .project: return DS.entityContent  // Projects share content blue
         case .note: return DS.entityNote
+        case .stickyNote: return DS.entityStickyNote
         case .thinkspace: return DS.accent
         case .cosmo: return DS.accent
         case .cosmoAI: return DS.accent

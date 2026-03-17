@@ -64,7 +64,9 @@ actor GhostSuggestionEngine {
         Each suggestion must be grounded in the provided source materials. \
         Write 1-2 sentence synthesized insights, not raw quotes. \
         Skip sections where sources have nothing relevant. \
-        Do not repeat items that already exist.
+        Do not repeat items that already exist — not even reworded versions of the same point. \
+        NEVER prefix suggestions with the source title or topic name. \
+        Jump straight into the insight — no preamble like "Topic Name | " or "According to...".
         """
 
         let prompt = """
@@ -74,9 +76,14 @@ actor GhostSuggestionEngine {
         Source materials:
         \(sourceDigest)
 
-        \(existingDigest.isEmpty ? "" : "Existing items (do NOT repeat these):\n\(existingDigest)\n")
+        \(existingDigest.isEmpty ? "" : "Existing items (do NOT repeat or rephrase these — each suggestion must cover a DIFFERENT point):\n\(existingDigest)\n")
         For each section where sources provide relevant information, generate 1-3 suggestions.
         Each suggestion must reference a specific source.
+
+        CRITICAL RULES:
+        - Do NOT start the TEXT with the source title, topic name, or any prefix before the insight.
+        - Each suggestion must make a DISTINCT point — no two suggestions should cover the same idea even if worded differently.
+        - Go straight to the insight. Bad: "Solipsism | The problem is..." Good: "The fundamental problem is..."
 
         Respond ONLY with lines in this exact format (one per line):
         SECTION: <section name> | SOURCE: <source title> | TEXT: <suggested content>
@@ -195,7 +202,7 @@ actor GhostSuggestionEngine {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let sourcePart = parts[1].replacingOccurrences(of: "SOURCE:", with: "", options: .caseInsensitive)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let textPart = parts[2...].joined(separator: "|")
+            var textPart = parts[2...].joined(separator: "|")
                 .replacingOccurrences(of: "TEXT:", with: "", options: .caseInsensitive)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -209,6 +216,9 @@ actor GhostSuggestionEngine {
             } ?? sources.first
 
             guard let source = matchingSource else { continue }
+
+            // Strip title prefix the LLM may have prepended (e.g. "Topic Name | actual insight")
+            textPart = stripTitlePrefix(textPart, sourceTitles: sources.map(\.title))
 
             suggestions.append(GhostSuggestion(
                 content: textPart,
@@ -243,6 +253,47 @@ actor GhostSuggestionEngine {
         return nil
     }
 
+    // MARK: - Title Prefix Stripping
+
+    /// Strip a source title the LLM may have prepended (e.g. "Topic Name | actual insight" or "Topic Name: insight")
+    private func stripTitlePrefix(_ text: String, sourceTitles: [String]) -> String {
+        var cleaned = text
+
+        // Strip "Title | rest" pattern
+        if let pipeRange = cleaned.range(of: " | ") {
+            let before = String(cleaned[cleaned.startIndex..<pipeRange.lowerBound])
+            let isTitle = sourceTitles.contains { title in
+                before.lowercased().contains(title.lowercased().prefix(20)) ||
+                title.lowercased().contains(before.lowercased().prefix(20))
+            }
+            if isTitle {
+                cleaned = String(cleaned[pipeRange.upperBound...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        // Strip "Title: rest" or "Title — rest" patterns
+        for separator in [": ", " — ", " - "] {
+            if let sepRange = cleaned.range(of: separator) {
+                let before = String(cleaned[cleaned.startIndex..<sepRange.lowerBound])
+                // Only strip if the prefix is short (likely a title, not part of the insight)
+                if before.count < 60 {
+                    let isTitle = sourceTitles.contains { title in
+                        before.lowercased().contains(title.lowercased().prefix(20)) ||
+                        title.lowercased().contains(before.lowercased().prefix(20))
+                    }
+                    if isTitle {
+                        cleaned = String(cleaned[sepRange.upperBound...])
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        break
+                    }
+                }
+            }
+        }
+
+        return cleaned.isEmpty ? text : cleaned
+    }
+
     // MARK: - Deduplication
 
     private func deduplicateSuggestions(
@@ -251,24 +302,49 @@ actor GhostSuggestionEngine {
     ) -> [GhostSuggestion] {
         var kept: [GhostSuggestion] = []
 
-        for suggestion in suggestions {
-            let contentWords = Set(suggestion.content.lowercased().split(separator: " "))
+        // Build significant-words set (drop common stop words for better semantic matching)
+        func significantWords(_ text: String) -> Set<String> {
+            let stopWords: Set<String> = [
+                "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+                "should", "may", "might", "must", "can", "could", "of", "in", "to",
+                "for", "with", "on", "at", "from", "by", "as", "into", "through",
+                "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+                "neither", "each", "every", "all", "any", "few", "more", "most",
+                "other", "some", "such", "no", "only", "own", "same", "than",
+                "too", "very", "just", "that", "this", "it", "its", "we", "they",
+                "their", "our", "how", "what", "which", "who", "whom", "when", "where"
+            ]
+            return Set(
+                text.lowercased()
+                    .split(separator: " ")
+                    .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+                    .filter { $0.count > 2 && !stopWords.contains($0) }
+            )
+        }
 
-            // Check against existing items
+        for suggestion in suggestions {
+            let contentWords = significantWords(suggestion.content)
+            guard contentWords.count >= 2 else {
+                kept.append(suggestion)
+                continue
+            }
+
+            // Check against existing items (lower threshold to catch reworded duplicates)
             let duplicatesExisting = existingItems.contains { item in
-                let itemWords = Set(item.content.lowercased().split(separator: " "))
-                guard !contentWords.isEmpty else { return false }
-                let overlap = Double(contentWords.intersection(itemWords).count) / Double(contentWords.count)
-                return overlap > 0.7
+                let itemWords = significantWords(item.content)
+                guard !itemWords.isEmpty else { return false }
+                let overlap = Double(contentWords.intersection(itemWords).count) / Double(min(contentWords.count, itemWords.count))
+                return overlap > 0.45
             }
             guard !duplicatesExisting else { continue }
 
             // Check against already-kept suggestions
             let duplicatesKept = kept.contains { other in
-                let otherWords = Set(other.content.lowercased().split(separator: " "))
-                guard !contentWords.isEmpty else { return false }
-                let overlap = Double(contentWords.intersection(otherWords).count) / Double(contentWords.count)
-                return overlap > 0.7
+                let otherWords = significantWords(other.content)
+                guard !otherWords.isEmpty else { return false }
+                let overlap = Double(contentWords.intersection(otherWords).count) / Double(min(contentWords.count, otherWords.count))
+                return overlap > 0.45
             }
             guard !duplicatesKept else { continue }
 

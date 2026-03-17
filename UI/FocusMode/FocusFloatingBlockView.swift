@@ -213,53 +213,15 @@ struct FocusCanvasBlockView: View {
     let onRemove: () -> Void
     let onPositionChange: (CGPoint) -> Void
 
-    @State private var isHovered = false
     @State private var dragOffset: CGSize = .zero
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            blockContent
-
-            // Remove button on hover
-            if isHovered {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(DS.textMuted)
-                        .shadow(color: .black.opacity(0.1), radius: 4)
-                }
-                .buttonStyle(.plain)
-                .padding(8)
-                .transition(.opacity)
-            }
-        }
-        .position(
-            x: block.positionX + dragOffset.width,
-            y: block.positionY + dragOffset.height
-        )
-        .gesture(dragGesture)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) {
-                isHovered = hovering
-            }
-        }
-        .contextMenu {
-            Button {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openBlockInFocusMode,
-                    object: nil,
-                    userInfo: ["atomUUID": block.linkedAtomUUID]
-                )
-            } label: {
-                Label("Open Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
-            }
-
-            Divider()
-
-            Button(role: .destructive, action: onRemove) {
-                Label("Remove from Canvas", systemImage: "xmark.circle")
-            }
-        }
+        blockContent
+            .position(
+                x: block.positionX + dragOffset.width,
+                y: block.positionY + dragOffset.height
+            )
+            .gesture(dragGesture)
     }
 
     // MARK: - Block Content (Type-Specific Dispatch)

@@ -12,6 +12,9 @@ struct DashboardTaskList: View {
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
     @State private var showOverdueRescheduleMenu = false
     @State private var activeTaskMenuUUID: String?
+    @State private var hoveredTaskUUID: String?
+    @State private var draggedTaskUUID: String?
+    @State private var dropTargetTaskUUID: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -44,7 +47,8 @@ struct DashboardTaskList: View {
                 title: "Overdue",
                 tasks: viewModel.overdueTasks,
                 headerColor: PlannerumColors.overdue,
-                showReschedule: true
+                showReschedule: true,
+                section: .overdue
             )
         }
 
@@ -53,7 +57,8 @@ struct DashboardTaskList: View {
             taskSection(
                 title: "Scheduled",
                 tasks: viewModel.scheduledTasks,
-                headerColor: DS.textSecondary
+                headerColor: DS.textSecondary,
+                section: .scheduled
             )
         }
 
@@ -63,7 +68,8 @@ struct DashboardTaskList: View {
                 ? "Tasks" : "Unscheduled",
             tasks: viewModel.unscheduledTasks,
             headerColor: DS.textSecondary,
-            showAddRow: true
+            showAddRow: true,
+            section: .unscheduled
         )
 
         // Empty state
@@ -123,7 +129,8 @@ struct DashboardTaskList: View {
         tasks: [TaskViewModel],
         headerColor: Color,
         showReschedule: Bool = false,
-        showAddRow: Bool = false
+        showAddRow: Bool = false,
+        section: CommandCenterDashboardViewModel.TaskSection? = nil
     ) -> some View {
         sectionHeader(
             title: title,
@@ -134,6 +141,59 @@ struct DashboardTaskList: View {
 
         ForEach(tasks) { task in
             taskRow(task)
+                .draggable(task.uuid) {
+                    // Drag preview
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(task.priority.color)
+                            .frame(width: 4, height: 20)
+                        Text(task.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .onAppear { draggedTaskUUID = task.uuid }
+                }
+                .dropDestination(for: String.self) { droppedItems, _ in
+                    guard let droppedUUID = droppedItems.first,
+                          let targetSection = section,
+                          droppedUUID != task.uuid else { return false }
+
+                    var sectionTasks: [TaskViewModel]
+                    switch targetSection {
+                    case .overdue: sectionTasks = viewModel.overdueTasks
+                    case .scheduled: sectionTasks = viewModel.scheduledTasks
+                    case .unscheduled: sectionTasks = viewModel.unscheduledTasks
+                    }
+
+                    guard let fromIndex = sectionTasks.firstIndex(where: { $0.uuid == droppedUUID }),
+                          let toIndex = sectionTasks.firstIndex(where: { $0.uuid == task.uuid })
+                    else { return false }
+
+                    let offset = toIndex > fromIndex ? toIndex + 1 : toIndex
+                    viewModel.reorderTasks(
+                        section: targetSection,
+                        fromOffsets: IndexSet(integer: fromIndex),
+                        toOffset: offset
+                    )
+                    draggedTaskUUID = nil
+                    dropTargetTaskUUID = nil
+                    return true
+                } isTargeted: { targeted in
+                    dropTargetTaskUUID = targeted ? task.uuid : (dropTargetTaskUUID == task.uuid ? nil : dropTargetTaskUUID)
+                }
+                .overlay(alignment: .top) {
+                    if dropTargetTaskUUID == task.uuid && draggedTaskUUID != task.uuid {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(DS.accent)
+                            .frame(height: 2)
+                            .padding(.horizontal, 8)
+                            .transition(.opacity)
+                    }
+                }
 
             if expandedTaskId == task.uuid && completionStates[task.uuid] == nil {
                 TaskDetailInlineEditor(
@@ -266,11 +326,13 @@ struct DashboardTaskList: View {
         let completionState = completionStates[task.uuid]
         let isAnimatingCompletion = completionState != nil
 
+        let isHovered = hoveredTaskUUID == task.uuid && !isAnimatingCompletion
+
         HStack(spacing: 0) {
-            // Priority color bar
+            // Priority color bar — widens on hover
             RoundedRectangle(cornerRadius: 2)
-                .fill(task.priority.color)
-                .frame(width: 4)
+                .fill(task.priority.color.opacity(isHovered ? 1.0 : 0.85))
+                .frame(width: isHovered ? 5 : 4)
                 .padding(.vertical, 4)
 
             HStack(spacing: 10) {
@@ -322,6 +384,7 @@ struct DashboardTaskList: View {
                     isActiveSession ? DS.accent.opacity(0.06)
                         : isMultiSelected ? DS.accent.opacity(0.06)
                         : isKeyboardSelected ? DS.accentSoft
+                        : isHovered ? DS.surfaceHover
                         : Color.clear
                 )
         )
@@ -335,11 +398,15 @@ struct DashboardTaskList: View {
                     lineWidth: isMultiSelected ? 2 : 1
                 )
         )
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .scaleEffect(completionState?.rowScale ?? 1)
         .opacity(completionState?.rowOpacity ?? 1)
         .offset(y: completionState?.rowOffsetY ?? 0)
         .blur(radius: completionState?.blurRadius ?? 0)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredTaskUUID = hovering ? task.uuid : (hoveredTaskUUID == task.uuid ? nil : hoveredTaskUUID)
+        }
         .contextMenu {
             Button {
                 handleTaskCompletionTap(task)
@@ -603,10 +670,20 @@ struct DashboardTaskList: View {
     // MARK: - Empty State
 
     private func emptyState(message: String, icon: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .light))
-                .foregroundColor(DS.textMuted)
+        VStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .stroke(DS.accent.opacity(0.08), lineWidth: 1)
+                    .frame(width: 56, height: 56)
+
+                Circle()
+                    .fill(DS.accentSoft.opacity(0.5))
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundColor(DS.accent.opacity(0.6))
+            }
 
             Text(message)
                 .font(DS.cardMeta)

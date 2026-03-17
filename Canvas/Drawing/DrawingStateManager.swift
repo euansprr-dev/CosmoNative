@@ -611,11 +611,9 @@ final class DrawingStateManager: ObservableObject {
     // MARK: - Ramer-Douglas-Peucker Path Simplification
 
     func simplifyPath(_ points: [CGPoint], epsilon: CGFloat) -> [CGPoint] {
-        guard points.count > 2 else { return points }
+        guard points.count > 2, let first = points.first, let last = points.last else { return points }
 
         // Find the point with maximum distance from the line between first and last
-        let first = points.first!
-        let last = points.last!
         var maxDist: CGFloat = 0
         var maxIdx = 0
 

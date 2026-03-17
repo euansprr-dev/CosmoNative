@@ -420,8 +420,12 @@ public final class ContentPipelineService: ObservableObject {
         updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
         let atomToUpdate = updatedAtom
 
-        try? await database.write { db in
-            try atomToUpdate.update(db)
+        do {
+            try await database.write { db in
+                try atomToUpdate.update(db)
+            }
+        } catch {
+            print("ContentPipelineService: Failed to update prediction metadata: \(error)")
         }
     }
 
@@ -742,8 +746,12 @@ public final class ContentPipelineService: ObservableObject {
             contentAtom.metadata = meta.toJSON()
             contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
             let atomToUpdate = contentAtom
-            try? await database.write { db in
-                try atomToUpdate.update(db)
+            do {
+                try await database.write { db in
+                    try atomToUpdate.update(db)
+                }
+            } catch {
+                print("ContentPipelineService: Failed to update draft readiness: \(error)")
             }
         }
 
@@ -788,8 +796,12 @@ public final class ContentPipelineService: ObservableObject {
             contentAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
 
             let atomToUpdate = contentAtom
-            try? await database.write { db in
-                try atomToUpdate.update(db)
+            do {
+                try await database.write { db in
+                    try atomToUpdate.update(db)
+                }
+            } catch {
+                print("ContentPipelineService: Failed to store draft package: \(error)")
             }
 
             // Create AtomLinks from content to each referenced swipe
@@ -804,8 +816,12 @@ public final class ContentPipelineService: ObservableObject {
                 linkedAtom.links = linksString
                 linkedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
                 let finalAtom = linkedAtom
-                try? await database.write { db in
-                    try finalAtom.update(db)
+                do {
+                    try await database.write { db in
+                        try finalAtom.update(db)
+                    }
+                } catch {
+                    print("ContentPipelineService: Failed to persist swipe links: \(error)")
                 }
             }
         }

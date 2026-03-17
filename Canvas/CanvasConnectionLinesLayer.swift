@@ -1,5 +1,6 @@
 // CosmoOS/Canvas/CanvasConnectionLinesLayer.swift
 // Container that queries graph edges and renders all visible pulse lines on the canvas
+// Lives OUTSIDE the scaled ZStack — renders in screen coordinates to prevent clipping
 // PERF: Throttled 15fps animation, cached endpoints, single-pass edge filtering
 
 import SwiftUI
@@ -7,13 +8,16 @@ import SwiftUI
 /// Renders knowledge pulse lines between related blocks on the canvas.
 /// Queries the graph for edges where both source and target are visible, then
 /// draws animated bezier connections. Supports tap-to-select and delete.
+///
+/// NOTE: This layer renders in **screen coordinates** outside the scaled ZStack.
+/// This prevents clipping at non-100% zoom levels (same approach as CanvasDrawingsLayer).
 @MainActor
 struct CanvasConnectionLinesLayer: View {
 
     // MARK: - Parameters
 
     let blocks: [CanvasBlock]
-    let contentOffset: CGSize
+    let transform: CanvasViewportTransform
     let activeBlockDrag: ActiveCanvasDragState<String>
     var isActive: Bool = true
 
@@ -31,8 +35,9 @@ struct CanvasConnectionLinesLayer: View {
     @State private var cachedEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
     @State private var cachedPaths: [String: Path] = [:]
 
-    // PERF: Throttle endpoint recomputation during drag to ~15fps
+    // PERF: Throttle endpoint recomputation during drag to ~30fps with trailing edge
     @State private var dragEndpointThrottleTask: Task<Void, Never>?
+    @State private var needsTrailingRecompute = false
 
     // MARK: - Constants
 
@@ -81,6 +86,20 @@ struct CanvasConnectionLinesLayer: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            // Dismiss overlay — when a connection is selected, tapping anywhere
+            // else on the canvas should deselect it (placed behind delete button)
+            if selectedEdgeKey != nil {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(ProMotionSprings.snappy) {
+                            selectedEdgeKey = nil
+                        }
+                        // Also deselect any selected blocks
+                        NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
+                    }
+            }
+
             // Delete button for selected connection
             if let selectedKey = selectedEdgeKey,
                let edge = cachedVisibleEdges.first(where: { $0.deduplicationKey == selectedKey }),
@@ -96,7 +115,10 @@ struct CanvasConnectionLinesLayer: View {
             fetchEdges()
             recomputeVisibleEdgesAndEndpoints()
         }
-        .onChange(of: contentOffset) { _, _ in
+        .onChange(of: transform.contentOffset) { _, _ in
+            recomputeEndpoints()
+        }
+        .onChange(of: transform.effectiveScale) { _, _ in
             recomputeEndpoints()
         }
         .onChange(of: blockGeometrySignature) { _, _ in
@@ -112,6 +134,10 @@ struct CanvasConnectionLinesLayer: View {
             // Deselect connection when a block is selected
             selectedEdgeKey = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            // Deselect connection when canvas background is tapped
+            selectedEdgeKey = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.blockRenderedSizeChanged)) { _ in
             // Recompute endpoints when a block's actual rendered size changes (e.g. autoHeight expansion)
             recomputeEndpoints()
@@ -119,6 +145,12 @@ struct CanvasConnectionLinesLayer: View {
         .onAppear {
             fetchEdges()
             if isActive { startPulseTimer() }
+            // Delayed recompute to catch rendered size cache updates
+            // (GeometryReader reports actual sizes after first layout pass)
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                recomputeEndpoints()
+            }
         }
         .onDisappear {
             loadTask?.cancel()
@@ -200,38 +232,57 @@ struct CanvasConnectionLinesLayer: View {
         CanvasPerformanceInstrumentation.signposter.endInterval("connection-endpoints", signpost)
     }
 
-    /// Throttled endpoint recomputation during drag — ~15fps (every 66ms).
-    /// Connection lines don't need pixel-perfect tracking during active drag;
-    /// geometry updates still snap them to final positions at drag end.
+    /// Throttled endpoint recomputation during drag — ~30fps (every 33ms).
+    /// Uses leading + trailing edge pattern so lines always snap to the
+    /// final position even when intermediate frames are skipped.
     private func throttledRecomputeEndpoints() {
-        guard dragEndpointThrottleTask == nil else { return }
-        // Fire immediately for first frame, then throttle
-        recomputeEndpoints()
-        dragEndpointThrottleTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(66))
-            dragEndpointThrottleTask = nil
+        if dragEndpointThrottleTask == nil {
+            // Fire immediately for first frame
+            recomputeEndpoints()
+            dragEndpointThrottleTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(33))
+                dragEndpointThrottleTask = nil
+                // Fire trailing edge if any updates were skipped
+                if needsTrailingRecompute {
+                    needsTrailingRecompute = false
+                    recomputeEndpoints()
+                }
+            }
+        } else {
+            // Mark that we need a trailing update when throttle expires
+            needsTrailingRecompute = true
         }
     }
 
-    /// Compute endpoints for a single edge
+    /// Compute endpoints for a single edge in **screen coordinates**
     private func computeEndpoints(for edge: GraphEdge, blocksByUUID: [String: CanvasBlock]) -> (start: CGPoint, end: CGPoint)? {
         guard let fromBlock = blocksByUUID[edge.sourceUUID],
               let toBlock = blocksByUUID[edge.targetUUID] else { return nil }
 
-        let fromPos = blockCanvasPosition(fromBlock)
-        let toPos = blockCanvasPosition(toBlock)
-        let distance = hypot(toPos.x - fromPos.x, toPos.y - fromPos.y)
+        // Compute block centers in screen space
+        let fromScreen = blockScreenPosition(fromBlock)
+        let toScreen = blockScreenPosition(toBlock)
+        let distance = hypot(toScreen.x - fromScreen.x, toScreen.y - fromScreen.y)
 
-        guard distance >= Constants.minLineLength && distance <= Constants.maxLineLength else { return nil }
+        // Use scaled min/max lengths for screen space comparison
+        let scale = transform.effectiveScale
+        guard distance >= Constants.minLineLength * scale && distance <= Constants.maxLineLength * scale else { return nil }
 
+        // Scale block sizes to screen space
         let fromActualSize = BlockRenderedSizeCache.shared.renderedSize(for: fromBlock)
         let toActualSize = BlockRenderedSizeCache.shared.renderedSize(for: toBlock)
-        let fromRendered = CGSize(width: fromActualSize.width * fromBlock.scale, height: fromActualSize.height * fromBlock.scale)
-        let toRendered = CGSize(width: toActualSize.width * toBlock.scale, height: toActualSize.height * toBlock.scale)
+        let fromRendered = CGSize(
+            width: fromActualSize.width * fromBlock.scale * scale,
+            height: fromActualSize.height * fromBlock.scale * scale
+        )
+        let toRendered = CGSize(
+            width: toActualSize.width * toBlock.scale * scale,
+            height: toActualSize.height * toBlock.scale * scale
+        )
 
         return edgeEndpoints(
-            from: fromPos, fromSize: fromRendered,
-            to: toPos, toSize: toRendered
+            from: fromScreen, fromSize: fromRendered,
+            to: toScreen, toSize: toRendered
         )
     }
 
@@ -353,14 +404,15 @@ struct CanvasConnectionLinesLayer: View {
 
     // MARK: - Position & Endpoint Helpers
 
-    /// Block position in the canvas coordinate space (before scaleEffect is applied),
-    /// including live drag offset so lines follow blocks during drag
-    private func blockCanvasPosition(_ block: CanvasBlock) -> CGPoint {
+    /// Block position in **screen coordinates** — applies viewport transform
+    /// including pan offset, zoom scale, and live drag offset
+    private func blockScreenPosition(_ block: CanvasBlock) -> CGPoint {
         let dragOffset = activeBlockDrag.translation(for: block.id)
-        return CGPoint(
-            x: block.position.x + contentOffset.width + dragOffset.width,
-            y: block.position.y + contentOffset.height + dragOffset.height
+        let canvasPos = CGPoint(
+            x: block.position.x + dragOffset.width,
+            y: block.position.y + dragOffset.height
         )
+        return transform.canvasToScreen(canvasPos)
     }
 
     private func connectionPath(from: CGPoint, to: CGPoint) -> Path {
@@ -386,13 +438,14 @@ struct CanvasConnectionLinesLayer: View {
         let toHalfW = toSize.width / 2
         let toHalfH = toSize.height / 2
 
-        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap
+        let scale = transform.effectiveScale
+        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap * scale
         let start = CGPoint(
             x: from.x + cos(angle) * startOffset,
             y: from.y + sin(angle) * startOffset
         )
 
-        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap
+        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap * scale
         let end = CGPoint(
             x: to.x + cos(angle + .pi) * endOffset,
             y: to.y + sin(angle + .pi) * endOffset
@@ -435,57 +488,73 @@ struct CanvasConnectionLinesLayer: View {
     }
 }
 
+/// Renders connection lines using SwiftUI Path shapes in screen coordinates.
+/// Path shapes overflow their parent bounds, avoiding clipping at non-100% zoom.
 private struct CanvasConnectionVisualRenderer: View {
     let edges: [GraphEdge]
     let cachedPaths: [String: Path]
     let animationPhase: Double
 
     var body: some View {
-        Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, _ in
-            for edge in edges {
-                guard let path = cachedPaths[edge.deduplicationKey] else { continue }
-
-                let weight = edge.combinedWeight
-                let baseWidth = 1.0 + CGFloat(weight)
-                let modulation = 0.1 * CGFloat(sin(animationPhase * 0.308))
-                let lineWidth = baseWidth + modulation
-                let baseOpacity = 0.15 + weight * 0.20
-                let pulseProgress = CGFloat((animationPhase * 0.192).truncatingRemainder(dividingBy: 1.0))
-                let stop1 = max(0, min(pulseProgress, 0.79))
-                let stop2 = max(stop1 + 0.001, min(pulseProgress + 0.08, 0.89))
-                let stop3 = max(stop2 + 0.001, min(pulseProgress + 0.16, 0.99))
-                let lineColor = DS.textMuted
-
-                context.stroke(
-                    path,
-                    with: .color(lineColor.opacity(baseOpacity * 0.3)),
-                    style: StrokeStyle(
-                        lineWidth: lineWidth * 2.5,
-                        lineCap: .round,
-                        lineJoin: .round
-                    )
-                )
-
-                context.stroke(
-                    path,
-                    with: .linearGradient(
-                        Gradient(stops: [
-                            .init(color: lineColor.opacity(baseOpacity * 0.4), location: 0),
-                            .init(color: lineColor.opacity(baseOpacity), location: stop1),
-                            .init(color: lineColor.opacity(baseOpacity * 0.7), location: stop2),
-                            .init(color: lineColor.opacity(baseOpacity), location: stop3),
-                            .init(color: lineColor.opacity(baseOpacity * 0.4), location: 1),
-                        ]),
-                        startPoint: path.boundingRect.origin,
-                        endPoint: CGPoint(x: path.boundingRect.maxX, y: path.boundingRect.maxY)
-                    ),
-                    style: StrokeStyle(
-                        lineWidth: lineWidth,
-                        lineCap: .round,
-                        lineJoin: .round
-                    )
-                )
+        ZStack {
+            ForEach(edges, id: \.deduplicationKey) { edge in
+                if let path = cachedPaths[edge.deduplicationKey] {
+                    ConnectionLineShape(edge: edge, path: path, animationPhase: animationPhase)
+                }
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Individual connection line rendered as SwiftUI Path strokes (glow + gradient pulse).
+private struct ConnectionLineShape: View {
+    let edge: GraphEdge
+    let path: Path
+    let animationPhase: Double
+
+    var body: some View {
+        let weight = edge.combinedWeight
+        let baseWidth = 1.0 + CGFloat(weight)
+        let modulation = 0.1 * CGFloat(sin(animationPhase * 0.308))
+        let lineWidth = baseWidth + modulation
+        let baseOpacity = 0.15 + weight * 0.20
+        let pulseProgress = CGFloat((animationPhase * 0.192).truncatingRemainder(dividingBy: 1.0))
+        let stop1 = max(0, min(pulseProgress, 0.79))
+        let stop2 = max(stop1 + 0.001, min(pulseProgress + 0.08, 0.89))
+        let stop3 = max(stop2 + 0.001, min(pulseProgress + 0.16, 0.99))
+        let lineColor = DS.textMuted
+
+        ZStack {
+            // Glow stroke
+            path.stroke(
+                lineColor.opacity(baseOpacity * 0.3),
+                style: StrokeStyle(
+                    lineWidth: lineWidth * 2.5,
+                    lineCap: .round,
+                    lineJoin: .round
+                )
+            )
+
+            // Main stroke with gradient pulse
+            path.stroke(
+                LinearGradient(
+                    stops: [
+                        .init(color: lineColor.opacity(baseOpacity * 0.4), location: 0),
+                        .init(color: lineColor.opacity(baseOpacity), location: stop1),
+                        .init(color: lineColor.opacity(baseOpacity * 0.7), location: stop2),
+                        .init(color: lineColor.opacity(baseOpacity), location: stop3),
+                        .init(color: lineColor.opacity(baseOpacity * 0.4), location: 1),
+                    ],
+                    startPoint: UnitPoint(x: 0, y: 0),
+                    endPoint: UnitPoint(x: 1, y: 1)
+                ),
+                style: StrokeStyle(
+                    lineWidth: lineWidth,
+                    lineCap: .round,
+                    lineJoin: .round
+                )
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

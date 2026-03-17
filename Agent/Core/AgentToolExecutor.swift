@@ -45,7 +45,27 @@ class AgentToolExecutor {
     /// Optional callback for emitting live tool activity events to the UI.
     /// Set by CosmoAgentService before each tool loop iteration so that tool
     /// execution (including context-loading sub-tools) can stream progress.
-    var onToolActivity: (@Sendable (ToolActivityEvent) -> Void)?
+    /// Paired with a session token to prevent concurrent sessions from clearing
+    /// each other's callbacks (see setToolActivity/clearToolActivity).
+    private(set) var onToolActivity: (@Sendable (ToolActivityEvent) -> Void)?
+    private var toolActivitySessionToken: UUID?
+
+    /// Set the tool activity callback with a session token. Concurrent sessions
+    /// on different chats each get their own token; clearToolActivity only clears
+    /// if the token matches, preventing one session from killing another's callback.
+    func setToolActivity(_ callback: (@Sendable (ToolActivityEvent) -> Void)?, token: UUID) {
+        onToolActivity = callback
+        toolActivitySessionToken = token
+    }
+
+    /// Clear the callback only if the token matches the one that set it.
+    /// This prevents Session A from nilling out Session B's callback.
+    func clearToolActivity(token: UUID) {
+        if toolActivitySessionToken == token {
+            onToolActivity = nil
+            toolActivitySessionToken = nil
+        }
+    }
 
     /// Optional callback for delivering in-app action buttons from the `send_action_buttons` tool.
     /// Set by CosmoWindowViewModel before each agent call; cleared after completion.
@@ -1468,20 +1488,6 @@ class AgentToolExecutor {
             }
         }
 
-        // DUPLICATE CHECK: search for existing in-progress content with similar title or same client
-        if let existing = try? await findExistingContent(title: title, clientUUID: resolvedClientUUID) {
-            let existingMeta = existing.metadataValue(as: ContentAtomMetadata.self)
-            let phase = existingMeta?.phase.displayName ?? "Ideation"
-            return jsonEncode([
-                "success": true,
-                "uuid": existing.uuid,
-                "title": existing.title ?? title,
-                "message": "EXISTING content atom found with a similar title — reusing it instead of creating a duplicate. UUID: \(existing.uuid), phase: \(phase). Use this UUID for generate_outline / generate_draft.",
-                "isDuplicate": true,
-                "phase": phase
-            ] as [String: Any])
-        }
-
         // Build metadata
         var metaDict: [String: Any] = [
             "phase": "ideation",
@@ -2786,64 +2792,6 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Duplicate Content Detection
-
-    /// Search for an existing in-progress content atom with a similar title (or same client + recent).
-    /// Returns the first match if found, nil otherwise. Uses fuzzy title matching to catch
-    /// near-duplicates like "Rich people never buy Airbnbs" vs "Why rich people never buy Airbnbs".
-    private func findExistingContent(title: String, clientUUID: String?) async -> Atom? {
-        guard let allContent = try? await atomRepo.fetchAll(type: .content) else { return nil }
-
-        // Only check active content (not published/archived)
-        let activePhases: Set<String> = ["ideation", "brainstorm", "outline", "draft", "polish", "review"]
-        let active = allContent.filter { atom in
-            let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-            let phase = meta?.phase.rawValue ?? "ideation"
-            return activePhases.contains(phase)
-        }
-
-        let normalizedTitle = title.lowercased()
-            .replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "'", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Extract significant words (3+ chars, no stop words)
-        let stopWords: Set<String> = ["the", "and", "for", "with", "this", "that", "from", "into", "about", "how", "why", "what", "here", "your", "their"]
-        let titleWords = Set(normalizedTitle.split(separator: " ")
-            .map { String($0) }
-            .filter { $0.count >= 3 && !stopWords.contains($0) })
-
-        guard titleWords.count >= 2 else { return nil }
-
-        for atom in active {
-            let atomTitle = (atom.title ?? "").lowercased()
-                .replacingOccurrences(of: "\"", with: "")
-                .replacingOccurrences(of: "'", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let atomWords = Set(atomTitle.split(separator: " ")
-                .map { String($0) }
-                .filter { $0.count >= 3 && !stopWords.contains($0) })
-
-            guard !atomWords.isEmpty else { continue }
-
-            // Check word overlap — if >= 60% of significant words match, it's likely a duplicate
-            let overlap = titleWords.intersection(atomWords)
-            let overlapRatio = Double(overlap.count) / Double(min(titleWords.count, atomWords.count))
-
-            if overlapRatio >= 0.6 {
-                // If client UUID is specified, also verify it matches (or the existing has no client)
-                if let clientUUID = clientUUID {
-                    let meta = atom.metadataValue(as: ContentAtomMetadata.self)
-                    if let existingClient = meta?.clientProfileUUID, existingClient != clientUUID {
-                        continue  // Different client — not a duplicate
-                    }
-                }
-                return atom
-            }
-        }
-
-        return nil
-    }
 
     // MARK: - Helpers
 

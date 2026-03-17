@@ -40,7 +40,7 @@ struct ClusterGridContent: View {
                         .onTapGesture(count: 2) {
                             onOpenFocusMode(block.entityUuid)
                         }
-                        .onDrag { NSItemProvider(object: block.entityUuid as NSString) }
+                        .onDrag { dragProvider(for: block) }
                 }
 
                 // Drop placeholder
@@ -130,5 +130,10 @@ struct ClusterGridContent: View {
     private var memberBlocks: [CanvasBlock] {
         let uuids = Set(cluster.blockUUIDs)
         return blocks.filter { uuids.contains($0.entityUuid) }
+    }
+
+    private func dragProvider(for block: CanvasBlock) -> NSItemProvider {
+        ClusterViewDragSession.sourceClusterId = cluster.id
+        return NSItemProvider(object: block.entityUuid as NSString)
     }
 }

@@ -36,6 +36,7 @@ enum CosmoNotification {
         static let removeBlock = Notification.Name("com.cosmo.canvas.removeBlock")
         static let duplicateBlock = Notification.Name("com.cosmo.canvas.duplicateBlock")
         static let toggleBlockPin = Notification.Name("com.cosmo.canvas.toggleBlockPin")
+        static let changeStickyColor = Notification.Name("com.cosmo.canvas.changeStickyColor")
         static let blurAllBlocks = Notification.Name("com.cosmo.canvas.blurAllBlocks")
         static let collapseExpandedBlock = Notification.Name("com.cosmo.canvas.collapseExpandedBlock")
 
@@ -84,10 +85,6 @@ enum CosmoNotification {
         // Zone creation (empty cluster via zone tool)
         static let zoneDrawn = Notification.Name("com.cosmo.canvas.zoneDrawn")
 
-        // Trisociative collisions
-        static let collisionsGenerated = Notification.Name("com.cosmo.canvas.collisionsGenerated")
-        static let collisionPromoted = Notification.Name("com.cosmo.canvas.collisionPromoted")
-
         // Provocation layer
         static let provocationScanComplete = Notification.Name("com.cosmo.canvas.provocationScanComplete")
         static let provocationDismissed = Notification.Name("com.cosmo.canvas.provocationDismissed")
@@ -98,6 +95,13 @@ enum CosmoNotification {
         static let enterInboxFocusMode = Notification.Name("com.cosmo.canvas.enterInboxFocusMode")
         static let updateInboxBlockPosition = Notification.Name("com.cosmo.canvas.updateInboxBlockPosition")
         static let updateInboxBlockSize = Notification.Name("com.cosmo.canvas.updateInboxBlockSize")
+    }
+
+    // MARK: - Inbox Notifications
+    enum Inbox {
+        static let itemAdded = Notification.Name("com.cosmo.inbox.itemAdded")
+        static let itemClassified = Notification.Name("com.cosmo.inbox.itemClassified")
+        static let itemActioned = Notification.Name("com.cosmo.inbox.itemActioned")
     }
 
     // MARK: - Navigation Notifications
@@ -650,6 +654,9 @@ extension Notification.Name {
     public static let focusSessionPaused = Notification.Name("focusSessionPaused")
     public static let focusSessionCompleted = Notification.Name("focusSessionCompleted")
     public static let atomsDidChange = Notification.Name("com.cosmo.atomsDidChange")
+
+    /// Posted just before the app terminates so active focus modes can flush pending saves synchronously.
+    public static let cosmoAppWillTerminate = Notification.Name("com.cosmo.appWillTerminate")
 }
 
 /// Triggers an XP tracer animation

@@ -27,8 +27,7 @@ struct CommandCenterDashboard: View {
             VStack(alignment: .leading, spacing: 16) {
                 DashboardMonthCalendar(viewModel: viewModel)
 
-                Divider()
-                    .foregroundColor(DS.borderSubtle)
+                gradientDivider
 
                 DashboardScheduleStrip(viewModel: viewModel)
             }
@@ -47,8 +46,7 @@ struct CommandCenterDashboard: View {
             // Time tracking panel (timer + summary + presets)
             DashboardTimeTracker(viewModel: viewModel)
 
-            Divider()
-                .foregroundColor(DS.borderSubtle)
+            gradientDivider
 
             // View mode tabs
             DashboardViewModeBar(
@@ -148,14 +146,18 @@ struct CommandCenterDashboard: View {
     // MARK: - Right Column (260px) — Habits + Stats
 
     private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             // Toggle header
             HStack(spacing: 0) {
                 rightColumnTab("Habits", icon: "checkmark.circle", isActive: !viewModel.showReports)
                 rightColumnTab("Reports", icon: "chart.bar", isActive: viewModel.showReports)
             }
             .padding(2)
-            .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+            .background(DS.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
 
             if viewModel.showReports {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -188,9 +190,23 @@ struct CommandCenterDashboard: View {
             .foregroundColor(isActive ? DS.text : DS.textMuted)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(isActive ? DS.bg : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(isActive ? DS.surfaceElevated : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Gradient Divider
+
+    private var gradientDivider: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [DS.borderSubtle.opacity(0), DS.borderSubtle, DS.borderSubtle.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(height: 1)
     }
 
     // MARK: - Greeting
@@ -199,11 +215,18 @@ struct CommandCenterDashboard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(viewModel.greetingText)
                 .font(DS.pageTitle)
+                .tracking(-0.3)
                 .foregroundColor(DS.text)
 
-            Text(viewModel.dateText)
-                .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(DS.accent.opacity(0.5))
+                    .frame(width: 4, height: 4)
+
+                Text(viewModel.dateText)
+                    .font(DS.cardMeta)
+                    .foregroundColor(DS.textSecondary)
+            }
         }
     }
 

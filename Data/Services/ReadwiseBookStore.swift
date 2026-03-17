@@ -57,17 +57,14 @@ class ReadwiseBookStore: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return books }
 
-        // Lowercase the query once rather than per-field comparison
-        let lowerQuery = trimmed.lowercased()
+        return books.filter { Self.matchesSearch($0, query: trimmed) }
+    }
 
-        return books.filter { book in
-            if book.title.localizedCaseInsensitiveContains(lowerQuery) { return true }
-            if book.author?.localizedCaseInsensitiveContains(lowerQuery) == true { return true }
-            return book.highlights.contains { h in
-                h.text.localizedCaseInsensitiveContains(lowerQuery) ||
-                (h.note?.localizedCaseInsensitiveContains(lowerQuery) ?? false) ||
-                h.tags.contains { $0.localizedCaseInsensitiveContains(lowerQuery) }
-            }
+    nonisolated static func matchesSearch(_ book: ReadwiseLibraryBook, query: String) -> Bool {
+        CommandKSearchMatcher.matches(query, in: book.title) ||
+        CommandKSearchMatcher.matches(query, in: book.author) ||
+        book.highlights.contains { highlight in
+            ReadwiseLibraryTab.matchesSearch(highlight, query: query)
         }
     }
 

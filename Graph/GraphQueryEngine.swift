@@ -420,7 +420,7 @@ public struct GraphQueryEngine: Sendable {
 
         while !queue.isEmpty {
             let path = queue.removeFirst()
-            let current = path.last!
+            guard let current = path.last else { continue }
 
             if current == targetUUID {
                 return path

@@ -410,6 +410,8 @@ extension EntityType {
             return [0.55, 0.36, 0.96, 1.0]  // Thinkspace purple
         case .image:
             return [0.35, 0.61, 0.63, 1.0]  // Muted teal
+        case .stickyNote:
+            return [0.83, 0.76, 0.42, 1.0]  // Warm yellow
         }
     }
 }

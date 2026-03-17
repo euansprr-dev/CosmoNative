@@ -10,11 +10,12 @@ import Combine
 struct NoteBlockView: View {
     let block: CanvasBlock
 
-    @State private var noteTitle: String = ""
+    @State private var noteTitleDocument: RichDocument = .empty
+    @State private var noteBodyDocument: RichDocument = .empty
+    @State private var noteTitleText: String = ""
     @State private var noteText: String = ""
+    @State private var noteWordCount: Int = 0
     @State private var isExpanded = false
-    @FocusState private var isTitleFocused: Bool
-    @FocusState private var isBodyFocused: Bool
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
@@ -46,6 +47,8 @@ struct NoteBlockView: View {
             startObservingAtom()
         }
         .onDisappear {
+            autoSaveTask?.cancel()
+            saveNoteSync()
             observationCancellable?.cancel()
         }
         // Listen for direct state change notifications from focus mode
@@ -53,10 +56,12 @@ struct NoteBlockView: View {
             if let uuid = notification.userInfo?["atomUUID"] as? String,
                uuid == block.entityUuid {
                 if let title = notification.userInfo?["title"] as? String {
-                    noteTitle = title
+                    noteTitleText = title
+                    noteTitleDocument = RichDocument.migrateLegacy(title)
                 }
                 if let body = notification.userInfo?["body"] as? String {
                     noteText = body
+                    noteBodyDocument = RichDocument.migrateLegacy(body)
                 }
             }
         }
@@ -66,8 +71,8 @@ struct NoteBlockView: View {
 
     private var displayTitle: String {
         // Use title field, or fall back to first line of content
-        if !noteTitle.isEmpty {
-            return String(noteTitle.prefix(40))
+        if !noteTitleText.isEmpty {
+            return String(noteTitleText.prefix(40))
         }
         if let firstLine = noteText.components(separatedBy: .newlines).first,
            !firstLine.isEmpty {
@@ -80,48 +85,61 @@ struct NoteBlockView: View {
 
     private var noteContent: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Entity identity strip
+            Capsule()
+                .fill(accentColor.opacity(0.35))
+                .frame(height: 3)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, -8)
+
             // Title field
-            TextField("", text: $noteTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 24, weight: .regular, design: .serif))
-                .foregroundColor(DS.text)
-                .focused($isTitleFocused)
-                .onSubmit {
-                    isBodyFocused = true
+            CosmoDocumentEditor(
+                document: $noteTitleDocument,
+                fontSize: 24,
+                compact: true,
+                placeholder: "Heading",
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                singleLine: true,
+                baseFontWeight: .semibold,
+                onDocumentChange: { document, _ in
+                    noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
+                    if !isSyncingFromDB { scheduleAutoSave() }
                 }
-                .overlay(alignment: .topLeading) {
-                    if noteTitle.isEmpty && !isTitleFocused {
-                        Text("Heading")
-                            .font(.system(size: 24, weight: .regular, design: .serif))
-                            .italic()
-                            .foregroundColor(DS.textMuted)
-                            .allowsHitTesting(false)
-                    }
-                }
+            )
+            .frame(height: 48)
 
             // Body text editor
-            TextEditor(text: $noteText)
-                .font(.system(size: 15))
-                .foregroundColor(DS.text)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .focused($isBodyFocused)
-                .overlay(alignment: .topLeading) {
-                    if noteText.isEmpty && !isBodyFocused {
-                        Text("Press / for commands...")
-                            .font(.system(size: 15))
-                            .foregroundColor(DS.textMuted)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
+            CosmoDocumentEditor(
+                document: $noteBodyDocument,
+                fontSize: 15,
+                compact: true,
+                placeholder: "Press / for commands...",
+                allowSlashCommands: true,
+                allowMentions: true,
+                allowSelectionMenu: true,
+                allowImages: true,
+                onDocumentChange: { _, plainText in
+                    noteText = plainText
+                    noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+                    if !isSyncingFromDB { scheduleAutoSave() }
                 }
+            )
             .frame(maxHeight: .infinity)
 
-            // Timestamp at bottom
-            if let timestamp = block.metadata["created"] {
-                HStack {
-                    Spacer()
+            // Footer: word count + timestamp
+            HStack(spacing: 6) {
+                if noteWordCount > 0 {
+                    Text("\(noteWordCount)w")
+                        .font(.system(size: 10))
+                        .foregroundColor(accentColor.opacity(0.6))
+                }
+
+                Spacer()
+
+                if let timestamp = block.metadata["created"] {
                     Text(formatTimestamp(timestamp))
                         .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
@@ -130,15 +148,7 @@ struct NoteBlockView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: noteTitle) { _, _ in
-            if !isSyncingFromDB { scheduleAutoSave() }
-        }
-        .onChange(of: noteText) { _, _ in
-            if !isSyncingFromDB { scheduleAutoSave() }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
-            isTitleFocused = false
-            isBodyFocused = false
         }
     }
 
@@ -146,22 +156,34 @@ struct NoteBlockView: View {
 
     private func loadNote() {
         // First try block.metadata (for freeform blocks)
-        if let title = block.metadata["title"] {
-            noteTitle = title
-        }
-        if let content = block.metadata["content"] {
-            noteText = content
+        noteTitleDocument = RichDocumentPersistence.loadBlockDocument(
+            key: RichDocumentMetadataKeys.titleDocument,
+            metadata: block.metadata,
+            fallbackPlainText: block.metadata["title"]
+        )
+        noteBodyDocument = RichDocumentPersistence.loadBlockDocument(
+            key: RichDocumentMetadataKeys.bodyDocument,
+            metadata: block.metadata,
+            fallbackPlainText: block.metadata["content"]
+        )
+        noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
+        noteText = noteBodyDocument.plainText
+
+        if noteTitleText.isEmpty, let title = block.metadata["title"] {
+            noteTitleText = title
         }
 
         // Fall back to block.title / block.subtitle (for atom-backed blocks via fromAtom())
-        if noteTitle.isEmpty {
+        if noteTitleText.isEmpty {
             let blockTitle = block.title
             if blockTitle != "Note" && blockTitle != "Untitled" {
-                noteTitle = blockTitle
+                noteTitleText = blockTitle
+                noteTitleDocument = RichDocument.migrateLegacy(blockTitle)
             }
         }
         if noteText.isEmpty, let subtitle = block.subtitle {
             noteText = subtitle
+            noteBodyDocument = RichDocument.migrateLegacy(subtitle)
         }
 
         // If linked to an atom, load freshest data from database
@@ -170,8 +192,18 @@ struct NoteBlockView: View {
                 do {
                     if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
                         await MainActor.run {
-                            noteTitle = atom.title ?? ""
-                            noteText = atom.body ?? ""
+                            noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
+                                field: .title,
+                                metadata: atom.metadata,
+                                fallbackPlainText: atom.title
+                            )
+                            noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
+                                field: .body,
+                                metadata: atom.metadata,
+                                fallbackPlainText: atom.body
+                            )
+                            noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
+                            noteText = noteBodyDocument.plainText
                         }
                     }
                 } catch {
@@ -199,12 +231,24 @@ struct NoteBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { fetchedAtom in
                     guard let atom = fetchedAtom else { return }
-                    let newTitle = atom.title ?? ""
-                    let newBody = atom.body ?? ""
+                    let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .title,
+                        metadata: atom.metadata,
+                        fallbackPlainText: atom.title
+                    )
+                    let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .body,
+                        metadata: atom.metadata,
+                        fallbackPlainText: atom.body
+                    )
+                    let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
+                    let newBody = newBodyDocument.plainText
                     // Only update state if values actually changed (nil-safe)
-                    guard newTitle != noteTitle || newBody != noteText else { return }
+                    guard newTitle != noteTitleText || newBody != noteText || newTitleDocument != noteTitleDocument || newBodyDocument != noteBodyDocument else { return }
                     isSyncingFromDB = true
-                    noteTitle = newTitle
+                    noteTitleDocument = newTitleDocument
+                    noteBodyDocument = newBodyDocument
+                    noteTitleText = newTitle
                     noteText = newBody
                     // Defer clearing the flag so onChange handlers see it
                     DispatchQueue.main.async {
@@ -236,8 +280,24 @@ struct NoteBlockView: View {
             object: nil,
             userInfo: [
                 "blockId": block.id,
-                "title": noteTitle,
+                "title": noteTitleText,
                 "content": noteText
+            ]
+        )
+
+        let updatedMetadata = RichDocumentPersistence
+            .writeBlockDocument(noteTitleDocument, key: RichDocumentMetadataKeys.titleDocument, metadata: block.metadata)
+        let bodyMetadata = RichDocumentPersistence
+            .writeBlockDocument(noteBodyDocument, key: RichDocumentMetadataKeys.bodyDocument, metadata: updatedMetadata)
+        NotificationCenter.default.post(
+            name: .updateBlockMetadata,
+            object: nil,
+            userInfo: [
+                "blockId": block.id,
+                "metadata": bodyMetadata.merging([
+                    "title": noteTitleText,
+                    "content": noteText
+                ]) { _, new in new }
             ]
         )
 
@@ -247,18 +307,29 @@ struct NoteBlockView: View {
             Task {
                 do {
                     try await CosmoDatabase.shared.asyncWrite { db in
+                        var existingMetadata: String?
+                        if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                            existingMetadata = row["metadata"]
+                        }
+                        let fields = RichDocumentPersistence.writeAtomDocuments(
+                            existingMetadata: existingMetadata,
+                            titleDocument: noteTitleDocument,
+                            bodyDocument: noteBodyDocument
+                        )
                         try db.execute(
                             sql: """
                             UPDATE atoms
                             SET title = ?,
                                 body = ?,
+                                metadata = ?,
                                 updated_at = ?,
                                 _local_version = _local_version + 1
                             WHERE uuid = ?
                             """,
                             arguments: [
-                                noteTitle.isEmpty ? nil : noteTitle,
-                                noteText,
+                                fields.title,
+                                fields.body ?? "",
+                                fields.metadata,
                                 ISO8601DateFormatter().string(from: Date()),
                                 uuid
                             ]
@@ -268,6 +339,47 @@ struct NoteBlockView: View {
                     print("NoteBlock: Failed to save to atom: \(error)")
                 }
             }
+        }
+    }
+
+    /// Synchronous save — blocks until DB write completes.
+    /// Used on close to guarantee data is persisted before the block/app exits.
+    private func saveNoteSync() {
+        let uuid = block.entityUuid
+        guard !uuid.isEmpty else { return }
+
+        do {
+            try CosmoDatabase.shared.write { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    existingMetadata = row["metadata"]
+                }
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: noteTitleDocument,
+                    bodyDocument: noteBodyDocument
+                )
+                try db.execute(
+                    sql: """
+                    UPDATE atoms
+                    SET title = ?,
+                        body = ?,
+                        metadata = ?,
+                        updated_at = ?,
+                        _local_version = _local_version + 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [
+                        fields.title,
+                        fields.body ?? "",
+                        fields.metadata,
+                        ISO8601DateFormatter().string(from: Date()),
+                        uuid
+                    ]
+                )
+            }
+        } catch {
+            print("NoteBlock: sync save failed: \(error)")
         }
     }
 
@@ -290,9 +402,17 @@ struct NoteBlockView: View {
                 do {
                     var newAtom = Atom.new(
                         type: .note,
-                        title: noteTitle.isEmpty ? nil : noteTitle,
+                        title: noteTitleText.isEmpty ? nil : noteTitleText,
                         body: noteText
                     )
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: newAtom.metadata,
+                        titleDocument: noteTitleDocument,
+                        bodyDocument: noteBodyDocument
+                    )
+                    newAtom.title = fields.title
+                    newAtom.body = fields.body
+                    newAtom.metadata = fields.metadata
                     let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
                         try newAtom.insert(db)
                         return db.lastInsertedRowID

@@ -19,9 +19,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Crystallization
     var crystallizationLevel: CrystallizationLevel = .raw
 
-    // Incubation heartbeat
-    var isHeartbeating: Bool = false
-
     // When true, the block grows vertically to fit content (no fixed height, no scaling)
     var autoHeight: Bool = false
 
@@ -173,46 +170,8 @@ struct CosmoBlockWrapper<Content: View>: View {
                 }
             }
 
-            // Floating toolbar when selected — outside tap gesture scope
-            // so its layout doesn't extend the card's hit area
-            BlockSelectionToolbar(
-                blockCount: 1,
-                accentColor: accentColor,
-                onAIAssist: onAIAssist ?? {},
-                onColorChange: {},
-                onSave: {},
-                onEdit: {},
-                onFocusMode: {
-                    CosmicHaptics.shared.play(.focusEnter)
-                    if let onFocusMode = onFocusMode {
-                        onFocusMode()
-                    } else {
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: ["type": block.entityType, "id": block.entityId]
-                        )
-                    }
-                },
-                onDuplicate: onDuplicate ?? {},
-                onDelete: {
-                    CosmicHaptics.shared.play(.delete)
-                    if let onClose = onClose {
-                        onClose()
-                    } else {
-                        NotificationCenter.default.post(
-                            name: .removeBlock,
-                            object: nil,
-                            userInfo: ["blockId": block.id]
-                        )
-                    }
-                }
-            )
-            .offset(y: isSelected ? -52 : -44)
-            .scaleEffect(isSelected ? 1.0 : 0.9)
-            .opacity(isSelected ? 1 : 0)
-            .allowsHitTesting(isSelected)
-            .animation(ProMotionSprings.snappy, value: isSelected)
+            // Block selection toolbar removed — actions now live in the
+            // unified CanvasSelectionInspector panel (top-right corner)
         }
         // ProMotion-optimized animations
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition

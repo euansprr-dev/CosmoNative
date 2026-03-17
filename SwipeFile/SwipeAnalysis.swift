@@ -70,6 +70,15 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var transcriptionQuality: TranscriptionQuality?
     public var transcriptionWarnings: [String]?
 
+    // Engagement Metrics (from platform APIs or manual entry)
+    public var likesCount: Int?
+    public var viewsCount: Int?
+    public var commentsCount: Int?
+    public var sharesCount: Int?
+    public var engagementRate: Double?        // (likes + comments) / views * 100
+    public var publishedAt: Date?             // Original post publish date
+    public var postShortcode: String?         // Instagram shortcode for dedup
+
     public init(
         hookText: String? = nil,
         hookType: SwipeHookType? = nil,
@@ -108,7 +117,14 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         rawTranscriptSlides: [TranscriptSlide]? = nil,
         transcriptSpeechSegments: [TranscriptSegment]? = nil,
         transcriptionQuality: TranscriptionQuality? = nil,
-        transcriptionWarnings: [String]? = nil
+        transcriptionWarnings: [String]? = nil,
+        likesCount: Int? = nil,
+        viewsCount: Int? = nil,
+        commentsCount: Int? = nil,
+        sharesCount: Int? = nil,
+        engagementRate: Double? = nil,
+        publishedAt: Date? = nil,
+        postShortcode: String? = nil
     ) {
         self.hookText = hookText
         self.hookType = hookType
@@ -148,6 +164,13 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         self.transcriptSpeechSegments = transcriptSpeechSegments
         self.transcriptionQuality = transcriptionQuality
         self.transcriptionWarnings = transcriptionWarnings
+        self.likesCount = likesCount
+        self.viewsCount = viewsCount
+        self.commentsCount = commentsCount
+        self.sharesCount = sharesCount
+        self.engagementRate = engagementRate
+        self.publishedAt = publishedAt
+        self.postShortcode = postShortcode
     }
 
     /// Mark as studied now
@@ -748,10 +771,9 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.clientUUID = clientUUID
         self.clientName = clientName
         self.instagramId = instagramId
-        self.searchableText = [title, hookText, author, niche, creatorName]
-            .compactMap { $0 }
-            .joined(separator: " ")
-            .lowercased()
+        self.searchableText = CommandKSearchMatcher.searchableText(
+            from: [title, hookText, author, niche, creatorName]
+        )
     }
 
     /// Platform display icon
@@ -842,6 +864,11 @@ extension Atom {
     public var isSwipeFileAtom: Bool {
         guard type == .research else { return false }
         return researchMetadata?.isSwipeFile ?? false
+    }
+
+    /// Whether this swipe has engagement data (imported vs manually captured)
+    public var hasEngagementData: Bool {
+        swipeAnalysis?.likesCount != nil || swipeAnalysis?.viewsCount != nil
     }
 
     /// Build a SwipeGalleryItem from this atom

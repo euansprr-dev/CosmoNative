@@ -26,7 +26,8 @@ class CrossThinkspaceDragManager: ObservableObject {
 
     // Sidebar hover state
     @Published var hoveredThinkspaceId: String?
-    @Published var hoverProgress: CGFloat = 0  // 0→1 over switchDelay
+    @Published var hoverProgress: CGFloat = 0
+    @Published var springLoadPulse: CGFloat = 0
     @Published var hasThinkspaceSwitched = false
     @Published var targetThinkspaceId: String?
 
@@ -40,7 +41,9 @@ class CrossThinkspaceDragManager: ObservableObject {
     var sidebarWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
 
     // Timing
-    private let switchDelay: TimeInterval = 0.8
+    private let hoverDelay: TimeInterval = 0.30
+    private let blinkDuration: TimeInterval = 0.27
+    private let blinkCount: Double = 3
     private var hoverTimer: Timer?
     private var blinkStartTime: Date?
 
@@ -64,6 +67,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         targetThinkspaceId = nil
         hoveredThinkspaceId = nil
         hoverProgress = 0
+        springLoadPulse = 0
     }
 
     // MARK: - Enter/Exit Sidebar
@@ -80,6 +84,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         cancelHoverTimer()
         hoveredThinkspaceId = nil
         hoverProgress = 0
+        springLoadPulse = 0
         stopEventMonitors()
     }
 
@@ -104,6 +109,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         if foundId != hoveredThinkspaceId {
             hoveredThinkspaceId = foundId
             hoverProgress = 0
+            springLoadPulse = 0
             cancelHoverTimer()
 
             if foundId != nil {
@@ -120,10 +126,19 @@ class CrossThinkspaceDragManager: ObservableObject {
             Task { @MainActor in
                 guard let self = self, let start = self.blinkStartTime else { return }
                 let elapsed = Date().timeIntervalSince(start)
-                let progress = min(elapsed / self.switchDelay, 1.0)
-                self.hoverProgress = CGFloat(progress)
+                let totalDuration = self.hoverDelay + self.blinkDuration
+                self.hoverProgress = CGFloat(min(elapsed / self.hoverDelay, 1.0))
 
-                if progress >= 1.0 {
+                if elapsed < self.hoverDelay {
+                    self.springLoadPulse = 0
+                } else {
+                    let blinkElapsed = min(elapsed - self.hoverDelay, self.blinkDuration)
+                    let blinkPhase = (blinkElapsed / self.blinkDuration) * self.blinkCount
+                    self.springLoadPulse = CGFloat(abs(sin(blinkPhase * .pi)))
+                }
+
+                if elapsed >= totalDuration {
+                    self.springLoadPulse = 0
                     self.performThinkspaceSwitch()
                 }
             }
@@ -135,6 +150,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         hoverTimer = nil
         blinkStartTime = nil
         hoverProgress = 0
+        springLoadPulse = 0
     }
 
     // MARK: - Thinkspace Switch
@@ -146,6 +162,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         hasThinkspaceSwitched = true
         targetThinkspaceId = targetId
         hoverProgress = 1.0
+        springLoadPulse = 0
 
         // Notify MainView to switch destination
         onThinkspaceSwitch?(targetId)
@@ -191,11 +208,24 @@ class CrossThinkspaceDragManager: ObservableObject {
         sourceThinkspaceId = nil
         hoveredThinkspaceId = nil
         hoverProgress = 0
+        springLoadPulse = 0
         hasThinkspaceSwitched = false
         targetThinkspaceId = nil
         floatingPosition = .zero
         cancelHoverTimer()
         stopEventMonitors()
+    }
+
+    func isSpringLoading(_ thinkspaceId: String) -> Bool {
+        isOverSidebar &&
+        !hasThinkspaceSwitched &&
+        hoveredThinkspaceId == thinkspaceId &&
+        springLoadPulse > 0
+    }
+
+    func pulseForThinkspace(_ thinkspaceId: String) -> CGFloat {
+        guard isSpringLoading(thinkspaceId) else { return 0 }
+        return springLoadPulse
     }
 
     // MARK: - NSEvent Monitors
@@ -260,12 +290,6 @@ class CrossThinkspaceDragManager: ObservableObject {
             mouseUpMonitor = nil
         }
     }
-
-    deinit {
-        hoverTimer?.invalidate()
-        if let monitor = mouseDragMonitor { NSEvent.removeMonitor(monitor) }
-        if let monitor = mouseUpMonitor { NSEvent.removeMonitor(monitor) }
-    }
 }
 
 // MARK: - Notification Name
@@ -279,38 +303,188 @@ extension CosmoNotification.Canvas {
 struct CrossThinkspaceDragPreview: View {
     let block: CanvasBlock
 
+    private var accent: Color { block.entityType.color }
+
+    private var previewSize: CGSize {
+        let sourceSize = CGSize(
+            width: max(block.size.width, 220),
+            height: max(block.size.height, 108)
+        )
+        let maxWidth: CGFloat = 176
+        let maxHeight: CGFloat = 126
+        let scale = min(maxWidth / sourceSize.width, maxHeight / sourceSize.height, 0.62)
+        return CGSize(
+            width: max(128, sourceSize.width * scale),
+            height: max(88, sourceSize.height * scale)
+        )
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(block.entityType.color.opacity(0.2))
-                .frame(width: 24, height: 24)
-                .overlay(
-                    Image(systemName: block.entityType.icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(block.entityType.color)
-                )
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(accent.opacity(0.85))
+                .frame(height: 3)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(block.title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(accent.opacity(0.12))
+                        .frame(width: 22, height: 22)
+                        .overlay(
+                            Image(systemName: block.entityType.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(accent)
+                        )
 
-                Text(block.entityType.rawValue.capitalized)
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(block.entityType.rawValue.capitalized)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(DS.textMuted)
+                            .textCase(.uppercase)
+                            .tracking(0.5)
+
+                        Text(block.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(DS.text)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 6)
+                }
+
+                previewBody
+
+                Spacer(minLength: 0)
             }
+            .padding(10)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .frame(width: previewSize.width, height: previewSize.height, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 4)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DS.surfaceElevated)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(DS.border, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(DS.border, lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.08), radius: 16, x: 0, y: 6)
+        .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+    }
+
+    @ViewBuilder
+    private var previewBody: some View {
+        switch block.entityType {
+        case .task:
+            VStack(alignment: .leading, spacing: 8) {
+                Text((block.subtitle?.isEmpty == false ? block.subtitle : nil) ?? "0/1 today")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .lineLimit(1)
+
+                miniBarRow(
+                    color: accent,
+                    values: [0.60, 0.38, 0.43, 0.34, 0.49, 0.28]
+                )
+
+                miniPill(
+                    label: block.metadata["status"]?.capitalized ?? "Not tracked",
+                    tint: accent
+                )
+            }
+        case .image:
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            accent.opacity(0.18),
+                            accent.opacity(0.08)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(alignment: .bottomLeading) {
+                    Text((block.subtitle?.isEmpty == false ? block.subtitle : nil) ?? "Image")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .lineLimit(1)
+                        .padding(8)
+                }
+        default:
+            VStack(alignment: .leading, spacing: 8) {
+                if let subtitle = block.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.textSecondary)
+                        .lineLimit(block.entityType == .research ? 2 : 3)
+                } else {
+                    miniPlaceholderLines
+                }
+
+                HStack(spacing: 6) {
+                    miniPill(label: block.entityType.rawValue.capitalized, tint: accent)
+
+                    if let status = block.metadata["status"], !status.isEmpty {
+                        miniPill(label: status.capitalized, tint: DS.textSecondary, isSecondary: true)
+                    } else if let type = block.metadata["type"], !type.isEmpty {
+                        miniPill(label: type.capitalized, tint: DS.textSecondary, isSecondary: true)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var miniPlaceholderLines: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(0..<placeholderLineCount, id: \.self) { index in
+                Capsule()
+                    .fill(index == placeholderLineCount - 1 ? DS.borderSubtle.opacity(0.8) : DS.borderSubtle)
+                    .frame(width: placeholderLineWidth(index: index), height: 5)
+            }
+        }
+    }
+
+    private var placeholderLineCount: Int {
+        switch block.entityType {
+        case .task:
+            return 2
+        case .research, .content, .note, .connection:
+            return 3
+        default:
+            return 2
+        }
+    }
+
+    private func placeholderLineWidth(index: Int) -> CGFloat {
+        let widths = [0.92, 0.76, 0.58]
+        let normalized = widths[min(index, widths.count - 1)]
+        return max(54, previewSize.width * normalized - 20)
+    }
+
+    private func miniBarRow(color: Color, values: [CGFloat]) -> some View {
+        HStack(spacing: 5) {
+            ForEach(Array(values.enumerated()), id: \.offset) { value in
+                Capsule()
+                    .fill(value.element > 0.5 ? color.opacity(0.7) : DS.borderSubtle)
+                    .frame(
+                        width: max(16, (previewSize.width - 42) * value.element / 3.0),
+                        height: 5
+                    )
+            }
+        }
+    }
+
+    private func miniPill(label: String, tint: Color, isSecondary: Bool = false) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(DS.bg, in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(isSecondary ? 0.12 : 0.18), lineWidth: 1)
+            )
     }
 }

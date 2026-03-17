@@ -59,28 +59,20 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Filtered Thinkspaces
 
     private var filteredThinkspaces: [Thinkspace] {
-        let all = manager.sidebarThinkspaces
-        let filtered: [Thinkspace]
         if let projectId = selectedProjectFilter {
-            filtered = all.filter { $0.projectUuid == projectId }
-        } else {
-            filtered = all
+            return manager.rootThinkspacesForProject(projectId)
         }
-        return filtered.sorted { $0.lastOpened > $1.lastOpened }
+        return manager.sidebarThinkspaces
+            .filter { $0.parentThinkspaceId == nil }
+            .sorted { $0.lastOpened > $1.lastOpened }
     }
 
     // MARK: - Navigable Items
 
-    private var allNavigableItems: [NavigableItem] {
-        var items: [NavigableItem] = []
+    private var allNavigableItems: [ThinkspaceNavigatorItem] {
+        var items: [ThinkspaceNavigatorItem] = []
         for thinkspace in filteredThinkspaces {
-            items.append(.thinkspace(thinkspace, projectId: thinkspace.projectUuid))
-            if expandedThinkspaces.contains(thinkspace.id),
-               let docs = manager.childDocsCache[thinkspace.id] {
-                for doc in docs {
-                    items.append(.childDoc(doc, thinkspaceId: thinkspace.id))
-                }
-            }
+            appendNavigationItems(from: thinkspace, level: 0, into: &items)
         }
         return items
     }
@@ -146,14 +138,13 @@ struct SidebarThinkspaceSection: View {
             if isCollapsed {
                 Image(systemName: "rectangle.3.group")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Thinkspaces")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
@@ -166,7 +157,7 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Filter Chips Row
 
     private var filterChipsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal) {
             HStack(spacing: 6) {
                 filterChip(label: "All", color: DS.accent, isSelected: selectedProjectFilter == nil) {
                     withAnimation(actionAnimation) {
@@ -195,6 +186,7 @@ struct SidebarThinkspaceSection: View {
                 }
             }
         }
+        .scrollIndicators(.never)
     }
 
     @ViewBuilder
@@ -207,13 +199,13 @@ struct SidebarThinkspaceSection: View {
 
                 Text(label)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                    .foregroundColor(isSelected ? color : DS.textSecondary)
+                    .foregroundStyle(isSelected ? color : DS.textSecondary)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
             .background(
-                Capsule().fill(isSelected ? color.opacity(0.12) : DS.surface)
+                Capsule().fill(isSelected ? color.opacity(0.12) : DS.bg)
             )
             .overlay(
                 Capsule().stroke(isSelected ? color.opacity(0.22) : DS.borderSubtle, lineWidth: 1)
@@ -232,34 +224,33 @@ struct SidebarThinkspaceSection: View {
                 .overlay(
                     Image(systemName: "rectangle.3.group")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.accent)
+                        .foregroundStyle(DS.accent)
                 )
 
-            TextField("Name", text: $newName, prompt: Text("Name").foregroundColor(DS.textMuted))
+            TextField("Name", text: $newName, prompt: Text("Name").foregroundStyle(DS.textMuted))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isNameFieldFocused)
                 .onSubmit { createThinkspace() }
 
-            Button {
+            Button("Cancel", systemImage: "xmark") {
                 withAnimation(actionAnimation) {
                     isCreatingThinkspace = false
                 }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .frame(width: 24, height: 24)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .labelStyle(.iconOnly)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(DS.textMuted)
+            .frame(width: 24, height: 24)
+            .background(DS.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .fill(DS.surface)
+                .fill(DS.bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
                         .stroke(DS.accent.opacity(0.22), lineWidth: 1)
@@ -281,7 +272,7 @@ struct SidebarThinkspaceSection: View {
         } else {
             VStack(spacing: 6) {
                 ForEach(items) { thinkspace in
-                    thinkspaceRow(thinkspace)
+                    thinkspaceRow(thinkspace, level: 0)
                 }
             }
         }
@@ -296,19 +287,24 @@ struct SidebarThinkspaceSection: View {
                 EmptyView()
             } else {
                 ForEach(items) { thinkspace in
-                    thinkspaceRow(thinkspace)
+                    thinkspaceRow(thinkspace, level: 0)
                 }
             }
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func thinkspaceRow(_ thinkspace: Thinkspace) -> some View {
+    private func thinkspaceRow(_ thinkspace: Thinkspace, level: Int) -> some View {
         let isActive = activeThinkspaceId == thinkspace.id
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
         let isRenaming = renamingThinkspaceId == thinkspace.id
-        let isDropTarget = crossDragManager.hoveredThinkspaceId == thinkspace.id
+        let isDropTarget =
+            crossDragManager.isDragging &&
+            crossDragManager.isOverSidebar &&
+            crossDragManager.hoveredThinkspaceId == thinkspace.id
+        let springLoadPulse = crossDragManager.pulseForThinkspace(thinkspace.id)
+        let isSpringLoading = springLoadPulse > 0
 
         return VStack(alignment: .leading, spacing: 0) {
             if isRenaming && !isCollapsed {
@@ -317,75 +313,58 @@ struct SidebarThinkspaceSection: View {
                 Button {
                     selectThinkspace(thinkspace)
                 } label: {
-                    thinkspaceRowLabel(thinkspace, isActive: isActive, isExpanded: isExpanded)
+                    thinkspaceRowLabel(thinkspace, isActive: isActive, isExpanded: isExpanded, level: level)
                 }
                 .buttonStyle(.plain)
             }
 
-            // Child docs
             if isExpanded && !isCollapsed {
-                childDocsSection(for: thinkspace)
+                childDocsSection(for: thinkspace, level: level)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .fill(thinkspaceRowFill(isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .strokeBorder(
-                    isDropTarget ? DS.accent.opacity(0.32) : (isActive ? DS.accent.opacity(0.14) : Color.clear),
-                    lineWidth: isDropTarget ? 1.5 : 1
-                )
-        )
-        .shadow(color: isDropTarget ? DS.accentGlow : .clear, radius: 12, x: 0, y: 0)
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .preference(
-                        key: ThinkspaceRowFrameKey.self,
-                        value: [thinkspace.id: geo.frame(in: .global)]
-                    )
-            }
-        )
+        .modifier(ThinkspaceRowChrome(
+            thinkspaceId: thinkspace.id,
+            isActive: isActive,
+            isHovered: isHovered,
+            isDropTarget: isDropTarget,
+            isSpringLoading: isSpringLoading,
+            springLoadPulse: springLoadPulse,
+            fillColor: thinkspaceRowFill(isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
+        ))
         .onHover { hoveredThinkspaceId = $0 ? thinkspace.id : nil }
         .contextMenu {
             thinkspaceContextMenu(thinkspace)
         }
         .animation(hoverAnimation, value: isHovered)
         .animation(hoverAnimation, value: isDropTarget)
+        .animation(.linear(duration: 0.08), value: springLoadPulse)
     }
 
     @ViewBuilder
-    private func thinkspaceRowLabel(_ thinkspace: Thinkspace, isActive: Bool, isExpanded: Bool) -> some View {
+    private func thinkspaceRowLabel(_ thinkspace: Thinkspace, isActive: Bool, isExpanded: Bool, level: Int) -> some View {
         let project = projectFor(thinkspace)
         let color = project.map { projectColor(for: $0) } ?? DS.accent
 
         if isCollapsed {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isActive ? DS.accentSoft : DS.surface)
+                .fill(isActive ? DS.accentSoft : Color.clear)
                 .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                 .overlay(
                     Text(String(thinkspace.name.prefix(1)).uppercased())
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(isActive ? DS.accent : color)
+                        .foregroundStyle(isActive ? DS.accent : color)
                 )
                 .frame(maxWidth: .infinity)
                 .help(thinkspace.name)
         } else {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(isActive ? DS.accent : Color.clear)
-                    .frame(width: 3, height: 18)
-
-                Button {
+                Button(isExpanded ? "Collapse" : "Expand", systemImage: isExpanded ? "chevron.down" : "chevron.right") {
                     toggleExpand(thinkspace)
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.textMuted)
-                        .frame(width: 20, height: 20)
                 }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 20, height: 20)
                 .buttonStyle(.plain)
 
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -394,22 +373,41 @@ struct SidebarThinkspaceSection: View {
                     .overlay(
                         Text(String(thinkspace.name.prefix(1)).uppercased())
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(isActive ? DS.accent : color)
+                            .foregroundStyle(isActive ? DS.accent : color)
                     )
 
                 Text(thinkspace.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                    .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                    .foregroundStyle(isActive ? DS.text : DS.textSecondary)
                     .lineLimit(1)
+
+                if level > 0 {
+                    Text("Nested")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.bg, in: Capsule())
+                }
 
                 Spacer()
 
-                Text("\(thinkspace.blockCount)")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(DS.textMuted)
-                    .frame(minWidth: 22, alignment: .trailing)
+                HStack(spacing: 8) {
+                    let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
+                    if nestedCount > 0 && level == 0 {
+                        Label("\(nestedCount)", systemImage: "rectangle.stack")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(DS.textMuted)
+                    }
+
+                    Text("\(thinkspace.blockCount)")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(minWidth: 22, alignment: .trailing)
+                }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, 8 + CGFloat(level) * 18)
+            .padding(.trailing, 8)
             .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -428,13 +426,13 @@ struct SidebarThinkspaceSection: View {
                 .overlay(
                     Text(String(thinkspace.name.prefix(1)).uppercased())
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundColor(color)
+                        .foregroundStyle(color)
                 )
 
             TextField("Name", text: $renameText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isRenameFieldFocused)
                 .onSubmit { commitRename(thinkspace) }
                 .onExitCommand { cancelRename() }
@@ -443,7 +441,7 @@ struct SidebarThinkspaceSection: View {
         .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .fill(DS.surface)
+                .fill(DS.bg)
                 .overlay(
                     RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
                         .stroke(DS.accent.opacity(0.22), lineWidth: 1)
@@ -454,45 +452,48 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Child Docs
 
     @ViewBuilder
-    private func childDocsSection(for thinkspace: Thinkspace) -> some View {
-        let docs = manager.childDocsCache[thinkspace.id] ?? []
+    private func childDocsSection(for thinkspace: Thinkspace, level: Int) -> some View {
+        let navigation = manager.navigationCache[thinkspace.id]
+        let docs = navigation?.blockInventory ?? []
+        let childThinkspaces = level == 0 ? (navigation?.childThinkspaces ?? []) : []
         let isLoading = childDocsLoading.contains(thinkspace.id)
 
-        VStack(alignment: .leading, spacing: 4) {
-            if isLoading {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
-                        .scaleEffect(0.5)
-                    Text("Loading...")
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(width: 1)
+
+            VStack(alignment: .leading, spacing: 4) {
+                if isLoading {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
+                            .scaleEffect(0.5)
+                        Text("Loading...")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                } else if docs.isEmpty && childThinkspaces.isEmpty {
+                    Text("No blocks")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                }
-            } else if docs.isEmpty {
-                Text("No blocks")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-            } else {
-                ForEach(docs) { doc in
-                    sidebarChildDocRow(doc, thinkspaceId: thinkspace.id)
+                        .foregroundStyle(DS.textMuted)
+                } else {
+                    ForEach(childThinkspaces) { childThinkspace in
+                        AnyView(thinkspaceRow(childThinkspace, level: level + 1))
+                    }
+
+                    ForEach(docs) { doc in
+                        sidebarChildDocRow(doc, level: level + 1)
+                    }
                 }
             }
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DS.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-        .padding(.leading, 24)
+        .padding(.leading, level == 0 ? 30 : 48)
         .padding(.top, 4)
         .padding(.bottom, 6)
     }
 
-    private func sidebarChildDocRow(_ doc: ChildDoc, thinkspaceId: String) -> some View {
+    private func sidebarChildDocRow(_ doc: ChildDoc, level: Int) -> some View {
         let isHovered = hoveredChildDocId == doc.id
 
         return Button {
@@ -509,19 +510,29 @@ struct SidebarThinkspaceSection: View {
                     .overlay(
                         Image(systemName: doc.entityType.icon)
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(doc.entityType.color)
+                            .foregroundStyle(doc.entityType.color)
                     )
 
                 Text(doc.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer()
+
+                if doc.outlineReferenceCount > 0 {
+                    Text("\(doc.outlineReferenceCount)")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DS.borderSubtle, in: Capsule())
+                }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, 8 + CGFloat(max(level - 1, 0)) * 18)
+            .padding(.trailing, 8)
             .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 8, hoverFill: DS.surfaceHover)
+            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 8, hoverFill: DS.bg)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -601,15 +612,15 @@ struct SidebarThinkspaceSection: View {
         VStack(spacing: 8) {
             Image(systemName: "rectangle.3.group")
                 .font(.system(size: 18))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text("No thinkspaces yet")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             Text("Create one to start organizing the canvas.")
                 .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -617,7 +628,7 @@ struct SidebarThinkspaceSection: View {
     }
 
     private var createThinkspaceButton: some View {
-        Button {
+        Button("New thinkspace", systemImage: "plus") {
             withAnimation(actionAnimation) {
                 isCreatingThinkspace = true
                 newName = ""
@@ -625,17 +636,16 @@ struct SidebarThinkspaceSection: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isNameFieldFocused = true
             }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.accent)
-                .frame(width: 28, height: 28)
-                .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(DS.accent.opacity(0.12), lineWidth: 1)
-                )
         }
+        .labelStyle(.iconOnly)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(DS.accent)
+        .frame(width: 28, height: 28)
+        .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+        )
         .buttonStyle(.plain)
         .help("New ThinkSpace")
     }
@@ -648,7 +658,7 @@ struct SidebarThinkspaceSection: View {
             return DS.accentSoft
         }
         if isHovered {
-            return DS.surfaceHover
+            return DS.bg
         }
         return .clear
     }
@@ -689,10 +699,10 @@ struct SidebarThinkspaceSection: View {
                 expandedThinkspaces.remove(thinkspace.id)
             } else {
                 expandedThinkspaces.insert(thinkspace.id)
-                if manager.childDocsCache[thinkspace.id] == nil {
+                if manager.navigationCache[thinkspace.id] == nil {
                     childDocsLoading.insert(thinkspace.id)
                     Task {
-                        await manager.fetchChildDocs(for: thinkspace.id)
+                        await manager.fetchNavigationData(for: thinkspace.id)
                         childDocsLoading.remove(thinkspace.id)
                     }
                 }
@@ -770,14 +780,12 @@ struct SidebarThinkspaceSection: View {
         switch items[selectedIndex] {
         case .thinkspace(let thinkspace, _):
             selectThinkspace(thinkspace)
-        case .childDoc(let doc, _):
+        case .block(let doc, _, _):
             NotificationCenter.default.post(
                 name: .enterFocusMode,
                 object: nil,
                 userInfo: ["type": doc.entityType, "id": doc.entityId]
             )
-        case .project:
-            break
         }
     }
 
@@ -816,11 +824,9 @@ struct SidebarThinkspaceSection: View {
         case .thinkspace(let thinkspace, _):
             hoveredThinkspaceId = thinkspace.id
             hoveredChildDocId = nil
-        case .childDoc(let doc, _):
+        case .block(let doc, _, _):
             hoveredChildDocId = doc.id
             hoveredThinkspaceId = nil
-        case .project:
-            break
         }
     }
 
@@ -837,5 +843,99 @@ struct SidebarThinkspaceSection: View {
     private func projectFor(_ thinkspace: Thinkspace) -> Atom? {
         guard let projectUuid = thinkspace.projectUuid else { return nil }
         return projects.first { $0.uuid == projectUuid }
+    }
+
+    private func appendNavigationItems(
+        from thinkspace: Thinkspace,
+        level: Int,
+        into items: inout [ThinkspaceNavigatorItem]
+    ) {
+        items.append(.thinkspace(thinkspace, level: level))
+
+        guard expandedThinkspaces.contains(thinkspace.id) else { return }
+
+        let navigation = manager.navigationCache[thinkspace.id]
+        if level == 0 {
+            for childThinkspace in navigation?.childThinkspaces ?? [] {
+                appendNavigationItems(from: childThinkspace, level: level + 1, into: &items)
+            }
+        }
+
+        for doc in navigation?.blockInventory ?? [] {
+            items.append(.block(doc, thinkspaceId: thinkspace.id, level: level + 1))
+        }
+    }
+}
+
+private enum ThinkspaceNavigatorItem {
+    case thinkspace(Thinkspace, level: Int)
+    case block(ChildDoc, thinkspaceId: String, level: Int)
+}
+
+// MARK: - Thinkspace Row Chrome
+
+/// Extracted ViewModifier to reduce opaque type nesting depth in thinkspaceRow().
+/// The Swift compiler can stack-overflow resolving deeply chained overlays + backgrounds.
+private struct ThinkspaceRowChrome: ViewModifier {
+    let thinkspaceId: String
+    let isActive: Bool
+    let isHovered: Bool
+    let isDropTarget: Bool
+    let isSpringLoading: Bool
+    let springLoadPulse: Double
+    let fillColor: Color
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                    .fill(fillColor)
+            )
+            .overlay(springLoadFill)
+            .overlay(strokeOverlay)
+            .overlay(alignment: .leading) { leadingIndicator }
+            .shadow(
+                color: (isDropTarget || isSpringLoading)
+                    ? DS.accentGlow.opacity(0.18 + springLoadPulse * 0.34)
+                    : .clear,
+                radius: 10 + springLoadPulse * 8,
+                x: 0,
+                y: 0
+            )
+            .background(frameTracker)
+    }
+
+    private var springLoadFill: some View {
+        RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+            .fill(DS.accent.opacity(0.06 + springLoadPulse * 0.16))
+            .opacity(isSpringLoading ? 1 : 0)
+    }
+
+    private var strokeOverlay: some View {
+        RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+            .strokeBorder(
+                isSpringLoading
+                    ? DS.accent.opacity(0.18 + springLoadPulse * 0.34)
+                    : (isDropTarget ? DS.accent.opacity(0.26) : Color.clear),
+                lineWidth: (isDropTarget || isSpringLoading) ? 1.5 : 1
+            )
+    }
+
+    private var leadingIndicator: some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .fill(DS.accent.opacity(isSpringLoading ? 0.36 + springLoadPulse * 0.42 : (isDropTarget ? 0.28 : 0)))
+            .frame(width: 3)
+            .padding(.vertical, 8)
+            .opacity(isDropTarget || isSpringLoading ? 1 : 0)
+    }
+
+    private var frameTracker: some View {
+        GeometryReader { geo in
+            Color.clear
+                .preference(
+                    key: ThinkspaceRowFrameKey.self,
+                    value: [thinkspaceId: geo.frame(in: .global)]
+                )
+        }
     }
 }

@@ -12,7 +12,7 @@ struct InstagramCarouselLayout: View {
     let atom: Atom
     let instagramData: InstagramData
     let onAnnotationAdd: (Int, InstagramAnnotation.AnnotationType) -> Void
-    let onAnnotationEdit: (InstagramAnnotation) -> Void
+    let onAnnotationEdit: (InstagramAnnotation, RichDocument) -> Void
     let onAnnotationDelete: (UUID) -> Void
 
     @State private var currentSlideIndex: Int = 0
@@ -194,7 +194,7 @@ struct InstagramCarouselLayout: View {
                 ForEach(annotations) { annotation in
                     CarouselAnnotationView(
                         annotation: annotation,
-                        onEdit: { onAnnotationEdit(annotation) },
+                        onEdit: { updatedDocument in onAnnotationEdit(annotation, updatedDocument) },
                         onDelete: { onAnnotationDelete(annotation.id) }
                     )
                 }
@@ -325,10 +325,11 @@ struct CarouselSlideView: View {
 
 struct CarouselAnnotationView: View {
     let annotation: InstagramAnnotation
-    let onEdit: () -> Void
+    let onEdit: (RichDocument) -> Void
     let onDelete: () -> Void
 
     @State private var isHovering = false
+    @State private var document: RichDocument = .empty
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -347,26 +348,30 @@ struct CarouselAnnotationView: View {
                     .foregroundColor(annotationColor)
 
                 // Content
-                Text(annotation.content)
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.text)
-                    .fixedSize(horizontal: false, vertical: true)
+                CosmoDocumentEditor(
+                    document: $document,
+                    fontSize: 13,
+                    compact: true,
+                    placeholder: "Add note...",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    onDocumentChange: { document, _ in
+                        onEdit(document)
+                    }
+                )
+                .frame(minHeight: 30)
             }
 
             Spacer()
 
             if isHovering {
-                HStack(spacing: 8) {
-                    Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
-                    }
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                    }
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.textMuted)
                 }
-                .foregroundColor(DS.textMuted)
                 .buttonStyle(.plain)
             }
         }
@@ -375,6 +380,12 @@ struct CarouselAnnotationView: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(annotationColor.opacity(0.08))
         )
+        .onAppear {
+            document = annotation.resolvedDocument
+        }
+        .onChange(of: annotation) { _, updated in
+            document = updated.resolvedDocument
+        }
         .onHover { hovering in
             isHovering = hovering
         }
@@ -396,4 +407,3 @@ struct CarouselAnnotationView: View {
         }
     }
 }
-

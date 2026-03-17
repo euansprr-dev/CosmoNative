@@ -5,6 +5,9 @@ struct DashboardHabitPanel: View {
 
     @State private var editingHabit: HabitDefinition?
     @State private var creatingHabit = false
+    @State private var animateProgress = false
+    @State private var bouncingHabitId: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,6 +28,18 @@ struct DashboardHabitPanel: View {
         }
         .task {
             await viewModel.loadHabits()
+        }
+        .onAppear {
+            guard !animateProgress else { return }
+            if reduceMotion {
+                animateProgress = true
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                        animateProgress = true
+                    }
+                }
+            }
         }
         .popover(item: $editingHabit, attachmentAnchor: .rect(.bounds), arrowEdge: .leading) { habit in
             CommandCenterHabitEditor(
@@ -104,13 +119,13 @@ struct DashboardHabitPanel: View {
     @ViewBuilder
     private func habitCard(_ habit: HabitState) -> some View {
         let accent = habit.accentColor
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: habit.iconName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(accent)
-                    .frame(width: 28, height: 28)
-                    .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: 30, height: 30)
+                    .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -138,12 +153,35 @@ struct DashboardHabitPanel: View {
                 if habit.allowManualComplete {
                     Button {
                         Task { await viewModel.recordManualHabitCompletion(habitUUID: habit.id) }
+                        if !reduceMotion {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) {
+                                bouncingHabitId = habit.id
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                                    bouncingHabitId = nil
+                                }
+                            }
+                        }
                     } label: {
-                        Image(systemName: habit.isTodayComplete ? "checkmark.circle.fill" : "plus.circle.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(habit.isTodayComplete ? accent : DS.textMuted)
+                        Image(systemName: habit.isTodayComplete ? "checkmark" : "plus")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(habit.todayCount >= habit.targetCount ? accent.opacity(0.55) : accent)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                habit.isTodayComplete ? accent.opacity(0.12) : DS.bg,
+                                in: Circle()
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(
+                                        habit.isTodayComplete ? accent.opacity(0.18) : DS.borderSubtle,
+                                        lineWidth: 1
+                                    )
+                            )
                     }
                     .buttonStyle(.plain)
+                    .scaleEffect(bouncingHabitId == habit.id ? 1.2 : 1.0)
                     .disabled(habit.todayCount >= habit.targetCount)
                 }
             }
@@ -166,14 +204,21 @@ struct DashboardHabitPanel: View {
                 statPill(icon: "wand.and.stars", label: linkedIntentSummary, color: accent)
             }
         }
-        .padding(12)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.02), radius: 4, y: 1)
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(accent.opacity(habit.isTodayComplete ? 0.85 : 0.45))
+                .frame(width: 3)
+                .padding(.vertical, 10)
+                .padding(.leading, 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture {
             if let definition = viewModel.habitDefinition(for: habit.id) {
                 editingHabit = definition
@@ -186,12 +231,16 @@ struct DashboardHabitPanel: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(DS.surface)
+                        .fill(DS.borderSubtle)
                         .frame(height: 5)
 
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(habit.accentColor.opacity(0.75))
-                        .frame(width: proxy.size.width * habit.todayProgress, height: 5)
+                        .fill(habit.accentColor.opacity(0.72))
+                        .frame(width: proxy.size.width * (animateProgress ? habit.todayProgress : 0), height: 5)
+                        .animation(
+                            reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.8).delay(0.1),
+                            value: animateProgress
+                        )
                 }
             }
             .frame(height: 5)
@@ -199,11 +248,11 @@ struct DashboardHabitPanel: View {
             HStack(spacing: 5) {
                 ForEach(Array(habit.last7Days.enumerated()), id: \.offset) { index, isComplete in
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(isComplete ? habit.accentColor : DS.borderSubtle)
+                        .fill(isComplete ? habit.accentColor.opacity(0.8) : DS.bg)
                         .frame(height: 6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 3)
-                                .stroke(index == 6 && !isComplete ? habit.accentColor.opacity(0.25) : .clear, lineWidth: 1)
+                                .stroke(index == 6 && !isComplete ? habit.accentColor.opacity(0.22) : .clear, lineWidth: 1)
                         )
                 }
             }
@@ -221,13 +270,17 @@ struct DashboardHabitPanel: View {
         .foregroundColor(color)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(DS.surface, in: Capsule())
+        .background(DS.bg, in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 16)
-                .fill(DS.surface)
+                .fill(DS.bg)
                 .frame(width: 48, height: 48)
                 .overlay(
                     Image(systemName: "repeat")
@@ -247,6 +300,10 @@ struct DashboardHabitPanel: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 }

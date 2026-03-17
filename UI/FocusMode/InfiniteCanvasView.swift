@@ -86,9 +86,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
     /// Active zoom gesture scale
     @GestureState private var zoomGestureScale: CGFloat = 1.0
 
-    /// Tracks if spacebar is held for drag mode
-    @State private var isSpacebarDragMode = false
-
     /// Canvas size from GeometryReader
     @State private var canvasSize: CGSize = .zero
 
@@ -152,14 +149,6 @@ struct InfiniteCanvasView<AnchoredContent: View, FloatingContent: View>: View {
         // Note: No .clipped() to allow transcript content to overflow visually
         .gesture(panGesture)
         .gesture(zoomGesture)
-        .onKeyPress(.space) {
-            isSpacebarDragMode = true
-            return .handled
-        }
-        .onKeyPress(keys: [.init(" ")], phases: .up) { _ in
-            isSpacebarDragMode = false
-            return .handled
-        }
         // Keyboard shortcuts for zoom
         .onKeyPress { keyPress in
             switch keyPress.characters {

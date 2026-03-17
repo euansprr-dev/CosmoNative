@@ -373,6 +373,16 @@ struct SanctuarySettingsView: View {
                 instructions: "1. Visit https://www.perplexity.ai\n2. Sign up or log in\n3. Go to API settings\n4. Generate a new API key"
             )
 
+            // Apify
+            APIKeyCard(
+                title: "Apify API Key",
+                subtitle: "Optional - For Instagram creator import",
+                placeholder: "apify_api_...",
+                keyIdentifier: "apify",
+                isRequired: false,
+                instructions: "1. Visit https://apify.com\n2. Sign up or log in\n3. Go to Settings → Integrations\n4. Copy your Personal API token"
+            )
+
             Spacer()
         }
     }
@@ -1109,6 +1119,7 @@ private struct APIKeyCard: View {
         case "tiktok": return APIKeys.tiktok
         case "x_twitter": return APIKeys.xTwitter
         case "youtube_channel_id": return APIKeys.youtubeChannelId
+        case "apify": return APIKeys.apify
         default: return nil
         }
     }

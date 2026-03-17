@@ -16,6 +16,7 @@ final class FlashLiteRouter {
     You route Telegram messages to tools. Return ONLY valid JSON, no markdown.
 
     TOOLS:
+    - capture_to_inbox(text, title?) — capture a general thought, note, observation, or reflection to the inbox for triage. Use for thinking out loud, musings, "I just had a thought about X", "save this to my inbox", or any substantive non-actionable thought that isn't a specific content idea, swipe, task, or question.
     - capture_swipe(url, hook?, notes?, clientName?) — save URL as swipe file
     - capture_swipe_with_idea(url, title?, ideaContext?, clientName?, hook?) — save URL + create linked idea. Use title for user-specified idea name
     - capture_research(title, url?, body?) — save research/bookmark
@@ -117,6 +118,11 @@ final class FlashLiteRouter {
     private func executeToolCall(json: [String: Any]) async -> (response: String, toolName: String)? {
         guard let toolName = json["toolName"] as? String else { return nil }
         var arguments = json["arguments"] as? [String: Any] ?? [:]
+
+        // Inbox capture — handled directly, not via AgentToolExecutor
+        if toolName == "capture_to_inbox" {
+            return await executeInboxCapture(arguments: arguments)
+        }
 
         let clientName = json["clientName"] as? String
         let metadata = json["metadata"] as? [String: Any]
@@ -241,6 +247,72 @@ final class FlashLiteRouter {
         }
         if failed > 0 { lines.append("(\(failed) failed)") }
         return (lines.joined(separator: "\n"), "multi_create")
+    }
+
+    // MARK: - Inbox Capture
+
+    @MainActor
+    private func executeInboxCapture(arguments: [String: Any]) async -> (response: String, toolName: String)? {
+        let text = arguments["text"] as? String ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ("Nothing to capture.", "capture_to_inbox")
+        }
+
+        let userTitle = arguments["title"] as? String
+
+        // Create inbox item
+        let item = InboxItem.new(
+            source: .telegramText,
+            rawText: text,
+            title: userTitle
+        )
+
+        do {
+            let saved = try await InboxRepository.shared.create(item)
+
+            // Classify asynchronously
+            let classification = await InboxClassificationEngine.shared.classify(
+                text: text,
+                source: .telegramText
+            )
+
+            try await InboxRepository.shared.updateClassification(
+                uuid: saved.uuid,
+                classification: classification.classification,
+                confidence: classification.confidence,
+                title: classification.title,
+                mergeTargetUuid: classification.mergeTarget?.atomUuid,
+                mergeTargetTitle: classification.mergeTarget?.atomTitle,
+                mergeTargetType: classification.mergeTarget?.atomType,
+                mergePreview: classification.mergeTarget?.preview,
+                placeThinkspaceId: classification.placeTarget?.thinkspaceId,
+                placeThinkspaceName: classification.placeTarget?.thinkspaceName,
+                placeAtomType: classification.placeTarget?.suggestedAtomType
+            )
+
+            // Build response
+            let title = classification.title
+            var response = "📥 *Captured to inbox*\n\"\(title)\""
+            switch classification.classification {
+            case .merge:
+                if let target = classification.mergeTarget {
+                    let pct = Int(classification.confidence * 100)
+                    response += "\n\nAI suggests: *Merge with* \"\(target.atomTitle)\" (\(pct)%)"
+                }
+            case .place:
+                if let target = classification.placeTarget {
+                    response += "\n\nAI suggests: *Place in* \(target.thinkspaceName)"
+                }
+            case .new:
+                response += "\n\nAI suggests: *Create new*"
+            }
+            response += "\nOpen CosmoOS to confirm."
+
+            return (response, "capture_to_inbox")
+        } catch {
+            print("⚠️ [FlashLiteRouter] Inbox capture failed: \(error)")
+            return ("Captured thought, but classification failed. Check inbox.", "capture_to_inbox")
+        }
     }
 
     // MARK: - Post-Processing

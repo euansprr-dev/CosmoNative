@@ -270,6 +270,9 @@ struct CosmoMentionColors {
     /// Swipe File - Warm bronze
     static let swipeFile = Color(hex: "B08C5A")
 
+    /// Sticky Note - Warm yellow
+    static let stickyNote = Color(hex: "D4C36A")
+
     /// Default fallback
     static let defaultColor = Color(hex: "6B6B78")
 
@@ -289,6 +292,7 @@ struct CosmoMentionColors {
         case .cosmo, .cosmoAI: return cosmoAI
         case .project: return project
         case .swipeFile: return swipeFile
+        case .stickyNote: return stickyNote
         default: return defaultColor
         }
     }

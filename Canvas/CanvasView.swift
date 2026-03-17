@@ -81,9 +81,6 @@ struct CanvasView: View {
     @State private var showCrystallizationHeatmap = false
     @StateObject private var crystallizationEngine = CrystallizationEngine.shared
 
-    // Incubation engine (spaced repetition heartbeat)
-    @StateObject private var incubationEngine = IncubationEngine.shared
-
     // Lasso synthesis workspace
     @State private var showSynthesisWorkspace = false
     @State private var synthesisSourceBlockIds: [String] = []
@@ -96,9 +93,6 @@ struct CanvasView: View {
 
     // Minimap overlay
     @State private var showMinimap = false
-
-    // Trisociative collision engine
-    @StateObject private var trisociativeEngine = TrisociativeEngine.shared
 
     // Provocation engine (AI devil's advocate)
     @StateObject private var provocationEngine = ProvocationEngine.shared
@@ -232,16 +226,6 @@ struct CanvasView: View {
                     blocksLayer
                     inboxBlocksLayer
 
-                    // Connection lines render ON TOP of blocks so they're visible.
-                    // Blocks have opaque backgrounds that would completely hide lines
-                    // drawn behind them. allowsHitTesting(false) prevents interaction interference.
-                    CanvasConnectionLinesLayer(
-                        blocks: renderedBlocks,
-                        contentOffset: viewportTransform.contentOffset,
-                        activeBlockDrag: blockDragState,
-                        isActive: canvasIsActive
-                    )
-
                     // Drag-to-connect overlay (canvas coordinates, inside scaled container
                     // so it shares the same coordinate space as blocks and final connection lines)
                     DragToConnectOverlay(
@@ -256,6 +240,15 @@ struct CanvasView: View {
                     x: screenCenter.x / geo.size.width,
                     y: screenCenter.y / geo.size.height
                 ))
+
+                // Connection lines layer (screen coordinates, outside scaled container
+                // to prevent frame clipping at non-100% zoom levels)
+                CanvasConnectionLinesLayer(
+                    blocks: renderedBlocks,
+                    transform: viewportTransform,
+                    activeBlockDrag: blockDragState,
+                    isActive: canvasIsActive
+                )
 
                 // Drawing elements layer (screen coordinates, outside scaled container
                 // to prevent frame clipping at non-100% zoom levels)
@@ -310,20 +303,17 @@ struct CanvasView: View {
                 )
             }
             .overlay(alignment: .topTrailing) {
-                // Drawing tools + view layers
-                VStack(alignment: .trailing, spacing: 0) {
+                // Drawing tools + view layers + unified inspector
+                VStack(alignment: .trailing, spacing: 12) {
                     CanvasDrawingToolbar(drawingState: drawingState)
 
-                    // View layers toolbar (below the drawing tools, right-aligned)
-                    CanvasViewLayersToolbar(
-                        showCrystallizationHeatmap: $showCrystallizationHeatmap,
-                        provocationEngine: provocationEngine,
-                        clusterEngine: clusterEngine,
-                        blockUUIDs: spatialEngine.blocks.map { $0.entityUuid }
-                    )
+                    // Unified inspector slot (block OR cluster)
+                    canvasInspectorPanel
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 16)
+                .animation(ProMotionSprings.snappy, value: selectedBlockId)
+                .animation(ProMotionSprings.snappy, value: clusterEngine.selectedClusterId)
             }
             // Thinkspace sidebar trigger zone (left edge)
             .overlay(alignment: .leading) {
@@ -352,12 +342,6 @@ struct CanvasView: View {
                     .padding(.top, 60)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
-            }
-            // Trisociative collision tray (bottom-left)
-            .overlay(alignment: .bottomLeading) {
-                CollisionTray(engine: trisociativeEngine)
-                    .padding(.leading, 16)
-                    .padding(.bottom, 16)
             }
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
             // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
@@ -417,6 +401,111 @@ struct CanvasView: View {
             }
         }
         .animation(.spring(response: 0.3), value: effectiveScale != 1.0)
+    }
+
+    private var selectedInspectableBlock: CanvasBlock? {
+        guard let selectedBlockId,
+              let block = spatialEngine.blocks.first(where: { $0.id == selectedBlockId }),
+              !block.entityUuid.isEmpty,
+              block.entityType != .cosmoAI else {
+            return nil
+        }
+        // Sticky notes may not have a backing atom (entityId == -1) — still inspectable
+        if block.entityType == .stickyNote { return block }
+        // All other types require a backing atom
+        guard block.entityId > 0 else { return nil }
+        return block
+    }
+
+    // MARK: - Unified Inspector Panel (top-right, below toolbar)
+
+    @ViewBuilder
+    private var canvasInspectorPanel: some View {
+        if let selectedBlock = selectedInspectableBlock {
+            CanvasSelectionInspector(
+                block: selectedBlock,
+                currentThinkspaceId: spatialEngine.currentThinkspaceId,
+                onClose: { clearSelectedBlock() },
+                onFocusMode: {
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: ["type": selectedBlock.entityType, "id": selectedBlock.entityId]
+                    )
+                },
+                onOpenAsPane: {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openAsPane,
+                        object: nil,
+                        userInfo: ["type": selectedBlock.entityType, "id": selectedBlock.entityId]
+                    )
+                },
+                onAskCosmo: {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Canvas.createCosmoAIBlock,
+                        object: nil,
+                        userInfo: [
+                            "position": CGPoint(x: selectedBlock.position.x + 360, y: selectedBlock.position.y),
+                            "contextBlockId": selectedBlock.id
+                        ]
+                    )
+                },
+                onConnectTo: {
+                    // Placeholder — connect-to interaction
+                },
+                onAIAssist: {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Canvas.createCosmoAIBlock,
+                        object: nil,
+                        userInfo: [
+                            "position": CGPoint(x: selectedBlock.position.x + 360, y: selectedBlock.position.y),
+                            "contextBlockId": selectedBlock.id
+                        ]
+                    )
+                },
+                onSave: {
+                    // Placeholder — save/bookmark action
+                },
+                onDuplicate: {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Canvas.duplicateBlock,
+                        object: nil,
+                        userInfo: ["blockId": selectedBlock.id]
+                    )
+                },
+                onDelete: {
+                    NotificationCenter.default.post(
+                        name: .removeBlock,
+                        object: nil,
+                        userInfo: ["blockId": selectedBlock.id]
+                    )
+                    clearSelectedBlock()
+                }
+            )
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        } else if let clusterId = clusterEngine.selectedClusterId,
+                  let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterId }) {
+            ClusterInspectorPanel(
+                cluster: cluster,
+                onChangeColor: { colorIndex in
+                    clusterEngine.changeClusterColor(id: clusterId, colorIndex: colorIndex)
+                },
+                onChangeViewMode: { mode in
+                    clusterEngine.setViewMode(for: clusterId, mode: mode, blocks: spatialEngine.blocks)
+                },
+                onChangeBoardGrouping: { grouping in
+                    clusterEngine.setBoardGrouping(for: clusterId, grouping: grouping)
+                },
+                onDelete: {
+                    clusterEngine.removeUserCluster(id: clusterId)
+                    clusterEngine.selectCluster(nil)
+                },
+                onDismiss: {
+                    clusterEngine.selectCluster(nil)
+                }
+            )
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
     }
 
     private var inboxBlocksLayer: some View {
@@ -537,7 +626,6 @@ struct CanvasView: View {
                 expansionOpacity: expansionManager.opacity(for: block.id),
                 expansionZIndex: expansionManager.zIndex(for: block.id),
                 isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
-                isHeartbeating: incubationEngine.heartbeatingUUIDs.contains(block.entityUuid),
                 staticContent: CanvasBlockStaticView(
                     block: block,
                     isMediaContent: mediaContentBlockIds.contains(block.id),
@@ -1187,22 +1275,6 @@ struct CanvasView: View {
                     }
                 }
 
-                // Listen for focus mode entry to record incubation interactions
-                addCanvasObserver(
-                    forName: .enterFocusMode,
-                    object: nil,
-                    queue: .main
-                ) { [self] notification in
-                    if let entityId = notification.userInfo?["id"] as? Int64 {
-                        // Find the block UUID for this entity
-                        if let block = spatialEngine.blocks.first(where: { $0.entityId == entityId }) {
-                            Task { @MainActor in
-                                await incubationEngine.recordInteraction(uuid: block.entityUuid)
-                            }
-                        }
-                    }
-                }
-
                 // Listen for cross-thinkspace block drop (block moved from another thinkspace)
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.crossThinkspaceDropBlock,
@@ -1212,13 +1284,26 @@ struct CanvasView: View {
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
                         guard let targetThinkspaceId = notification.userInfo?["thinkspaceId"] as? String,
-                              targetThinkspaceId == thinkspaceId,
-                              let entityUuid = notification.userInfo?["entityUuid"] as? String else { return }
+                              let currentThinkspaceId = spatialEngine.currentThinkspaceId,
+                              targetThinkspaceId == currentThinkspaceId,
+                              let blockId = notification.userInfo?["blockId"] as? String else { return }
+
+                        let positionSpace = notification.userInfo?["positionSpace"] as? String
+                        let screenPosition = notification.userInfo?["screenPosition"] as? CGPoint
 
                         // Reload blocks to pick up the transferred block
-                        await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                        await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: currentThinkspaceId)
                         rebuildMediaContentCache()
-                        
+
+                        if let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == currentThinkspaceId }) {
+                            canvasScale = CGFloat(ts.zoomLevel)
+                            canvasOffset = ts.panOffset
+                        }
+
+                        if positionSpace == "screen", let screenPosition {
+                            let canvasPosition = screenToCanvasPosition(screenPosition)
+                            spatialEngine.updateBlockPosition(blockId, position: canvasPosition)
+                        }
                     }
                 }
 
@@ -2023,6 +2108,16 @@ struct CanvasView: View {
         // Convert screen position to canvas position (accounting for zoom)
         let position = screenToCanvasPosition(screenPosition)
 
+        // Handle existing atom from database picker
+        if let existingUUID = userInfo["existingAtomUUID"] as? String {
+            Task {
+                guard let atom = try? await AtomRepository.shared.fetch(uuid: existingUUID) else { return }
+                let block = CanvasBlock.fromAtom(atom, position: position)
+                await spatialEngine.addBlock(block, persist: true)
+            }
+            return
+        }
+
         print("📦 Creating \(entityType) block at position: \(position)")
 
         // Optional prefilled content (e.g. “Save as Idea” from Cosmo AI)
@@ -2051,6 +2146,8 @@ struct CanvasView: View {
             return
         case .note:
             block = CanvasBlock.noteBlock(position: position)
+        case .stickyNote:
+            block = CanvasBlock.stickyNoteBlock(position: position)
         case .cosmoAI:
             block = CanvasBlock.cosmoAIBlock(position: position)
         default:
@@ -2086,11 +2183,9 @@ struct CanvasView: View {
         // the gesture coordinate space.
         blockDragState.begin(id: blockId, translation: translation)
 
-        // Mark selected (one-time update)
-        if selectedBlockId != blockId {
-            selectedBlockId = blockId
-            clusterEngine.selectCluster(nil)
-        }
+        // Deselect cluster during block drag, but don't open inspector —
+        // selection (and inspector) is handled by handleTap on click only.
+        clusterEngine.selectCluster(nil)
 
         // Cross-thinkspace drag detection: check if cursor is over the sidebar
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
@@ -2143,16 +2238,24 @@ struct CanvasView: View {
         let cachedPreview = canvasClusterDropPreview?.blockId == blockId ? canvasClusterDropPreview : nil
         clearCanvasClusterDropPreview()
 
-        // Cross-thinkspace drag: if block is over sidebar, handle transfer instead of normal drop
-        if crossDragManager.isDragging && crossDragManager.isOverSidebar {
+        let isCrossThinkspaceDrop =
+            crossDragManager.isDragging &&
+            (crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched)
+
+        // Cross-thinkspace drag: if block is over the sidebar or we've already spring-loaded
+        // into another thinkspace, let the shared manager finish the transfer.
+        if isCrossThinkspaceDrop {
             blockDragState.clear()
             // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
-            let mouseLocation = NSEvent.mouseLocation
+            let fallbackPosition = crossDragManager.floatingPosition
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                let mouseLocation = NSEvent.mouseLocation
                 let windowPoint = window.convertPoint(fromScreen: mouseLocation)
                 let contentHeight = window.contentView?.bounds.height ?? window.frame.height
                 let flippedY = contentHeight - windowPoint.y
                 crossDragManager.completeDrop(screenPosition: CGPoint(x: windowPoint.x, y: flippedY))
+            } else {
+                crossDragManager.completeDrop(screenPosition: fallbackPosition)
             }
             return
         }
@@ -2426,6 +2529,14 @@ struct CanvasView: View {
         if blockDragState.activeId == blockId {
             handleDragEndOptimized(blockId: blockId, translation: blockDragState.translation)
         }
+    }
+
+    private func clearSelectedBlock() {
+        if let selectedBlockId,
+           let index = spatialEngine.blocks.firstIndex(where: { $0.id == selectedBlockId }) {
+            spatialEngine.blocks[index].isSelected = false
+        }
+        selectedBlockId = nil
     }
 
     private func handleTap(blockId: String) {
@@ -3905,6 +4016,8 @@ struct CanvasBlockStaticView: View {
             TaskBlockView(block: block)
         case .image:
             ImageBlockView(block: block)
+        case .stickyNote:
+            StickyNoteBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }
@@ -3923,7 +4036,6 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
     let expansionOpacity: Double
     let expansionZIndex: Double
     let isCrossThinkspaceDragging: Bool
-    let isHeartbeating: Bool
     let staticContent: StaticContent
 
     // Closures — excluded from Equatable comparison
@@ -3934,7 +4046,6 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
     var body: some View {
         staticContent
             .expansionAware(blockId: block.id)
-            .heartbeatAnimation(isActive: isHeartbeating)
             .position(
                 x: block.position.x + transform.contentOffset.width + dragOffset.width,
                 y: block.position.y + transform.contentOffset.height + dragOffset.height

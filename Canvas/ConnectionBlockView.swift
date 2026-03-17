@@ -15,7 +15,7 @@ struct ConnectionBlockView: View {
     @State private var isExpanded = false
     @State private var observationCancellable: AnyCancellable?
     @State private var editableTitle: String = ""
-    @State private var isEditingTitle = false
+    @State private var titleDocument: RichDocument = .empty
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Purple accent for connections
@@ -76,14 +76,14 @@ struct ConnectionBlockView: View {
                 ForEach(Array(sections.indices), id: \.self) { index in
                     CompactSectionRow(
                         section: $sections[index],
-                        onAddItem: { content in
-                            addItem(content: content, toSectionIndex: index)
+                        onAddItem: { document, plainText in
+                            addItem(document: document, plainText: plainText, toSectionIndex: index)
                         },
                         onDeleteItem: { itemId in
                             deleteItem(id: itemId, fromSectionIndex: index)
                         },
-                        onEditItem: { itemId, newContent in
-                            editItem(id: itemId, newContent: newContent, inSectionIndex: index)
+                        onEditItem: { itemId, document, plainText in
+                            editItem(id: itemId, document: document, plainText: plainText, inSectionIndex: index)
                         }
                     )
                 }
@@ -103,61 +103,56 @@ struct ConnectionBlockView: View {
     // MARK: - Compact Header
 
     private var compactHeader: some View {
-        HStack(spacing: 10) {
-            // Icon circle
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [accentColor.opacity(0.3), accentColor.opacity(0.15)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 32, height: 32)
+        VStack(alignment: .leading, spacing: 0) {
+            // Entity identity strip
+            Capsule()
+                .fill(accentColor.opacity(0.35))
+                .frame(height: 3)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 8)
 
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(accentColor)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                if isEditingTitle {
-                    TextField("Untitled Connection", text: $editableTitle, onCommit: {
-                        commitTitleEdit()
-                    })
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
-                } else {
-                    Text(editableTitle.isEmpty ? "Untitled Connection" : editableTitle)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
-                        .lineLimit(2)
-                        .onTapGesture(count: 2) {
-                            isEditingTitle = true
-                        }
+            CosmoDocumentEditor(
+                document: $titleDocument,
+                fontSize: 14,
+                compact: true,
+                placeholder: "Untitled Connection",
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                singleLine: true,
+                baseFontWeight: .medium,
+                onDocumentChange: { document, _ in
+                    editableTitle = RichDocumentPersistence.titlePlainText(from: document)
+                    commitTitleEdit(document: document)
                 }
+            )
+            .frame(height: 32)
 
-                Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
-            }
-
-            Spacer()
+            Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
+                .font(.system(size: 11))
+                .foregroundColor(DS.textMuted)
         }
     }
 
     // MARK: - Footer
 
     private var footerBar: some View {
-        HStack {
+        HStack(spacing: 4) {
+            Image(systemName: "link")
+                .font(.system(size: 9))
+                .foregroundColor(accentColor.opacity(0.5))
+            Text("\(totalItemCount) items")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(accentColor.opacity(0.6))
+
+            Spacer()
+
             if let created = block.metadata["created"] ?? block.metadata["updated"] {
                 Text(formatTimestamp(created))
                     .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
             }
-            Spacer()
         }
     }
 
@@ -178,9 +173,12 @@ struct ConnectionBlockView: View {
                 receiveValue: { atom in
                     guard let atom else { return }
                     self.atom = atom
-                    if !isEditingTitle {
-                        self.editableTitle = atom.title ?? ""
-                    }
+                    self.titleDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .title,
+                        metadata: atom.metadata,
+                        fallbackPlainText: atom.title
+                    )
+                    self.editableTitle = RichDocumentPersistence.titlePlainText(from: self.titleDocument)
                     self.parseSections(from: atom)
                 }
             )
@@ -190,12 +188,30 @@ struct ConnectionBlockView: View {
 
     private func loadInitialData() {
         guard block.entityId > 0 else {
-            // No backing atom yet — initialize empty sections
-            sections = ConnectionSectionType.allCases
-                .sorted { $0.sortOrder < $1.sortOrder }
-                .map { type in
-                    ConnectionSection(type: type, isExpanded: false)
-                }
+            editableTitle = block.metadata["title"] ?? block.title
+            titleDocument = RichDocumentPersistence.loadBlockDocument(
+                key: RichDocumentMetadataKeys.titleDocument,
+                metadata: block.metadata,
+                fallbackPlainText: editableTitle
+            )
+            editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
+
+            if let json = block.metadata["structured"],
+               let data = ConnectionStructuredData.fromJSON(json) {
+                sections = data.sections
+                    .sorted { $0.type.sortOrder < $1.type.sortOrder }
+                    .map { section in
+                        var copy = section
+                        copy.isExpanded = !section.items.isEmpty
+                        return copy
+                    }
+            } else {
+                sections = ConnectionSectionType.allCases
+                    .sorted { $0.sortOrder < $1.sortOrder }
+                    .map { type in
+                        ConnectionSection(type: type, isExpanded: false)
+                    }
+            }
             return
         }
 
@@ -205,7 +221,12 @@ struct ConnectionBlockView: View {
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
                 await MainActor.run {
                     atom = loaded
-                    editableTitle = loaded.title ?? block.title
+                    titleDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .title,
+                        metadata: loaded.metadata,
+                        fallbackPlainText: loaded.title ?? block.title
+                    )
+                    editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
                     parseSections(from: loaded)
                 }
             }
@@ -227,6 +248,7 @@ struct ConnectionBlockView: View {
                     }
                     return s
                 }
+            deduplicateItemsAcrossSections()
             return
         }
 
@@ -244,6 +266,7 @@ struct ConnectionBlockView: View {
                     }
                     return s
                 }
+            deduplicateItemsAcrossSections()
             return
         }
 
@@ -257,11 +280,27 @@ struct ConnectionBlockView: View {
         }
     }
 
+    /// Remove duplicate items that appear across multiple sections (keeps first occurrence).
+    private func deduplicateItemsAcrossSections() {
+        var seenContent: Set<String> = []
+        for i in sections.indices {
+            sections[i].items.removeAll { item in
+                let key = item.resolvedPlainText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !key.isEmpty else { return false }
+                if seenContent.contains(key) {
+                    return true // duplicate — remove
+                }
+                seenContent.insert(key)
+                return false
+            }
+        }
+    }
+
     // MARK: - Item Actions
 
-    private func addItem(content: String, toSectionIndex index: Int) {
-        guard !content.isEmpty else { return }
-        let item = ConnectionItem(content: content)
+    private func addItem(document: RichDocument, plainText: String, toSectionIndex index: Int) {
+        guard !plainText.isEmpty else { return }
+        let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
         sections[index].items.append(item)
         sections[index].isExpanded = true
         saveChanges()
@@ -272,11 +311,10 @@ struct ConnectionBlockView: View {
         saveChanges()
     }
 
-    private func editItem(id: UUID, newContent: String, inSectionIndex index: Int) {
-        guard !newContent.isEmpty else { return }
+    private func editItem(id: UUID, document: RichDocument, plainText: String, inSectionIndex index: Int) {
+        guard !plainText.isEmpty else { return }
         if let itemIndex = sections[index].items.firstIndex(where: { $0.id == id }) {
-            sections[index].items[itemIndex].content = newContent
-            sections[index].items[itemIndex].updatedAt = Date()
+            sections[index].items[itemIndex].applyDocument(document)
             saveChanges()
         }
     }
@@ -284,17 +322,21 @@ struct ConnectionBlockView: View {
     // MARK: - Persistence
 
     private func saveChanges() {
+        let structuredData = ConnectionStructuredData(sections: sections)
+        guard let json = structuredData.toJSON() else { return }
+        let flattenedBodyText = flattenedSectionBodyText()
+
+        persistBlockSnapshot(structuredJSON: json, flattenedBodyText: flattenedBodyText)
+
         guard let atom = atom else { return }
         let atomUUID = atom.uuid
 
         // 1. Write to atom.structured
-        let structuredData = ConnectionStructuredData(sections: sections)
-        guard let json = structuredData.toJSON() else { return }
         Task {
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
-                    sql: "UPDATE atoms SET structured = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                    arguments: [json, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [json, flattenedBodyText, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
             }
         }
@@ -309,16 +351,29 @@ struct ConnectionBlockView: View {
 
     // MARK: - Title Editing
 
-    private func commitTitleEdit() {
-        isEditingTitle = false
-        let newTitle = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !newTitle.isEmpty, let atom = atom else { return }
+    private func commitTitleEdit(document: RichDocument) {
+        let newTitle = RichDocumentPersistence.titlePlainText(from: document)
+        persistBlockSnapshot(
+            structuredJSON: ConnectionStructuredData(sections: sections).toJSON(),
+            flattenedBodyText: flattenedSectionBodyText(),
+            titleDocumentOverride: document
+        )
+
+        guard let atom = atom else { return }
         let atomUUID = atom.uuid
         Task {
             try? await CosmoDatabase.shared.asyncWrite { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {
+                    existingMetadata = row["metadata"]
+                }
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: document
+                )
                 try db.execute(
-                    sql: "UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                    arguments: [newTitle, ISO8601DateFormatter().string(from: Date()), atomUUID]
+                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [fields.title ?? newTitle, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
             }
         }
@@ -327,18 +382,69 @@ struct ConnectionBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        guard block.entityId > 0 else {
-            print("⚠️ ConnectionBlockView.openFocusMode: no backing atom (entityId=\(block.entityId)), skipping")
+        guard block.entityId <= 0 else {
+            NotificationCenter.default.post(
+                name: .enterFocusMode,
+                object: nil,
+                userInfo: [
+                    "type": EntityType.connection,
+                    "id": block.entityId
+                ]
+            )
             return
         }
-        NotificationCenter.default.post(
-            name: .enterFocusMode,
-            object: nil,
-            userInfo: [
-                "type": EntityType.connection,
-                "id": block.entityId
-            ]
-        )
+
+        let structuredData = ConnectionStructuredData(sections: sections)
+        guard let json = structuredData.toJSON() else { return }
+        let flattenedBodyText = flattenedSectionBodyText()
+
+        Task {
+            do {
+                var newAtom = Atom.new(
+                    type: .connection,
+                    title: RichDocumentPersistence.nilIfEmpty(editableTitle),
+                    body: flattenedBodyText
+                )
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: newAtom.metadata,
+                    titleDocument: titleDocument
+                )
+                newAtom.title = fields.title
+                newAtom.body = flattenedBodyText
+                newAtom.metadata = fields.metadata
+                newAtom.structured = json
+
+                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                    try newAtom.insert(db)
+                    return db.lastInsertedRowID
+                }
+
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: """
+                        UPDATE canvas_blocks
+                        SET entity_id = ?, entity_uuid = ?
+                        WHERE id = ?
+                        """,
+                        arguments: [atomId, newAtom.uuid, block.id]
+                    )
+                }
+
+                await MainActor.run {
+                    atom = newAtom
+                    NotificationCenter.default.post(
+                        name: .enterFocusMode,
+                        object: nil,
+                        userInfo: [
+                            "type": EntityType.connection,
+                            "id": atomId
+                        ]
+                    )
+                }
+            } catch {
+                print("ConnectionBlockView: Failed to create backing atom: \(error)")
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -351,18 +457,67 @@ struct ConnectionBlockView: View {
         }
         return timestamp
     }
+
+    private func flattenedSectionBodyText() -> String {
+        sections
+            .filter { !$0.items.isEmpty }
+            .map { section in
+                "\(section.type.displayName)\n" + section.items.map { "• \($0.resolvedPlainText)" }.joined(separator: "\n")
+            }
+            .joined(separator: "\n\n")
+    }
+
+    private func persistBlockSnapshot(
+        structuredJSON: String?,
+        flattenedBodyText: String,
+        titleDocumentOverride: RichDocument? = nil
+    ) {
+        let resolvedTitleDocument = titleDocumentOverride ?? titleDocument
+        let resolvedTitle = RichDocumentPersistence.titlePlainText(from: resolvedTitleDocument)
+
+        NotificationCenter.default.post(
+            name: .updateBlockContent,
+            object: nil,
+            userInfo: [
+                "blockId": block.id,
+                "title": resolvedTitle,
+                "content": flattenedBodyText
+            ]
+        )
+
+        var updatedMetadata = RichDocumentPersistence.writeBlockDocument(
+            resolvedTitleDocument,
+            key: RichDocumentMetadataKeys.titleDocument,
+            metadata: block.metadata
+        )
+        updatedMetadata["title"] = resolvedTitle
+        updatedMetadata["content"] = flattenedBodyText
+        if let structuredJSON {
+            updatedMetadata["structured"] = structuredJSON
+        }
+
+        NotificationCenter.default.post(
+            name: .updateBlockMetadata,
+            object: nil,
+            userInfo: [
+                "blockId": block.id,
+                "metadata": updatedMetadata
+            ]
+        )
+    }
 }
 
 // MARK: - Compact Section Row
 
 private struct CompactSectionRow: View {
     @Binding var section: ConnectionSection
-    let onAddItem: (String) -> Void
+    let onAddItem: (RichDocument, String) -> Void
     let onDeleteItem: (UUID) -> Void
-    let onEditItem: (UUID, String) -> Void
+    let onEditItem: (UUID, RichDocument, String) -> Void
 
     @State private var isAddingItem = false
     @State private var newItemText = ""
+    @State private var newItemDocument: RichDocument = .empty
     @FocusState private var isAddFieldFocused: Bool
 
     var body: some View {
@@ -419,8 +574,8 @@ private struct CompactSectionRow: View {
                         CompactItemRow(
                             item: item,
                             accentColor: section.type.accentColor,
-                            onEdit: { newContent in
-                                onEditItem(item.id, newContent)
+                            onEdit: { document, plainText in
+                                onEditItem(item.id, document, plainText)
                             },
                             onDelete: {
                                 onDeleteItem(item.id)
@@ -436,18 +591,40 @@ private struct CompactSectionRow: View {
                                 .foregroundColor(section.type.accentColor.opacity(0.5))
                                 .frame(width: 12)
 
-                            TextField("Add item...", text: $newItemText)
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.text)
-                                .textFieldStyle(.plain)
-                                .focused($isAddFieldFocused)
-                                .onSubmit {
-                                    commitAddItem()
+                            CosmoDocumentEditor(
+                                document: $newItemDocument,
+                                fontSize: 12,
+                                compact: true,
+                                placeholder: "Add item...",
+                                allowSlashCommands: false,
+                                allowMentions: true,
+                                allowSelectionMenu: false,
+                                allowImages: false,
+                                onDocumentChange: { _, plainText in
+                                    newItemText = plainText
                                 }
-                                .onKeyPress(.escape) {
-                                    cancelAddItem()
-                                    return .handled
-                                }
+                            )
+                            .frame(minHeight: 24)
+
+                            Button {
+                                cancelAddItem()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(DS.textMuted)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                commitAddItem()
+                            } label: {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(section.type.accentColor)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .opacity(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -477,21 +654,30 @@ private struct CompactSectionRow: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(section.isExpanded ? DS.surfaceElevated : Color.clear)
+                .fill(sectionBackground)
         )
+    }
+
+    private var sectionBackground: Color {
+        if section.items.isEmpty {
+            return section.isExpanded ? DS.surfaceElevated : Color.clear
+        }
+        return section.type.accentColor.opacity(section.isExpanded ? 0.04 : 0.02)
     }
 
     private func commitAddItem() {
         let text = newItemText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
-            onAddItem(text)
+            onAddItem(newItemDocument, text)
         }
         newItemText = ""
+        newItemDocument = .empty
         isAddingItem = false
     }
 
     private func cancelAddItem() {
         newItemText = ""
+        newItemDocument = .empty
         isAddingItem = false
     }
 }
@@ -501,11 +687,12 @@ private struct CompactSectionRow: View {
 private struct CompactItemRow: View {
     let item: ConnectionItem
     let accentColor: Color
-    let onEdit: (String) -> Void
+    let onEdit: (RichDocument, String) -> Void
     let onDelete: () -> Void
 
     @State private var isHovered = false
     @State private var isEditing = false
+    @State private var editDocument: RichDocument = .empty
     @State private var editText = ""
     @FocusState private var isFieldFocused: Bool
 
@@ -518,23 +705,44 @@ private struct CompactItemRow: View {
                 .frame(width: 12)
 
             if isEditing {
-                TextField("", text: $editText)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.text)
-                    .textFieldStyle(.plain)
-                    .focused($isFieldFocused)
-                    .onSubmit {
-                        commitEdit()
+                CosmoDocumentEditor(
+                    document: $editDocument,
+                    fontSize: 12,
+                    compact: true,
+                    placeholder: "",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    onDocumentChange: { _, plainText in
+                        editText = plainText
                     }
-                    .onKeyPress(.escape) {
+                )
+                .frame(minHeight: 22)
+
+                HStack(spacing: 4) {
+                    Button {
                         cancelEdit()
-                        return .handled
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(DS.textMuted)
                     }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        commitEdit()
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
+                }
             } else {
-                Text(item.content)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CosmoDocumentRenderer(document: item.resolvedDocument, fontSize: 12, lineLimit: 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -575,7 +783,8 @@ private struct CompactItemRow: View {
     }
 
     private func startEdit() {
-        editText = item.content
+        editDocument = item.resolvedDocument
+        editText = item.resolvedPlainText
         isEditing = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             isFieldFocused = true
@@ -585,15 +794,17 @@ private struct CompactItemRow: View {
     private func commitEdit() {
         let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
-            onEdit(text)
+            onEdit(editDocument, text)
         }
         isEditing = false
         editText = ""
+        editDocument = .empty
     }
 
     private func cancelEdit() {
         isEditing = false
         editText = ""
+        editDocument = .empty
     }
 }
 

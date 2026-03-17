@@ -29,8 +29,14 @@ struct ResearchBlockView: View {
     @State private var resolvedThumbnailURL: String?
     @State private var loadTask: Task<Void, Never>?
 
-    // Green accent for research
-    private let accentColor = DS.entityResearch
+    // Accent color: bronze for swipe files, green for research
+    private var isSwipeFile: Bool {
+        atom?.isSwipeFileAtom ?? (block.metadata["isSwipeFile"] == "true")
+    }
+
+    private var accentColor: Color {
+        isSwipeFile ? DS.entitySwipe : DS.entityResearch
+    }
 
     init(block: CanvasBlock, isViewportActive: Bool = true) {
         self.block = block
@@ -71,10 +77,18 @@ struct ResearchBlockView: View {
     private var researchContent: some View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 0) {
+                // Entity identity strip
+                Capsule()
+                    .fill(accentColor.opacity(0.35))
+                    .frame(height: 3)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+
                 // Header with metadata
                 metadataHeader
                     .padding(.horizontal, 16)
-                    .padding(.top, 16)
+                    .padding(.top, 6)
                     .padding(.bottom, 12)
 
                 // Video area (replaces raw body text)
@@ -102,7 +116,7 @@ struct ResearchBlockView: View {
     private var metadataHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Content type badge
-            Text(contentType.uppercased())
+            Text(isSwipeFile ? "SWIPE FILE" : contentType.uppercased())
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(accentColor)
                 .tracking(0.8)
@@ -379,6 +393,22 @@ struct ResearchBlockView: View {
                     .font(.system(size: 11))
                     .foregroundColor(DS.textSecondary)
             }
+
+            // Swipe: hook type pill
+            if isSwipeFile,
+               let hookTypeRaw = block.metadata["hookType"],
+               let hookType = SwipeHookType(rawValue: hookTypeRaw) {
+                HStack(spacing: 3) {
+                    Image(systemName: hookType.iconName)
+                        .font(.system(size: 8))
+                    Text(hookType.displayName)
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(hookType.color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(hookType.color.opacity(0.12), in: Capsule())
+            }
         }
     }
 
@@ -398,6 +428,42 @@ struct ResearchBlockView: View {
                 .foregroundColor(accentColor.opacity(0.7))
             }
 
+            // Swipe: hook score
+            if isSwipeFile,
+               let scoreStr = block.metadata["hookScore"],
+               let score = Double(scoreStr) {
+                HStack(spacing: 3) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 9))
+                    Text(String(format: "%.0f", score))
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(hookScoreColor(score))
+            }
+
+            // Engagement badge (from creator import)
+            if isSwipeFile, let likes = atom?.swipeAnalysis?.likesCount, likes > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 8))
+                    Text(formatEngagement(likes))
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                }
+                .foregroundStyle(DS.entitySwipe)
+            }
+
+            // Processing indicator
+            if isProcessing {
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(DS.orange)
+                        .frame(width: 4, height: 4)
+                    Text("Processing")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(DS.orange)
+                }
+            }
+
             Spacer()
 
             // Timestamp
@@ -407,6 +473,18 @@ struct ResearchBlockView: View {
                     .foregroundColor(DS.textMuted)
             }
         }
+    }
+
+    private func hookScoreColor(_ score: Double) -> Color {
+        if score >= 8.0 { return DS.green }
+        if score >= 5.0 { return DS.orange }
+        return DS.textMuted
+    }
+
+    private func formatEngagement(_ count: Int) -> String {
+        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
+        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
+        return "\(count)"
     }
 
     // MARK: - Content Type Icon

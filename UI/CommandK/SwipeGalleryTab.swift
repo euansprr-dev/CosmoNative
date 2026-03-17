@@ -915,153 +915,34 @@ private struct SwipeGalleryCard: View {
     let cardWidth: CGFloat
     var viewModel: CommandKViewModel?
 
-    @State private var isHovered = false
     @State private var isPressed = false
     @State private var showDeleteAlert = false
-    @State private var localThumbnail: NSImage?
 
     private var isSelected: Bool {
         viewModel?.selectedUUIDs.contains(item.atomUUID) ?? false
     }
 
-    /// Whether this item has any displayable thumbnail (remote URL or local video fallback)
-    private var hasThumbnail: Bool {
-        item.thumbnailUrl != nil || localThumbnail != nil || item.instagramId != nil
-    }
-
-    /// Whether this is an Instagram reel
-    private var isReel: Bool {
-        switch item.platform {
-        case "instagramReel", "instagram_reel", "instagram":
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// Whether this is an Instagram carousel
-    private var isCarousel: Bool {
-        switch item.platform {
-        case "instagramCarousel", "instagram_carousel":
-            return true
-        default:
-            return false
-        }
-    }
-
-    // MARK: - Platform-Based Preview Height
-
-    /// Height of the info section below the preview (title + subtitle + badge + padding)
-    private let infoSectionHeight: CGFloat = 96
-
-    private var previewHeight: CGFloat {
-        if hasThumbnail {
-            switch item.platform {
-            case "youtube":
-                return cardWidth * 9 / 16                     // 16:9 landscape
-            case "youtubeShort", "youtube_short":
-                return min(cardWidth * 16 / 9, 420)           // 9:16 portrait
-            case "instagramReel", "instagram_reel":
-                return min(cardWidth * 16 / 9, 420)           // 9:16 portrait
-            case "instagramCarousel", "instagram_carousel":
-                return cardWidth * 5 / 4                      // 4:5 (native IG carousel)
-            case "instagramPost", "instagram_post":
-                return cardWidth * 5 / 4                      // 4:5 (native IG post)
-            case "instagram":
-                return cardWidth * 5 / 4                      // 4:5 (generic IG fallback)
-            default:
-                return cardWidth * 9 / 16                     // default landscape
-            }
-        } else {
-            // No thumbnail — compact text card
-            return 92
-        }
-    }
-
-    /// Total card height — fixed to prevent masonry layout miscalculation from async image loading
-    private var totalCardHeight: CGFloat {
-        previewHeight + infoSectionHeight
-    }
-
-    /// Static height estimation for lazy column distribution (no instance needed)
     static func estimatedHeight(for item: SwipeGalleryItem, cardWidth: CGFloat) -> CGFloat {
-        let infoHeight: CGFloat = 96
-        let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
-        let previewHeight: CGFloat
-        if hasThumbnail {
-            switch item.platform {
-            case "youtube":
-                previewHeight = cardWidth * 9 / 16
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
-                previewHeight = min(cardWidth * 16 / 9, 420)
-            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
-                previewHeight = cardWidth * 5 / 4
-            default:
-                previewHeight = cardWidth * 9 / 16
-            }
-        } else {
-            previewHeight = 80
-        }
-        return previewHeight + infoHeight
+        SwipeGalleryCardView.estimatedHeight(for: item, cardWidth: cardWidth)
     }
 
-    /// Platform-specific accent color for the preview gradient
-    private var platformAccentColor: Color {
-        switch item.platform {
-        case "youtube", "youtubeShort", "youtube_short":
-            return Color(hex: "#FF4444")
-        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
-             "instagram_reel", "instagram_post", "instagram_carousel":
-            return Color(hex: "#C13584")
-        case "xPost", "twitter", "x_post":
-            return Color(hex: "#1DA1F2")
-        case "threads":
-            return Color(hex: "#AAAAAA")
-        case "website":
-            return Color(hex: "#8FC7A2")
-        default:
-            return Color(hex: "#8FC7A2")
-        }
+    fileprivate static func thumbnailFromCache(shortcode: String) async -> NSImage? {
+        await SwipeGalleryCardView.thumbnailFromCache(shortcode: shortcode)
+    }
+
+    fileprivate static func extractAndCacheThumbnail(shortcode: String) async -> NSImage? {
+        await SwipeGalleryCardView.extractAndCacheThumbnail(shortcode: shortcode)
     }
 
     // MARK: - Body
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Preview area — platform-based height
-            previewArea
-                .frame(height: previewHeight)
-                .clipped()
-
-            // Info area — matches Library card structure
-            VStack(alignment: .leading, spacing: 8) {
-                // Title (hook text)
-                Text(item.hookText ?? item.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(2)
-
-                // Subtitle (author + platform)
-                subtitleLabel
-
-                // Bottom row: hook type badge + date
-                bottomRowLabel
-            }
-            .padding(14)
-        }
-        .frame(height: totalCardHeight)
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.cardCornerRadius, style: .continuous))
-        .commandKGalleryCardChrome(
-            isHovered: isHovered,
+        SwipeGalleryCardView(
+            item: item,
+            cardWidth: cardWidth,
             isSelected: isSelected,
-            accentColor: DS.entitySwipe
+            isPressed: isPressed
         )
-        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
-        .scaleEffect(isPressed ? 0.985 : 1.0)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
-        .animation(ProMotionSprings.press, value: isPressed)
-        .onHover { hovering in isHovered = hovering }
         .contentShape(Rectangle())
         .onTapGesture {
             if NSEvent.modifierFlags.contains(.shift) {
@@ -1102,197 +983,6 @@ private struct SwipeGalleryCard: View {
         } message: {
             Text(swipeDeleteAlertMessage)
         }
-        .onAppear {
-            // Pre-generate local thumbnail for Instagram items without a remote URL
-            if item.thumbnailUrl == nil && item.instagramId != nil {
-                generateLocalThumbnail()
-            }
-        }
-    }
-
-    // MARK: - Preview Area
-
-    @ViewBuilder
-    private var previewArea: some View {
-        ZStack {
-            platformAccentColor.opacity(0.08)
-
-            previewContent
-
-            // Overlay badges
-            VStack {
-                HStack(alignment: .top) {
-                    // Platform badge (top-left)
-                    HStack(spacing: 4) {
-                        Image(systemName: item.platformIcon)
-                            .font(.system(size: 9))
-                        Text(item.platformName)
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(DS.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(DS.surfaceElevated))
-                    .overlay(
-                        Capsule()
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    )
-
-                    Spacer()
-
-                    // Score badge (top-right)
-                    if let score = item.hookScore {
-                        Text(String(format: "%.1f", score))
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundColor(DS.textOnAccent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(item.scoreColor.opacity(0.85)))
-                    }
-                }
-
-                Spacer()
-
-                // Duration badge (bottom-right)
-                if let duration = item.duration, duration > 0 {
-                    HStack {
-                        Spacer()
-                        Text(formatDuration(duration))
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
-                            .foregroundColor(DS.text)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(DS.surfaceElevated))
-                            .overlay(
-                                Capsule()
-                                    .stroke(DS.borderSubtle, lineWidth: 1)
-                            )
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    @ViewBuilder
-    private var previewContent: some View {
-        if let localThumb = localThumbnail {
-            // Local thumbnail generated from cached video
-            Image(nsImage: localThumb)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .frame(height: previewHeight)
-                .clipped()
-        } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: previewHeight)
-                        .clipped()
-                case .failure:
-                    fallbackPreview
-                        .onAppear { generateLocalThumbnail() }
-                case .empty:
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .tint(DS.textMuted)
-                @unknown default:
-                    fallbackPreview
-                        .onAppear { generateLocalThumbnail() }
-                }
-            }
-        } else {
-            fallbackPreview
-                .onAppear { generateLocalThumbnail() }
-        }
-    }
-
-    @ViewBuilder
-    private var fallbackPreview: some View {
-        VStack(spacing: 8) {
-            if let hookText = item.hookText, !hookText.isEmpty {
-                // Text preview (like Library's idea card)
-                Text(hookText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                Spacer(minLength: 0)
-            } else {
-                Spacer(minLength: 0)
-                Image(systemName: item.platformIcon)
-                    .font(.system(size: 30))
-                    .foregroundColor(platformAccentColor.opacity(0.5))
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    // MARK: - Subtitle
-
-    @ViewBuilder
-    private var subtitleLabel: some View {
-        let parts = [item.author, item.platformName].compactMap { $0 }.filter { !$0.isEmpty }
-
-        if !parts.isEmpty {
-            Text(parts.joined(separator: " \u{00B7} "))
-                .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
-                .lineLimit(1)
-        }
-    }
-
-    // MARK: - Bottom Row
-
-    @ViewBuilder
-    private var bottomRowLabel: some View {
-        HStack {
-            if let hookType = item.hookType {
-                hookTypeBadgeLabel(hookType)
-            } else {
-                // Pending badge for unanalyzed swipes
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text("Pending")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundColor(Color(hex: "#64748B"))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color(hex: "#64748B").opacity(0.12))
-                .clipShape(Capsule())
-            }
-
-            Spacer()
-
-            Text(relativeDate)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.textMuted)
-        }
-    }
-
-    @ViewBuilder
-    private func hookTypeBadgeLabel(_ hookType: SwipeHookType) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: hookType.iconName)
-                .font(.system(size: 10))
-            Text(hookType.displayName)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(hookType.color)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(hookType.color.opacity(0.12))
-        .clipShape(Capsule())
     }
 
     // MARK: - Selection-Aware Context Menu
@@ -1385,6 +1075,292 @@ private struct SwipeGalleryCard: View {
         withAnimation(ProMotionSprings.snappy) {
             viewModel?.clearSelection()
         }
+    }
+}
+
+struct SwipeGalleryCardView: View {
+    let item: SwipeGalleryItem
+    let cardWidth: CGFloat
+    var isSelected: Bool = false
+    var isPressed: Bool = false
+
+    @State private var isHovered = false
+    @State private var localThumbnail: NSImage?
+
+    /// Whether this item has any displayable thumbnail (remote URL or local video fallback)
+    private var hasThumbnail: Bool {
+        item.thumbnailUrl != nil || localThumbnail != nil || item.instagramId != nil
+    }
+
+    /// Height of the info section below the preview (title + subtitle + badge + padding)
+    private let infoSectionHeight: CGFloat = 96
+
+    private var previewHeight: CGFloat {
+        if hasThumbnail {
+            switch item.platform {
+            case "youtube":
+                return cardWidth * 9 / 16
+            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
+                return min(cardWidth * 16 / 9, 420)
+            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
+                return cardWidth * 5 / 4
+            default:
+                return cardWidth * 9 / 16
+            }
+        }
+        return 92
+    }
+
+    private var totalCardHeight: CGFloat {
+        previewHeight + infoSectionHeight
+    }
+
+    static func estimatedHeight(for item: SwipeGalleryItem, cardWidth: CGFloat) -> CGFloat {
+        let infoHeight: CGFloat = 96
+        let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
+        let previewHeight: CGFloat
+        if hasThumbnail {
+            switch item.platform {
+            case "youtube":
+                previewHeight = cardWidth * 9 / 16
+            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
+                previewHeight = min(cardWidth * 16 / 9, 420)
+            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
+                previewHeight = cardWidth * 5 / 4
+            default:
+                previewHeight = cardWidth * 9 / 16
+            }
+        } else {
+            previewHeight = 80
+        }
+        return previewHeight + infoHeight
+    }
+
+    private var platformAccentColor: Color {
+        switch item.platform {
+        case "youtube", "youtubeShort", "youtube_short":
+            return Color(hex: "#FF4444")
+        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
+             "instagram_reel", "instagram_post", "instagram_carousel":
+            return Color(hex: "#C13584")
+        case "xPost", "twitter", "x_post":
+            return Color(hex: "#1DA1F2")
+        case "threads":
+            return Color(hex: "#AAAAAA")
+        case "website":
+            return Color(hex: "#8FC7A2")
+        default:
+            return Color(hex: "#8FC7A2")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            previewArea
+                .frame(height: previewHeight)
+                .clipped()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.hookText ?? item.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(DS.text)
+                    .lineLimit(2)
+
+                subtitleLabel
+                bottomRowLabel
+            }
+            .padding(14)
+        }
+        .frame(height: totalCardHeight)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.cardCornerRadius, style: .continuous))
+        .commandKGalleryCardChrome(
+            isHovered: isHovered,
+            isSelected: isSelected,
+            accentColor: DS.entitySwipe
+        )
+        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
+        .scaleEffect(isPressed ? 0.985 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
+        .animation(ProMotionSprings.press, value: isPressed)
+        .onHover { hovering in isHovered = hovering }
+        .onAppear {
+            if item.thumbnailUrl == nil && item.instagramId != nil {
+                generateLocalThumbnail()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var previewArea: some View {
+        ZStack {
+            platformAccentColor.opacity(0.08)
+
+            previewContent
+
+            VStack {
+                HStack(alignment: .top) {
+                    HStack(spacing: 4) {
+                        Image(systemName: item.platformIcon)
+                            .font(.system(size: 9))
+                        Text(item.platformName)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundColor(DS.text)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(DS.surfaceElevated))
+                    .overlay(
+                        Capsule()
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    )
+
+                    Spacer()
+
+                    if let score = item.hookScore {
+                        Text(String(format: "%.1f", score))
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundColor(DS.textOnAccent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(item.scoreColor.opacity(0.85)))
+                    }
+                }
+
+                Spacer()
+
+                if let duration = item.duration, duration > 0 {
+                    HStack {
+                        Spacer()
+                        Text(formatDuration(duration))
+                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .foregroundColor(DS.text)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(DS.surfaceElevated))
+                            .overlay(
+                                Capsule()
+                                    .stroke(DS.borderSubtle, lineWidth: 1)
+                            )
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let localThumb = localThumbnail {
+            Image(nsImage: localThumb)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: previewHeight)
+                .clipped()
+        } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: previewHeight)
+                        .clipped()
+                case .failure:
+                    fallbackPreview
+                        .onAppear { generateLocalThumbnail() }
+                case .empty:
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(DS.textMuted)
+                @unknown default:
+                    fallbackPreview
+                        .onAppear { generateLocalThumbnail() }
+                }
+            }
+        } else {
+            fallbackPreview
+                .onAppear { generateLocalThumbnail() }
+        }
+    }
+
+    @ViewBuilder
+    private var fallbackPreview: some View {
+        VStack(spacing: 8) {
+            if let hookText = item.hookText, !hookText.isEmpty {
+                Text(hookText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                Spacer(minLength: 0)
+            } else {
+                Spacer(minLength: 0)
+                Image(systemName: item.platformIcon)
+                    .font(.system(size: 30))
+                    .foregroundColor(platformAccentColor.opacity(0.5))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var subtitleLabel: some View {
+        let parts = [item.author, item.platformName].compactMap { $0 }.filter { !$0.isEmpty }
+
+        if !parts.isEmpty {
+            Text(parts.joined(separator: " · "))
+                .font(.system(size: 12))
+                .foregroundColor(DS.textMuted)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var bottomRowLabel: some View {
+        HStack {
+            if let hookType = item.hookType {
+                hookTypeBadgeLabel(hookType)
+            } else {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                    Text("Pending")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(Color(hex: "#64748B"))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color(hex: "#64748B").opacity(0.12))
+                .clipShape(Capsule())
+            }
+
+            Spacer()
+
+            Text(relativeDate)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func hookTypeBadgeLabel(_ hookType: SwipeHookType) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: hookType.iconName)
+                .font(.system(size: 10))
+            Text(hookType.displayName)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(hookType.color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(hookType.color.opacity(0.12))
+        .clipShape(Capsule())
     }
 
     // MARK: - Helpers

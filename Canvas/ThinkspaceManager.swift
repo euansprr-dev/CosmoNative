@@ -134,6 +134,13 @@ struct ChildDoc: Identifiable, Equatable {
     let entityId: Int64
     let entityUuid: String
     let title: String
+    let outlineReferenceCount: Int
+}
+
+/// Sidebar/navigation payload for an expanded thinkspace.
+struct ThinkspaceNavigationData: Equatable {
+    let childThinkspaces: [Thinkspace]
+    let blockInventory: [ChildDoc]
 }
 
 // MARK: - Thinkspace Manager
@@ -159,6 +166,9 @@ class ThinkspaceManager: ObservableObject {
 
     /// Cached child docs per thinkspace ID
     @Published private(set) var childDocsCache: [String: [ChildDoc]] = [:]
+
+    /// Cached thinkspace navigation payloads used by the unified sidebar.
+    @Published private(set) var navigationCache: [String: ThinkspaceNavigationData] = [:]
 
     /// Sidebar visibility state - shared for coordinating UI elements
     @Published var isSidebarVisible: Bool = false
@@ -200,6 +210,11 @@ class ThinkspaceManager: ObservableObject {
             let realCounts = await fetchRealBlockCounts()
             for i in loaded.indices {
                 loaded[i].blockCount = realCounts[loaded[i].id] ?? 0
+            }
+
+            let parentIds = Set(loaded.compactMap(\.parentThinkspaceId))
+            for i in loaded.indices {
+                loaded[i].hasChildren = parentIds.contains(loaded[i].id)
             }
 
             thinkspaces = loaded
@@ -524,7 +539,7 @@ class ThinkspaceManager: ObservableObject {
     /// Permanently delete a Thinkspace (hard delete)
     func permanentlyDelete(_ thinkspaceId: String) async {
         do {
-            try await repository.hardDelete(uuid: thinkspaceId)
+            try await repository.hardDelete(uuid: thinkspaceId, confirmed: true)
             await loadThinkspaces()
 
             print("🗑️ Permanently deleted Thinkspace: \(thinkspaceId)")
@@ -751,15 +766,23 @@ class ThinkspaceManager: ObservableObject {
 
     /// Fetch child docs (canvas blocks) for a thinkspace, joining atoms for fresh titles
     func fetchChildDocs(for thinkspaceId: String) async {
+        await fetchNavigationData(for: thinkspaceId)
+    }
+
+    /// Fetch child thinkspaces plus block inventory for sidebar/navigation surfaces.
+    func fetchNavigationData(for thinkspaceId: String) async {
         do {
             let tsId = thinkspaceId
             let rows: [Row] = try await database.asyncRead { db in
                 try Row.fetchAll(db, sql: """
-                    SELECT cb.id, cb.entity_type, cb.entity_id, cb.entity_uuid,
+                    SELECT MIN(cb.id) AS id, cb.entity_type, cb.entity_id, cb.entity_uuid,
+                           a.metadata AS atom_metadata,
                            COALESCE(a.title, cb.entity_title, 'Untitled') AS live_title
                     FROM canvas_blocks cb
                     LEFT JOIN atoms a ON a.uuid = cb.entity_uuid
                     WHERE cb.thinkspace_id = ? AND cb.is_deleted = 0
+                    GROUP BY CASE WHEN cb.entity_uuid IS NOT NULL AND cb.entity_uuid != ''
+                                 THEN cb.entity_uuid ELSE cb.id END
                     ORDER BY live_title
                 """, arguments: [tsId])
             }
@@ -771,15 +794,22 @@ class ThinkspaceManager: ObservableObject {
                       let entityId: Int64 = row["entity_id"] else { return nil }
                 let entityUuid: String = row["entity_uuid"] ?? ""
                 let title: String = row["live_title"] ?? "Untitled"
+                let metadata: String? = row["atom_metadata"]
                 return ChildDoc(
                     id: id,
                     entityType: type,
                     entityId: entityId,
                     entityUuid: entityUuid,
-                    title: title
+                    title: title,
+                    outlineReferenceCount: Atom.decodeOutlineReferences(from: metadata).count
                 )
             }
 
+            let childThinkspaces = childThinkspaces(of: thinkspaceId)
+            navigationCache[thinkspaceId] = ThinkspaceNavigationData(
+                childThinkspaces: childThinkspaces,
+                blockInventory: docs
+            )
             childDocsCache[thinkspaceId] = docs
         } catch {
             print("❌ Failed to fetch child docs: \(error)")
@@ -789,7 +819,7 @@ class ThinkspaceManager: ObservableObject {
     /// Refresh child docs for a set of expanded thinkspace IDs
     func refreshChildDocs(for thinkspaceIds: Set<String>) async {
         for id in thinkspaceIds {
-            await fetchChildDocs(for: id)
+            await fetchNavigationData(for: id)
         }
     }
 
@@ -797,8 +827,10 @@ class ThinkspaceManager: ObservableObject {
     func invalidateChildDocsCache(for thinkspaceId: String? = nil) {
         if let id = thinkspaceId {
             childDocsCache.removeValue(forKey: id)
+            navigationCache.removeValue(forKey: id)
         } else {
             childDocsCache.removeAll()
+            navigationCache.removeAll()
         }
     }
 
@@ -809,7 +841,10 @@ class ThinkspaceManager: ObservableObject {
         do {
             let rows: [Row] = try await database.asyncRead { db in
                 try Row.fetchAll(db, sql: """
-                    SELECT thinkspace_id, COUNT(*) as block_count
+                    SELECT thinkspace_id, COUNT(DISTINCT
+                        CASE WHEN entity_uuid IS NOT NULL AND entity_uuid != ''
+                             THEN entity_uuid ELSE id END
+                    ) as block_count
                     FROM canvas_blocks
                     WHERE is_deleted = 0 AND thinkspace_id IS NOT NULL
                     GROUP BY thinkspace_id

@@ -208,6 +208,8 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
     let id: UUID
     let type: AnnotationType
     var content: String
+    var document: RichDocument?
+    var plainText: String?
     let timestamp: TimeInterval
     let createdAt: Date
     var updatedAt: Date
@@ -223,6 +225,8 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
         id: UUID = UUID(),
         type: AnnotationType,
         content: String,
+        document: RichDocument? = nil,
+        plainText: String? = nil,
         timestamp: TimeInterval,
         linkedAtomUUIDs: [String] = [],
         customOffset: CGPoint? = nil,
@@ -232,6 +236,8 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
         self.id = id
         self.type = type
         self.content = content
+        self.document = document ?? RichDocument.migrateLegacy(content)
+        self.plainText = plainText ?? content
         self.timestamp = timestamp
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -252,6 +258,17 @@ struct ResearchAnnotation: Identifiable, Codable, Equatable {
     var hasCustomPosition: Bool {
         guard let offset = customOffset else { return false }
         return abs(offset.x) > 5 || abs(offset.y) > 5
+    }
+
+    var resolvedDocument: RichDocument {
+        document ?? RichDocument.migrateLegacy(plainText ?? content)
+    }
+
+    mutating func applyDocument(_ document: RichDocument) {
+        self.document = document
+        self.plainText = document.plainText
+        self.content = document.plainText
+        self.updatedAt = Date()
     }
 }
 
@@ -439,15 +456,27 @@ struct ResearchFocusModeState: Codable {
     mutating func updateAnnotationContent(id: UUID, content: String) {
         for i in transcriptSections.indices {
             if let j = transcriptSections[i].annotations.firstIndex(where: { $0.id == id }) {
-                transcriptSections[i].annotations[j].content = content
-                transcriptSections[i].annotations[j].updatedAt = Date()
+                transcriptSections[i].annotations[j].applyDocument(RichDocument.migrateLegacy(content))
                 lastModified = Date()
                 return
             }
         }
         if let idx = annotations.firstIndex(where: { $0.id == id }) {
-            annotations[idx].content = content
-            annotations[idx].updatedAt = Date()
+            annotations[idx].applyDocument(RichDocument.migrateLegacy(content))
+            lastModified = Date()
+        }
+    }
+
+    mutating func updateAnnotationDocument(id: UUID, document: RichDocument) {
+        for i in transcriptSections.indices {
+            if let j = transcriptSections[i].annotations.firstIndex(where: { $0.id == id }) {
+                transcriptSections[i].annotations[j].applyDocument(document)
+                lastModified = Date()
+                return
+            }
+        }
+        if let idx = annotations.firstIndex(where: { $0.id == id }) {
+            annotations[idx].applyDocument(document)
             lastModified = Date()
         }
     }

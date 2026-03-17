@@ -86,9 +86,31 @@ struct ContentBlockView: View {
 
     private var workflowCardView: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Entity identity strip + step indicator
+            VStack(alignment: .leading, spacing: 0) {
+                Capsule()
+                    .fill(accentColor.opacity(0.35))
+                    .frame(height: 3)
+                    .frame(maxWidth: .infinity)
+
+                HStack {
+                    Spacer()
+                    HStack(spacing: 3) {
+                        Image(systemName: currentStep.icon)
+                            .font(.system(size: 9))
+                        Text(currentStep.label)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(accentColor.opacity(0.7))
+                }
+                .padding(.top, 4)
+            }
+            .padding(.top, 12)
+            .padding(.horizontal, 16)
+
             // Title section
             titleSection
-                .padding(.top, 12)
+                .padding(.top, 4)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
@@ -188,15 +210,17 @@ struct ContentBlockView: View {
                 }
             } else {
                 // Empty state
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.text.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor.opacity(0.5))
+                VStack(spacing: 8) {
+                    Image(systemName: "pencil.line")
+                        .font(.system(size: 20))
+                        .foregroundColor(accentColor.opacity(0.25))
                     Text("Open to start writing...")
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
                         .italic()
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
             }
         }
     }
@@ -205,10 +229,14 @@ struct ContentBlockView: View {
 
     private var bottomInfoBar: some View {
         HStack(spacing: 4) {
-            // Phase name
-            Text(currentContentPhase.displayName)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(accentColor.opacity(0.7))
+            // 3-dot step progress (brainstorm / draft / polish)
+            HStack(spacing: 3) {
+                ForEach(ContentStep.allCases, id: \.rawValue) { step in
+                    Circle()
+                        .fill(stepDotColor(step))
+                        .frame(width: 5, height: 5)
+                }
+            }
 
             if wordCount > 0 {
                 Text("\u{00B7}")
@@ -231,6 +259,16 @@ struct ContentBlockView: View {
                     .font(.system(size: 10))
                     .foregroundColor(DS.textMuted)
             }
+        }
+    }
+
+    private func stepDotColor(_ step: ContentStep) -> Color {
+        if step.stepNumber < currentStep.stepNumber {
+            return DS.green.opacity(0.6)
+        } else if step.stepNumber == currentStep.stepNumber {
+            return accentColor
+        } else {
+            return DS.borderSubtle
         }
     }
 

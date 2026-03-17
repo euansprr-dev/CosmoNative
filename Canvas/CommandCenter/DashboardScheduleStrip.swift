@@ -8,6 +8,8 @@ import SwiftUI
 struct DashboardScheduleStrip: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @State private var nowPulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let hourHeight: CGFloat = 50
     private let startHour: Int = 7
@@ -188,15 +190,31 @@ struct DashboardScheduleStrip: View {
         let yOffset = yPosition(for: Date())
 
         return HStack(spacing: 0) {
-            Circle()
-                .fill(PlannerumColors.nowMarker)
-                .frame(width: 8, height: 8)
+            ZStack {
+                // Pulse ring — fades outward
+                if !reduceMotion {
+                    Circle()
+                        .stroke(PlannerumColors.nowMarker.opacity(nowPulse ? 0 : 0.4), lineWidth: 1.5)
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(nowPulse ? 2.2 : 1.0)
+                        .animation(.easeOut(duration: 2.0).repeatForever(autoreverses: false), value: nowPulse)
+                }
+
+                Circle()
+                    .fill(PlannerumColors.nowMarker)
+                    .frame(width: 8, height: 8)
+            }
 
             Rectangle()
                 .fill(PlannerumColors.nowMarker)
                 .frame(height: 1.5)
         }
         .offset(x: 28, y: yOffset)
+        .onAppear {
+            if !reduceMotion {
+                nowPulse = true
+            }
+        }
     }
 
     // MARK: - Positioning Helpers

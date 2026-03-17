@@ -366,11 +366,19 @@ struct LibraryView: View {
                 .foregroundColor(item.color)
                 .frame(width: 28)
 
-            // Title
-            Text(item.title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.text)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                if let provenance = item.provenanceSummary, !provenance.isEmpty {
+                    Text(provenance)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer()
 
@@ -458,6 +466,20 @@ struct SmartCollection: Identifiable {
 
 // MARK: - Library Item
 
+enum LibraryItemKind: String {
+    case atom
+    case project
+    case thinkspace
+
+    var sortRank: Int {
+        switch self {
+        case .project: return 0
+        case .thinkspace: return 1
+        case .atom: return 2
+        }
+    }
+}
+
 struct LibraryItem: Identifiable {
     let id: String
     let uuid: String
@@ -468,22 +490,86 @@ struct LibraryItem: Identifiable {
     let color: Color
     let typeName: String
     let relativeDate: String
-    let isFolder: Bool
     let childCount: Int
     let updatedAt: Date
     let preview: String?
     let thumbnailURL: String?
     let statusBadge: String?
+    let kind: LibraryItemKind
+    let projectUUID: String?
+    let projectName: String?
+    let thinkspaceUUIDs: [String]
+    let thinkspaceNames: [String]
+    let nestedThinkspaceCount: Int
+    let blockCount: Int
 
-    init(atom: Atom, childCount: Int = 0) {
+    var isFolder: Bool {
+        kind == .project
+    }
+
+    var provenanceSummary: String? {
+        switch kind {
+        case .project:
+            return nil
+        case .thinkspace:
+            return projectName
+        case .atom:
+            let segments = [projectName, thinkspaceNames.first].compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            return segments.isEmpty ? nil : segments.joined(separator: " / ")
+        }
+    }
+
+    private static func relativeDateString(from date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "now" }
+        if interval < 3600 { return "\(Int(interval / 60))m" }
+        if interval < 86400 { return "\(Int(interval / 3600))h" }
+        if interval < 604800 { return "\(Int(interval / 86400))d" }
+        return "\(Int(interval / 604800))w"
+    }
+
+    private static func parseUpdatedAt(_ value: String) -> Date? {
+        ISO8601DateFormatter().date(from: value)
+    }
+
+    init(atom: Atom, childCount: Int = 0, project: Atom? = nil, thinkspaces: [Thinkspace] = []) {
+        let thinkspaceMetadata = atom.type == .thinkspace
+            ? atom.metadataValue(as: ThinkspaceMetadata.self)
+            : nil
+        let previewText: String? = {
+            if let body = atom.body, !body.isEmpty {
+                return String(body.prefix(100))
+            }
+            if atom.type == .thinkspace, let thinkspaceMetadata {
+                return "\(thinkspaceMetadata.blockIds.count) block\(thinkspaceMetadata.blockIds.count == 1 ? "" : "s")"
+            }
+            return nil
+        }()
+
         self.id = atom.uuid
         self.uuid = atom.uuid
         self.entityId = atom.id ?? 0
-        self.title = atom.title ?? "Untitled"
+        self.title = thinkspaceMetadata?.name ?? atom.title ?? "Untitled"
         self.atomType = atom.type
-        self.isFolder = atom.type == .project
-        self.preview = atom.body.flatMap { String($0.prefix(100)) }
+        self.preview = previewText
         self.statusBadge = nil
+        self.projectUUID = project?.uuid
+        self.projectName = project?.title
+        self.thinkspaceUUIDs = thinkspaces.map(\.id)
+        self.thinkspaceNames = thinkspaces.map(\.name)
+        self.nestedThinkspaceCount = 0
+        self.blockCount = thinkspaceMetadata?.blockIds.count ?? 0
+        switch atom.type {
+        case .project:
+            self.kind = .project
+        case .thinkspace:
+            self.kind = .thinkspace
+        default:
+            self.kind = .atom
+        }
 
         // Populate thumbnail URL from research metadata, YouTube video ID, or image path
         if atom.type == .image, let imagePath = atom.imageMetadata?.imagePath {
@@ -522,6 +608,10 @@ struct LibraryItem: Identifiable {
             self.icon = "folder.fill"
             self.color = Color(hex: "#6366F1")
             self.typeName = "Project"
+        case .thinkspace:
+            self.icon = "rectangle.3.group"
+            self.color = project?.projectMetadata?.color.map { Color(hex: $0) } ?? DS.accent
+            self.typeName = "Thinkspace"
         case .image:
             self.icon = "photo.fill"
             self.color = DS.entityImage
@@ -532,23 +622,45 @@ struct LibraryItem: Identifiable {
             self.typeName = atom.type.displayName
         }
 
-        // Child count for folders
         self.childCount = childCount
 
-        // Relative date
-        let formatter = ISO8601DateFormatter()
-        if let date = formatter.date(from: atom.updatedAt) {
+        if let date = Self.parseUpdatedAt(atom.updatedAt) {
             self.updatedAt = date
-            let interval = Date().timeIntervalSince(date)
-            if interval < 60 { self.relativeDate = "now" }
-            else if interval < 3600 { self.relativeDate = "\(Int(interval / 60))m" }
-            else if interval < 86400 { self.relativeDate = "\(Int(interval / 3600))h" }
-            else if interval < 604800 { self.relativeDate = "\(Int(interval / 86400))d" }
-            else { self.relativeDate = "\(Int(interval / 604800))w" }
+            self.relativeDate = Self.relativeDateString(from: date)
         } else {
             self.updatedAt = Date()
             self.relativeDate = ""
         }
+    }
+
+    init(thinkspace: Thinkspace, project: Atom?, nestedThinkspaceCount: Int) {
+        self.id = thinkspace.id
+        self.uuid = thinkspace.id
+        self.entityId = 0
+        self.title = thinkspace.name
+        self.atomType = .thinkspace
+        self.icon = "rectangle.3.group"
+        if let colorHex = project?.projectMetadata?.color {
+            self.color = Color(hex: colorHex)
+        } else {
+            self.color = DS.accent
+        }
+        self.typeName = "Thinkspace"
+        self.updatedAt = thinkspace.lastOpened
+        self.relativeDate = Self.relativeDateString(from: thinkspace.lastOpened)
+        self.kind = .thinkspace
+        self.projectUUID = project?.uuid ?? thinkspace.projectUuid
+        self.projectName = project?.title
+        self.thinkspaceUUIDs = [thinkspace.id]
+        self.thinkspaceNames = [thinkspace.name]
+        self.nestedThinkspaceCount = nestedThinkspaceCount
+        self.blockCount = thinkspace.blockCount
+        self.childCount = nestedThinkspaceCount + thinkspace.blockCount
+        self.preview = thinkspace.parentThinkspaceId == nil
+            ? "\(thinkspace.blockCount) block\(thinkspace.blockCount == 1 ? "" : "s")"
+            : "Nested space · \(thinkspace.blockCount) block\(thinkspace.blockCount == 1 ? "" : "s")"
+        self.thumbnailURL = nil
+        self.statusBadge = nestedThinkspaceCount > 0 ? "\(nestedThinkspaceCount) space\(nestedThinkspaceCount == 1 ? "" : "s")" : nil
     }
 }
 
@@ -581,6 +693,10 @@ final class LibraryViewModel: ObservableObject {
         currentFolderUUID == nil
     }
 
+    var searchableItems: [LibraryItem] {
+        currentFolderUUID == nil ? allItems : displayItems
+    }
+
     // MARK: - Load
 
     func forceReload() {
@@ -594,12 +710,21 @@ final class LibraryViewModel: ObservableObject {
             // Fetch all user-facing atoms (ideas excluded — they live in the Ideas tab)
             let userTypes: [AtomType] = [.content, .research, .connection, .project, .image]
             let atoms = try await AtomRepository.shared.fetchAll(types: userTypes)
+            if ThinkspaceManager.shared.thinkspaces.isEmpty {
+                await ThinkspaceManager.shared.loadThinkspaces()
+            }
+            let projects = atoms.filter { $0.type == .project }
+            let projectsByUUID = Dictionary(uniqueKeysWithValues: projects.map { ($0.uuid, $0) })
+            let thinkspaces = ThinkspaceManager.shared.sidebarThinkspaces
+            let thinkspacesByID = Dictionary(uniqueKeysWithValues: thinkspaces.map { ($0.id, $0) })
+            let memberships = try await AtomRepository.shared.fetchThinkspaceMembership(
+                for: atoms.filter { $0.type != .project }.map(\.uuid)
+            )
 
             // Compute project-owned atom UUIDs (atoms on project thinkspaces or with project links)
             let projectThinkspaces = ThinkspaceManager.shared.thinkspaces.filter { $0.projectUuid != nil }
             let projectThinkspaceIds = projectThinkspaces.map(\.id)
-            let projectAtoms = atoms.filter { $0.type == .project }
-            let projectUUIDs = projectAtoms.map(\.uuid)
+            let projectUUIDs = projects.map(\.uuid)
 
             let (allOwned, perProject) = try await AtomRepository.shared.fetchProjectOwnedAtomUUIDs(
                 projectThinkspaceIds: projectThinkspaceIds,
@@ -608,12 +733,48 @@ final class LibraryViewModel: ObservableObject {
             projectOwnedAtomUUIDs = allOwned
             projectChildCounts = perProject.mapValues(\.count)
 
-            allItems = atoms.filter { !$0.isDeleted && !$0.isSwipeFileAtom }.map { atom in
-                if atom.type == .project, let count = projectChildCounts[atom.uuid] {
-                    return LibraryItem(atom: atom, childCount: count)
+            let atomItems = atoms
+                .filter { !$0.isDeleted && !$0.isSwipeFileAtom }
+                .map { atom -> LibraryItem in
+                    let atomThinkspaces = (memberships[atom.uuid] ?? []).compactMap { thinkspacesByID[$0] }
+                    let resolvedProject: Atom? = {
+                        if atom.type == .project { return atom }
+                        if let explicitProjectUUID = atom.link(ofType: .project)?.uuid,
+                           let project = projectsByUUID[explicitProjectUUID] {
+                            return project
+                        }
+                        if let thinkspaceProjectUUID = atomThinkspaces.compactMap(\.projectUuid).first,
+                           let project = projectsByUUID[thinkspaceProjectUUID] {
+                            return project
+                        }
+                        return nil
+                    }()
+
+                    if atom.type == .project {
+                        return LibraryItem(
+                            atom: atom,
+                            childCount: projectChildCounts[atom.uuid] ?? 0,
+                            project: resolvedProject,
+                            thinkspaces: []
+                        )
+                    }
+
+                    return LibraryItem(
+                        atom: atom,
+                        project: resolvedProject,
+                        thinkspaces: atomThinkspaces
+                    )
                 }
-                return LibraryItem(atom: atom)
+
+            let thinkspaceItems = thinkspaces.map { thinkspace in
+                LibraryItem(
+                    thinkspace: thinkspace,
+                    project: thinkspace.projectUuid.flatMap { projectsByUUID[$0] },
+                    nestedThinkspaceCount: ThinkspaceManager.shared.childThinkspaces(of: thinkspace.id).count
+                )
             }
+
+            allItems = atomItems + thinkspaceItems
             applySort()
             applyFilters()
 
@@ -633,6 +794,7 @@ final class LibraryViewModel: ObservableObject {
 
         // Recently Active (modified in last 7 days)
         let recentCount = allItems.filter {
+            $0.kind != .thinkspace &&
             $0.updatedAt.timeIntervalSinceNow > -604800
         }.count
         if recentCount > 0 {
@@ -698,6 +860,8 @@ final class LibraryViewModel: ObservableObject {
     func handleItemTap(_ item: LibraryItem) {
         if item.isFolder {
             navigateIntoFolder(item)
+        } else if item.kind == .thinkspace {
+            openThinkspace(item)
         } else {
             openInFocusMode(item)
         }
@@ -728,21 +892,26 @@ final class LibraryViewModel: ObservableObject {
     }
 
     func openInFocusMode(_ item: LibraryItem) {
-        let entityType: String
-        switch item.atomType {
-        case .idea: entityType = "idea"
-        case .task: entityType = "task"
-        case .content: entityType = "content"
-        case .research: entityType = "research"
-        case .connection: entityType = "connection"
-        case .project: entityType = "project"
-        default: entityType = "idea"
+        if item.kind == .thinkspace {
+            openThinkspace(item)
+            return
         }
+
+        guard let entityType = EntityType(rawValue: item.atomType.rawValue),
+              item.entityId > 0 else { return }
 
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
-            userInfo: ["type": entityType, "id": item.uuid]
+            userInfo: ["type": entityType, "id": item.entityId]
+        )
+    }
+
+    func openThinkspace(_ item: LibraryItem) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.navigateToThinkspaceById,
+            object: nil,
+            userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: item.uuid).userInfo
         )
     }
 
@@ -773,32 +942,14 @@ final class LibraryViewModel: ObservableObject {
     // MARK: - Folder Contents
 
     private func loadFolderContents(_ folderUUID: String) async {
-        do {
-            // 1. Get atoms with explicit project links
-            let linkedAtoms = try await AtomRepository.shared.fetchByProject(projectUuid: folderUUID)
-
-            // 2. Get atoms on project thinkspaces (canvas_blocks)
-            let projectThinkspaceIds = ThinkspaceManager.shared.thinkspacesForProject(folderUUID).map(\.id)
-            let thinkspaceAtomUUIDs = try await AtomRepository.shared.fetchAtomUUIDsInThinkspaces(projectThinkspaceIds)
-
-            // 3. Merge: start with linked atoms, then add thinkspace atoms not already included
-            var seenUUIDs = Set(linkedAtoms.map(\.uuid))
-            var allAtoms = linkedAtoms.filter { !$0.isDeleted && $0.type != .project && $0.type != .thinkspace }
-
-            let missingUUIDs = thinkspaceAtomUUIDs.subtracting(seenUUIDs)
-            for uuid in missingUUIDs {
-                if let atom = try await AtomRepository.shared.fetch(uuid: uuid),
-                   !atom.isDeleted && atom.type != .project && atom.type != .thinkspace {
-                    allAtoms.append(atom)
-                    seenUUIDs.insert(uuid)
-                }
-            }
-
-            displayItems = allAtoms.filter { !$0.isSwipeFileAtom }.map { LibraryItem(atom: $0) }
-            applySortToDisplay()
-        } catch {
-            print("⚠️ Folder load failed: \(error)")
+        let projectThinkspaces = allItems.filter {
+            $0.kind == .thinkspace && $0.projectUUID == folderUUID
         }
+        let projectAtoms = allItems.filter {
+            $0.kind == .atom && $0.projectUUID == folderUUID
+        }
+        displayItems = projectThinkspaces + projectAtoms
+        applySortToDisplay()
     }
 
     // MARK: - Sort & Filter
@@ -815,27 +966,11 @@ final class LibraryViewModel: ObservableObject {
     }
 
     private func applySort() {
-        switch sortMode {
-        case .dateAdded:
-            allItems.sort { $0.updatedAt > $1.updatedAt }
-        case .lastModified:
-            allItems.sort { $0.updatedAt > $1.updatedAt }
-        case .name:
-            allItems.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        case .type:
-            allItems.sort { $0.typeName < $1.typeName }
-        }
+        allItems.sort(by: librarySortComparator)
     }
 
     private func applySortToDisplay() {
-        switch sortMode {
-        case .dateAdded, .lastModified:
-            displayItems.sort { $0.updatedAt > $1.updatedAt }
-        case .name:
-            displayItems.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        case .type:
-            displayItems.sort { $0.typeName < $1.typeName }
-        }
+        displayItems.sort(by: librarySortComparator)
     }
 
     private func applyFilters() {
@@ -847,12 +982,16 @@ final class LibraryViewModel: ObservableObject {
         if !searchFilter.isEmpty {
             items = items.filter {
                 $0.title.localizedCaseInsensitiveContains(searchFilter) ||
-                ($0.preview?.localizedCaseInsensitiveContains(searchFilter) ?? false)
+                ($0.preview?.localizedCaseInsensitiveContains(searchFilter) ?? false) ||
+                ($0.provenanceSummary?.localizedCaseInsensitiveContains(searchFilter) ?? false)
             }
         } else {
             // At home level without search: exclude non-folder atoms owned by a project
             items = items.filter { item in
-                item.isFolder || !projectOwnedAtomUUIDs.contains(item.uuid)
+                if item.kind == .thinkspace {
+                    return false
+                }
+                return item.isFolder || !projectOwnedAtomUUIDs.contains(item.uuid)
             }
         }
 
@@ -862,6 +1001,24 @@ final class LibraryViewModel: ObservableObject {
         items = folders + nonFolders
 
         displayItems = items
+    }
+
+    private func librarySortComparator(lhs: LibraryItem, rhs: LibraryItem) -> Bool {
+        if lhs.kind.sortRank != rhs.kind.sortRank {
+            return lhs.kind.sortRank < rhs.kind.sortRank
+        }
+
+        switch sortMode {
+        case .dateAdded, .lastModified:
+            return lhs.updatedAt > rhs.updatedAt
+        case .name:
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        case .type:
+            if lhs.typeName != rhs.typeName {
+                return lhs.typeName < rhs.typeName
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
     }
 
     // MARK: - Delete & Restore
@@ -902,7 +1059,7 @@ final class LibraryViewModel: ObservableObject {
     func permanentlyDelete(uuid: String) {
         Task {
             do {
-                try await AtomRepository.shared.hardDelete(uuid: uuid)
+                try await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
                 recentlyDeletedItems.removeAll { $0.uuid == uuid }
             } catch {
                 print("⚠️ Permanent delete failed: \(error)")
@@ -912,7 +1069,7 @@ final class LibraryViewModel: ObservableObject {
 
     func loadRecentlyDeleted() async {
         do {
-            let userTypes: [AtomType] = [.content, .research, .connection, .project]
+            let userTypes: [AtomType] = [.content, .research, .connection, .project, .thinkspace]
             let typeStrings = userTypes.map { $0.rawValue }
             let thirtyDaysAgo = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-30 * 86400))
 

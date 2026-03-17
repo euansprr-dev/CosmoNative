@@ -24,6 +24,18 @@ struct RichTextEditor: View {
     var fontSize: CGFloat = 16
     var compact: Bool = false  // Compact mode for notes
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
+    var allowSlashCommands: Bool = true
+    var allowMentions: Bool = true
+    var allowSelectionMenu: Bool = true
+    var allowImages: Bool = true
+    var singleLine: Bool = false
+    var baseFontWeight: NSFont.Weight = .regular
+    var polishHighlights: WritingAnalysis? = nil
+    var textAlignment: NSTextAlignment = .natural
+    var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
+    var onContentHeightChange: ((CGFloat) -> Void)? = nil
+    var onAIAction: ((AIWritingAction) -> Void)? = nil
+    var onCustomPrompt: ((String) -> Void)? = nil
 
     // Geometry for menu clamping
     @State private var containerSize: CGSize = .zero
@@ -46,6 +58,18 @@ struct RichTextEditor: View {
         compact: Bool = false,
         placeholder: String = "Start typing...",
         darkMode: Bool = false,
+        allowSlashCommands: Bool = true,
+        allowMentions: Bool = true,
+        allowSelectionMenu: Bool = true,
+        allowImages: Bool = true,
+        singleLine: Bool = false,
+        baseFontWeight: NSFont.Weight = .regular,
+        polishHighlights: WritingAnalysis? = nil,
+        textAlignment: NSTextAlignment = .natural,
+        onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil,
+        onContentHeightChange: ((CGFloat) -> Void)? = nil,
+        onAIAction: ((AIWritingAction) -> Void)? = nil,
+        onCustomPrompt: ((String) -> Void)? = nil,
         onSave: ((NSAttributedString) -> Void)? = nil
     ) {
         self._text = text
@@ -54,6 +78,18 @@ struct RichTextEditor: View {
         self.compact = compact
         self.placeholder = placeholder
         self.darkMode = darkMode
+        self.allowSlashCommands = allowSlashCommands
+        self.allowMentions = allowMentions
+        self.allowSelectionMenu = allowSelectionMenu
+        self.allowImages = allowImages
+        self.singleLine = singleLine
+        self.baseFontWeight = baseFontWeight
+        self.polishHighlights = polishHighlights
+        self.textAlignment = textAlignment
+        self.onSelectionChanged = onSelectionChanged
+        self.onContentHeightChange = onContentHeightChange
+        self.onAIAction = onAIAction
+        self.onCustomPrompt = onCustomPrompt
         self.onSave = onSave
     }
 
@@ -67,29 +103,36 @@ struct RichTextEditor: View {
                     cursorPosition: $cursorPosition,
                     shouldRefocus: $shouldRefocusEditor,
                     fontSize: fontSize,
+                    compact: compact,
                     darkMode: darkMode,
+                    allowSlashCommands: allowSlashCommands,
+                    allowMentions: allowMentions,
+                    allowImages: allowImages,
+                    allowSelectionMenu: allowSelectionMenu,
+                    singleLine: singleLine,
+                    baseFontWeight: baseFontWeight,
+                    polishHighlights: polishHighlights,
+                    textAlignment: textAlignment,
                     onSlashCommand: { position in
-                        // Disable slash commands in compact mode
-                        if !compact {
-                            slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 280, height: 340), in: geometry.size)
-                            showSlashMenu = true
-                        }
+                        guard allowSlashCommands else { return }
+                        slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 330), in: geometry.size)
+                        showSlashMenu = true
                     },
                     onMention: { position, query in
-                        // Disable mentions in compact mode
-                        if !compact {
-                            mentionMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 290), in: geometry.size)
-                            mentionSearchQuery = query
-                            showMentionMenu = true
-                        }
+                        guard allowMentions else { return }
+                        mentionMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 360, height: 320), in: geometry.size)
+                        mentionSearchQuery = query
+                        showMentionMenu = true
                     },
-                    onSelectionChange: { range, position in
-                        if range.length > 0 {
-                            // Don't show if other menus are active
-                            if !showSlashMenu && !showMentionMenu {
-                                // Use compact menu size in compact mode
-                                let menuSize = compact ? CGSize(width: 180, height: 48) : CGSize(width: 260, height: 60)
-                                selectionMenuPosition = clampMenuPosition(position, menuSize: menuSize, in: geometry.size)
+                    onSelectionChange: { snapshot in
+                        onSelectionChanged?(snapshot)
+                        if snapshot.range.length > 0 {
+                            if allowSelectionMenu && !showSlashMenu && !showMentionMenu {
+                                let menuHeight: CGFloat = 52
+                                // Y: place menu center above selection top
+                                let menuY = snapshot.rectInEditor.minY - (menuHeight / 2) - 8
+                                // X: center on selection midpoint (no clamping — menu uses .fixedSize())
+                                selectionMenuPosition = CGPoint(x: snapshot.rectInEditor.midX, y: menuY)
                                 showSelectionMenu = true
                             }
                         } else {
@@ -100,7 +143,8 @@ struct RichTextEditor: View {
                     },
                     onDismissMenus: {
                         dismissAllOverlays()
-                    }
+                    },
+                    onContentHeightChange: onContentHeightChange
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Ensure the entire editor area is clickable, even when empty
@@ -110,8 +154,8 @@ struct RichTextEditor: View {
                 if plainText.isEmpty {
                     Text(placeholder)
                         .foregroundColor(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
-                        .padding(.top, 16)  // Match textContainerInset height
-                        .padding(.leading, 16)  // Match textContainerInset width
+                        .padding(.top, editorInsets.top)
+                        .padding(.leading, editorInsets.leading)
                         .allowsHitTesting(false)
 
                     // Clickable overlay to focus empty editor
@@ -175,9 +219,13 @@ struct RichTextEditor: View {
                         position: mentionMenuPosition,
                         searchQuery: mentionSearchQuery,
                         onSelect: { entity in
-                            insertMention(entity)
                             dismissAllOverlays()
-                            refocusAfterDismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                shouldRefocusEditor = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    performMentionSelection(entity)
+                                }
+                            }
                         },
                         onDismiss: {
                             dismissAllOverlays()
@@ -191,13 +239,15 @@ struct RichTextEditor: View {
 
                 // Selection formatting menu
                 if showSelectionMenu && !showSlashMenu && !showMentionMenu {
-                     SelectionFormattingMenu(
+                    SelectionFormattingMenu(
                         position: selectionMenuPosition,
                         compact: compact,
-                        onDismiss: { showSelectionMenu = false }
-                     )
-                     .zIndex(900)
-                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        onDismiss: { showSelectionMenu = false },
+                        onAIAction: onAIAction,
+                        onCustomPrompt: onCustomPrompt
+                    )
+                    .zIndex(900)
+                    .transition(.opacity)
                 }
             }
             .onAppear { containerSize = geometry.size }
@@ -210,7 +260,7 @@ struct RichTextEditor: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
-                dismissAllOverlays()
+                dismissAllOverlays(includeSelection: false)
             }
             .onDisappear {
                 removeOutsideClickDismissMonitor()
@@ -223,12 +273,12 @@ struct RichTextEditor: View {
 
     // MARK: - Overlay Helpers
 
-    private func dismissAllOverlays() {
+    private func dismissAllOverlays(includeSelection: Bool = true) {
         showSlashMenu = false
         showMentionMenu = false
-        // showSelectionMenu = false // Don't aggressively dismiss selection menu on outside clicks within editor?
-        // Actually, outside click should dismiss it.
-        showSelectionMenu = false
+        if includeSelection {
+            showSelectionMenu = false
+        }
     }
 
     private func refocusAfterDismiss() {
@@ -240,8 +290,8 @@ struct RichTextEditor: View {
     private func installOutsideClickDismissMonitor() {
         guard outsideClickDismissMonitor == nil else { return }
 
-        // Dismiss if the user clicks anywhere else in the app.
-        // We trigger on mouse *up* and with a tiny delay so menu taps still register first.
+        // Dismiss slash/mention menus on clicks elsewhere.
+        // Selection menu is NOT dismissed here — it dismisses when the text selection clears.
         outsideClickDismissMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
         ) { event in
@@ -280,6 +330,37 @@ struct RichTextEditor: View {
         return CGPoint(x: x, y: y)
     }
 
+    private func clampCenteredMenuPosition(_ rawCenter: CGPoint, menuSize: CGSize, in containerSize: CGSize) -> CGPoint {
+        let padding: CGFloat = 10
+        let halfWidth = menuSize.width / 2
+        let halfHeight = menuSize.height / 2
+
+        let minX = padding + halfWidth
+        let maxX = max(minX, containerSize.width - padding - halfWidth)
+        let minY = padding + halfHeight
+        let maxY = max(minY, containerSize.height - padding - halfHeight)
+
+        return CGPoint(
+            x: min(max(rawCenter.x, minX), maxX),
+            y: min(max(rawCenter.y, minY), maxY)
+        )
+    }
+
+    private var editorInsets: EdgeInsets {
+        if singleLine {
+            return EdgeInsets(top: compact ? 4 : max(4, floor(fontSize * 0.12)),
+                              leading: compact ? 0 : 2,
+                              bottom: compact ? 4 : max(4, floor(fontSize * 0.12)),
+                              trailing: 2)
+        }
+
+        if compact {
+            return EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
+        }
+
+        return EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
+    }
+
     // MARK: - Slash Command Insertion
     private func insertSlashCommand(_ command: SlashCommand) {
         // Delegate all text manipulation to TextKitCoordinator to ensure
@@ -292,39 +373,15 @@ struct RichTextEditor: View {
     }
 
     // MARK: - Mention Insertion
-    private func insertMention(_ entity: MentionEntity) {
-        let mutableText = NSMutableAttributedString(attributedString: text)
-
-        // Find and remove the "@query" text
-        let searchText = "@\(mentionSearchQuery)"
-        if let range = mutableText.string.range(of: searchText, options: .backwards) {
-            let nsRange = NSRange(range, in: mutableText.string)
-            mutableText.deleteCharacters(in: nsRange)
-
-            // Insert styled mention
-            let mention = createMentionAttributedString(entity)
-            mutableText.insert(mention, at: nsRange.location)
-        }
-
-        text = mutableText
-        plainText = mutableText.string
-    }
-
-    private func createMentionAttributedString(_ entity: MentionEntity) -> NSAttributedString {
-        // Use CosmoMentionColors for entity-specific, high-contrast colors
-        let color = CosmoMentionColors.nsColor(for: entity.type)
-
-        return NSAttributedString(
-            string: "@\(entity.title)",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-                .foregroundColor: color,
-                .link: "cosmo://\(entity.type.rawValue)/\(entity.id)",
-                .backgroundColor: color.withAlphaComponent(0.1),  // Subtle pill background
-                .underlineStyle: 0,  // No underline - cleaner look
-                // Custom attributes for entity tracking (hover preview, navigation)
-                NSAttributedString.Key("CosmoEntityType"): entity.type.rawValue,
-                NSAttributedString.Key("CosmoEntityId"): entity.id
+    private func performMentionSelection(_ entity: MentionEntity) {
+        NotificationCenter.default.post(
+            name: .performMentionSelection,
+            object: nil,
+            userInfo: [
+                "entityType": entity.type.rawValue,
+                "entityId": entity.entityID as Any,
+                "entityUUID": entity.uuid,
+                "title": entity.title
             ]
         )
     }
@@ -334,6 +391,7 @@ extension Notification.Name {
     static let cosmoDismissEditorOverlays = Notification.Name("CosmoDismissEditorOverlays")
     static let setEditorTypingAttributes = Notification.Name("SetEditorTypingAttributes")
     static let performSlashCommand = Notification.Name("PerformSlashCommand")
+    static let performMentionSelection = Notification.Name("PerformMentionSelection")
     static let openMentionAsFloatingBlock = Notification.Name("OpenMentionAsFloatingBlock")
 }
 
@@ -347,35 +405,36 @@ struct SlashCommand: Identifiable {
     let shortcut: String?
 
     static let all: [SlashCommand] = [
-        SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: "⌘1"),
-        SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: "⌘2"),
-        SlashCommand(type: .bulletList, title: "Bullet List", subtitle: "Create a bullet list", icon: "list.bullet", shortcut: "⌘L"),
-        SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: nil),
-        SlashCommand(type: .checkbox, title: "Checkbox", subtitle: "Track tasks with checkboxes", icon: "checkmark.square", shortcut: nil),
+        SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil),
+        SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: nil),
+        SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: nil),
+        SlashCommand(type: .heading3, title: "Heading 3", subtitle: "Small section heading", icon: "textformat.size.smaller", shortcut: nil),
         SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: nil),
-        SlashCommand(type: .code, title: "Code Block", subtitle: "Add code with syntax highlighting", icon: "chevron.left.forwardslash.chevron.right", shortcut: nil),
         SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: nil),
-        SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight important information", icon: "lightbulb", shortcut: nil),
-        SlashCommand(type: .linkIdea, title: "Link Idea", subtitle: "Reference an existing idea", icon: "lightbulb.fill", shortcut: nil),
-        SlashCommand(type: .linkTask, title: "Link Task", subtitle: "Reference an existing task", icon: "checkmark.circle.fill", shortcut: nil),
-        SlashCommand(type: .linkContent, title: "Link Content", subtitle: "Reference existing content", icon: "doc.fill", shortcut: nil),
+        SlashCommand(type: .bulletList, title: "Bullet List", subtitle: "Create a bullet list", icon: "list.bullet", shortcut: nil),
+        SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: nil),
+        SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: nil),
     ]
 }
 
 enum SlashCommandType {
-    case heading1, heading2
+    case image
+    case heading1, heading2, heading3
     case bulletList, numberedList, checkbox
-    case quote, code, divider, callout
-    case linkIdea, linkTask, linkContent
+    case quote, divider
 }
 
 // MARK: - Mention Entity
 struct MentionEntity: Identifiable {
-    let id: Int64
+    let entityID: Int64?
     let uuid: String
     let type: EntityType
     let title: String
     let subtitle: String?
+    let typeLabel: String
+    let updatedAt: String
+
+    var id: String { uuid }
 }
 
 // MARK: - Preview

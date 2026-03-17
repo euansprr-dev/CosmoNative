@@ -7,6 +7,8 @@ import SwiftUI
 struct DashboardObjectivesBar: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @State private var animateProgress = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -43,14 +45,26 @@ struct DashboardObjectivesBar: View {
 
     private var objectivesList: some View {
         VStack(spacing: 6) {
-            ForEach(viewModel.objectives.prefix(3)) { objective in
-                objectiveRow(objective)
+            ForEach(Array(viewModel.objectives.prefix(3).enumerated()), id: \.element.id) { index, objective in
+                objectiveRow(objective, index: index)
+            }
+        }
+        .onAppear {
+            guard !animateProgress else { return }
+            if reduceMotion {
+                animateProgress = true
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                        animateProgress = true
+                    }
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func objectiveRow(_ objective: ObjectiveState) -> some View {
+    private func objectiveRow(_ objective: ObjectiveState, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(objective.title)
@@ -65,7 +79,7 @@ struct DashboardObjectivesBar: View {
                     .foregroundColor(objective.paceStatus.color)
             }
 
-            // Progress bar
+            // Progress bar — animated fill
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
@@ -74,7 +88,14 @@ struct DashboardObjectivesBar: View {
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(objective.paceStatus.color)
-                        .frame(width: geo.size.width * min(objective.progress, 1.0), height: 4)
+                        .frame(
+                            width: geo.size.width * (animateProgress ? min(objective.progress, 1.0) : 0),
+                            height: 4
+                        )
+                        .animation(
+                            reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.8).delay(Double(index) * 0.1),
+                            value: animateProgress
+                        )
                 }
             }
             .frame(height: 4)

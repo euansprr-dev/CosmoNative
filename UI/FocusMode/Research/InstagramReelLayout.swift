@@ -17,7 +17,7 @@ struct InstagramReelLayout: View {
     let onAddSection: (TimeInterval) -> Void
     let onSectionTap: (ManualTranscriptSection) -> Void
     let onAnnotationAdd: (UUID, InstagramAnnotation.AnnotationType) -> Void
-    let onAnnotationEdit: (InstagramAnnotation) -> Void
+    let onAnnotationEdit: (InstagramAnnotation, RichDocument) -> Void
     let onAnnotationDelete: (UUID) -> Void
 
     @State private var isPlaying = false
@@ -450,7 +450,7 @@ struct ManualTranscriptSectionView: View {
     let isActive: Bool
     let onTap: () -> Void
     let onAddAnnotation: (InstagramAnnotation.AnnotationType) -> Void
-    let onAnnotationEdit: (InstagramAnnotation) -> Void
+    let onAnnotationEdit: (InstagramAnnotation, RichDocument) -> Void
     let onAnnotationDelete: (UUID) -> Void
 
     @State private var isEditing = false
@@ -530,7 +530,7 @@ struct ManualTranscriptSectionView: View {
             ForEach(section.annotations) { annotation in
                 AnnotationBubbleView(
                     annotation: annotation,
-                    onEdit: { onAnnotationEdit(annotation) },
+                    onEdit: { updatedDocument in onAnnotationEdit(annotation, updatedDocument) },
                     onDelete: { onAnnotationDelete(annotation.id) }
                 )
             }
@@ -583,10 +583,11 @@ struct ManualTranscriptSectionView: View {
 
 struct AnnotationBubbleView: View {
     let annotation: InstagramAnnotation
-    let onEdit: () -> Void
+    let onEdit: (RichDocument) -> Void
     let onDelete: () -> Void
 
     @State private var isHovering = false
+    @State private var document: RichDocument = .empty
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -603,30 +604,41 @@ struct AnnotationBubbleView: View {
                     .foregroundColor(annotationColor)
 
                 // Content
-                Text(annotation.content)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                CosmoDocumentEditor(
+                    document: $document,
+                    fontSize: 12,
+                    compact: true,
+                    placeholder: "Add note...",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    onDocumentChange: { document, _ in
+                        onEdit(document)
+                    }
+                )
+                .frame(minHeight: 28)
             }
 
             Spacer()
 
             if isHovering {
-                HStack(spacing: 4) {
-                    Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 10))
-                    }
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 10))
-                    }
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.textMuted)
                 }
-                .foregroundColor(DS.textMuted)
                 .buttonStyle(.plain)
             }
         }
         .padding(10)
         .background(annotationColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .onAppear {
+            document = annotation.resolvedDocument
+        }
+        .onChange(of: annotation) { _, updated in
+            document = updated.resolvedDocument
+        }
         .onHover { hovering in
             isHovering = hovering
         }
@@ -640,4 +652,3 @@ struct AnnotationBubbleView: View {
         }
     }
 }
-

@@ -22,6 +22,7 @@ public struct CommandKView: View {
     @StateObject private var viewModel = CommandKViewModel()
     @FocusState private var isSearchFocused: Bool
     @State private var activeTab: CommandKTab
+    @Namespace private var tabNamespace
 
     init(initialTab: CommandKTab = .database) {
         self.initialTab = initialTab
@@ -86,10 +87,14 @@ public struct CommandKView: View {
 
     // MARK: - Background Layer
     private var backgroundLayer: some View {
-        DS.bg.opacity(0.78)
-            .onTapGesture {
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            }
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            DS.bg.opacity(0.45)
+        }
+        .ignoresSafeArea()
+        .onTapGesture {
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
     }
 
     // MARK: - Overlay Container
@@ -147,13 +152,14 @@ public struct CommandKView: View {
         HStack(spacing: 14) {
             Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
                 .font(.system(size: 18, weight: .medium))
-                .foregroundColor(viewModel.isTaskCreationMode ? DS.accent : DS.textSecondary)
+                .foregroundStyle(viewModel.isTaskCreationMode ? DS.accent : (isSearchFocused ? DS.accent : DS.textSecondary))
+                .symbolEffect(.pulse, isActive: viewModel.currentPhase == .searching)
                 .frame(width: 22)
 
             TextField(searchPlaceholder, text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 17, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .focused($isSearchFocused)
                 .onSubmit {
                     viewModel.openSelected()
@@ -170,7 +176,7 @@ public struct CommandKView: View {
             if viewModel.isTaskCreationMode {
                 Text("Enter to create task")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .commandKToolbarChip(
                         isActive: true,
                         activeFill: DS.accentSoft,
@@ -183,7 +189,7 @@ public struct CommandKView: View {
             } label: {
                 Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
                     .font(.system(size: 15))
-                    .foregroundColor(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
+                    .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
                     .frame(width: 32, height: 32)
                     .background(
                         Circle()
@@ -218,7 +224,7 @@ public struct CommandKView: View {
             Text(type.displayName)
                 .font(.system(size: 11, weight: .medium))
         }
-        .foregroundColor(entityColor(type))
+        .foregroundStyle(entityColor(type))
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(entityColor(type).opacity(0.15))
@@ -232,6 +238,8 @@ public struct CommandKView: View {
                 title: "Database",
                 icon: "tray.full.fill",
                 isActive: activeTab == .database && !viewModel.isUnifiedSearchActive,
+                count: viewModel.totalCount,
+                namespace: tabNamespace,
                 isDimmed: viewModel.isUnifiedSearchActive
             ) {
                 withAnimation(ProMotionSprings.snappy) {
@@ -245,6 +253,8 @@ public struct CommandKView: View {
                 icon: "bolt.fill",
                 isActive: activeTab == .swipeGallery && !viewModel.isUnifiedSearchActive,
                 accentColor: DS.entitySwipe,
+                count: viewModel.swipeGalleryItems.count,
+                namespace: tabNamespace,
                 isDimmed: viewModel.isUnifiedSearchActive
             ) {
                 withAnimation(ProMotionSprings.snappy) {
@@ -258,6 +268,8 @@ public struct CommandKView: View {
                 icon: "lightbulb.fill",
                 isActive: activeTab == .ideas && !viewModel.isUnifiedSearchActive,
                 accentColor: DS.entityIdea,
+                count: viewModel.ideaGalleryItems.count,
+                namespace: tabNamespace,
                 isDimmed: viewModel.isUnifiedSearchActive
             ) {
                 withAnimation(ProMotionSprings.snappy) {
@@ -271,6 +283,8 @@ public struct CommandKView: View {
                 icon: "books.vertical.fill",
                 isActive: activeTab == .readwise && !viewModel.isUnifiedSearchActive,
                 accentColor: DS.entityReadwise,
+                count: ReadwiseBookStore.shared.books.count,
+                namespace: tabNamespace,
                 isDimmed: viewModel.isUnifiedSearchActive
             ) {
                 withAnimation(ProMotionSprings.snappy) {
@@ -287,7 +301,7 @@ public struct CommandKView: View {
                 Text("Tab")
                     .font(.system(size: 11, weight: .semibold))
             }
-            .foregroundColor(DS.textMuted)
+            .foregroundStyle(DS.textMuted)
             .commandKToolbarChip(cornerRadius: 8)
         }
         .padding(.horizontal, 20)
@@ -328,36 +342,71 @@ private struct CommandKTabButton: View {
     let icon: String
     let isActive: Bool
     var accentColor: Color = DS.accent
+    var count: Int = 0
+    var namespace: Namespace.ID
     var isDimmed: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 5) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isActive ? accentColor : DS.textMuted)
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(isActive ? DS.text : DS.textSecondary)
-                }
-                .padding(.horizontal, 12)
-                .frame(height: CommandKMetrics.tabBarHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isActive ? DS.surface : Color.clear)
-                )
+                tabLabel
+                    .padding(.horizontal, 12)
+                    .frame(height: CommandKMetrics.tabBarHeight)
+                    .background(tabBackground)
 
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(isActive ? accentColor : Color.clear)
-                    .frame(width: 28, height: 2.5)
+                tabIndicator
             }
             .opacity(isDimmed ? 0.45 : 1.0)
         }
         .buttonStyle(.plain)
         .animation(ProMotionSprings.snappy, value: isActive)
         .animation(ProMotionSprings.snappy, value: isDimmed)
+    }
+
+    private var tabLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isActive ? accentColor : DS.textMuted)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .contentTransition(.numericText(value: Double(count)))
+                    .foregroundStyle(isActive ? accentColor : DS.textMuted)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule()
+                            .fill(isActive ? accentColor.opacity(0.12) : DS.surface)
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tabBackground: some View {
+        if isActive {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.surface)
+                .matchedGeometryEffect(id: "commandKTabBg", in: namespace)
+        }
+    }
+
+    @ViewBuilder
+    private var tabIndicator: some View {
+        if isActive {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(accentColor)
+                .frame(width: 28, height: 2.5)
+                .matchedGeometryEffect(id: "commandKTabLine", in: namespace)
+        } else {
+            Color.clear
+                .frame(width: 28, height: 2.5)
+        }
     }
 }
 

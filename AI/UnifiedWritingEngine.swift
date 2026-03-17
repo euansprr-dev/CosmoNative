@@ -436,10 +436,11 @@ final class UnifiedWritingEngine: ObservableObject {
         if let fresh = freshAtom {
             self.contentAtom = fresh
         }
-        await loadClientProfile(contentAtom: self.contentAtom!)
+        guard let currentAtom = self.contentAtom else { return }
+        await loadClientProfile(contentAtom: currentAtom)
         cachedBlock2 = nil
         cachedReferenceMaterial.removeAll()
-        buildCachedBlocks(contentAtom: self.contentAtom!)
+        buildCachedBlocks(contentAtom: currentAtom)
         await autoLoadPrimarySwipeBody()
     }
 
@@ -2383,7 +2384,9 @@ final class UnifiedWritingEngine: ObservableObject {
             return "No client profile matching '\(query)'. Available profiles: \(available.joined(separator: ", "))"
         }
 
-        let match = matches.first!
+        guard let match = matches.first else {
+            return "Client profile search returned empty results unexpectedly."
+        }
         let profileAtom = match.atom
         let meta = match.meta
 
@@ -2676,7 +2679,22 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Second: search for more if needed
         if sameTypeCandidates.count < 20 {
-            let query = contentAtom.title ?? contentAtom.body ?? ""
+            // Vary the query by appending a random body sentence to broaden results
+            let baseQuery = contentAtom.title ?? contentAtom.body ?? ""
+            let query: String
+            if let body = contentAtom.body, let title = contentAtom.title,
+               !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let sentences = body.components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { $0.count > 10 }
+                if !sentences.isEmpty {
+                    query = title + " " + sentences[Int.random(in: 0..<sentences.count)]
+                } else {
+                    query = baseQuery
+                }
+            } else {
+                query = baseQuery
+            }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let existingUUIDs = Set(sameTypeCandidates.map(\.uuid))
                 if let results = try? await HybridSearchEngine.shared.search(
@@ -2689,7 +2707,7 @@ final class UnifiedWritingEngine: ObservableObject {
                         if let atom = try? await database.asyncRead({ db in
                             try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
                         }), atom.isSwipeFileAtom,
-                           targetWritingFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat) {
+                           targetWritingFormat.matchesSwipeAtom(atom) {
                             candidates.append(atom)
                         }
                         if candidates.count >= 50 { break }
@@ -2713,19 +2731,6 @@ final class UnifiedWritingEngine: ObservableObject {
                 needed: targetSwipeCount,
                 existingUUIDs: Set()
             )
-            // Safety net: if still empty and we weren't searching for reels, retry with reel format
-            if selectedSwipes.isEmpty && !targetWritingFormat.swipeFormatFamily.contains(.reel) {
-                let reelFallback = await selectSwipesFallback(
-                    contentAtom: contentAtom,
-                    targetFormat: .instagramReel,
-                    needed: targetSwipeCount,
-                    existingUUIDs: Set()
-                )
-                selectedSwipes.append(contentsOf: reelFallback)
-                if !reelFallback.isEmpty {
-                    print("⚠️ [UnifiedWritingEngine] Format fallback to reels: loaded \(reelFallback.count) swipes")
-                }
-            }
             promotePrimaryBlueprintIfNeeded(preferredUUIDs: strictPrimarySwipeUUIDs)
             if selectedSwipes.count < targetSwipeCount {
                 print("⚠️ [UnifiedWritingEngine] Same-type swipe shortfall: loaded \(selectedSwipes.count)/\(targetSwipeCount) for \(targetWritingFormat.displayName)")
@@ -2742,7 +2747,7 @@ final class UnifiedWritingEngine: ObservableObject {
         var scored: [(atom: Atom, finalScore: Double, hookType: String)] = []
 
         for atom in analyzed {
-            let analysis = atom.swipeAnalysis!
+            guard let analysis = atom.swipeAnalysis else { continue }
 
             // Axis 1: Exact type match
             var formatScore = 0.0
@@ -2776,41 +2781,54 @@ final class UnifiedWritingEngine: ObservableObject {
             scored.append((atom: atom, finalScore: finalScore, hookType: hookType))
         }
 
-        // Sort by final score descending
-        let sortedCandidates = scored.sorted { $0.finalScore > $1.finalScore }
-
-        // Select diverse examples ensuring >= 2 different hook types
+        // Weighted random sampling — higher scores are more likely but not guaranteed,
+        // so different swipes surface each session while still favoring quality.
         var selected: [Atom] = []
         var selectedHookTypes = Set<String>()
         var usedFingerprints: Set<String> = []
+        var selectedUUIDs = Set<String>()
 
-        if let primaryCandidate = sortedCandidates.first(where: { strictPrimarySwipeUUIDs.contains($0.atom.uuid) }) {
-            selected.append(primaryCandidate.atom)
-            selectedHookTypes.insert(primaryCandidate.hookType)
-            usedFingerprints.insert(primaryCandidate.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString)
+        // Always pick primary swipes first (inherited from idea/user-linked)
+        for entry in scored where strictPrimarySwipeUUIDs.contains(entry.atom.uuid) {
+            selected.append(entry.atom)
+            selectedUUIDs.insert(entry.atom.uuid)
+            selectedHookTypes.insert(entry.hookType)
+            usedFingerprints.insert(entry.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString)
         }
 
-        for candidate in sortedCandidates {
-            if selected.count >= targetSwipeCount { break }
-            if selected.contains(where: { $0.uuid == candidate.atom.uuid }) { continue }
-            let fp = candidate.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString
-            let hookType = candidate.hookType
+        // Build pool excluding already-selected primaries
+        var pool = scored.filter { !selectedUUIDs.contains($0.atom.uuid) }
 
-            // Prefer diverse fingerprints and hook types
-            if usedFingerprints.contains(fp) && selected.count > 0 { continue }
-            if selectedHookTypes.count >= 2 && !selectedHookTypes.contains(hookType) && selected.count >= targetSwipeCount - 1 { continue }
+        while selected.count < targetSwipeCount && !pool.isEmpty {
+            // Square scores to widen gap between good and mediocre
+            let weights = pool.map { max($0.finalScore * $0.finalScore, 0.01) }
+            let totalWeight = weights.reduce(0, +)
+            let roll = Double.random(in: 0..<totalWeight)
 
-            selected.append(candidate.atom)
-            selectedHookTypes.insert(hookType)
-            usedFingerprints.insert(fp)
-        }
-
-        // Fill remaining slots with top scorers
-        for candidate in sortedCandidates {
-            if selected.count >= targetSwipeCount { break }
-            if !selected.contains(where: { $0.uuid == candidate.atom.uuid }) {
-                selected.append(candidate.atom)
+            var cumulative = 0.0
+            var pickedIndex = 0
+            for (i, w) in weights.enumerated() {
+                cumulative += w
+                if roll < cumulative {
+                    pickedIndex = i
+                    break
+                }
             }
+
+            let pick = pool[pickedIndex]
+            let fp = pick.atom.swipeAnalysis?.beatFingerprint ?? UUID().uuidString
+
+            // Skip duplicate fingerprints for diversity, but accept if pool is exhausted
+            if usedFingerprints.contains(fp) && pool.count > 1 {
+                pool.remove(at: pickedIndex)
+                continue
+            }
+
+            selected.append(pick.atom)
+            selectedUUIDs.insert(pick.atom.uuid)
+            selectedHookTypes.insert(pick.hookType)
+            usedFingerprints.insert(fp)
+            pool.remove(at: pickedIndex)
         }
 
         // If below target, backfill with same-type fallback swipes only.
@@ -2837,20 +2855,6 @@ final class UnifiedWritingEngine: ObservableObject {
                     compressed.isPrimary = true
                 }
                 return compressed
-            }
-        }
-
-        // Safety net: if still empty and we weren't searching for reels, retry with reel format
-        if selectedSwipes.isEmpty && !targetWritingFormat.swipeFormatFamily.contains(.reel) {
-            let reelFallback = await selectSwipesFallback(
-                contentAtom: contentAtom,
-                targetFormat: .instagramReel,
-                needed: targetSwipeCount,
-                existingUUIDs: Set()
-            )
-            selectedSwipes.append(contentsOf: reelFallback)
-            if !reelFallback.isEmpty {
-                print("⚠️ [UnifiedWritingEngine] Format fallback to reels: loaded \(reelFallback.count) swipes")
             }
         }
 
@@ -2898,7 +2902,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 guard let atom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
                 }), atom.isSwipeFileAtom else { continue }
-                guard targetFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat) else { continue }
+                guard targetFormat.matchesSwipeAtom(atom) else { continue }
                 guard var compressed = compressSwipe(atom) else { continue }
 
                 seenUUIDs.insert(uuid)
@@ -2919,7 +2923,7 @@ final class UnifiedWritingEngine: ObservableObject {
     ) -> [Atom] {
         atoms.filter { atom in
             guard atom.isSwipeFileAtom else { return false }
-            return targetFormat.matchesSwipeFormat(atom.swipeAnalysis?.swipeContentFormat)
+            return targetFormat.matchesSwipeAtom(atom)
         }
     }
 
@@ -3350,7 +3354,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // Don't split between assistant-with-toolCalls and its toolResult
         if splitIndex > 0 && splitIndex < messages.count {
             let prevMsg = messages[splitIndex - 1]
-            if prevMsg.role == .assistant && prevMsg.toolCalls != nil && !prevMsg.toolCalls!.isEmpty {
+            if prevMsg.role == .assistant && !(prevMsg.toolCalls ?? []).isEmpty {
                 splitIndex -= 1
             }
         }

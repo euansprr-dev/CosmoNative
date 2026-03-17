@@ -10,6 +10,7 @@ struct DashboardMonthCalendar: View {
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
 
     @State private var displayedMonth: Date = Date()
+    @State private var hoveredDay: Int?
 
     private let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
     private let cellSize: CGFloat = 30
@@ -102,6 +103,7 @@ struct DashboardMonthCalendar: View {
             let isSelected = calendar.isDate(date, inSameDayAs: viewModel.selectedDate)
             let isToday = calendar.isDateInToday(date)
             let dayNumber = calendar.component(.day, from: date)
+            let isHovered = hoveredDay == dayNumber && !isSelected
 
             Button {
                 withAnimation(ProMotionSprings.snappy) {
@@ -121,12 +123,24 @@ struct DashboardMonthCalendar: View {
                 }
                 .frame(width: cellSize, height: cellSize)
                 .background(
-                    Circle()
-                        .fill(isSelected ? DS.accent : Color.clear)
-                        .frame(width: 28, height: 28)
+                    ZStack {
+                        if isSelected {
+                            Circle()
+                                .fill(DS.accent)
+                                .frame(width: 28, height: 28)
+                        } else if isHovered {
+                            Circle()
+                                .stroke(DS.borderActive, lineWidth: 1)
+                                .frame(width: 28, height: 28)
+                        }
+                    }
                 )
+                .animation(.easeOut(duration: 0.1), value: isHovered)
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                hoveredDay = hovering ? dayNumber : (hoveredDay == dayNumber ? nil : hoveredDay)
+            }
         } else {
             Color.clear
                 .frame(width: cellSize, height: cellSize)

@@ -33,6 +33,7 @@ struct ResearchFocusModeView: View {
     @State private var showSettings = false
     @State private var rightClickMonitor: Any?
     @State private var canvasFrameSize: CGSize = CGSize(width: 1440, height: 900)
+    @State private var viewFrameInWindow: CGRect = .zero
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -96,6 +97,7 @@ struct ResearchFocusModeView: View {
                 }
             }
         }
+        .focusBlockInspector(manager: floatingBlocksManager)
         .overlay(alignment: .topLeading) {
             FocusSidebarTrigger(isVisible: $sidebarVisible)
                 .frame(maxHeight: .infinity)
@@ -118,35 +120,30 @@ struct ResearchFocusModeView: View {
             .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                // Pane close button
-                if isPaneContext {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(DS.textMuted)
-                            .frame(width: 28, height: 28)
-                            .background(DS.glassCardFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .regular))
+            if isPaneContext {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(DS.textMuted)
                         .frame(width: 28, height: 28)
-                        .contentShape(Circle())
+                        .background(DS.glassCardFill, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .padding(.trailing, 16)
+                .padding(.top, 16)
             }
-            .padding(.trailing, 16)
-            .padding(.top, 16)
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { viewFrameInWindow = geo.frame(in: .global) }
+                    .onChange(of: geo.frame(in: .global)) { _, newFrame in viewFrameInWindow = newFrame }
+            }
+        )
         .onAppear {
             loadState()
             listenForAtomPicker()
-            if !isPaneContext { setupRightClickMonitor() }
+            setupRightClickMonitor()
             // Register context provider for global Cosmo window
             let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
@@ -255,8 +252,8 @@ struct ResearchFocusModeView: View {
                     onAnnotationAdd: { sectionId, type in
                         viewModel.addInstagramAnnotation(type: type, toSection: sectionId)
                     },
-                    onAnnotationEdit: { annotation in
-                        viewModel.editInstagramAnnotation(annotation)
+                    onAnnotationEdit: { annotation, document in
+                        viewModel.editInstagramAnnotation(annotation, document: document)
                     },
                     onAnnotationDelete: { id in
                         viewModel.deleteInstagramAnnotation(id)
@@ -270,8 +267,8 @@ struct ResearchFocusModeView: View {
                     onAnnotationAdd: { slideIndex, type in
                         viewModel.addInstagramCarouselAnnotation(type: type, slideIndex: slideIndex)
                     },
-                    onAnnotationEdit: { annotation in
-                        viewModel.editInstagramAnnotation(annotation)
+                    onAnnotationEdit: { annotation, document in
+                        viewModel.editInstagramAnnotation(annotation, document: document)
                     },
                     onAnnotationDelete: { id in
                         viewModel.deleteInstagramAnnotation(id)
@@ -297,8 +294,8 @@ struct ResearchFocusModeView: View {
                         onAnnotationAdd: { sectionId, type in
                             viewModel.addInstagramAnnotation(type: type, toSection: sectionId)
                         },
-                        onAnnotationEdit: { annotation in
-                            viewModel.editInstagramAnnotation(annotation)
+                        onAnnotationEdit: { annotation, document in
+                            viewModel.editInstagramAnnotation(annotation, document: document)
                         },
                         onAnnotationDelete: { id in
                             viewModel.deleteInstagramAnnotation(id)
@@ -358,8 +355,8 @@ struct ResearchFocusModeView: View {
                             content: ""
                         )
                     },
-                    onAnnotationEdit: { annotation, newContent in
-                        viewModel.editAnnotation(annotation, newContent: newContent)
+                    onAnnotationEdit: { annotation, document in
+                        viewModel.editAnnotation(annotation, document: document)
                     },
                     onAnnotationDelete: { annotation in
                         viewModel.deleteAnnotation(annotation.id)
@@ -436,20 +433,22 @@ struct ResearchFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Back button
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+            // Back button (hidden in pane mode — X button handles close)
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.glassCardFill, in: Capsule())
                 }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.glassCardFill, in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Title
             Text(atom.title ?? "Research")
@@ -471,6 +470,25 @@ struct ResearchFocusModeView: View {
             .background(DS.entityResearch.opacity(0.12), in: Capsule())
 
             Spacer()
+
+            // Sidebar toggle (pane mode)
+            if isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        sidebarVisible.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13))
+                        .foregroundStyle(sidebarVisible ? DS.entityResearch : DS.textSecondary)
+                        .padding(8)
+                        .background(
+                            sidebarVisible ? DS.entityResearch.opacity(0.15) : DS.border,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
 
             // Annotation count
             HStack(spacing: 4) {
@@ -494,7 +512,7 @@ struct ResearchFocusModeView: View {
 
         }
         .padding(.leading, 20)
-        .padding(.trailing, 56) // Leave room for gearshape overlay at .topTrailing
+        .padding(.trailing, 20)
         .padding(.vertical, 12)
         .background(
             LinearGradient(
@@ -514,16 +532,13 @@ struct ResearchFocusModeView: View {
 
     // MARK: - Focus Mode Radial Actions
 
-    /// 8-item radial menu for focus modes (Note/Idea/Task/Content/Research/Connection/Agent/Database)
+    /// 5-item radial menu matching canvas (Content/Note/Sticky/Connection/Database)
     private static let focusModeActions: [RadialAction] = [
-        RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
-        RadialAction(icon: "lightbulb.fill", label: "Idea", color: DS.entityIdea, type: .createIdea),
-        RadialAction(icon: "checkmark.circle.fill", label: "Task", color: DS.entityTask, type: .createTask),
         RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
-        RadialAction(icon: "magnifyingglass", label: "Research", color: DS.entityResearch, type: .createResearch),
-        RadialAction(icon: "link.circle.fill", label: "Connection", color: DS.entityConnection, type: .createConnection),
-        RadialAction(icon: "brain.head.profile", label: "Agent", color: DS.accent, type: .researchAgent),
-        RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textMuted, type: .fromDatabase),
+        RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
+        RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
+        RadialAction(icon: "person.2.fill", label: "Connection", color: DS.entityConnection, type: .createConnection),
+        RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textSecondary, type: .fromDatabase),
     ]
 
     // MARK: - Right-Click Monitor
@@ -535,21 +550,30 @@ struct ResearchFocusModeView: View {
             let windowPoint = event.locationInWindow
             let windowHeight = window.frame.height
 
-            // Convert to SwiftUI coordinates (flip Y)
+            // Convert to SwiftUI coordinates (flip Y, origin top-left)
             let screenPoint = CGPoint(
                 x: windowPoint.x,
                 y: windowHeight - windowPoint.y
             )
 
-            // Convert screen coordinates to canvas coordinates
-            // Inverse of: screen = canvas * zoom + offset
+            // Only handle clicks within this view's frame
+            guard viewFrameInWindow.contains(screenPoint) else { return event }
+
+            // Convert to view-local coordinates
+            let localPoint = CGPoint(
+                x: screenPoint.x - viewFrameInWindow.minX,
+                y: screenPoint.y - viewFrameInWindow.minY
+            )
+
+            // Convert local coordinates to canvas coordinates
+            // Inverse of: local = canvas * zoom + offset
             let canvasPoint = CGPoint(
-                x: (screenPoint.x - viewportState.offset.x) / viewportState.zoomScale,
-                y: (screenPoint.y - viewportState.offset.y) / viewportState.zoomScale
+                x: (localPoint.x - viewportState.offset.x) / viewportState.zoomScale,
+                y: (localPoint.y - viewportState.offset.y) / viewportState.zoomScale
             )
 
             viewModel.lastTapPosition = canvasPoint
-            viewModel.radialMenuPosition = screenPoint
+            viewModel.radialMenuPosition = localPoint
 
             return nil // Consume the event
         }
@@ -608,6 +632,14 @@ struct ResearchFocusModeView: View {
             Task {
                 if let connectionAtom = await viewModel.createConnection() {
                     addPanelForAtom(connectionAtom, at: position)
+                }
+            }
+
+        case .createStickyNote:
+            Task {
+                let stickyAtom = Atom.new(type: .stickyNote, title: "", body: "")
+                if let created = try? await AtomRepository.shared.create(stickyAtom) {
+                    addPanelForAtom(created, at: position)
                 }
             }
 
@@ -924,8 +956,8 @@ class ResearchFocusModeViewModel: ObservableObject {
         selectedAnnotationID = id
     }
 
-    func editAnnotation(_ annotation: ResearchAnnotation, newContent: String) {
-        state.updateAnnotationContent(id: annotation.id, content: newContent)
+    func editAnnotation(_ annotation: ResearchAnnotation, document: RichDocument) {
+        state.updateAnnotationDocument(id: annotation.id, document: document)
         saveState()
     }
 
@@ -1170,9 +1202,24 @@ class ResearchFocusModeViewModel: ObservableObject {
     }
 
     /// Edit an Instagram annotation
-    func editInstagramAnnotation(_ annotation: InstagramAnnotation) {
-        // Would open edit sheet - for now just log
-        print("Edit Instagram annotation: \(annotation.id)")
+    func editInstagramAnnotation(_ annotation: InstagramAnnotation, document: RichDocument) {
+        guard var igData = instagramData,
+              var transcript = igData.manualTranscript else {
+            return
+        }
+
+        for sectionIndex in transcript.sections.indices {
+            if let annotationIndex = transcript.sections[sectionIndex].annotations.firstIndex(where: { $0.id == annotation.id }) {
+                transcript.sections[sectionIndex].annotations[annotationIndex].document = document
+                transcript.sections[sectionIndex].annotations[annotationIndex].plainText = document.plainText
+                transcript.sections[sectionIndex].annotations[annotationIndex].content = document.plainText
+                transcript.sections[sectionIndex].annotations[annotationIndex].updatedAt = Date()
+            }
+        }
+
+        transcript.updatedAt = Date()
+        igData.manualTranscript = transcript
+        updateAtomInstagramData(igData)
     }
 
     /// Delete an Instagram annotation

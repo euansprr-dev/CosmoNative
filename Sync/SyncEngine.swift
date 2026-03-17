@@ -27,6 +27,13 @@ class SyncEngine: ObservableObject {
     private var realtimeSubscription: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
+    deinit {
+        let timer = syncTimer
+        let subscription = realtimeSubscription
+        timer?.invalidate()
+        subscription?.cancel()
+    }
+
     // MARK: - Configuration
     private let syncInterval: TimeInterval = 30 // seconds
     private let maxRetries = 3

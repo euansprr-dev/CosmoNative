@@ -577,16 +577,25 @@ struct CommandCenterTaskActionPopover: View {
         trailing: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
+        let isRowHovered = hoveredAction == title
+
+        return Button(action: action) {
+            HStack(spacing: 0) {
+                // Accent bar — matches BlockContextMenu pattern
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(isRowHovered ? tint : Color.clear)
+                    .frame(width: 2, height: 16)
+                    .padding(.trailing, 8)
+
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(tint)
+                    .foregroundColor(isRowHovered ? tint : tint.opacity(0.7))
                     .frame(width: 22, height: 22)
 
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12, weight: isRowHovered ? .semibold : .medium))
                     .foregroundColor(DS.text)
+                    .padding(.leading, 2)
 
                 Spacer()
 
@@ -596,15 +605,16 @@ struct CommandCenterTaskActionPopover: View {
                         .foregroundColor(DS.textMuted)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(hoveredAction == title ? DS.surfaceHover : Color.clear)
+                    .fill(isRowHovered ? DS.surfaceHover : Color.clear)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.1), value: isRowHovered)
         .onHover { isHovering in
             hoveredAction = isHovering ? title : (hoveredAction == title ? nil : hoveredAction)
         }

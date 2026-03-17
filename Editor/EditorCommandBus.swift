@@ -71,10 +71,14 @@ final class EditorCommandBus: ObservableObject {
 enum FormattingType: String {
     case bold
     case italic
+    case underline
     case strikethrough
     case heading1
     case heading2
+    case heading3
     case bulletList
+    case numberedList
+    case checklist
 }
 
 // MARK: - Notification Names
@@ -84,4 +88,3 @@ extension Notification.Name {
     // Re-declare internal ones here if needed, or rely on TextKitCoordinator's own
     static let insertMentionInEditor = Notification.Name("insertMentionInEditor") 
 }
-

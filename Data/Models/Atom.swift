@@ -91,6 +91,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
 
     // MARK: - Thinkspace (Infinite Canvas)
     case note                                           // Floating note blocks (orange)
+    case stickyNote = "sticky_note"                     // Square sticky note blocks (yellow)
     case thinkspace                                     // Saved Thinkspace configurations
     case image                                          // Native image blocks on canvas
 
@@ -111,7 +112,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .objective, .creator, .taxonomyValue, .image:
+             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
             return .leveling
@@ -240,6 +241,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .syncState: return "Sync State"
         // Thinkspace
         case .note: return "Note"
+        case .stickyNote: return "Sticky Note"
         case .thinkspace: return "Thinkspace"
         // Planning
         case .objective: return "Objective"
@@ -325,6 +327,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .syncState: return "Sync States"
         // Thinkspace
         case .note: return "Notes"
+        case .stickyNote: return "Sticky Notes"
         case .thinkspace: return "Thinkspaces"
         // Planning
         case .objective: return "Objectives"
@@ -410,6 +413,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .syncState: return "arrow.triangle.2.circlepath.circle"
         // Thinkspace
         case .note: return "note.text"
+        case .stickyNote: return "square.and.pencil"
         case .thinkspace: return "rectangle.3.group"
         // Planning
         case .objective: return "target"
@@ -1797,6 +1801,17 @@ struct CreatorMetadata: Codable, Sendable {
     var profileUrl: String?           // URL to creator's profile
     var thumbnailUrl: String?         // Cached avatar/thumbnail URL
     var isActive: Bool?               // Whether creator is still tracked
+
+    // Aggregate engagement stats (computed from imported posts)
+    var totalPostsImported: Int?      // Total posts fetched from API
+    var averageLikes: Double?         // Avg likes across imported posts
+    var averageViews: Double?         // Avg views across imported posts
+    var averageComments: Double?      // Avg comments across imported posts
+    var medianEngagementRate: Double?  // Median engagement rate
+    var lastImportedAt: String?       // ISO8601 timestamp of last import
+    var bio: String?                  // Creator bio from profile
+    var postsCount: Int?              // Total public posts count
+    var followingCount: Int?          // Following count
 }
 
 /// Metadata for user-defined taxonomy values (.taxonomyValue type)
@@ -2114,6 +2129,9 @@ struct TaskMetadata: Codable, Sendable {
 
     /// Last time this task was scheduled/recommended
     var lastScheduledAt: String?
+
+    /// Manual sort order for drag-to-reorder in today view (lower = higher)
+    var manualSortOrder: Int?
 }
 
 // MARK: - Synthesis Metadata (WP5 Lasso Synthesis)
@@ -2264,29 +2282,6 @@ struct CrystallizationMetadata: Codable, Sendable {
     var downstreamCount: Int
     var lastComputedAt: String?
     var userOverride: Int?
-}
-
-// MARK: - Incubation / Spaced Repetition
-
-/// Metadata for the Leitner-based review queue (stored in `metadata` JSON)
-struct ReviewQueueMetadata: Codable, Sendable {
-    var leitnerBox: Int = 1          // Box 1 (1-day), Box 2 (3-day), Box 3 (7-day)
-    var dueAt: String                // ISO8601 date when next review is due
-    var ignoreCount: Int = 0         // Times resurfaced but not interacted with
-    var snoozedUntil: String?        // Optional snooze date
-    var interactionHistory: [String] = []  // ISO8601 dates of interactions
-    var enrolledAt: String           // ISO8601 date when enrolled
-    var isDormant: Bool = false      // True after 3 ignores
-
-    /// Interval in days for current Leitner box
-    var intervalDays: Int {
-        switch leitnerBox {
-        case 1: return 1
-        case 2: return 3
-        case 3: return 7
-        default: return 7
-        }
-    }
 }
 
 /// Metadata for journal entry atoms

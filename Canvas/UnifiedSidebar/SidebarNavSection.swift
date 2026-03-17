@@ -8,6 +8,7 @@ struct SidebarNavSection: View {
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var inboxRepo = InboxRepository.shared
 
     @State private var hoveredItem: String?
 
@@ -102,19 +103,14 @@ struct SidebarNavSection: View {
         let activeIcon = icon == "hexagon" ? icon : "\(icon).fill"
 
         HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isActive ? DS.accent.opacity(0.14) : DS.surface)
-
-                Image(systemName: isActive ? activeIcon : icon)
-                    .font(.system(size: UnifiedSidebarMetrics.iconSize, weight: .medium))
-                    .foregroundColor(isActive ? DS.accent : DS.textSecondary)
-            }
-            .frame(width: 32, height: 32)
+            Image(systemName: isActive ? activeIcon : icon)
+                .font(.system(size: UnifiedSidebarMetrics.iconSize, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
+                .frame(width: 20, alignment: .center)
 
             Text(label)
                 .font(.system(size: 14, weight: isActive ? .semibold : .medium))
-                .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
@@ -122,17 +118,17 @@ struct SidebarNavSection: View {
             if let count = badge, count > 0 {
                 Text("\(count)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 8)
                     .frame(height: 24)
-                    .background(DS.accentSoft, in: Capsule())
+                    .background(isActive ? DS.bg : DS.surface, in: Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+                            .stroke(isActive ? DS.accent.opacity(0.12) : DS.borderSubtle, lineWidth: 1)
                     )
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.standardRowHeight, alignment: .leading)
         .unifiedSidebarRowChrome(isActive: isActive, isHovered: isHovered)
     }
@@ -149,7 +145,7 @@ struct SidebarNavSection: View {
         ZStack(alignment: .topTrailing) {
             Image(systemName: isActive ? activeIcon : icon)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(isActive ? DS.accent : DS.textSecondary)
+                .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
                 .frame(
                     width: UnifiedSidebarMetrics.railHitTarget,
                     height: UnifiedSidebarMetrics.railHitTarget
@@ -173,7 +169,6 @@ struct SidebarNavSection: View {
     // MARK: - Inbox Count
 
     private var inboxUnreadCount: Int? {
-        // TODO: Connect to actual inbox data
-        nil
+        inboxRepo.unreadCount > 0 ? inboxRepo.unreadCount : nil
     }
 }

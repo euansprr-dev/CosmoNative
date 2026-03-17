@@ -199,6 +199,36 @@ class AtomRepository: ObservableObject {
         return Set(rows.compactMap { $0["entity_uuid"] as String? })
     }
 
+    /// Fetch a mapping of atom UUID → thinkspace IDs from canvas_blocks.
+    func fetchThinkspaceMembership(for atomUUIDs: [String]) async throws -> [String: [String]] {
+        guard !atomUUIDs.isEmpty else { return [:] }
+
+        let placeholders = atomUUIDs.map { _ in "?" }.joined(separator: ", ")
+        let rows: [Row] = try await database.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT DISTINCT entity_uuid, thinkspace_id
+                FROM canvas_blocks
+                WHERE is_deleted = 0
+                  AND entity_uuid IS NOT NULL
+                  AND thinkspace_id IS NOT NULL
+                  AND entity_uuid IN (\(placeholders))
+            """, arguments: StatementArguments(atomUUIDs))
+        }
+
+        var memberships: [String: [String]] = [:]
+        for row in rows {
+            guard let atomUUID: String = row["entity_uuid"],
+                  let thinkspaceId: String = row["thinkspace_id"] else { continue }
+            memberships[atomUUID, default: []].append(thinkspaceId)
+        }
+        return memberships.mapValues { Array(Set($0)) }
+    }
+
+    /// Fetch thinkspace IDs containing a specific atom UUID.
+    func fetchThinkspaceMembership(for atomUUID: String) async throws -> [String] {
+        try await fetchThinkspaceMembership(for: [atomUUID])[atomUUID] ?? []
+    }
+
     /// Fetch atoms by multiple types
     func fetchAll(types: [AtomType]) async throws -> [Atom] {
         let typeStrings = types.map { $0.rawValue }
@@ -320,6 +350,22 @@ class AtomRepository: ObservableObject {
         return updatedAtom
     }
 
+    /// Synchronous update — blocks until the write completes.
+    /// Use this in save-on-close paths where the app may terminate before an async write finishes.
+    @discardableResult
+    func updateSync(_ atom: Atom) throws -> Atom {
+        var updatedAtom = atom
+        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
+        updatedAtom.localVersion += 1
+
+        let atomToUpdate = updatedAtom
+        try database.write { db in
+            try atomToUpdate.save(db)
+        }
+
+        return updatedAtom
+    }
+
     /// Update specific fields of an atom by UUID
     func update(uuid: String, updates: (inout Atom) -> Void) async throws -> Atom? {
         guard var atom = try await fetch(uuid: uuid) else { return nil }
@@ -368,8 +414,13 @@ class AtomRepository: ObservableObject {
         try await delete(uuid: atom.uuid)
     }
 
-    /// Hard delete an atom (use with caution)
-    func hardDelete(uuid: String) async throws {
+    /// Hard delete an atom — permanently destroys data with no undo.
+    /// Callers MUST present a confirmation dialog before invoking.
+    func hardDelete(uuid: String, confirmed: Bool = false) async throws {
+        guard confirmed else {
+            assertionFailure("hardDelete() called without confirmed: true — add a confirmation dialog before calling")
+            return
+        }
         try await database.asyncWrite { db in
             try db.execute(
                 sql: "DELETE FROM atoms WHERE uuid = ?",
@@ -418,7 +469,7 @@ class AtomRepository: ObservableObject {
 
     /// Permanently delete a project (hard delete)
     func permanentlyDeleteProject(_ uuid: String) async throws {
-        try await hardDelete(uuid: uuid)
+        try await hardDelete(uuid: uuid, confirmed: true)
     }
 
     // MARK: - Batch Operations
@@ -535,6 +586,21 @@ class AtomRepository: ObservableObject {
             return try request
                 .order(Atom.CodingKeys.updatedAt.desc)
                 .fetchAll(db)
+        }
+    }
+
+    /// Fetch atoms whose outline-reference metadata points at the target UUID.
+    func fetchOutlineBacklinks(to targetAtomUUID: String) async throws -> [Atom] {
+        let candidates = try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE ?", arguments: ["%\(targetAtomUUID)%"])
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchAll(db)
+        }
+
+        return candidates.filter { atom in
+            atom.outlineReferences.contains { $0.atomUUID == targetAtomUUID }
         }
     }
 
@@ -1487,5 +1553,71 @@ extension AtomRepository {
         }
 
         return sorted
+    }
+
+    // MARK: - Engagement Queries
+
+    /// Engagement sort options for swipe queries
+    enum EngagementSort: String, CaseIterable, Sendable {
+        case likes, views, comments, engagementRate, recent
+    }
+
+    /// Fetch swipe files sorted by an engagement metric
+    func fetchSwipesByEngagement(
+        creatorUUID: String? = nil,
+        sortBy: EngagementSort = .likes,
+        limit: Int = 50
+    ) async throws -> [Atom] {
+        let allSwipes = try await fetchSwipesByTaxonomy(creatorUUID: creatorUUID)
+
+        // Sort by the requested metric (in-memory, since structured is JSON)
+        let sorted: [Atom]
+        switch sortBy {
+        case .likes:
+            sorted = allSwipes.sorted {
+                ($0.swipeAnalysis?.likesCount ?? 0) > ($1.swipeAnalysis?.likesCount ?? 0)
+            }
+        case .views:
+            sorted = allSwipes.sorted {
+                ($0.swipeAnalysis?.viewsCount ?? 0) > ($1.swipeAnalysis?.viewsCount ?? 0)
+            }
+        case .comments:
+            sorted = allSwipes.sorted {
+                ($0.swipeAnalysis?.commentsCount ?? 0) > ($1.swipeAnalysis?.commentsCount ?? 0)
+            }
+        case .engagementRate:
+            sorted = allSwipes.sorted {
+                ($0.swipeAnalysis?.engagementRate ?? 0) > ($1.swipeAnalysis?.engagementRate ?? 0)
+            }
+        case .recent:
+            sorted = allSwipes.sorted {
+                ($0.swipeAnalysis?.publishedAt ?? .distantPast) > ($1.swipeAnalysis?.publishedAt ?? .distantPast)
+            }
+        }
+
+        return Array(sorted.prefix(limit))
+    }
+
+    /// Check which post shortcodes already exist as swipe atoms
+    func findExistingShortcodes(_ shortcodes: [String]) async throws -> Set<String> {
+        guard !shortcodes.isEmpty else { return [] }
+
+        let allSwipes = try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.research.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE '%\"isSwipeFile\":true%'")
+                .filter(sql: "structured LIKE '%postShortcode%'")
+                .fetchAll(db)
+        }
+
+        // Extract shortcodes from swipe analysis
+        var found = Set<String>()
+        for swipe in allSwipes {
+            if let sc = swipe.swipeAnalysis?.postShortcode, shortcodes.contains(sc) {
+                found.insert(sc)
+            }
+        }
+        return found
     }
 }

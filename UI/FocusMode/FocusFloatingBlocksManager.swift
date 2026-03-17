@@ -125,6 +125,19 @@ class FocusFloatingBlocksManager: ObservableObject {
         }
     }
 
+    /// Update a block's size (called when user resizes via CosmoBlockWrapper)
+    func updateSize(_ floatingBlockId: String, size: CGSize) {
+        if let index = blocks.firstIndex(where: { $0.id == floatingBlockId }) {
+            blocks[index].width = size.width
+            blocks[index].height = size.height
+            if var cb = canvasBlocks[floatingBlockId] {
+                cb.size = size
+                canvasBlocks[floatingBlockId] = cb
+            }
+            debouncedSave()
+        }
+    }
+
     /// Check if a block already exists for a given atom
     func hasBlock(for atomUUID: String) -> Bool {
         blocks.contains { $0.linkedAtomUUID == atomUUID }

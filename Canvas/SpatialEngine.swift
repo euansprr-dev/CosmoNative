@@ -158,6 +158,40 @@ class SpatialEngine: ObservableObject {
                     ? block.metadata["content"]
                     : nil
 
+                // For blocks with a real entity, check for existing row to prevent duplicates
+                if !block.entityUuid.isEmpty {
+                    let existingId = try String.fetchOne(db,
+                        sql: """
+                            SELECT id FROM canvas_blocks
+                            WHERE entity_uuid = ? AND thinkspace_id IS ? AND document_type = ? AND document_id = ? AND is_deleted = 0
+                            LIMIT 1
+                        """,
+                        arguments: [block.entityUuid, tsId, docType, docId]
+                    )
+
+                    if let existingId = existingId {
+                        // Update existing row instead of inserting a duplicate
+                        try db.execute(
+                            sql: """
+                                UPDATE canvas_blocks
+                                SET entity_type = ?, entity_id = ?, entity_title = ?,
+                                    position_x = ?, position_y = ?, width = ?, height = ?,
+                                    z_index = ?, note_content = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """,
+                            arguments: [
+                                block.entityType.rawValue, block.entityId, block.title,
+                                Int(block.position.x), Int(block.position.y),
+                                Int(block.size.width), Int(block.size.height),
+                                block.zIndex, noteContent, block.isPinned,
+                                existingId
+                            ]
+                        )
+                        return
+                    }
+                }
+
+                // No existing row (or empty entityUuid for notes) — insert new
                 try db.execute(
                     sql: """
                     INSERT OR REPLACE INTO canvas_blocks
@@ -246,23 +280,20 @@ class SpatialEngine: ObservableObject {
         }
 
         // Update thinkspace_id and position in database
-        let db = database
-        Task.detached(priority: .background) {
-            do {
-                try await db.asyncWrite { database in
-                    try database.execute(
-                        sql: """
-                        UPDATE canvas_blocks
-                        SET thinkspace_id = ?, position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        arguments: [newThinkspaceId, Int(position.x), Int(position.y), blockId]
-                    )
-                }
-                print("📦 Moved block \(blockId) to thinkspace \(newThinkspaceId)")
-            } catch {
-                print("❌ Failed to move block to thinkspace: \(error)")
+        do {
+            try await database.asyncWrite { database in
+                try database.execute(
+                    sql: """
+                    UPDATE canvas_blocks
+                    SET thinkspace_id = ?, position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    arguments: [newThinkspaceId, Int(position.x), Int(position.y), blockId]
+                )
             }
+            print("📦 Moved block \(blockId) to thinkspace \(newThinkspaceId)")
+        } catch {
+            print("❌ Failed to move block to thinkspace: \(error)")
         }
     }
 
@@ -312,18 +343,46 @@ class SpatialEngine: ObservableObject {
 
     // MARK: - Add Block (with persistence)
     func addBlock(_ block: CanvasBlock, persist: Bool = true) async {
-        // Prevent duplicate blocks for the same entity
+        // Prevent duplicate blocks for the same entity (in-memory check)
         if !block.entityUuid.isEmpty,
            blocks.contains(where: { $0.entityUuid == block.entityUuid }) {
             print("⚠️ addBlock: skipping duplicate for entity \(block.entityUuid)")
             return
         }
+
+        // Database-level check (catches duplicates after app restart when memory is empty)
+        if !block.entityUuid.isEmpty, await entityExistsInDb(block.entityUuid) {
+            print("⚠️ addBlock: entity \(block.entityUuid) already in DB, skipping")
+            return
+        }
+
         blocks.append(block)
 
         if persist {
             await saveBlock(block)
             // Register undo (CosmoUndoManager ignores during undo/redo)
             CosmoUndoManager.shared.register(CreateBlockAction(block: block, spatialEngine: self))
+        }
+    }
+
+    /// Check if an entity already has a canvas_block row in the current thinkspace/document.
+    private func entityExistsInDb(_ entityUuid: String) async -> Bool {
+        let docType = currentDocumentType
+        let docId = currentDocumentId
+        let tsId = currentThinkspaceId
+        do {
+            return try await database.asyncRead { db in
+                let count = try Int.fetchOne(db,
+                    sql: """
+                        SELECT COUNT(*) FROM canvas_blocks
+                        WHERE entity_uuid = ? AND thinkspace_id IS ? AND document_type = ? AND document_id = ? AND is_deleted = 0
+                    """,
+                    arguments: [entityUuid, tsId, docType, docId]
+                ) ?? 0
+                return count > 0
+            }
+        } catch {
+            return false
         }
     }
 
@@ -349,7 +408,7 @@ class SpatialEngine: ObservableObject {
         var newBlocks: [CanvasBlock] = []
 
         for entity in entities {
-            let block = createBlock(from: entity, type: entityType)
+            guard let block = createBlock(from: entity, type: entityType) else { continue }
             newBlocks.append(block)
         }
 
@@ -533,24 +592,31 @@ class SpatialEngine: ObservableObject {
     }
 
     // MARK: - Block Creation
-    private func createBlock(from entity: Any, type: EntityType) -> CanvasBlock {
+    private func createBlock(from entity: Any, type: EntityType) -> CanvasBlock? {
         let center = CGPoint(x: 960, y: 540)  // Start at center
 
         switch type {
         case .idea:
-            return CanvasBlock.fromIdea(entity as! Idea, position: center)
+            guard let idea = entity as? Idea else { return nil }
+            return CanvasBlock.fromIdea(idea, position: center)
         case .content:
-            return CanvasBlock.fromContent(entity as! CosmoContent, position: center)
+            guard let content = entity as? CosmoContent else { return nil }
+            return CanvasBlock.fromContent(content, position: center)
         case .task:
-            return CanvasBlock.fromTask(entity as! CosmoTask, position: center)
+            guard let task = entity as? CosmoTask else { return nil }
+            return CanvasBlock.fromTask(task, position: center)
         case .connection:
-            return CanvasBlock.fromConnection(entity as! Connection, position: center)
+            guard let connection = entity as? Connection else { return nil }
+            return CanvasBlock.fromConnection(connection, position: center)
         case .research:
-            return CanvasBlock.fromResearch(entity as! Research, position: center)
+            guard let research = entity as? Research else { return nil }
+            return CanvasBlock.fromResearch(research, position: center)
         case .project:
-            return CanvasBlock.fromProject(entity as! Project, position: center)
+            guard let project = entity as? Project else { return nil }
+            return CanvasBlock.fromProject(project, position: center)
         default:
-            fatalError("Unsupported entity type: \(type)")
+            print("SpatialEngine: Unsupported entity type: \(type)")
+            return nil
         }
     }
 

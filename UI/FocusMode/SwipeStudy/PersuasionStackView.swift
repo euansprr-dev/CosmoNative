@@ -42,9 +42,9 @@ struct PersuasionStackView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
@@ -131,7 +131,7 @@ struct PersuasionStackView: View {
                         .padding(.vertical, 8)
                 }
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(DS.borderSubtle)
                 )
                 .padding(.top, 6)

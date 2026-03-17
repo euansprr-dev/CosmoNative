@@ -25,7 +25,14 @@ struct SidebarDimensionSection: View {
                 collapsedIndexBadge
                     .frame(maxWidth: .infinity)
             } else {
-                cosmoIndexCard
+                VStack(spacing: 8) {
+                    cosmoIndexSummary
+
+                    Rectangle()
+                        .fill(DS.borderSubtle)
+                        .frame(height: 1)
+                        .padding(.leading, 46)
+                }
 
                 VStack(spacing: 6) {
                     ForEach(LevelDimension.allCases, id: \.self) { dimension in
@@ -49,29 +56,29 @@ struct SidebarDimensionSection: View {
             if isCollapsed {
                 Image(systemName: "chart.bar.xaxis")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(hasActiveDimension ? DS.accent : DS.textSecondary)
+                    .foregroundStyle(hasActiveDimension ? DS.accent : DS.textSecondary)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                     .background(
-                        hasActiveDimension ? DS.accentSoft : DS.surface,
+                        hasActiveDimension ? DS.accentSoft : Color.clear,
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                     )
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Dimensions")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 Text("CI \(cosmoIndex)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 8)
                     .frame(height: 24)
-                    .background(DS.accentSoft, in: Capsule())
+                    .background(DS.bg, in: Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(DS.accent.opacity(0.12), lineWidth: 1)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
                     )
             }
         }
@@ -91,51 +98,43 @@ struct SidebarDimensionSection: View {
 
             Text("\(cosmoIndex)")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
         }
     }
 
-    private var cosmoIndexCard: some View {
+    private var cosmoIndexSummary: some View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .stroke(DS.accent.opacity(0.18), lineWidth: 3)
-                    .frame(width: 42, height: 42)
+                    .stroke(DS.accent.opacity(0.18), lineWidth: 2.5)
+                    .frame(width: 38, height: 38)
 
                 Circle()
                     .trim(from: 0, to: CGFloat(cosmoIndex) / 100.0)
-                    .stroke(DS.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 42, height: 42)
+                    .stroke(DS.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .frame(width: 38, height: 38)
                     .rotationEffect(.degrees(-90))
 
                 Text("\(cosmoIndex)")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(DS.accent)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.accent)
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Cosmo Index")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Text("Weighted view across your six dimensions")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
             }
 
             Spacer(minLength: 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DS.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
     }
 
     // MARK: - Dimension Row
@@ -155,38 +154,32 @@ struct SidebarDimensionSection: View {
             )
         } label: {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isActive ? color.opacity(0.18) : color.opacity(0.14))
-                    .frame(width: 24, height: 24)
-                    .overlay(
-                        Image(systemName: dimension.iconName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(color)
-                    )
+                Image(systemName: dimension.iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 18, alignment: .center)
 
                 Text(dimension.displayName)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isActive ? DS.text : DS.textSecondary)
+                    .foregroundStyle(isActive ? DS.text : DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer(minLength: 8)
 
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(DS.borderSubtle)
-                            .frame(height: 4)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(DS.borderSubtle)
+                        .frame(height: 4)
 
-                        Capsule()
-                            .fill(color)
-                            .frame(width: max(0, geo.size.width * CGFloat(score) / 100.0), height: 4)
-                    }
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(0, 48 * CGFloat(score) / 100.0), height: 4)
                 }
                 .frame(width: 48, height: 4)
 
                 Text("\(score)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 24, alignment: .trailing)
             }
             .padding(.horizontal, 8)
@@ -195,9 +188,8 @@ struct SidebarDimensionSection: View {
                 isActive: isActive,
                 isHovered: isHovered,
                 cornerRadius: 9,
-                activeFill: color.opacity(0.10),
-                hoverFill: DS.surfaceHover,
-                activeBorder: color.opacity(0.18)
+                activeFill: color.opacity(0.08),
+                hoverFill: DS.bg
             )
             .contentShape(Rectangle())
         }

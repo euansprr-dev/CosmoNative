@@ -91,6 +91,7 @@ struct ClusterBoardContent: View {
                 ForEach(column.blocks, id: \.id) { block in
                     ClusterBoardCard(
                         block: block,
+                        sourceClusterId: cluster.id,
                         onDoubleTap: { onOpenFocusMode(block.entityUuid) }
                     )
                 }
@@ -105,6 +106,7 @@ struct ClusterBoardContent: View {
 struct ClusterBoardCard: View {
 
     let block: CanvasBlock
+    let sourceClusterId: UUID
     let onDoubleTap: () -> Void
 
     @State private var isHovered = false
@@ -123,7 +125,7 @@ struct ClusterBoardCard: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onDoubleTap() }
         .onHover { hovering in isHovered = hovering }
-        .onDrag { NSItemProvider(object: block.entityUuid as NSString) }
+        .onDrag { dragProvider }
     }
 
     private var typeIcon: some View {
@@ -152,6 +154,11 @@ struct ClusterBoardCard: View {
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 7)
             .stroke(isHovered ? DS.borderActive : DS.border, lineWidth: 1)
+    }
+
+    private var dragProvider: NSItemProvider {
+        ClusterViewDragSession.sourceClusterId = sourceClusterId
+        return NSItemProvider(object: block.entityUuid as NSString)
     }
 }
 

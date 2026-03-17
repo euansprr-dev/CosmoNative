@@ -287,15 +287,30 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
         overdueTasks = active
             .filter { $0.isOverdue }
-            .sorted { $0.priority.sortOrder < $1.priority.sortOrder }
+            .sorted { lhs, rhs in
+                if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
+                if lhs.manualSortOrder != nil { return true }
+                if rhs.manualSortOrder != nil { return false }
+                return lhs.priority.sortOrder < rhs.priority.sortOrder
+            }
 
         scheduledTasks = active
             .filter { !$0.isOverdue && $0.hasSpecificTime }
-            .sorted { ($0.scheduledTime ?? .distantFuture) < ($1.scheduledTime ?? .distantFuture) }
+            .sorted { lhs, rhs in
+                if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
+                if lhs.manualSortOrder != nil { return true }
+                if rhs.manualSortOrder != nil { return false }
+                return (lhs.scheduledTime ?? .distantFuture) < (rhs.scheduledTime ?? .distantFuture)
+            }
 
         unscheduledTasks = active
             .filter { !$0.isOverdue && !$0.hasSpecificTime }
-            .sorted { $0.priority.sortOrder < $1.priority.sortOrder }
+            .sorted { lhs, rhs in
+                if let lo = lhs.manualSortOrder, let ro = rhs.manualSortOrder { return lo < ro }
+                if lhs.manualSortOrder != nil { return true }
+                if rhs.manualSortOrder != nil { return false }
+                return lhs.priority.sortOrder < rhs.priority.sortOrder
+            }
 
         // Load completed tasks independently (todayTasks excludes completed)
         await loadCompletedTasks()
@@ -386,6 +401,65 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     func moveTask(uuid: String, toDate: Date) async {
         await rescheduleTask(uuid: uuid, toDate: toDate)
+    }
+
+    // MARK: - Task Reordering
+
+    enum TaskSection { case overdue, scheduled, unscheduled }
+
+    func reorderTasks(section: TaskSection, fromOffsets: IndexSet, toOffset: Int) {
+        switch section {
+        case .overdue:
+            overdueTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
+            persistSortOrder(for: overdueTasks)
+        case .scheduled:
+            scheduledTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
+            persistSortOrder(for: scheduledTasks)
+        case .unscheduled:
+            unscheduledTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
+            persistSortOrder(for: unscheduledTasks)
+        }
+    }
+
+    func moveTask(uuid: String, toSection section: TaskSection, atIndex index: Int) {
+        // Remove from current section
+        overdueTasks.removeAll { $0.uuid == uuid }
+        scheduledTasks.removeAll { $0.uuid == uuid }
+        unscheduledTasks.removeAll { $0.uuid == uuid }
+
+        // Find the task from any previous section
+        guard let task = (overdueTasks + scheduledTasks + unscheduledTasks).first(where: { $0.uuid == uuid })
+            ?? [uuid].compactMap({ id in overdueTasks.first { $0.uuid == id } }).first
+        else { return }
+
+        // Insert into target section
+        switch section {
+        case .overdue:
+            overdueTasks.insert(task, at: min(index, overdueTasks.count))
+            persistSortOrder(for: overdueTasks)
+        case .scheduled:
+            scheduledTasks.insert(task, at: min(index, scheduledTasks.count))
+            persistSortOrder(for: scheduledTasks)
+        case .unscheduled:
+            unscheduledTasks.insert(task, at: min(index, unscheduledTasks.count))
+            persistSortOrder(for: unscheduledTasks)
+        }
+    }
+
+    private func persistSortOrder(for tasks: [TaskViewModel]) {
+        Task {
+            for (index, task) in tasks.enumerated() {
+                do {
+                    _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
+                        var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                        metadata.manualSortOrder = index
+                        atom = atom.withMetadata(metadata)
+                    }
+                } catch {
+                    print("❌ Dashboard: Failed to persist sort order: \(error)")
+                }
+            }
+        }
     }
 
     func rescheduleTask(uuid: String, toDate: Date?) async {

@@ -466,13 +466,13 @@ struct ReadwiseLibraryTab: View {
     }
 
     private func filteredHighlights(for book: ReadwiseLibraryBook) -> [ReadwiseLibraryHighlight] {
-        let trimmed = highlightSearchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let trimmed = highlightSearchText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return book.highlights }
-        return book.highlights.filter {
-            $0.text.lowercased().contains(trimmed) ||
-            ($0.note?.lowercased().contains(trimmed) ?? false) ||
-            $0.tags.contains { $0.lowercased().contains(trimmed) }
-        }
+        return book.highlights.filter { Self.matchesSearch($0, query: trimmed) }
+    }
+
+    nonisolated static func matchesSearch(_ highlight: ReadwiseLibraryHighlight, query: String) -> Bool {
+        CommandKSearchMatcher.matches(query, inAny: [highlight.text, highlight.note] + highlight.tags.map(Optional.some))
     }
 
     @ViewBuilder

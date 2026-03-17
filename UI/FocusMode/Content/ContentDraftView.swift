@@ -28,6 +28,14 @@ enum InlineAIState: Equatable {
     case showingResult
 }
 
+/// Preference key to track the DraftEditorTextView's frame within the overlay coordinate space.
+private struct EditorFrameInOverlayKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 // MARK: - Content Draft View
 
 struct ContentDraftView: View {
@@ -60,6 +68,7 @@ struct ContentDraftView: View {
 
     // Geometry for positioning
     @State private var editorAreaFrame: CGRect = .zero
+    @State private var editorOriginInOverlay: CGPoint = .zero
     @State private var textContentHeight: CGFloat = 400
 
     private let autoSaveDelay: TimeInterval = 1.5
@@ -313,6 +322,13 @@ struct ContentDraftView: View {
                             }
                         )
                         .frame(height: max(400, textContentHeight))
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .preference(key: EditorFrameInOverlayKey.self,
+                                                value: proxy.frame(in: .named("draftOverlay")))
+                            }
+                        )
                     }
                     .frame(width: editorWidth)
                     .padding(.vertical, 48)
@@ -324,10 +340,12 @@ struct ContentDraftView: View {
 
                 // Inline AI Action Bar — floats above selection
                 if inlineAIState == .showingBar && !selectionInfo.text.isEmpty {
+                    let barX = editorOriginInOverlay.x + selectionInfo.rectInEditor.midX
+                    let barY = editorOriginInOverlay.y + selectionInfo.rectInEditor.minY
                     inlineActionBar
                         .position(
-                            x: min(max(selectionInfo.rectInEditor.midX, 120), geo.size.width - 120),
-                            y: max(selectionInfo.rectInEditor.minY - 50, 20)
+                            x: min(max(barX, 120), geo.size.width - 120),
+                            y: max(barY - 50, 20)
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
                 }
@@ -336,14 +354,20 @@ struct ContentDraftView: View {
                 if inlineAIState == .processing(.expand) || inlineAIState == .processing(.condense) ||
                    inlineAIState == .processing(.rephrase) || inlineAIState == .processing(.continueWriting) ||
                    inlineAIState == .showingResult {
+                    let popX = editorOriginInOverlay.x + selectionInfo.rectInEditor.midX
+                    let popY = editorOriginInOverlay.y + selectionInfo.rectInEditor.minY
                     inlineResultPopover
                         .position(
-                            x: min(max(selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
-                            y: max(selectionInfo.rectInEditor.minY - 80, 60)
+                            x: min(max(popX, 180), geo.size.width - 180),
+                            y: max(popY - 80, 60)
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
                 }
 
+            }
+            .coordinateSpace(name: "draftOverlay")
+            .onPreferenceChange(EditorFrameInOverlayKey.self) { frame in
+                editorOriginInOverlay = frame.origin
             }
             .onAppear {
                 editorAreaFrame = geo.frame(in: .global)

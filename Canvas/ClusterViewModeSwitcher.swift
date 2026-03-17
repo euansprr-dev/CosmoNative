@@ -16,7 +16,7 @@ struct ClusterInspectorPanel: View {
     let onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let panelWidth: CGFloat = 276
+    private let panelWidth: CGFloat = 320
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

@@ -4,6 +4,85 @@
 
 import Foundation
 
+// MARK: - Outline References
+
+struct OutlineReferenceItem: Codable, Identifiable, Equatable, Sendable {
+    var id: String
+    var atomUUID: String
+    var atomType: AtomType?
+    var title: String
+    var note: String?
+
+    init(
+        id: String = UUID().uuidString,
+        atomUUID: String,
+        atomType: AtomType? = nil,
+        title: String,
+        note: String? = nil
+    ) {
+        self.id = id
+        self.atomUUID = atomUUID
+        self.atomType = atomType
+        self.title = title
+        self.note = note
+    }
+}
+
+extension Atom {
+    private static let outlineReferencesMetadataKey = "outlineReferences"
+
+    static func decodeOutlineReferences(from metadata: String?) -> [OutlineReferenceItem] {
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let refsObject = dict[outlineReferencesMetadataKey],
+              let refsData = try? JSONSerialization.data(withJSONObject: refsObject),
+              let refs = try? JSONDecoder().decode([OutlineReferenceItem].self, from: refsData) else {
+            return []
+        }
+        return refs
+    }
+
+    var outlineReferences: [OutlineReferenceItem] {
+        Self.decodeOutlineReferences(from: metadata)
+    }
+
+    var outlineReferenceCount: Int {
+        outlineReferences.count
+    }
+
+    func withOutlineReferences(_ references: [OutlineReferenceItem]) -> Atom {
+        var copy = self
+        var dict = metadataDict ?? [:]
+
+        if references.isEmpty {
+            dict.removeValue(forKey: Self.outlineReferencesMetadataKey)
+        } else if let encoded = try? JSONEncoder().encode(references),
+                  let refsObject = try? JSONSerialization.jsonObject(with: encoded) {
+            dict[Self.outlineReferencesMetadataKey] = refsObject
+        }
+
+        if dict.isEmpty {
+            copy.metadata = nil
+        } else if let merged = try? JSONSerialization.data(withJSONObject: dict),
+                  let mergedString = String(data: merged, encoding: .utf8) {
+            copy.metadata = mergedString
+        }
+
+        return copy
+    }
+
+    func appendingOutlineReference(_ reference: OutlineReferenceItem) -> Atom {
+        var updated = outlineReferences.filter { $0.atomUUID != reference.atomUUID }
+        updated.append(reference)
+        return withOutlineReferences(updated)
+    }
+
+    func removingOutlineReference(id referenceId: String) -> Atom {
+        withOutlineReferences(outlineReferences.filter { $0.id != referenceId })
+    }
+}
+
 // MARK: - Content Atom Extensions
 
 extension Atom {
@@ -76,7 +155,16 @@ extension Atom {
     }
 
     var tagsList: [String] {
-        ideaMetadata?.tags ?? contentMetadata?.tags ?? researchMetadata?.tags ?? []
+        if let tags = ideaMetadata?.tags ?? contentMetadata?.tags ?? researchMetadata?.tags {
+            return tags
+        }
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tags = dict["tags"] as? [String] else {
+            return []
+        }
+        return tags
     }
 
     /// Legacy: tags as comma-separated string
@@ -908,50 +996,6 @@ extension Atom {
     /// Convenience: returns the crystallization level, defaulting to .raw
     var crystallizationLevel: CrystallizationLevel {
         crystallizationMetadata?.level ?? .raw
-    }
-}
-
-// MARK: - Incubation / Review Queue Extensions
-
-extension Atom {
-    /// Review queue metadata stored in the metadata JSON field (Leitner spaced repetition)
-    var reviewQueueMetadata: ReviewQueueMetadata? {
-        get {
-            // Decode the reviewQueue sub-object from metadata
-            guard let dict = metadataDict,
-                  let reviewDict = dict["reviewQueue"] as? [String: Any],
-                  let jsonData = try? JSONSerialization.data(withJSONObject: reviewDict) else {
-                return nil
-            }
-            return try? JSONDecoder().decode(ReviewQueueMetadata.self, from: jsonData)
-        }
-        set {
-            var dict = metadataDict ?? [:]
-            if let newValue = newValue,
-               let encoded = try? JSONEncoder().encode(newValue),
-               let reviewObj = try? JSONSerialization.jsonObject(with: encoded) {
-                dict["reviewQueue"] = reviewObj
-            } else {
-                dict.removeValue(forKey: "reviewQueue")
-            }
-            if let merged = try? JSONSerialization.data(withJSONObject: dict),
-               let mergedString = String(data: merged, encoding: .utf8) {
-                self.metadata = mergedString
-            }
-        }
-    }
-
-    /// Whether this atom is enrolled in the incubation review queue
-    var isInReviewQueue: Bool {
-        reviewQueueMetadata != nil
-    }
-
-    /// Whether this atom is due for review (dueAt <= now and not dormant and not snoozed)
-    var isDueForReview: Bool {
-        guard let rq = reviewQueueMetadata, !rq.isDormant else { return false }
-        let now = ISO8601DateFormatter().string(from: Date())
-        if let snoozed = rq.snoozedUntil, snoozed > now { return false }
-        return rq.dueAt <= now
     }
 }
 

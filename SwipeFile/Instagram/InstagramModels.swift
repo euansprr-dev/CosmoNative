@@ -32,6 +32,21 @@ enum InstagramContentType: String, Codable, Sendable, CaseIterable, Equatable {
     }
 }
 
+// MARK: - Instagram Engagement Metrics
+
+/// Engagement metrics for an Instagram post (from API or scraping)
+struct InstagramEngagement: Codable, Sendable, Equatable {
+    let likesCount: Int
+    let commentsCount: Int
+    let viewsCount: Int?       // nil for images (only video has views)
+    let sharesCount: Int?
+
+    var engagementRate: Double? {
+        guard let views = viewsCount, views > 0 else { return nil }
+        return Double(likesCount + commentsCount) / Double(views) * 100.0
+    }
+}
+
 // MARK: - Instagram Media Data
 
 /// Extracted media data from Instagram
@@ -262,6 +277,8 @@ struct InstagramAnnotation: Identifiable, Codable, Sendable, Equatable {
     let id: UUID
     var type: AnnotationType
     var content: String
+    var document: RichDocument?
+    var plainText: String?
     var timestamp: TimeInterval?  // For video annotations
     var slideIndex: Int?          // For carousel annotations
     var linkedAtomUUIDs: [String]
@@ -272,6 +289,8 @@ struct InstagramAnnotation: Identifiable, Codable, Sendable, Equatable {
         id: UUID = UUID(),
         type: AnnotationType,
         content: String,
+        document: RichDocument? = nil,
+        plainText: String? = nil,
         timestamp: TimeInterval? = nil,
         slideIndex: Int? = nil,
         linkedAtomUUIDs: [String] = [],
@@ -281,11 +300,17 @@ struct InstagramAnnotation: Identifiable, Codable, Sendable, Equatable {
         self.id = id
         self.type = type
         self.content = content
+        self.document = document ?? RichDocument.migrateLegacy(content)
+        self.plainText = plainText ?? content
         self.timestamp = timestamp
         self.slideIndex = slideIndex
         self.linkedAtomUUIDs = linkedAtomUUIDs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    var resolvedDocument: RichDocument {
+        document ?? RichDocument.migrateLegacy(plainText ?? content)
     }
 
     /// Annotation type (matches existing research annotation types)

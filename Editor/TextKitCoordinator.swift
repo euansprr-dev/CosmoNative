@@ -1,75 +1,103 @@
 // CosmoOS/Editor/TextKitCoordinator.swift
-// TextKit 2 integration for native macOS rich text editing
-// Handles slash commands, @mentions, and live markdown
+// Shared TextKit editor infrastructure for rich writing surfaces.
 
-import SwiftUI
 import AppKit
+import SwiftUI
+import UniformTypeIdentifiers
 
-// MARK: - Custom NSTextView with Hyperlink Paste Support
+@MainActor
+fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
+    func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType)
+    func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool
+}
 
-/// Custom NSTextView that converts selected text to hyperlinks when a URL is pasted
-class CosmoTextView: NSTextView {
+// MARK: - Custom NSTextView
 
-    /// Override paste to support hyperlink creation on selected text
+final class CosmoTextView: NSTextView {
+    fileprivate weak var shortcutDelegate: CosmoTextViewShortcutDelegate?
+
     override func paste(_ sender: Any?) {
-        // Check if we have selected text and the pasteboard contains a URL
         let selectedRange = self.selectedRange()
 
         if selectedRange.length > 0,
            let pasteboardString = NSPasteboard.general.string(forType: .string),
            let url = URL(string: pasteboardString),
-           url.scheme != nil,
-           (url.scheme == "http" || url.scheme == "https" || url.scheme == "mailto") {
-
-            // Get the selected text
-            guard let textStorage = self.textStorage,
+           let scheme = url.scheme,
+           ["http", "https", "mailto"].contains(scheme) {
+            guard let textStorage = textStorage,
                   selectedRange.location + selectedRange.length <= textStorage.length else {
                 super.paste(sender)
                 return
             }
 
             let selectedText = textStorage.attributedSubstring(from: selectedRange)
-
-            // Create hyperlink attributed string
-            let linkAttributes: [NSAttributedString.Key: Any] = [
-                .link: url,
-                .foregroundColor: NSColor.systemBlue,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-                .font: self.font ?? NSFont.systemFont(ofSize: 16)
-            ]
-
             let hyperlinkString = NSAttributedString(
                 string: selectedText.string,
-                attributes: linkAttributes
+                attributes: [
+                    .link: url,
+                    .foregroundColor: NSColor.systemBlue,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .font: font ?? NSFont.systemFont(ofSize: 16)
+                ]
             )
 
-            // Replace selected text with hyperlinked version
             if shouldChangeText(in: selectedRange, replacementString: hyperlinkString.string) {
                 textStorage.replaceCharacters(in: selectedRange, with: hyperlinkString)
                 didChangeText()
-
-                // Place cursor after the link
-                let newCursorPosition = selectedRange.location + hyperlinkString.length
-                setSelectedRange(NSRange(location: newCursorPosition, length: 0))
-
-                print("🔗 Created hyperlink: \(selectedText.string) → \(url.absoluteString)")
+                setSelectedRange(NSRange(location: selectedRange.location + hyperlinkString.length, length: 0))
             }
+            return
+        }
+
+        if shortcutDelegate?.textView(self, shouldHandleImagePaste: NSPasteboard.general) == true {
+            return
+        }
+
+        super.paste(sender)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        // Forward scroll events to the outer SwiftUI ScrollView.
+        // The enclosing NSScrollView doesn't scroll (text view grows to fit),
+        // so we skip it and forward to the next responder in the chain.
+        if let scrollView = enclosingScrollView {
+            scrollView.nextResponder?.scrollWheel(with: event)
         } else {
-            // Normal paste behavior
-            super.paste(sender)
+            super.scrollWheel(with: event)
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard flags == .command,
+              let chars = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        switch chars {
+        case "b":
+            shortcutDelegate?.textViewDidRequestFormattingShortcut(.bold)
+            return true
+        case "i":
+            shortcutDelegate?.textViewDidRequestFormattingShortcut(.italic)
+            return true
+        case "u":
+            shortcutDelegate?.textViewDidRequestFormattingShortcut(.underline)
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
         }
     }
 }
 
-// MARK: - Scrollable CosmoTextView Factory
-
 extension CosmoTextView {
-    /// Creates a scrollable CosmoTextView (similar to NSTextView.scrollableTextView())
     static func scrollableCosmoTextView() -> NSScrollView {
         let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScrollElasticity = .none
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
 
@@ -84,58 +112,85 @@ extension CosmoTextView {
         )
 
         scrollView.documentView = textView
-
         return scrollView
     }
 }
 
-// MARK: - TextKit 2 Editor Representable
+// MARK: - Representable
+
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
     @Binding var cursorPosition: Int
-    @Binding var shouldRefocus: Bool  // Trigger refocus from parent
+    @Binding var shouldRefocus: Bool
 
-    var fontSize: CGFloat = 16 // Default font size
-    var darkMode: Bool = false  // Dark mode for Thinkspace blocks
+    var fontSize: CGFloat = 16
+    var compact: Bool = false
+    var darkMode: Bool = false
+    var allowSlashCommands: Bool = true
+    var allowMentions: Bool = true
+    var allowImages: Bool = true
+    var allowSelectionMenu: Bool = true
+    var singleLine: Bool = false
+    var baseFontWeight: NSFont.Weight = .regular
+    var polishHighlights: WritingAnalysis? = nil
+    var textAlignment: NSTextAlignment = .natural
 
     var onSlashCommand: ((CGPoint) -> Void)?
     var onMention: ((CGPoint, String) -> Void)?
-    var onSelectionChange: ((NSRange, CGPoint) -> Void)?
+    var onSelectionChange: ((EditorSelectionSnapshot) -> Void)?
     var onDismissMenus: (() -> Void)?
+    var onContentHeightChange: ((CGFloat) -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
-        // Use CosmoTextView for hyperlink paste support
         let scrollView = CosmoTextView.scrollableCosmoTextView()
 
         guard let textView = scrollView.documentView as? CosmoTextView else {
             return scrollView
         }
 
-        // Configure TextKit 2 text view
-        configureTextView(textView, context: context)
-
-        // Set initial content
+        configureTextView(textView, context: context, isInitial: true)
         textView.textStorage?.setAttributedString(attributedText)
-
-        // Store reference for refocusing
+        context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.textViewReference = textView
         context.coordinator.installScrollDismissObserver(for: scrollView)
+        context.coordinator.normalizeSingleLineViewport(for: textView)
+        context.coordinator.notifyContentHeightChange(for: textView)
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? CosmoTextView else { return }
+        context.coordinator.parent = self
+        configureTextView(textView, context: context, isInitial: false)
 
-        // Only update if content changed externally
-        if textView.attributedString() != attributedText {
-            let selectedRange = textView.selectedRange()
-            textView.textStorage?.setAttributedString(attributedText)
-            textView.setSelectedRange(selectedRange)
+        // Skip text storage replacement when the change originated from user typing —
+        // the text view already has the correct content, avoiding scroll position resets.
+        guard !context.coordinator.isUpdatingFromTextView else {
+            context.coordinator.applyPolishHighlights(to: textView)
+            if shouldRefocus {
+                DispatchQueue.main.async {
+                    textView.window?.makeFirstResponder(textView)
+                    self.shouldRefocus = false
+                }
+            }
+            return
         }
 
-        // Handle refocus request
+        if !textView.attributedString().isEqual(to: attributedText) {
+            let selectedRange = textView.selectedRange()
+            textView.textStorage?.setAttributedString(attributedText)
+            let safeLocation = min(selectedRange.location, textView.string.count)
+            let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
+            textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+            context.coordinator.normalizeSingleLineViewport(for: textView)
+            context.coordinator.notifyContentHeightChange(for: textView)
+        }
+
+        context.coordinator.applyPolishHighlights(to: textView)
+        context.coordinator.normalizeSingleLineViewport(for: textView)
+
         if shouldRefocus {
             DispatchQueue.main.async {
                 textView.window?.makeFirstResponder(textView)
@@ -144,50 +199,89 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
     }
 
-    private func configureTextView(_ textView: NSTextView, context: Context) {
-        // Basic configuration
+    private func configureTextView(_ textView: CosmoTextView, context: Context, isInitial: Bool = true) {
         textView.isRichText = true
         textView.allowsUndo = true
         textView.isEditable = true
         textView.isSelectable = true
-        textView.usesFontPanel = true
+        textView.usesFontPanel = false
         textView.usesRuler = false
-        textView.importsGraphics = true
-        textView.allowsImageEditing = true
+        textView.importsGraphics = allowImages
+        textView.allowsImageEditing = allowImages
+        textView.drawsBackground = false
 
-        // Typography - colors depend on dark mode
-        textView.font = NSFont.systemFont(ofSize: fontSize)
-        if darkMode {
-            // Thinkspace dark mode: white text on dark glass
-            textView.textColor = NSColor.white
-            textView.backgroundColor = NSColor.clear
-            textView.insertionPointColor = NSColor.white
-        } else {
-            // Light mode: dark text
-            textView.textColor = NSColor(CosmoColors.textPrimary) // #2D2D2D
-            textView.backgroundColor = NSColor.clear
-            textView.insertionPointColor = NSColor(CosmoColors.textPrimary)
+        // Only set font/textColor/alignment on initial setup.
+        // Setting these on every update overwrites the entire text storage,
+        // destroying any rich text formatting (bold, italic, etc.).
+        if isInitial {
+            textView.font = resolvedBaseFont()
+            textView.textColor = darkMode ? .white : NSColor(CosmoColors.textPrimary)
+            textView.alignment = textAlignment
+            textView.defaultParagraphStyle = baseParagraphStyle()
+            textView.typingAttributes = defaultTypingAttributes()
         }
 
-        // Spacing
-        textView.textContainerInset = NSSize(width: 16, height: 16)
+        textView.backgroundColor = .clear
+        textView.insertionPointColor = darkMode ? .white : NSColor(CosmoColors.textPrimary)
+        textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
+        textView.isVerticallyResizable = !singleLine
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: singleLine ? resolvedSingleLineHeight() : CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: 0, height: singleLine ? resolvedSingleLineHeight() : 0)
+        // For multi-line mode, preserve the current container width (tracked from the text view)
+        // so word-wrapping works correctly. Only override height.
+        let currentContainerWidth = textView.textContainer?.containerSize.width ?? textView.frame.width
+        let containerWidth = singleLine ? CGFloat.greatestFiniteMagnitude : max(1, currentContainerWidth)
+        textView.textContainer?.containerSize = NSSize(
+            width: containerWidth,
+            height: singleLine ? resolvedSingleLineHeight() : CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.maximumNumberOfLines = singleLine ? 1 : 0
+        textView.textContainer?.lineBreakMode = singleLine ? .byClipping : .byWordWrapping
 
-        // Enable smart features
         textView.isAutomaticQuoteSubstitutionEnabled = true
         textView.isAutomaticDashSubstitutionEnabled = true
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.isAutomaticTextCompletionEnabled = true
         textView.isAutomaticLinkDetectionEnabled = true
 
-        // Paragraph style
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 4
-        paragraphStyle.paragraphSpacing = 8
-        textView.defaultParagraphStyle = paragraphStyle
-
-        // Set delegate
         textView.delegate = context.coordinator
+        textView.shortcutDelegate = context.coordinator
+    }
+
+    private func baseParagraphStyle() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = singleLine ? 0 : 4
+        style.paragraphSpacing = singleLine ? 0 : 8
+        return style
+    }
+
+    private func defaultTypingAttributes() -> [NSAttributedString.Key: Any] {
+        [
+            .font: resolvedBaseFont(),
+            .foregroundColor: darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+            .paragraphStyle: baseParagraphStyle()
+        ]
+    }
+
+    private func resolvedBaseFont() -> NSFont {
+        NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+    }
+
+    private func resolvedTextInsets() -> NSSize {
+        if singleLine {
+            return NSSize(width: compact ? 0 : 2, height: compact ? 4 : max(4, floor(fontSize * 0.12)))
+        }
+        if compact {
+            return NSSize(width: 10, height: 8)
+        }
+        return NSSize(width: 16, height: 16)
+    }
+
+    private func resolvedSingleLineHeight() -> CGFloat {
+        let font = resolvedBaseFont()
+        let insets = resolvedTextInsets().height * 2
+        return ceil(font.ascender - font.descender + font.leading + insets + 2)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -195,60 +289,63 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     }
 
     // MARK: - Coordinator
+
     @MainActor
-    class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, CosmoTextViewShortcutDelegate {
         var parent: TextKitEditorRepresentable
-        private var isProcessingSlashCommand = false
-        private var mentionStartIndex: Int?
-        weak var textViewReference: NSTextView?  // Store reference for refocusing
+
+        weak var textViewReference: CosmoTextView?
+
         private weak var scrollContentView: NSClipView?
-        private var isInHeadingMode = false  // Track if we're in heading formatting mode
+        private var mentionStartIndex: Int?
+        private var isInHeadingMode = false
+        private var hasAppliedHighlights = false
+        /// Guards against updateNSView round-trip when change originated from user typing
+        var isUpdatingFromTextView = false
+        private var deferredSyncWorkItem: DispatchWorkItem?
+        private var lastReportedHeight: CGFloat = 0
+        private var selectionChangeWorkItem: DispatchWorkItem?
 
         init(_ parent: TextKitEditorRepresentable) {
             self.parent = parent
             super.init()
 
-            // Dismiss menus when app loses focus (e.g., click outside to another app)
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleAppWillResignActive(_:)),
                 name: NSApplication.willResignActiveNotification,
                 object: nil
             )
-
-            // Cross-surface insertions (e.g. drag a related block into the editor)
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleInsertMentionInEditor(_:)),
                 name: .insertMentionInEditor,
                 object: nil
             )
-
-            // Plain text insertions (e.g. research results, AI-generated content)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePerformMentionSelection(_:)),
+                name: .performMentionSelection,
+                object: nil
+            )
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleInsertTextInEditor(_:)),
                 name: .insertTextInEditor,
                 object: nil
             )
-
-            // Handle typing attribute changes from slash commands
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleSetTypingAttributes(_:)),
                 name: .setEditorTypingAttributes,
                 object: nil
             )
-
-            // Handle slash command execution
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handlePerformSlashCommand(_:)),
                 name: .performSlashCommand,
                 object: nil
             )
-
-            // Handle formatting toggles from menu
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleToggleFormatting(_:)),
@@ -261,408 +358,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if let scrollContentView {
                 NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollContentView)
             }
-            NotificationCenter.default.removeObserver(self, name: NSApplication.willResignActiveNotification, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .insertMentionInEditor, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .insertTextInEditor, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .insertTextInEditor, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .setEditorTypingAttributes, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .performSlashCommand, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .toggleEditorFormatting, object: nil)
+            NotificationCenter.default.removeObserver(self)
         }
 
-        /// Refocus the text view - called after menu selection
-        func refocusEditor() {
-            guard let textView = textViewReference else { return }
-            DispatchQueue.main.async {
-                textView.window?.makeFirstResponder(textView)
-            }
-        }
-
-        // MARK: - Text Did Change
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-
-            // Update bindings
-            parent.attributedText = textView.attributedString()
-            parent.plainText = textView.string
-            parent.cursorPosition = textView.selectedRange().location
-
-            let text = textView.string
-            let cursorLocation = textView.selectedRange().location
-
-            // === TELEPATHY ENGINE INTEGRATION ===
-            // Feed typing input for shadow search and autocomplete
-            Task {
-                await TelepathyEngine.shared.handleTypingInput(text, cursorPosition: cursorLocation)
-            }
-
-            // === SLASH COMMAND HANDLING ===
-            // Check if slash is still present when menu is active
-            if isProcessingSlashCommand {
-                // Find if there's still a "/" before cursor
-                let hasSlash = cursorLocation > 0 && {
-                    let checkIndex = text.index(text.startIndex, offsetBy: cursorLocation - 1, limitedBy: text.endIndex)
-                    if let idx = checkIndex, idx < text.endIndex {
-                        return text[idx] == "/"
-                    }
-                    return false
-                }()
-
-                if !hasSlash {
-                    // Slash was deleted - dismiss menu
-                    isProcessingSlashCommand = false
-                    dismissMenus()
-                }
-            }
-
-            // === MENTION HANDLING ===
-            // Check if @ is still present when menu is active
-            if let startIndex = mentionStartIndex {
-                // Verify @ is still at the start position
-                let atStillExists = startIndex < text.count && {
-                    let atIndex = text.index(text.startIndex, offsetBy: startIndex, limitedBy: text.endIndex)
-                    if let idx = atIndex, idx < text.endIndex {
-                        return text[idx] == "@"
-                    }
-                    return false
-                }()
-
-                if !atStillExists || cursorLocation <= startIndex {
-                    // @ was deleted or cursor moved before it - dismiss menu
-                    mentionStartIndex = nil
-                    dismissMenus()
-                }
-            }
-
-            // Check for new triggers
-            if cursorLocation > 0 {
-                let index = text.index(text.startIndex, offsetBy: cursorLocation - 1, limitedBy: text.endIndex) ?? text.endIndex
-                if index < text.endIndex {
-                    let char = text[index]
-
-                    // New slash command trigger
-                    if char == "/" && !isProcessingSlashCommand {
-                        let isValidTrigger = cursorLocation == 1 || {
-                            let prevIndex = text.index(text.startIndex, offsetBy: cursorLocation - 2, limitedBy: text.endIndex)
-                            if let prevIndex = prevIndex {
-                                let prevChar = text[prevIndex]
-                                return prevChar.isWhitespace || prevChar.isNewline
-                            }
-                            return true
-                        }()
-
-                        if isValidTrigger {
-                            let rect = textView.firstRect(forCharacterRange: NSRange(location: cursorLocation - 1, length: 1), actualRange: nil)
-                            let position = textView.convert(NSPoint(x: rect.origin.x, y: rect.origin.y + rect.height), from: nil)
-                            parent.onSlashCommand?(position)
-                            isProcessingSlashCommand = true
-                        }
-                    }
-
-                    // New @ mention trigger
-                    if char == "@" && mentionStartIndex == nil {
-                        mentionStartIndex = cursorLocation - 1
-                        let rect = textView.firstRect(forCharacterRange: NSRange(location: cursorLocation - 1, length: 1), actualRange: nil)
-                        let position = textView.convert(NSPoint(x: rect.origin.x, y: rect.origin.y + rect.height), from: nil)
-                        parent.onMention?(position, "")
-                    }
-
-                    // Update mention search query
-                    if let startIndex = mentionStartIndex, cursorLocation > startIndex {
-                        let queryStart = text.index(text.startIndex, offsetBy: startIndex + 1)
-                        let queryEnd = text.index(text.startIndex, offsetBy: cursorLocation)
-                        let query = String(text[queryStart..<queryEnd])
-
-                        if !query.contains(" ") && !query.contains("\n") {
-                            let rect = textView.firstRect(forCharacterRange: NSRange(location: startIndex, length: 1), actualRange: nil)
-                            let position = textView.convert(NSPoint(x: rect.origin.x, y: rect.origin.y + rect.height), from: nil)
-                            parent.onMention?(position, query)
-                        } else {
-                            mentionStartIndex = nil
-                            dismissMenus()
-                        }
-                    }
-                }
-            }
-
-            // Apply live markdown shortcuts and formatting
-            applyMarkdownShortcuts(textView)
-            applyMarkdownFormatting(textView)
-        }
-
-        // MARK: - Markdown Shortcuts (Live Transformations)
-        /// Transform common shortcuts into formatted elements as you type
-        private func applyMarkdownShortcuts(_ textView: NSTextView) {
-            guard let textStorage = textView.textStorage else { return }
-
-            let text = textView.string
-            let cursorLocation = textView.selectedRange().location
-
-            // Get the current line
-            let lineRange = (text as NSString).lineRange(for: NSRange(location: max(0, cursorLocation - 1), length: 0))
-            let currentLine = (text as NSString).substring(with: lineRange)
-
-            // === "- " at start of line → bullet point "• " ===
-            if currentLine.hasPrefix("- ") && cursorLocation >= lineRange.location + 2 {
-                let replaceRange = NSRange(location: lineRange.location, length: 2)
-                textStorage.replaceCharacters(in: replaceRange, with: "• ")
-                textView.setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-            }
-
-            // === "-> " → arrow "→ " ===
-            if currentLine.contains("-> ") {
-                let range = (text as NSString).range(of: "-> ", options: [], range: lineRange)
-                if range.location != NSNotFound {
-                    textStorage.replaceCharacters(in: range, with: "→ ")
-                    // Adjust cursor
-                    if cursorLocation > range.location {
-                        textView.setSelectedRange(NSRange(location: cursorLocation - 1, length: 0))
-                    }
-                }
-            }
-
-            // === "<- " → arrow "← " ===
-            if currentLine.contains("<- ") {
-                let range = (text as NSString).range(of: "<- ", options: [], range: lineRange)
-                if range.location != NSNotFound {
-                    textStorage.replaceCharacters(in: range, with: "← ")
-                    if cursorLocation > range.location {
-                        textView.setSelectedRange(NSRange(location: cursorLocation - 1, length: 0))
-                    }
-                }
-            }
-
-            // === "---" at start of line → divider "───────────────" ===
-            if currentLine.trimmingCharacters(in: .whitespaces) == "---" {
-                let divider = "\n───────────────\n"
-                textStorage.replaceCharacters(in: lineRange, with: divider)
-                textView.setSelectedRange(NSRange(location: lineRange.location + divider.count, length: 0))
-            }
-
-            // === "* " at start of line → bullet point "• " ===
-            if currentLine.hasPrefix("* ") && !currentLine.hasPrefix("**") && cursorLocation >= lineRange.location + 2 {
-                let replaceRange = NSRange(location: lineRange.location, length: 2)
-                textStorage.replaceCharacters(in: replaceRange, with: "• ")
-                textView.setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-            }
-
-            // === "1. " → numbered list (keep as-is but add proper spacing) ===
-            // Already handled by default behavior
-
-            // === "[] " or "[ ] " → checkbox "☐ " ===
-            if currentLine.hasPrefix("[] ") {
-                let replaceRange = NSRange(location: lineRange.location, length: 3)
-                textStorage.replaceCharacters(in: replaceRange, with: "☐ ")
-                textView.setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-            } else if currentLine.hasPrefix("[ ] ") {
-                let replaceRange = NSRange(location: lineRange.location, length: 4)
-                textStorage.replaceCharacters(in: replaceRange, with: "☐ ")
-                textView.setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-            }
-
-            // === "[x] " → checked checkbox "☑ " ===
-            if currentLine.hasPrefix("[x] ") || currentLine.hasPrefix("[X] ") {
-                let replaceRange = NSRange(location: lineRange.location, length: 4)
-                textStorage.replaceCharacters(in: replaceRange, with: "☑ ")
-                textView.setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-            }
-        }
-
-        // MARK: - Markdown Formatting
-        @MainActor
-        private func applyMarkdownFormatting(_ textView: NSTextView) {
-            guard let textStorage = textView.textStorage else { return }
-
-            let text = textView.string
-            let selectedRange = textView.selectedRange()
-
-            // Bold: **text** or __text__
-            applyPattern(
-                pattern: "\\*\\*(.+?)\\*\\*|__(.+?)__",
-                to: textStorage,
-                in: text,
-                attributes: [.font: NSFont.boldSystemFont(ofSize: 16)]
-            )
-
-            // Italic: *text* or _text_
-            applyPattern(
-                pattern: "(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)",
-                to: textStorage,
-                in: text,
-                attributes: [.font: NSFont.systemFont(ofSize: 16).italic()]
-            )
-
-            // Inline code: `code`
-            applyPattern(
-                pattern: "`(.+?)`",
-                to: textStorage,
-                in: text,
-                attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
-                    .backgroundColor: NSColor.quaternaryLabelColor
-                ]
-            )
-
-            // Headers: # ## ###
-            applyHeaderFormatting(textStorage, text: text)
-
-            // Restore selection
-            textView.setSelectedRange(selectedRange)
-        }
-
-        private func applyPattern(
-            pattern: String,
-            to textStorage: NSTextStorage,
-            in text: String,
-            attributes: [NSAttributedString.Key: Any]
-        ) {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-
-            let range = NSRange(text.startIndex..., in: text)
-            let matches = regex.matches(in: text, range: range)
-
-            for match in matches {
-                textStorage.addAttributes(attributes, range: match.range)
-            }
-        }
-
-        private func applyHeaderFormatting(_ textStorage: NSTextStorage, text: String) {
-            let lines = text.components(separatedBy: .newlines)
-            var currentLocation = 0
-
-            for line in lines {
-                if line.hasPrefix("### ") {
-                    let range = NSRange(location: currentLocation, length: line.count)
-                    textStorage.addAttributes([
-                        .font: NSFont.systemFont(ofSize: 18, weight: .semibold)
-                    ], range: range)
-                } else if line.hasPrefix("## ") {
-                    let range = NSRange(location: currentLocation, length: line.count)
-                    textStorage.addAttributes([
-                        .font: NSFont.systemFont(ofSize: 22, weight: .semibold)
-                    ], range: range)
-                } else if line.hasPrefix("# ") {
-                    let range = NSRange(location: currentLocation, length: line.count)
-                    textStorage.addAttributes([
-                        .font: NSFont.systemFont(ofSize: 28, weight: .bold)
-                    ], range: range)
-                }
-
-                currentLocation += line.count + 1 // +1 for newline
-            }
-        }
-
-        // MARK: - Key Events
-        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            // Handle Escape to dismiss menus
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                dismissMenus()
-                return true
-            }
-
-            // Handle Formatting Shortcuts (Cmd+B, Cmd+I) manually to ensure consistency
-            if commandSelector == #selector(NSFontManager.addFontTrait(_:)) {
-               // This selector is tricky to catch directly without the sender logic
-            }
-            
-            if commandSelector == NSSelectorFromString("toggleBold:") {
-                toggleBold()
-                return true
-            }
-            if commandSelector == NSSelectorFromString("toggleItalic:") {
-                toggleItalic()
-                return true
-            }
-
-
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                if isProcessingSlashCommand {
-                    isProcessingSlashCommand = false
-                    return false
-                }
-
-                // If in heading mode, reset to normal formatting after Enter
-                if isInHeadingMode {
-                    // Let the newline be inserted first, then reset formatting
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self, let textView = self.textViewReference else { return }
-                        self.resetToNormalTypingAttributes(textView)
-                    }
-                    return false  // Allow the newline to be inserted
-                }
-            }
-
-            return false
-        }
-
-        // MARK: - Selection Did Change
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            let selectedRange = textView.selectedRange()
-            
-            // Defer state updates to avoid "modifying state during view update"
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.cursorPosition = selectedRange.location
-            }
-            
-            // Notify parent about selection for Floating Formatting Menu
-            if selectedRange.length > 0 {
-                let rect = textView.firstRect(forCharacterRange: selectedRange, actualRange: nil)
-                // Convert to screen/window coordinates for overlay
-                let position = textView.convert(NSPoint(x: rect.origin.x, y: rect.origin.y), from: nil)
-                // Position above the selection - defer to avoid state modification during update
-                DispatchQueue.main.async { [weak self] in
-                    self?.parent.onSelectionChange?(selectedRange, position)
-                }
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.parent.onSelectionChange?(NSRange(location: NSNotFound, length: 0), .zero)
-                }
-            }
-        }
-
-        // MARK: - Link Click Handling
-        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            // Handle cosmo:// links - open as floating block in document
-            let urlString: String?
-            if let url = link as? URL {
-                urlString = url.absoluteString
-            } else if let str = link as? String {
-                urlString = str
-            } else {
-                urlString = nil
-            }
-
-            guard let urlString = urlString,
-                  let url = URL(string: urlString),
-                  url.scheme == "cosmo" else {
-                return false  // Let system handle other links
-            }
-
-            // Parse entity type and ID from URL: cosmo://idea/123
-            guard let entityTypeString = url.host,
-                  let entityType = EntityType(rawValue: entityTypeString),
-                  let entityIdString = url.pathComponents.last,
-                  let entityId = Int64(entityIdString) else {
-                return false
-            }
-
-            // Post notification to open as floating block in current document
-            NotificationCenter.default.post(
-                name: .openMentionAsFloatingBlock,
-                object: nil,
-                userInfo: [
-                    "entityType": entityType,
-                    "entityId": entityId
-                ]
-            )
-
-            return true  // We handled this link
-        }
-
-        // MARK: - Dismissal + Scroll Handling
-
-        @MainActor
         func installScrollDismissObserver(for scrollView: NSScrollView) {
             scrollView.contentView.postsBoundsChangedNotifications = true
             scrollContentView = scrollView.contentView
@@ -674,498 +372,809 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             )
         }
 
-        @MainActor
+        func applyPolishHighlights(to textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            if parent.polishHighlights == nil {
+                guard hasAppliedHighlights else { return }
+                storage.beginEditing()
+                storage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: storage.length))
+                storage.endEditing()
+                hasAppliedHighlights = false
+                return
+            }
+
+            let fullRange = NSRange(location: 0, length: storage.length)
+            storage.beginEditing()
+            storage.removeAttribute(.backgroundColor, range: fullRange)
+
+            if let analysis = parent.polishHighlights {
+                for range in analysis.complexSentenceRanges where NSMaxRange(range) <= storage.length {
+                    storage.addAttribute(.backgroundColor, value: NSColor.yellow.withAlphaComponent(0.15), range: range)
+                }
+                for range in analysis.veryComplexSentenceRanges where NSMaxRange(range) <= storage.length {
+                    storage.addAttribute(.backgroundColor, value: NSColor.red.withAlphaComponent(0.15), range: range)
+                }
+                for range in analysis.passiveVoiceRanges where NSMaxRange(range) <= storage.length {
+                    storage.addAttribute(.backgroundColor, value: NSColor.systemBlue.withAlphaComponent(0.15), range: range)
+                }
+                for range in analysis.adverbRanges where NSMaxRange(range) <= storage.length {
+                    storage.addAttribute(.backgroundColor, value: NSColor.purple.withAlphaComponent(0.15), range: range)
+                }
+            }
+
+            storage.endEditing()
+            hasAppliedHighlights = true
+        }
+
+        // MARK: - Shortcut Delegate
+
+        func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType) {
+            guard let textView = textViewReference,
+                  textView.window?.firstResponder === textView else { return }
+            applyFormatting(shortcut, to: textView)
+        }
+
+        func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool {
+            guard parent.allowImages else { return false }
+
+            if let image = NSImage(pasteboard: pasteboard),
+               let data = image.pngData() ?? image.tiffRepresentation {
+                insertImage(data: data, filename: "Pasted Image.png", into: textView)
+                return true
+            }
+
+            return false
+        }
+
+        // MARK: - Delegate
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? CosmoTextView else { return }
+
+            normalizeSingleLineViewport(for: textView)
+            syncBindings(from: textView)
+
+            let text = textView.string
+            let cursorLocation = textView.selectedRange().location
+
+            Task {
+                await TelepathyEngine.shared.handleTypingInput(text, cursorPosition: cursorLocation)
+            }
+
+            handleMentionState(in: textView, text: text, cursorLocation: cursorLocation)
+            handleSlashState(in: textView, text: text, cursorLocation: cursorLocation)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? CosmoTextView else { return }
+            normalizeSingleLineViewport(for: textView)
+            let selectedRange = textView.selectedRange()
+
+            parent.cursorPosition = selectedRange.location
+
+            // No selection — dispatch empty immediately (cheap)
+            guard selectedRange.length > 0 else {
+                selectionChangeWorkItem?.cancel()
+                parent.onSelectionChange?(.empty)
+                return
+            }
+
+            // Debounce expensive rect computation for actual selections
+            selectionChangeWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                // Use layoutManager for full selection bounding rect (covers all lines).
+                // Then convert from textView coords to scrollView coords (what SwiftUI sees).
+                let glyphRange = textView.layoutManager!.glyphRange(forCharacterRange: selectedRange, actualCharacterRange: nil)
+                let boundingRect = textView.layoutManager!.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!)
+                let tcOrigin = textView.textContainerOrigin
+                let textViewRect = CGRect(
+                    x: boundingRect.origin.x + tcOrigin.x,
+                    y: boundingRect.origin.y + tcOrigin.y,
+                    width: boundingRect.width,
+                    height: boundingRect.height
+                )
+                let localRect: CGRect
+                if let scrollView = textView.enclosingScrollView {
+                    localRect = textView.convert(textViewRect, to: scrollView)
+                } else {
+                    localRect = textViewRect
+                }
+                let selectedText = (textView.string as NSString).substring(with: selectedRange)
+                let snapshot = EditorSelectionSnapshot(
+                    range: selectedRange,
+                    text: selectedText,
+                    rectInEditor: localRect
+                )
+                self.parent.onSelectionChange?(snapshot)
+            }
+            selectionChangeWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            let urlString: String?
+            if let url = link as? URL {
+                urlString = url.absoluteString
+            } else if let string = link as? String {
+                urlString = string
+            } else {
+                urlString = nil
+            }
+
+            guard let urlString,
+                  let url = URL(string: urlString),
+                  url.scheme == "cosmo",
+                  let entityTypeString = url.host,
+                  let entityType = EntityType(rawValue: entityTypeString),
+                  let entityIDString = url.pathComponents.last,
+                  let entityID = Int64(entityIDString) else {
+                return false
+            }
+
+            NotificationCenter.default.post(
+                name: .openMentionAsFloatingBlock,
+                object: nil,
+                userInfo: [
+                    "entityType": entityType,
+                    "entityId": entityID
+                ]
+            )
+            return true
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                dismissMenus()
+                return true
+            }
+
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                if parent.singleLine {
+                    dismissMenus()
+                    return true
+                }
+
+                if isInHeadingMode {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, let textView = self.textViewReference else { return }
+                        self.resetToNormalTypingAttributes(textView)
+                    }
+                }
+            }
+
+            if commandSelector == #selector(NSResponder.insertTab(_:)) && parent.singleLine {
+                return true
+            }
+
+            return false
+        }
+
+        // MARK: - Menu State
+
+        private func handleMentionState(in textView: CosmoTextView, text: String, cursorLocation: Int) {
+            guard parent.allowMentions else {
+                mentionStartIndex = nil
+                return
+            }
+
+            if let startIndex = mentionStartIndex {
+                let stillValid = startIndex < text.count &&
+                    text[text.index(text.startIndex, offsetBy: startIndex)] == "@" &&
+                    cursorLocation >= startIndex
+
+                if !stillValid {
+                    mentionStartIndex = nil
+                    dismissMenus()
+                    return
+                }
+
+                let queryRange = NSRange(location: startIndex + 1, length: max(0, cursorLocation - startIndex - 1))
+                if queryRange.location <= text.count, NSMaxRange(queryRange) <= text.count {
+                    let query = (text as NSString).substring(with: queryRange)
+                    if query.contains(" ") || query.contains("\n") {
+                        mentionStartIndex = nil
+                        dismissMenus()
+                        return
+                    }
+
+                    let position = caretPosition(for: startIndex, in: textView)
+                    parent.onMention?(position, query)
+                    return
+                }
+            }
+
+            guard cursorLocation > 0 else { return }
+            let char = (text as NSString).substring(with: NSRange(location: cursorLocation - 1, length: 1))
+            if char == "@" {
+                mentionStartIndex = cursorLocation - 1
+                parent.onMention?(caretPosition(for: cursorLocation - 1, in: textView), "")
+            }
+        }
+
+        private func handleSlashState(in textView: CosmoTextView, text: String, cursorLocation: Int) {
+            guard parent.allowSlashCommands, cursorLocation > 0 else { return }
+            let nsText = text as NSString
+            let currentChar = nsText.substring(with: NSRange(location: cursorLocation - 1, length: 1))
+            guard currentChar == "/" else { return }
+
+            let isStartOfDocument = cursorLocation == 1
+            let precededByWhitespace: Bool = {
+                guard cursorLocation >= 2 else { return true }
+                let previous = nsText.substring(with: NSRange(location: cursorLocation - 2, length: 1))
+                return previous.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }()
+
+            if isStartOfDocument || precededByWhitespace {
+                parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView))
+            }
+        }
+
+        private func caretPosition(for location: Int, in textView: NSTextView) -> CGPoint {
+            let safeLocation = max(0, min(location, textView.string.count))
+            let screenRect = textView.firstRect(
+                forCharacterRange: NSRange(location: safeLocation, length: 0),
+                actualRange: nil
+            )
+            if let window = textView.window, let scrollView = textView.enclosingScrollView {
+                let windowRect = window.convertFromScreen(screenRect)
+                let local = scrollView.convert(windowRect.origin, from: nil)
+                return CGPoint(x: local.x, y: local.y + screenRect.height)
+            }
+            return CGPoint(x: screenRect.origin.x, y: screenRect.origin.y + screenRect.height)
+        }
+
         private func dismissMenus() {
-            isProcessingSlashCommand = false
             mentionStartIndex = nil
             parent.onDismissMenus?()
         }
 
-        @MainActor
+        // MARK: - Commands
+
         @objc private func handleEditorScroll(_ notification: Notification) {
-            // If the user scrolls while a menu is open, treat it as "leave this transient UI"
             dismissMenus()
         }
 
-        @MainActor
         @objc private func handleAppWillResignActive(_ notification: Notification) {
             dismissMenus()
         }
 
-        @MainActor
         @objc private func handleInsertMentionInEditor(_ notification: Notification) {
-            guard let textView = textViewReference else { return }
+            guard let textView = activeTextView else { return }
 
-            // Only the active editor should respond.
-            guard textView.window?.firstResponder === textView else { return }
-
-            guard
-                let rawType = notification.userInfo?["entityType"] as? String,
-                let type = EntityType(rawValue: rawType),
-                let title = notification.userInfo?["title"] as? String
-            else { return }
-
-            let id: Int64
-            if let id64 = notification.userInfo?["entityId"] as? Int64 {
-                id = id64
-            } else if let idInt = notification.userInfo?["entityId"] as? Int {
-                id = Int64(idInt)
-            } else {
+            guard let rawType = notification.userInfo?["entityType"] as? String,
+                  let type = EntityType(rawValue: rawType),
+                  let title = notification.userInfo?["title"] as? String else {
                 return
             }
 
-            insertMention(entityType: type, entityId: id, title: title, into: textView)
+            let entityID = notification.userInfo?["entityId"] as? Int64
+            let entityUUID = notification.userInfo?["entityUUID"] as? String ?? UUID().uuidString
+
+            replaceCurrentMentionOrSelection(
+                in: textView,
+                mention: RichMention(entityUUID: entityUUID, entityID: entityID, entityType: type, titleSnapshot: title)
+            )
         }
 
-        @MainActor
+        @objc private func handlePerformMentionSelection(_ notification: Notification) {
+            guard let textView = activeTextView else { return }
+
+            guard let rawType = notification.userInfo?["entityType"] as? String,
+                  let type = EntityType(rawValue: rawType),
+                  let title = notification.userInfo?["title"] as? String,
+                  let uuid = notification.userInfo?["entityUUID"] as? String else {
+                return
+            }
+
+            let entityID = notification.userInfo?["entityId"] as? Int64
+            replaceCurrentMentionOrSelection(
+                in: textView,
+                mention: RichMention(entityUUID: uuid, entityID: entityID, entityType: type, titleSnapshot: title)
+            )
+            dismissMenus()
+        }
+
         @objc private func handleInsertTextInEditor(_ notification: Notification) {
-            guard let textView = textViewReference else { return }
+            guard let textView = activeTextView,
+                  let text = notification.userInfo?["text"] as? String else { return }
 
-            // Only the active editor should respond
-            guard textView.window?.firstResponder === textView else { return }
-
-            guard let text = notification.userInfo?["text"] as? String else { return }
-            let positionRaw = notification.userInfo?["position"] as? String ?? "cursor"
-
+            let positionRaw = notification.userInfo?["position"] as? String ?? EditorCommandBus.InsertPosition.cursor.rawValue
             insertText(text, position: positionRaw, into: textView)
         }
 
-        /// Insert plain text at the specified position
-        @MainActor
-        private func insertText(_ text: String, position: String, into textView: NSTextView) {
-            let storage = textView.textStorage
-            guard let storage = storage else { return }
-
-            let insertRange: NSRange
-            switch position {
-            case "end":
-                insertRange = NSRange(location: storage.length, length: 0)
-            case "newParagraph":
-                // Insert at current cursor, but add newlines before
-                let cursorLocation = textView.selectedRange().location
-                let prefixedText = "\n\n" + text
-                insertRange = NSRange(location: cursorLocation, length: 0)
-
-                storage.beginEditing()
-                storage.replaceCharacters(in: insertRange, with: prefixedText)
-                storage.endEditing()
-
-                // Move cursor to end of inserted text
-                let newCursor = cursorLocation + prefixedText.count
-                textView.setSelectedRange(NSRange(location: newCursor, length: 0))
-
-                parent.attributedText = textView.attributedString()
-                parent.plainText = textView.string
-                return
-            default: // "cursor"
-                insertRange = textView.selectedRange()
-            }
-
-            storage.beginEditing()
-            storage.replaceCharacters(in: insertRange, with: text)
-            storage.endEditing()
-
-            // Move cursor to end of inserted text
-            let newCursor = insertRange.location + text.count
-            textView.setSelectedRange(NSRange(location: newCursor, length: 0))
-
-            parent.attributedText = textView.attributedString()
-            parent.plainText = textView.string
-        }
-
-        @MainActor
         @objc private func handleSetTypingAttributes(_ notification: Notification) {
-            guard let textView = textViewReference else { return }
-            
-            // Check if this editor is the active one OR if no one is first responder yet
-            // This allows the notification to work right after refocusing
-            let isActiveEditor = textView.window?.firstResponder === textView
-            let noFirstResponder = textView.window?.firstResponder == nil
-            
-            // Only skip if another text view is the first responder
-            if !isActiveEditor && !noFirstResponder {
-                if let firstResponder = textView.window?.firstResponder as? NSTextView,
-                   firstResponder !== textView {
-                    return  // Another editor is active
-                }
+            guard let textView = activeTextView,
+                  let font = notification.userInfo?["font"] as? NSFont,
+                  let color = notification.userInfo?["color"] as? NSColor else {
+                return
             }
 
-            guard let userInfo = notification.userInfo,
-                  let font = userInfo["font"] as? NSFont,
-                  let color = userInfo["color"] as? NSColor else { return }
-
-            let isHeading = userInfo["isHeading"] as? Bool ?? false
+            let isHeading = notification.userInfo?["isHeading"] as? Bool ?? false
             isInHeadingMode = isHeading
 
-            // Set typing attributes so next typed characters use this style
             var attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: color
             ]
-            
-            // If heading, add paragraph styling for spacing
+
             if isHeading {
                 let paragraphStyle = NSMutableParagraphStyle()
                 paragraphStyle.lineSpacing = 4
-                paragraphStyle.paragraphSpacing = 12 // More spacing after headers
+                paragraphStyle.paragraphSpacing = 12
                 paragraphStyle.paragraphSpacingBefore = 16
                 attributes[.paragraphStyle] = paragraphStyle
-                
-                // ALSO apply to the current paragraph range immediately
-                let range = textView.selectedRange()
-                let lineRange = (textView.string as NSString).lineRange(for: range)
-                textView.textStorage?.addAttributes(attributes, range: lineRange)
+            } else {
+                attributes[.paragraphStyle] = defaultParagraphStyle()
             }
 
             textView.typingAttributes = attributes
-            
-            // Update parent binding
-            parent.attributedText = textView.attributedString()
+            syncBindings(from: textView)
         }
 
-        /// Reset typing attributes to normal body style
-        @MainActor
-        private func resetToNormalTypingAttributes(_ textView: NSTextView) {
-            isInHeadingMode = false
+        @objc private func handlePerformSlashCommand(_ notification: Notification) {
+            guard let textView = activeTextView,
+                  let command = notification.userInfo?["command"] as? SlashCommand,
+                  let storage = textView.textStorage else {
+                return
+            }
 
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.lineSpacing = 4
-            paragraphStyle.paragraphSpacing = 8
+            var insertionPoint = textView.selectedRange().location
+            if insertionPoint > 0 {
+                let slashRange = NSRange(location: insertionPoint - 1, length: 1)
+                if slashRange.location < storage.length,
+                   (textView.string as NSString).substring(with: slashRange) == "/" {
+                    storage.replaceCharacters(in: slashRange, with: "")
+                    insertionPoint = slashRange.location
+                    textView.setSelectedRange(NSRange(location: insertionPoint, length: 0))
+                }
+            }
 
-            let textColor = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
-
-            textView.typingAttributes = [
-                .font: NSFont.systemFont(ofSize: parent.fontSize),
-                .foregroundColor: textColor,
-                .paragraphStyle: paragraphStyle
-            ]
-        }
-
-        @MainActor
-        @objc private func handleToggleFormatting(_ notification: Notification) {
-            guard let textView = textViewReference,
-                  let userInfo = notification.userInfo,
-                  let type = userInfo["type"] as? FormattingType else { return }
-            
-            // Ensure we are the first responder
-            guard textView.window?.firstResponder === textView else { return }
-            
-            let range = textView.selectedRange()
-            guard let textStorage = textView.textStorage else { return }
-
-            switch type {
-            case .bold:
-                toggleBold() // Use helper
-            case .italic:
-                toggleItalic()
-            case .strikethrough:
-                toggleStrikethrough(range: range, storage: textStorage)
+            switch command.type {
+            case .image:
+                guard parent.allowImages else { return }
+                presentImagePicker(for: textView)
             case .heading1:
                 applyHeading(level: 1, textView: textView)
             case .heading2:
                 applyHeading(level: 2, textView: textView)
+            case .heading3:
+                applyHeading(level: 3, textView: textView)
+            case .quote:
+                toggleBlockPrefix("│ ", kind: .quote, in: textView)
+            case .divider:
+                insertTextBlock("───────────────", at: insertionPoint, in: textView, appendTrailingNewline: true)
             case .bulletList:
-                // Simple bullet insertion for selection
-                // Real implementation would be complex logic to wrap lines
-                // For now, toggle bullet at start of line
-                toggleBulletList(textView: textView)
+                toggleBlockPrefix("• ", kind: .bulletList, in: textView)
+            case .numberedList:
+                toggleNumberedList(in: textView)
+            case .checkbox:
+                toggleChecklist(in: textView)
             }
-            
-            // Force update binding
-            parent.attributedText = textView.attributedString()
+
+            syncBindings(from: textView)
+            dismissMenus()
         }
-        
-        func toggleBold() {
-            guard let textView = textViewReference else { return }
+
+        @objc private func handleToggleFormatting(_ notification: Notification) {
+            guard let textView = activeTextView,
+                  let type = notification.userInfo?["type"] as? FormattingType else {
+                return
+            }
+
+            // Ensure editor has focus (button click may have stolen it)
+            if textView.window?.firstResponder !== textView {
+                textView.window?.makeFirstResponder(textView)
+            }
+
+            applyFormatting(type, to: textView)
+        }
+
+        // MARK: - Formatting
+
+        private func applyFormatting(_ type: FormattingType, to textView: CosmoTextView) {
+            switch type {
+            case .bold, .italic:
+                toggleFontTrait(type == .bold ? .boldFontMask : .italicFontMask, in: textView)
+            case .underline:
+                toggleAttribute(.underlineStyle, onValue: NSUnderlineStyle.single.rawValue, in: textView)
+            case .strikethrough:
+                toggleAttribute(.strikethroughStyle, onValue: NSUnderlineStyle.single.rawValue, in: textView)
+            case .heading1:
+                applyHeading(level: 1, textView: textView)
+            case .heading2:
+                applyHeading(level: 2, textView: textView)
+            case .heading3:
+                applyHeading(level: 3, textView: textView)
+            case .bulletList:
+                toggleBlockPrefix("• ", kind: .bulletList, in: textView)
+            case .numberedList:
+                toggleNumberedList(in: textView)
+            case .checklist:
+                toggleChecklist(in: textView)
+            }
+
+            syncBindings(from: textView)
+        }
+
+        private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) {
             let range = textView.selectedRange()
-            let currentFontSize = parent.fontSize
-            
+
             if range.length > 0 {
-                // Apply to selection
-                textView.textStorage?.applyFontTraits(.boldFontMask, range: range)
-            } else {
-                // Toggle typing attributes for cursor position
-                let font = textView.typingAttributes[.font] as? NSFont ?? NSFont.systemFont(ofSize: currentFontSize)
-                let isBold = font.fontDescriptor.symbolicTraits.contains(.bold)
-                let newFont = isBold ? 
-                    NSFont.systemFont(ofSize: font.pointSize) :
-                    NSFont.boldSystemFont(ofSize: font.pointSize)
-                
-                var attributes = textView.typingAttributes
-                attributes[.font] = newFont
-                textView.typingAttributes = attributes
+                textView.textStorage?.enumerateAttribute(.font, in: range, options: []) { value, subrange, _ in
+                    let currentFont = (value as? NSFont) ?? NSFont.systemFont(ofSize: self.parent.fontSize)
+                    let currentTraits = currentFont.fontDescriptor.symbolicTraits
+                    let shouldRemove = (trait == .boldFontMask && currentTraits.contains(.bold)) ||
+                        (trait == .italicFontMask && currentTraits.contains(.italic))
+                    let newFont = shouldRemove
+                        ? self.fontByRemovingTrait(trait, from: currentFont)
+                        : NSFontManager.shared.convert(currentFont, toHaveTrait: trait)
+                    textView.textStorage?.addAttribute(.font, value: newFont, range: subrange)
+                }
+                return
             }
-            
-            // Force update binding
-            parent.attributedText = textView.attributedString()
+
+            var attributes = textView.typingAttributes
+            let currentFont = (attributes[.font] as? NSFont) ?? NSFont.systemFont(ofSize: parent.fontSize)
+            let currentTraits = currentFont.fontDescriptor.symbolicTraits
+            let shouldRemove = (trait == .boldFontMask && currentTraits.contains(.bold)) ||
+                (trait == .italicFontMask && currentTraits.contains(.italic))
+            attributes[.font] = shouldRemove
+                ? fontByRemovingTrait(trait, from: currentFont)
+                : NSFontManager.shared.convert(currentFont, toHaveTrait: trait)
+            textView.typingAttributes = attributes
         }
 
-        // Helper for Italic
-        func toggleItalic() {
-            guard let textView = textViewReference else { return }
+        private func fontByRemovingTrait(_ trait: NSFontTraitMask, from font: NSFont) -> NSFont {
+            var traits = font.fontDescriptor.symbolicTraits
+            if trait == .boldFontMask {
+                traits.remove(.bold)
+            } else if trait == .italicFontMask {
+                traits.remove(.italic)
+            }
+
+            let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+            if let converted = NSFont(descriptor: descriptor, size: font.pointSize) {
+                return converted
+            }
+
+            return NSFont.systemFont(ofSize: font.pointSize)
+        }
+
+        private func toggleAttribute(_ key: NSAttributedString.Key, onValue: Int, in textView: NSTextView) {
             let range = textView.selectedRange()
-            let currentFontSize = parent.fontSize
-            
+
             if range.length > 0 {
-                // Apply to selection
-                textView.textStorage?.applyFontTraits(.italicFontMask, range: range)
-            } else {
-                // Toggle typing attributes for cursor position
-                let font = textView.typingAttributes[.font] as? NSFont ?? NSFont.systemFont(ofSize: currentFontSize)
-                let isItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
-                let newFont = isItalic ? 
-                    NSFont.systemFont(ofSize: font.pointSize) :
-                    (NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: font.pointSize) ?? font)
-                
-                var attributes = textView.typingAttributes
-                attributes[.font] = newFont
-                textView.typingAttributes = attributes
+                let current = textView.textStorage?.attribute(key, at: range.location, effectiveRange: nil) as? Int ?? 0
+                if current == onValue {
+                    textView.textStorage?.removeAttribute(key, range: range)
+                } else {
+                    textView.textStorage?.addAttribute(key, value: onValue, range: range)
+                }
+                return
             }
-            
-            // Force update binding
-            parent.attributedText = textView.attributedString()
+
+            var attributes = textView.typingAttributes
+            let current = attributes[key] as? Int ?? 0
+            attributes[key] = current == onValue ? 0 : onValue
+            textView.typingAttributes = attributes
         }
-        
-        func toggleStrikethrough(range: NSRange, storage: NSTextStorage) {
-            if range.length == 0 { return }
-            // Check if already struck through
-            let attributes = storage.attributes(at: range.location, effectiveRange: nil)
-            if attributes[.strikethroughStyle] != nil {
-                storage.removeAttribute(.strikethroughStyle, range: range)
-            } else {
-                storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+
+        private func applyHeading(level: Int, textView: NSTextView) {
+            let prefix: String
+            let font: NSFont
+
+            switch level {
+            case 1:
+                prefix = "# "
+                font = NSFont.systemFont(ofSize: max(28, parent.fontSize + 12), weight: .bold)
+            case 2:
+                prefix = "## "
+                font = NSFont.systemFont(ofSize: max(22, parent.fontSize + 8), weight: .semibold)
+            default:
+                prefix = "### "
+                font = NSFont.systemFont(ofSize: max(18, parent.fontSize + 4), weight: .semibold)
             }
-        }
-        
-        @MainActor
-        func applyHeading(level: Int, textView: NSTextView) {
-            guard let textStorage = textView.textStorage else { return }
 
-            let font = level == 1 ? NSFont.systemFont(ofSize: 28, weight: .bold) : NSFont.systemFont(ofSize: 22, weight: .semibold)
-            let color = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            let existingPrefixes = ["### ", "## ", "# "]
+            let existingPrefix = existingPrefixes.first(where: { lineText.hasPrefix($0) })
 
+            if let existingPrefix {
+                textView.textStorage?.replaceCharacters(
+                    in: NSRange(location: lineRange.location, length: existingPrefix.count),
+                    with: existingPrefix == prefix ? "" : prefix
+                )
+
+                if existingPrefix == prefix {
+                    isInHeadingMode = false
+                    resetToNormalTypingAttributes(textView)
+                    syncBindings(from: textView)
+                    return
+                }
+            } else {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: prefix)
+            }
+
+            let updatedLineRange = currentLineRange(in: textView)
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
             paragraphStyle.paragraphSpacingBefore = 16
 
-            let attributes: [NSAttributedString.Key: Any] = [
+            textView.textStorage?.addAttributes([
                 .font: font,
-                .foregroundColor: color,
+                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                .paragraphStyle: paragraphStyle
+            ], range: updatedLineRange)
+
+            textView.typingAttributes = [
+                .font: font,
+                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
                 .paragraphStyle: paragraphStyle
             ]
-
-            // Set heading mode flag so Enter key resets to normal
             isInHeadingMode = true
+        }
 
-            let range = textView.selectedRange()
-            let text = textView.string
-            let lineRange = (text as NSString).lineRange(for: range)
-            let currentLine = (text as NSString).substring(with: lineRange)
-
-            // Determine the markdown prefix for this heading level
-            let markdownPrefix = level == 1 ? "# " : "## "
-
-            // Check if line already has a heading prefix
-            let hasH1 = currentLine.hasPrefix("# ") && !currentLine.hasPrefix("## ")
-            let hasH2 = currentLine.hasPrefix("## ")
-
-            // Remove existing heading prefix if present (toggle or change level)
-            if hasH1 || hasH2 {
-                let existingPrefix = hasH2 ? "## " : "# "
-                let prefixRange = NSRange(location: lineRange.location, length: existingPrefix.count)
-                textStorage.replaceCharacters(in: prefixRange, with: "")
-
-                // If same level, we're toggling off - reset to normal formatting
-                if (level == 1 && hasH1) || (level == 2 && hasH2) {
-                    isInHeadingMode = false
-                    resetToNormalTypingAttributes(textView)
-
-                    // Re-calculate line range after removal and apply normal formatting
-                    let newLineRange = (textView.string as NSString).lineRange(for: NSRange(location: lineRange.location, length: 0))
-                    let normalAttrs: [NSAttributedString.Key: Any] = [
-                        .font: NSFont.systemFont(ofSize: parent.fontSize),
-                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
-                    ]
-                    if newLineRange.length > 0 {
-                        textStorage.addAttributes(normalAttrs, range: newLineRange)
-                    }
-                    parent.attributedText = textView.attributedString()
-                    parent.plainText = textView.string
-                    return
-                }
-
-                // Different level - insert the new prefix
-                textStorage.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: markdownPrefix)
+        private func toggleBlockPrefix(_ prefix: String, kind: RichBlockKind, in textView: NSTextView) {
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            if lineText.hasPrefix(prefix) {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: prefix.count), with: "")
             } else {
-                // No heading prefix - insert it at start of line
-                textStorage.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: markdownPrefix)
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: prefix)
             }
 
-            // Recalculate line range after insertion
-            let newLineRange = (textView.string as NSString).lineRange(for: NSRange(location: lineRange.location, length: 0))
-
-            // Apply visual attributes to the line
-            if newLineRange.length > 0 {
-                textStorage.addAttributes(attributes, range: newLineRange)
+            if kind != .quote {
+                resetToNormalTypingAttributes(textView)
             }
-
-            // Set typing attributes so new text uses heading style
-            textView.typingAttributes = attributes
-
-            // Move cursor to end of line (after any existing text)
-            let endOfLine = newLineRange.location + newLineRange.length
-            // Account for newline character at end
-            let cursorPos = max(newLineRange.location + markdownPrefix.count, endOfLine > 0 ? endOfLine - 1 : endOfLine)
-            textView.setSelectedRange(NSRange(location: cursorPos, length: 0))
-
-            // Update parent binding to persist changes
-            parent.attributedText = textView.attributedString()
-            parent.plainText = textView.string
-        }
-        
-        func toggleBulletList(textView: NSTextView) {
-             // Basic toggle: Check start of line for "• "
-             let range = textView.selectedRange()
-             let lineRange = (textView.string as NSString).lineRange(for: range)
-             let currentLine = (textView.string as NSString).substring(with: lineRange)
-             
-             if currentLine.hasPrefix("• ") {
-                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 2), with: "")
-             } else {
-                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "• ")
-             }
-        }
-        
-        @MainActor
-        @objc private func handlePerformSlashCommand(_ notification: Notification) {
-            guard let textView = textViewReference else { return }
-            
-            // Loose check for focus to handle timing issues with overlay dismissal
-            let isActiveEditor = textView.window?.firstResponder === textView
-            let noFirstResponder = textView.window?.firstResponder == nil
-             
-            if !isActiveEditor && !noFirstResponder {
-                if let firstResponder = textView.window?.firstResponder as? NSTextView,
-                   firstResponder !== textView {
-                    return
-                }
-            }
-
-            guard let userInfo = notification.userInfo,
-                  let command = userInfo["command"] as? SlashCommand,
-                  let textStorage = textView.textStorage else { return }
-
-            // 1. Remove the "/" trigger
-            let cursorLocation = textView.selectedRange().location
-            let text = textView.string
-            var insertLocation = cursorLocation
-            
-            // Find the slash before the cursor (usually at cursorLocation - 1)
-            if cursorLocation > 0 {
-                let range = NSRange(location: cursorLocation - 1, length: 1)
-                // Verify it's a slash
-                if range.location < text.count {
-                    let char = (text as NSString).substring(with: range)
-                    if char == "/" {
-                        textStorage.replaceCharacters(in: range, with: "")
-                        insertLocation = range.location
-                        // Update selection to reflect removal before proceeding
-                        textView.setSelectedRange(NSRange(location: insertLocation, length: 0))
-                    }
-                }
-            }
-            
-            let textColor = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
-            let secondaryColor = parent.darkMode ? NSColor.white.withAlphaComponent(0.7) : NSColor(CosmoColors.textSecondary)
-            let tertiaryColor = parent.darkMode ? NSColor.white.withAlphaComponent(0.4) : NSColor(CosmoColors.textTertiary)
-
-            switch command.type {
-            case .heading1:
-                applyHeading(level: 1, textView: textView)
-            case .heading2:
-                applyHeading(level: 2, textView: textView)
-            case .bulletList:
-                let bullet = NSAttributedString(string: "• ", attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: textColor])
-                textStorage.insert(bullet, at: insertLocation)
-                // Move cursor after insertion
-                textView.setSelectedRange(NSRange(location: insertLocation + bullet.length, length: 0))
-            case .numberedList:
-                let number = NSAttributedString(string: "1. ", attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: textColor])
-                textStorage.insert(number, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + number.length, length: 0))
-            case .checkbox:
-                let checkbox = NSAttributedString(string: "☐ ", attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: textColor])
-                textStorage.insert(checkbox, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + checkbox.length, length: 0))
-            case .quote:
-                let quote = NSAttributedString(string: "│ ", attributes: [.font: NSFont.systemFont(ofSize: 16, weight: .light), .foregroundColor: secondaryColor])
-                textStorage.insert(quote, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + quote.length, length: 0))
-            case .code:
-                let code = NSAttributedString(string: "```\n\n```", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular), .foregroundColor: textColor, .backgroundColor: NSColor(CosmoColors.glassGrey.opacity(0.3))])
-                textStorage.insert(code, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + 4, length: 0)) // Position inside code block
-            case .divider:
-                let divider = NSAttributedString(string: "\n───────────────\n", attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: tertiaryColor])
-                textStorage.insert(divider, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + divider.length, length: 0))
-            case .callout:
-                let callout = NSAttributedString(string: "💡 ", attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: textColor])
-                textStorage.insert(callout, at: insertLocation)
-                textView.setSelectedRange(NSRange(location: insertLocation + callout.length, length: 0))
-            case .linkIdea, .linkTask, .linkContent:
-                break
-            }
-            
-            // 3. Update bindings
-            parent.attributedText = textView.attributedString()
-            parent.plainText = textView.string
-            parent.cursorPosition = textView.selectedRange().location
         }
 
-        @MainActor
-        private func insertMention(entityType: EntityType, entityId: Int64, title: String, into textView: NSTextView) {
+        private func toggleNumberedList(in textView: NSTextView) {
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            if let match = lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                let count = lineText.distance(from: lineText.startIndex, to: match.upperBound)
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: count), with: "")
+            } else {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "1. ")
+            }
+            resetToNormalTypingAttributes(textView)
+        }
+
+        private func toggleChecklist(in textView: NSTextView) {
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            if lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ") {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 2), with: "")
+            } else {
+                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "☐ ")
+            }
+            resetToNormalTypingAttributes(textView)
+        }
+
+        private func currentLineRange(in textView: NSTextView) -> NSRange {
+            (textView.string as NSString).lineRange(for: textView.selectedRange())
+        }
+
+        private func resetToNormalTypingAttributes(_ textView: NSTextView) {
+            isInHeadingMode = false
+            textView.typingAttributes = [
+                .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                .paragraphStyle: defaultParagraphStyle()
+            ]
+        }
+
+        private func defaultParagraphStyle() -> NSParagraphStyle {
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = parent.singleLine ? 0 : 4
+            style.paragraphSpacing = parent.singleLine ? 0 : 8
+            return style
+        }
+
+        // MARK: - Insertion
+
+        private func insertText(_ text: String, position: String, into textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
 
-            let color = CosmoMentionColors.nsColor(for: entityType)
-            let mention = NSMutableAttributedString(
-                string: "@\(title)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-                    .foregroundColor: color,
-                    .link: "cosmo://\(entityType.rawValue)/\(entityId)",
-                    .backgroundColor: color.withAlphaComponent(0.1),
-                    .underlineStyle: 0,
-                    NSAttributedString.Key("CosmoEntityType"): entityType.rawValue,
-                    NSAttributedString.Key("CosmoEntityId"): entityId
-                ]
-            )
+            let range: NSRange
+            switch position {
+            case EditorCommandBus.InsertPosition.endOfDocument.rawValue:
+                range = NSRange(location: storage.length, length: 0)
+            case EditorCommandBus.InsertPosition.newParagraph.rawValue:
+                range = textView.selectedRange()
+                storage.replaceCharacters(in: range, with: "\n\n\(text)")
+                textView.setSelectedRange(NSRange(location: range.location + text.count + 2, length: 0))
+                syncBindings(from: textView)
+                return
+            default:
+                range = textView.selectedRange()
+            }
 
-            // Add a trailing space for flow.
-            mention.append(NSAttributedString(
+            storage.replaceCharacters(in: range, with: text)
+            textView.setSelectedRange(NSRange(location: range.location + text.count, length: 0))
+            syncBindings(from: textView)
+        }
+
+        private func replaceCurrentMentionOrSelection(in textView: NSTextView, mention: RichMention) {
+            guard let storage = textView.textStorage else { return }
+
+            let replacementRange: NSRange
+            if let mentionStartIndex,
+               mentionStartIndex <= textView.selectedRange().location {
+                replacementRange = NSRange(
+                    location: mentionStartIndex,
+                    length: textView.selectedRange().location - mentionStartIndex
+                )
+            } else {
+                replacementRange = textView.selectedRange()
+            }
+
+            let mentionString = NSMutableAttributedString(
+                string: mention.displayText,
+                attributes: mentionAttributes(for: mention)
+            )
+            mentionString.append(NSAttributedString(
                 string: " ",
                 attributes: [
-                    .font: NSFont.systemFont(ofSize: 16),
-                    .foregroundColor: NSColor(CosmoColors.textPrimary)
+                    .font: NSFont.systemFont(ofSize: parent.fontSize),
+                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
                 ]
             ))
 
-            let selectedRange = textView.selectedRange()
-            storage.replaceCharacters(in: selectedRange, with: mention)
-
-            // Move cursor to end of inserted mention
-            let newCursor = selectedRange.location + mention.length
+            storage.replaceCharacters(in: replacementRange, with: mentionString)
+            let newCursor = replacementRange.location + mentionString.length
             textView.setSelectedRange(NSRange(location: newCursor, length: 0))
+            mentionStartIndex = nil
+            syncBindings(from: textView)
+        }
 
-            // Sync bindings
-            parent.attributedText = textView.attributedString()
+        private func mentionAttributes(for mention: RichMention) -> [NSAttributedString.Key: Any] {
+            let color = CosmoMentionColors.nsColor(for: mention.entityType)
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: max(15, parent.fontSize - 1), weight: .semibold),
+                .foregroundColor: color,
+                .backgroundColor: color.withAlphaComponent(0.12),
+                .underlineStyle: 0,
+                RichDocumentAttributeKeys.entityType: mention.entityType.rawValue,
+                RichDocumentAttributeKeys.entityUUID: mention.entityUUID
+            ]
+
+            if let entityID = mention.entityID {
+                attributes[RichDocumentAttributeKeys.entityID] = entityID
+                attributes[.link] = "cosmo://\(mention.entityType.rawValue)/\(entityID)"
+            }
+
+            return attributes
+        }
+
+        private func presentImagePicker(for textView: NSTextView) {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.allowedContentTypes = [.png, .jpeg, .gif, .heic, .tiff, .image]
+            panel.title = "Insert Image"
+
+            guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else {
+                return
+            }
+
+            insertImage(data: data, filename: url.lastPathComponent, into: textView)
+        }
+
+        private func insertImage(data: Data, filename: String?, into textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+            guard let saved = try? ImageStore.save(data, originalFilename: filename),
+                  let image = ImageStore.load(path: saved.path) else {
+                return
+            }
+
+            let attachment = NSTextAttachment()
+            attachment.image = image.scaled(toFit: CGSize(width: min(680, saved.width), height: 420))
+
+            let attributed = NSMutableAttributedString(attachment: attachment)
+            attributed.addAttributes([
+                RichDocumentAttributeKeys.imagePath: saved.path
+            ], range: NSRange(location: 0, length: attributed.length))
+
+            let replacementRange = textView.selectedRange()
+            let prefix = replacementRange.location > 0 && !(textView.string as NSString).substring(with: NSRange(location: replacementRange.location - 1, length: 1)).hasSuffix("\n")
+                ? "\n"
+                : ""
+            let suffix = "\n"
+
+            let wrapped = NSMutableAttributedString(string: prefix)
+            wrapped.append(attributed)
+            wrapped.append(NSAttributedString(string: suffix))
+
+            storage.replaceCharacters(in: replacementRange, with: wrapped)
+            let cursor = replacementRange.location + wrapped.length
+            textView.setSelectedRange(NSRange(location: cursor, length: 0))
+            syncBindings(from: textView)
+        }
+
+        private func insertTextBlock(_ text: String, at location: Int, in textView: NSTextView, appendTrailingNewline: Bool) {
+            let prefix = location > 0 && !(textView.string as NSString).substring(with: NSRange(location: location - 1, length: 1)).hasSuffix("\n") ? "\n" : ""
+            let suffix = appendTrailingNewline ? "\n" : ""
+            let output = prefix + text + suffix
+            textView.textStorage?.replaceCharacters(in: NSRange(location: location, length: 0), with: output)
+            textView.setSelectedRange(NSRange(location: location + output.count, length: 0))
+        }
+
+        // MARK: - Shared helpers
+
+        private var activeTextView: CosmoTextView? {
+            textViewReference
+        }
+
+        private func syncBindings(from textView: NSTextView) {
+            // Lightweight per-keystroke sync: plain text + cursor position only
             parent.plainText = textView.string
-            parent.cursorPosition = newCursor
+            parent.cursorPosition = textView.selectedRange().location
+
+            // Coalesce expensive attributedText sync + height measurement.
+            // Fires after 50ms of inactivity — fast enough to feel instant,
+            // slow enough to skip during rapid typing bursts.
+            deferredSyncWorkItem?.cancel()
+            isUpdatingFromTextView = true
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.parent.attributedText = textView.attributedString()
+                self.notifyContentHeightChange(for: textView)
+                DispatchQueue.main.async { self.isUpdatingFromTextView = false }
+            }
+            deferredSyncWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+        }
+
+        fileprivate func notifyContentHeightChange(for textView: NSTextView) {
+            guard let callback = parent.onContentHeightChange else { return }
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return
+            }
+
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let measuredHeight = ceil(usedRect.height + (textView.textContainerInset.height * 2))
+            let minimum = parent.singleLine ? parent.resolvedSingleLineHeight() : 0
+            let newHeight = max(minimum, measuredHeight)
+            // Only notify when height changes by >1pt to prevent sub-pixel jitter
+            guard abs(newHeight - lastReportedHeight) > 1.0 else { return }
+            lastReportedHeight = newHeight
+            callback(newHeight)
+        }
+
+        fileprivate func normalizeSingleLineViewport(for textView: NSTextView) {
+            guard parent.singleLine,
+                  let scrollView = textView.enclosingScrollView else {
+                return
+            }
+
+            let targetHeight = parent.resolvedSingleLineHeight()
+            let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
+            if textView.frame.height != targetHeight || textView.frame.width != currentWidth {
+                textView.setFrameSize(NSSize(width: currentWidth, height: targetHeight))
+            }
+
+            let clipView = scrollView.contentView
+            if clipView.bounds.origin != .zero {
+                clipView.scroll(to: .zero)
+                scrollView.reflectScrolledClipView(clipView)
+            }
         }
     }
 }
 
-// MARK: - NSFont Italic Extension
-// Moved to CosmoMarkdown.swift
-
+fileprivate extension NSImage {
+    func pngData() -> Data? {
+        guard let tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}

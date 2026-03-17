@@ -1,192 +1,131 @@
-// CosmoOS/Editor/MentionMenu.swift
-// @mention autocomplete with entity search
-// Premium "Cosmic Glass" styling from Cosmo design system
-// December 2025 - Staggered animations, symbol effects, haptic feedback
-
 import SwiftUI
-import GRDB
 
 struct MentionMenu: View {
     let position: CGPoint
     let searchQuery: String
     let onSelect: (MentionEntity) -> Void
     let onDismiss: () -> Void
-    var darkMode: Bool = false  // Dark glass mode for Thinkspace blocks
+    var darkMode: Bool = false
 
     @State private var entities: [MentionEntity] = []
     @State private var selectedIndex = 0
     @State private var isLoading = true
-    @State private var appearedRows: Set<Int64> = []
+    @State private var appearedRows: Set<String> = []
     @State private var menuAppeared = false
-    @State private var headerIconBounce = false
+    @State private var searchTask: Task<Void, Never>?
 
-    private let database = CosmoDatabase.shared
-    private let menuWidth: CGFloat = 300
-    private let menuHeight: CGFloat = 290
+    private let provider = MentionSearchProvider.shared
+    private let menuWidth: CGFloat = 360
+    private let menuHeight: CGFloat = 320
 
-    // MARK: - Dark Mode Colors
-    private var bgColor: Color { darkMode ? CosmoColors.thinkspaceTertiary : CosmoColors.softWhite }
-    private var textPrimary: Color { darkMode ? .white : CosmoColors.textPrimary }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : CosmoColors.textSecondary }
-    private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary }
-    private var accentColor: Color { darkMode ? CosmoColors.thinkspacePurple : CosmoColors.skyBlue }
-    private var borderColor: Color { darkMode ? Color.white.opacity(0.1) : CosmoColors.glassGrey.opacity(0.5) }
-    private var shadowColor: Color { darkMode ? CosmoColors.thinkspacePurple.opacity(0.3) : .black.opacity(0.10) }
+    private var bgColor: Color { darkMode ? DS.surfaceElevated : CosmoColors.softWhite }
+    private var borderColor: Color { darkMode ? Color.white.opacity(0.08) : DS.border }
+    private var shadowColor: Color { darkMode ? Color.black.opacity(0.38) : Color.black.opacity(0.12) }
+    private var textPrimary: Color { darkMode ? .white : DS.text }
+    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
+    private var textMuted: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
     var body: some View {
-        menuContent
-            .frame(width: menuWidth, height: menuHeight, alignment: .top)
-            .background(bgColor)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(menuBorder)
-            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-            .shadow(color: shadowColor, radius: 16, y: 6)
-            .shadow(color: accentColor.opacity(0.15), radius: 24, y: 8)
-            .withAccentSeam(accentColor, position: .leading)
-            .scaleEffect(menuAppeared ? 1 : 0.95)
-            .opacity(menuAppeared ? 1 : 0)
-            .blur(radius: menuAppeared ? 0 : 4)
-            .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
-            .onAppear(perform: handleAppear)
-            .onChange(of: searchQuery) { handleSearchChange() }
-            .onKeyPress(.upArrow) { handleUpArrow() }
-            .onKeyPress(.downArrow) { handleDownArrow() }
-            .onKeyPress(.return) { handleReturn() }
-            .onKeyPress(.escape) { handleEscape() }
-            .onKeyPress(.delete) { handleDelete() }
-    }
-
-    // MARK: - Subviews
-
-    @ViewBuilder
-    private var menuContent: some View {
         VStack(spacing: 0) {
-            headerView
-            dividerView
-            contentView
+            header
+
+            Rectangle()
+                .fill(borderColor)
+                .frame(height: 1)
+
+            content
         }
+        .frame(width: menuWidth, height: menuHeight, alignment: .top)
+        .background(bgColor)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .shadow(color: shadowColor, radius: 22, y: 10)
+        .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
+        .scaleEffect(menuAppeared ? 1 : 0.97)
+        .opacity(menuAppeared ? 1 : 0)
+        .onAppear {
+            withAnimation(ProMotionSprings.gentle) {
+                menuAppeared = true
+            }
+            loadEntities()
+        }
+        .onChange(of: searchQuery) { _, _ in
+            appearedRows.removeAll()
+            loadEntities()
+        }
+        .onDisappear {
+            searchTask?.cancel()
+        }
+        .onKeyPress(.upArrow) { handleUpArrow() }
+        .onKeyPress(.downArrow) { handleDownArrow() }
+        .onKeyPress(.return) { handleReturn() }
+        .onKeyPress(.escape) { handleEscape() }
+        .onKeyPress(.delete) { handleDelete() }
     }
 
-    @ViewBuilder
-    private var headerView: some View {
-        HStack {
-            Image(systemName: "at")
-                .foregroundColor(accentColor)
-                .symbolEffect(.bounce, value: headerIconBounce)
+    private var header: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(DS.accentSoft)
+                    .frame(width: 30, height: 30)
 
-            Text(searchQuery.isEmpty ? "Search entities..." : "Results for \"\(searchQuery)\"")
-                .font(.system(size: 13))
-                .foregroundColor(textSecondary)
+                Image(systemName: "at")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.accent)
+            }
 
-            Spacer()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Link Item")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(textPrimary)
 
-            if !isLoading && !entities.isEmpty {
-                resultCountBadge
+                Text(searchQuery.isEmpty ? "Recent and relevant items" : "Results for @\(searchQuery)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if !isLoading {
+                Text("\(entities.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(DS.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(DS.accentSoft, in: Capsule())
             }
         }
-        .padding(12)
-        .background(bgColor)
-    }
-
-    private var resultCountBadge: some View {
-        Text("\(entities.count)")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(accentColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(accentColor.opacity(0.12))
-            .clipShape(Capsule())
-            .transition(.scale.combined(with: .opacity))
-    }
-
-    private var dividerView: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [accentColor.opacity(0.4), borderColor],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .frame(height: 1)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     @ViewBuilder
-    private var contentView: some View {
+    private var content: some View {
         if isLoading {
             loadingView
         } else if entities.isEmpty {
             emptyView
         } else {
-            entityListView
-        }
-    }
-
-    private var loadingView: some View {
-        VStack(spacing: 8) {
-            ForEach(0..<3, id: \.self) { _ in
-                shimmerRow
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .background(bgColor)
-    }
-
-    private var shimmerRow: some View {
-        HStack(spacing: 12) {
-            CosmicShimmer(entityColor: accentColor, cornerRadius: 8)
-                .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 4) {
-                CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
-                    .frame(height: 14)
-                    .frame(maxWidth: 120)
-                CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
-                    .frame(height: 10)
-                    .frame(maxWidth: 80)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    private var emptyView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24))
-                .foregroundColor(textTertiary)
-                .symbolEffect(.pulse)
-            Text("No entities found")
-                .font(.system(size: 13))
-                .foregroundColor(textSecondary)
-        }
-        .frame(height: 80)
-        .frame(maxWidth: .infinity)
-        .background(bgColor)
-    }
-
-    private var entityListView: some View {
-        ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 6) {
                     ForEach(Array(entities.enumerated()), id: \.element.id) { index, entity in
-                        entityRow(entity: entity, index: index)
+                        mentionRowView(index: index, entity: entity)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
-            .frame(maxHeight: 250)
-            .background(bgColor)
-            .onChange(of: selectedIndex) { _, newIndex in
-                withAnimation(ProMotionSprings.snappy) {
-                    proxy.scrollTo(newIndex, anchor: .center)
-                }
-                CosmicHaptics.shared.play(.threshold)
-            }
+            .background(darkMode ? DS.bg : Color.clear)
         }
     }
 
-    private func entityRow(entity: MentionEntity, index: Int) -> some View {
+    @ViewBuilder
+    private func mentionRowView(index: Int, entity: MentionEntity) -> some View {
         MentionRow(
             entity: entity,
             isSelected: index == selectedIndex,
@@ -195,19 +134,15 @@ struct MentionMenu: View {
         )
         .id(index)
         .onTapGesture {
-            CosmicHaptics.shared.play(.selection)
             onSelect(entity)
         }
-        .onHover { isHovered in
-            if isHovered {
-                if selectedIndex != index {
-                    CosmicHaptics.shared.play(.threshold)
-                }
+        .onHover { hovering in
+            if hovering {
                 selectedIndex = index
             }
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.03) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (Double(index) * 0.015)) {
                 withAnimation(ProMotionSprings.cardEntrance) {
                     _ = appearedRows.insert(entity.id)
                 }
@@ -215,32 +150,71 @@ struct MentionMenu: View {
         }
     }
 
-    private var menuBorder: some View {
-        RoundedRectangle(cornerRadius: 14)
-            .stroke(
-                LinearGradient(
-                    colors: [accentColor.opacity(0.4), borderColor],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-    }
+    private var loadingView: some View {
+        VStack(spacing: 10) {
+            ForEach(0..<4, id: \.self) { _ in
+                HStack(spacing: 12) {
+                    CosmicShimmer(entityColor: DS.accent, cornerRadius: 10)
+                        .frame(width: 34, height: 34)
 
-    // MARK: - Event Handlers
+                    VStack(alignment: .leading, spacing: 6) {
+                        CosmicShimmer(entityColor: DS.accent, cornerRadius: 4)
+                            .frame(width: 140, height: 14)
+                        CosmicShimmer(entityColor: DS.accent, cornerRadius: 4)
+                            .frame(width: 80, height: 10)
+                    }
 
-    private func handleAppear() {
-        CosmicHaptics.shared.play(.menuAppear)
-        withAnimation(ProMotionSprings.bouncy) {
-            menuAppeared = true
-            headerIconBounce.toggle()
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+            }
         }
-        loadEntities()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 14)
     }
 
-    private func handleSearchChange() {
-        appearedRows.removeAll()
-        loadEntities()
+    private var emptyView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundColor(textMuted)
+
+            Text("No items found")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(textPrimary)
+
+            Text("Try a different name or keyword.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func loadEntities() {
+        searchTask?.cancel()
+        isLoading = true
+        selectedIndex = 0
+
+        searchTask = Task {
+            let results = await provider.search(query: searchQuery)
+            let mapped = results.map { result in
+                MentionEntity(
+                    entityID: result.atomID,
+                    uuid: result.atomUUID,
+                    type: result.entityType,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                    typeLabel: result.typeLabel,
+                    updatedAt: result.updatedAt
+                )
+            }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                entities = mapped
+                isLoading = false
+            }
+        }
     }
 
     private func handleUpArrow() -> KeyPress.Result {
@@ -249,20 +223,17 @@ struct MentionMenu: View {
     }
 
     private func handleDownArrow() -> KeyPress.Result {
-        selectedIndex = min(entities.count - 1, selectedIndex + 1)
+        selectedIndex = min(max(0, entities.count - 1), selectedIndex + 1)
         return .handled
     }
 
     private func handleReturn() -> KeyPress.Result {
-        if let entity = entities[safe: selectedIndex] {
-            CosmicHaptics.shared.play(.selection)
-            onSelect(entity)
-        }
+        guard let entity = entities[safe: selectedIndex] else { return .handled }
+        onSelect(entity)
         return .handled
     }
 
     private func handleEscape() -> KeyPress.Result {
-        CosmicHaptics.shared.play(.selection)
         onDismiss()
         return .handled
     }
@@ -274,212 +245,68 @@ struct MentionMenu: View {
         }
         return .ignored
     }
-
-    // MARK: - Load Entities
-    private func loadEntities() {
-        isLoading = true
-        selectedIndex = 0
-
-        Task {
-            var results: [MentionEntity] = []
-
-            // Search ideas
-            let ideas = try? await database.asyncRead { db in
-                try Atom
-                    .filter(Column("type") == AtomType.idea.rawValue)
-                    .filter(Column("is_deleted") == false)
-                    .filter(
-                        searchQuery.isEmpty ? Column("id") > 0 :
-                        Column("title").like("%\(searchQuery)%") ||
-                        Column("body").like("%\(searchQuery)%")
-                    )
-                    .order(Column("updated_at").desc)
-                    .limit(5)
-                    .fetchAll(db)
-                    .map { IdeaWrapper(atom: $0) }
-            }
-
-            results += (ideas ?? []).map { idea in
-                MentionEntity(
-                    id: idea.id ?? -1,
-                    uuid: idea.uuid,
-                    type: .idea,
-                    title: idea.title ?? "Untitled",
-                    subtitle: String(idea.content.prefix(50))
-                )
-            }
-
-            // Search tasks
-            let tasks = try? await database.asyncRead { db in
-                try Atom
-                    .filter(Column("type") == AtomType.task.rawValue)
-                    .filter(Column("is_deleted") == false)
-                    .filter(
-                        searchQuery.isEmpty ? Column("id") > 0 :
-                        Column("title").like("%\(searchQuery)%")
-                    )
-                    .order(Column("updated_at").desc)
-                    .limit(3)
-                    .fetchAll(db)
-                    .map { TaskWrapper(atom: $0) }
-            }
-
-            results += (tasks ?? []).map { task in
-                MentionEntity(
-                    id: task.id ?? -1,
-                    uuid: task.uuid,
-                    type: .task,
-                    title: task.title ?? "Untitled",
-                    subtitle: task.status
-                )
-            }
-
-            // Search content
-            let content = try? await database.asyncRead { db in
-                try Atom
-                    .filter(Column("type") == AtomType.content.rawValue)
-                    .filter(Column("is_deleted") == false)
-                    .filter(
-                        searchQuery.isEmpty ? Column("id") > 0 :
-                        Column("title").like("%\(searchQuery)%")
-                    )
-                    .order(Column("updated_at").desc)
-                    .limit(3)
-                    .fetchAll(db)
-                    .map { ContentWrapper(atom: $0) }
-            }
-
-            results += (content ?? []).map { item in
-                MentionEntity(
-                    id: item.id ?? -1,
-                    uuid: item.uuid,
-                    type: .content,
-                    title: item.title ?? "Untitled",
-                    subtitle: item.status
-                )
-            }
-
-            // Search projects
-            let projects = try? await database.asyncRead { db in
-                try Atom
-                    .filter(Column("type") == AtomType.project.rawValue)
-                    .filter(Column("is_deleted") == false)
-                    .filter(
-                        searchQuery.isEmpty ? Column("id") > 0 :
-                        Column("title").like("%\(searchQuery)%")
-                    )
-                    .order(Column("updated_at").desc)
-                    .limit(2)
-                    .fetchAll(db)
-                    .map { ProjectWrapper(atom: $0) }
-            }
-
-            results += (projects ?? []).map { project in
-                MentionEntity(
-                    id: project.id ?? -1,
-                    uuid: project.uuid,
-                    type: .project,
-                    title: project.title ?? "Untitled",
-                    subtitle: project.status
-                )
-            }
-
-            await MainActor.run {
-                entities = results
-                isLoading = false
-            }
-        }
-    }
 }
 
-// MARK: - Mention Row
-/// Premium row with staggered entrance and symbol effects
 struct MentionRow: View {
     let entity: MentionEntity
     let isSelected: Bool
     let hasAppeared: Bool
     var darkMode: Bool = false
 
-    @State private var iconBounce = false
-
-    // Get entity color from CosmoMentionColors for proper contrast
     private var entityColor: Color {
         CosmoMentionColors.color(for: entity.type)
     }
 
-    // Dark mode colors
-    private var textPrimary: Color { darkMode ? .white : CosmoColors.textPrimary }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : CosmoColors.textSecondary }
+    private var textPrimary: Color { darkMode ? .white : DS.text }
+    private var textSecondary: Color { darkMode ? Color.white.opacity(0.65) : DS.textSecondary }
+    private var rowFill: Color {
+        isSelected ? entityColor.opacity(darkMode ? 0.18 : 0.12) : .clear
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            // Entity type icon - uses entity-specific color with symbol effect
-            Image(systemName: entity.type.icon)
-                .font(.system(size: 16))
-                .foregroundColor(entityColor)
-                .symbolEffect(.bounce, value: iconBounce)
-                .frame(width: 32, height: 32)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(entityColor.opacity(isSelected ? 0.2 : 0.12))
-                        .shadow(
-                            color: entityColor.opacity(isSelected ? 0.3 : 0),
-                            radius: isSelected ? 6 : 0,
-                            y: isSelected ? 2 : 0
-                        )
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(entityColor.opacity(isSelected ? 0.16 : 0.12))
+                .frame(width: 34, height: 34)
+                .overlay(
+                    Image(systemName: entity.type.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(entityColor)
                 )
 
-            // Title and subtitle
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(entity.title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(textPrimary)
                     .lineLimit(1)
 
                 if let subtitle = entity.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(textSecondary)
                         .lineLimit(1)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            // Type badge with entity color
-            Text(entity.type.rawValue)
+            Text(entity.typeLabel)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(entityColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(entityColor.opacity(0.12))
-                .cornerRadius(4)
-
-            // Selection indicator
-            if isSelected {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(entityColor)
-                    .transition(.scale.combined(with: .opacity))
-            }
+                .foregroundColor(textSecondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? entityColor.opacity(0.1) : Color.clear)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(rowFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isSelected ? entityColor.opacity(0.22) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
-        // Staggered entrance animation
         .opacity(hasAppeared ? 1 : 0)
-        .offset(x: hasAppeared ? 0 : -12)
-        .blur(radius: hasAppeared ? 0 : 2)
-        .scaleEffect(x: hasAppeared ? 1 : 0.98, y: 1, anchor: .leading)
-        .animation(ProMotionSprings.snappy, value: isSelected)
-        .onChange(of: isSelected) { _, selected in
-            if selected {
-                iconBounce.toggle()
-            }
-        }
+        .offset(y: hasAppeared ? 0 : 6)
     }
 }

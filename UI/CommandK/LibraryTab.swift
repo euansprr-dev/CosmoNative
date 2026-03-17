@@ -21,8 +21,6 @@ struct LibraryTab: View {
     @State private var showResearchURLInput = false
     @State private var researchURLText = ""
     @State private var showImageImporter = false
-    @StateObject private var incubationEngine = IncubationEngine.shared
-
     // MARK: - Filtered Items (Search-Library Bridge)
 
     private var filteredItems: [LibraryItem] {
@@ -32,11 +30,7 @@ struct LibraryTab: View {
             items = libraryViewModel.displayItems
         } else {
             // Local text filtering — reliable for all queries
-            items = libraryViewModel.allItems.filter {
-                $0.title.localizedCaseInsensitiveContains(trimmed) ||
-                ($0.preview?.localizedCaseInsensitiveContains(trimmed) ?? false) ||
-                $0.typeName.localizedCaseInsensitiveContains(trimmed)
-            }
+            items = libraryViewModel.searchableItems.filter { Self.matchesSearch($0, query: trimmed) }
         }
         if let typeFilter {
             items = items.filter { $0.atomType == typeFilter }
@@ -62,13 +56,6 @@ struct LibraryTab: View {
                     breadcrumbBar
                 }
 
-
-                // Due for Review (incubation queue)
-                if !incubationEngine.dueAtoms.isEmpty
-                    && !libraryViewModel.showingRecentlyDeleted
-                    && searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                    dueForReviewRow
-                }
 
                 // Main content
                 if libraryViewModel.showingRecentlyDeleted {
@@ -219,6 +206,10 @@ struct LibraryTab: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
         }
+    }
+
+    nonisolated static func matchesSearch(_ item: LibraryItem, query: String) -> Bool {
+        CommandKSearchMatcher.matches(query, inAny: [item.title, item.preview, item.typeName, item.provenanceSummary])
     }
 
     @ViewBuilder
@@ -617,10 +608,19 @@ struct LibraryTab: View {
                     .frame(width: 28)
             }
 
-            Text(item.title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.text)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(DS.text)
+                    .lineLimit(1)
+
+                if let provenance = item.provenanceSummary, !provenance.isEmpty {
+                    Text(provenance)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.textMuted)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer()
 
@@ -664,13 +664,24 @@ struct LibraryTab: View {
             }
         } else {
             Button {
-                libraryViewModel.openInFocusMode(item)
+                if item.kind == .thinkspace {
+                    libraryViewModel.openThinkspace(item)
+                } else {
+                    libraryViewModel.openInFocusMode(item)
+                }
             } label: {
-                Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
+                Label(item.kind == .thinkspace ? "Open Thinkspace" : "Open in Focus Mode", systemImage: item.kind == .thinkspace ? "rectangle.3.group" : "arrow.up.left.and.arrow.down.right")
             }
 
             Button {
-                if let entityType = EntityType(rawValue: item.atomType.rawValue) {
+                if item.kind == .thinkspace {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openAsPane,
+                        object: nil,
+                        userInfo: ["thinkspaceId": item.uuid]
+                    )
+                    NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                } else if let entityType = EntityType(rawValue: item.atomType.rawValue) {
                     NotificationCenter.default.post(
                         name: CosmoNotification.Navigation.openAsPane,
                         object: nil,
@@ -682,14 +693,16 @@ struct LibraryTab: View {
                 Label("Open as Pane", systemImage: "rectangle.split.2x1")
             }
 
-            Button {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.NodeGraph.addToCanvas,
-                    object: nil,
-                    userInfo: ["atomUUID": item.uuid]
-                )
-            } label: {
-                Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+            if item.kind == .atom {
+                Button {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.NodeGraph.addToCanvas,
+                        object: nil,
+                        userInfo: ["atomUUID": item.uuid]
+                    )
+                } label: {
+                    Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+                }
             }
 
             Divider()
@@ -853,14 +866,14 @@ struct LibraryTab: View {
     // MARK: - Item Actions
 
     private func handleItemTap(_ item: LibraryItem) {
-        if NSEvent.modifierFlags.contains(.shift) && !item.isFolder {
+        if NSEvent.modifierFlags.contains(.shift) && item.kind == .atom {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.toggleSelection(item.uuid)
             }
             return
         }
 
-        if viewModel.isMultiSelectActive && !item.isFolder {
+        if viewModel.isMultiSelectActive && item.kind == .atom {
             withAnimation(ProMotionSprings.snappy) {
                 viewModel.clearSelection()
             }
@@ -869,6 +882,9 @@ struct LibraryTab: View {
 
         if item.isFolder {
             libraryViewModel.navigateIntoFolder(item)
+        } else if item.kind == .thinkspace {
+            libraryViewModel.openThinkspace(item)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         } else {
             // Single click: add as floating block to the current canvas/focus mode
             NotificationCenter.default.post(
@@ -883,6 +899,9 @@ struct LibraryTab: View {
     private func handleItemDoubleTap(_ item: LibraryItem) {
         if item.isFolder {
             libraryViewModel.navigateIntoFolder(item)
+        } else if item.kind == .thinkspace {
+            libraryViewModel.openThinkspace(item)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         } else {
             // Double click: open in focus mode (existing behavior)
             viewModel.select(uuid: item.uuid)
@@ -946,89 +965,6 @@ struct LibraryTab: View {
         }
     }
 
-    // MARK: - Due for Review Row
-
-    private var dueForReviewRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "heart.circle.fill")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color(hex: "#F59E0B"))
-                Text("Due for Review")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
-
-                Text("\(incubationEngine.dueAtoms.count)")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color(hex: "#F59E0B"))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color(hex: "#F59E0B").opacity(0.15))
-                    )
-
-                Spacer()
-            }
-            .padding(.horizontal, 24)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(incubationEngine.dueAtoms.prefix(10), id: \.uuid) { atom in
-                        dueReviewCard(for: atom)
-                    }
-                }
-                .padding(.horizontal, 24)
-            }
-        }
-        .padding(.vertical, 10)
-    }
-
-    @ViewBuilder
-    private func dueReviewCard(for atom: Atom) -> some View {
-        let daysOverdue = daysOverdueForAtom(atom)
-
-        Button {
-            viewModel.select(uuid: atom.uuid)
-            viewModel.openSelected()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: atom.type.iconName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color(hex: "#F59E0B"))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(atom.title ?? "Untitled")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
-
-                    Text(daysOverdue > 0 ? "due \(daysOverdue)d ago" : "due today")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: "#F59E0B").opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(hex: "#F59E0B").opacity(0.2), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func daysOverdueForAtom(_ atom: Atom) -> Int {
-        guard let rq = atom.reviewQueueMetadata else { return 0 }
-        let formatter = ISO8601DateFormatter()
-        guard let dueDate = formatter.date(from: rq.dueAt) else { return 0 }
-        let days = Calendar.current.dateComponents([.day], from: dueDate, to: Date()).day ?? 0
-        return max(0, days)
-    }
 }
 
 // MARK: - Preview

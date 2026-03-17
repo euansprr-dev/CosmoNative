@@ -55,6 +55,7 @@ class IdeaFocusModeViewModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var autoEnrichTask: Task<Void, Never>?
     private var hookGenerationTask: Task<Void, Never>?
+    private var terminationCancellable: AnyCancellable?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
 
@@ -86,6 +87,13 @@ class IdeaFocusModeViewModel: ObservableObject {
             self.selectedHookIndex = hookIdx
         }
 
+        // Flush pending saves synchronously when the app is about to terminate
+        terminationCancellable = NotificationCenter.default
+            .publisher(for: .cosmoAppWillTerminate)
+            .sink { [weak self] _ in
+                self?.saveOnClose()
+            }
+
         // Load client profiles in background
         Task { await loadClientProfiles() }
 
@@ -104,6 +112,7 @@ class IdeaFocusModeViewModel: ObservableObject {
         autoSaveTask?.cancel()
         autoEnrichTask?.cancel()
         hookGenerationTask?.cancel()
+        terminationCancellable?.cancel()
     }
 
     // MARK: - Analysis Pipeline
@@ -778,12 +787,31 @@ class IdeaFocusModeViewModel: ObservableObject {
         }
     }
 
-    /// Force immediate save -- called when the view disappears.
+    /// Force immediate synchronous save — blocks until the DB write completes.
+    /// Guarantees data is persisted before the view/app exits.
     func saveOnClose() {
         autoSaveTask?.cancel()
         sessionState.selectedHookIndex = selectedHookIndex
         sessionState.save()
-        Task { await save() }
+
+        var updatedAtom = idea
+        updatedAtom.title = editableTitle.isEmpty ? nil : editableTitle
+        updatedAtom.body = editableBody.isEmpty ? nil : editableBody
+
+        updatedAtom = updatedAtom.withUpdatedIdeaMetadata { meta in
+            meta.tags = tags.isEmpty ? nil : tags
+            meta.contentFormat = selectedFormat
+            meta.platform = selectedPlatform
+            meta.ideaStatus = selectedStatus
+            meta.hooks = editableHooks.isEmpty ? nil : editableHooks
+            meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
+        }
+
+        do {
+            idea = try AtomRepository.shared.updateSync(updatedAtom)
+        } catch {
+            print("IdeaFocusMode: sync save failed: \(error)")
+        }
     }
 
     // MARK: - Client Profiles

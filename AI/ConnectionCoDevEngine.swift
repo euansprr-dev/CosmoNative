@@ -225,6 +225,7 @@ class ConnectionCoDevEngine: ObservableObject {
 
         Write 1-2 sentences that distill the key insight for this section. Include source attribution in parentheses.
         Do not use any formatting, headers, or bullet points. Just the plain text.
+        Do NOT start with the source title or topic name — jump straight into the insight.
         """
 
         do {

@@ -411,9 +411,6 @@ class AgentProactiveScheduler: ObservableObject {
     }
 
     private func fireHeartbeat() async {
-        // Evaluate incubation queue on every heartbeat tick
-        await evaluateIncubationQueue()
-
         guard let chatId = await resolveChatId() else { return }
 
         // Skip during DND / deep work sessions
@@ -430,21 +427,6 @@ class AgentProactiveScheduler: ObservableObject {
         await TelegramBridgeService.shared.sendLongMessage(chatId: chatId, text: pulse)
         lastHeartbeatAt = Date()
         logDeliveryAttempt(type: "heartbeat", success: true)
-    }
-
-    /// Evaluate the incubation review queue and update heartbeating blocks
-    private func evaluateIncubationQueue() async {
-        let engine = IncubationEngine.shared
-        await engine.evaluateQueue()
-
-        // Auto-enroll new eligible atoms periodically
-        await engine.autoEnrollEligibleAtoms()
-
-        // Daily trisociative collision generation
-        let collisions = await TrisociativeEngine.shared.generateCollisions()
-        if !collisions.isEmpty {
-            NotificationCenter.default.post(name: CosmoNotification.Canvas.collisionsGenerated, object: nil)
-        }
     }
 
     /// Evaluate noteworthy events since last heartbeat. Returns nil if nothing to report (silent).

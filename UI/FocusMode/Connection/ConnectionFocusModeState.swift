@@ -156,6 +156,8 @@ struct ConnectionSection: Identifiable, Codable, Equatable {
 struct ConnectionItem: Identifiable, Codable, Equatable {
     let id: UUID
     var content: String
+    var document: RichDocument?
+    var plainText: String?
     var sourceAtomUUID: String?     // If pulled from another atom
     var sourceSnippet: String?      // Original text from source
     let createdAt: Date
@@ -164,11 +166,15 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
     init(
         id: UUID = UUID(),
         content: String,
+        document: RichDocument? = nil,
+        plainText: String? = nil,
         sourceAtomUUID: String? = nil,
         sourceSnippet: String? = nil
     ) {
         self.id = id
         self.content = content
+        self.document = document ?? RichDocument.migrateLegacy(content)
+        self.plainText = plainText ?? content
         self.sourceAtomUUID = sourceAtomUUID
         self.sourceSnippet = sourceSnippet
         self.createdAt = Date()
@@ -177,6 +183,21 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
 
     var hasSource: Bool {
         sourceAtomUUID != nil
+    }
+
+    var resolvedDocument: RichDocument {
+        document ?? RichDocument.migrateLegacy(plainText ?? content)
+    }
+
+    var resolvedPlainText: String {
+        plainText ?? document?.plainText ?? content
+    }
+
+    mutating func applyDocument(_ document: RichDocument) {
+        self.document = document
+        self.plainText = document.plainText
+        self.content = document.plainText
+        self.updatedAt = Date()
     }
 }
 
@@ -287,6 +308,13 @@ struct ConnectionFocusModeState: Codable {
         }
     }
 
+    mutating func updateItem(_ item: ConnectionItem, inSection type: ConnectionSectionType) {
+        if let index = sections.firstIndex(where: { $0.type == type }) {
+            sections[index].updateItem(item)
+            lastModified = Date()
+        }
+    }
+
     // MARK: - Ghost Suggestions
 
     mutating func setGhostSuggestions(_ suggestions: [GhostSuggestion], forSection type: ConnectionSectionType) {
@@ -352,6 +380,18 @@ struct ConnectionFocusModeState: Codable {
 
     var completedSectionCount: Int {
         sections.filter { !$0.items.isEmpty }.count
+    }
+
+    var flattenedBodyText: String {
+        sections
+            .filter { !$0.items.isEmpty }
+            .map { section in
+                let lines = section.items
+                    .map { "• \($0.resolvedPlainText)" }
+                    .joined(separator: "\n")
+                return "\(section.type.displayName)\n\(lines)"
+            }
+            .joined(separator: "\n\n")
     }
 }
 

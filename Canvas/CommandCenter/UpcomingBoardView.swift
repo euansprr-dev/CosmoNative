@@ -14,6 +14,7 @@ struct UpcomingBoardView: View {
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
     @State private var showOverdueRescheduleMenu = false
     @State private var activeTaskMenuUUID: String?
+    @State private var hoveredBoardCardUUID: String?
     @FocusState private var addTaskFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -261,13 +262,11 @@ struct UpcomingBoardView: View {
 
     // MARK: - Task Card (Todoist style)
 
-    private func boardTaskCard(_ task: TaskViewModel) -> some View {
-        let isSelected = selectedTaskUUIDs.contains(task.uuid)
-        let completionState = completionStates[task.uuid]
-        let isAnimatingCompletion = completionState != nil
+    @ViewBuilder
+    private func boardTaskCardContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?, isAnimatingCompletion: Bool) -> some View {
         let resolvedHabit = viewModel.resolvedHabit(for: task)
 
-        return HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             // Checkbox
             Button {
                 handleTaskCompletionTap(task)
@@ -295,47 +294,7 @@ struct UpcomingBoardView: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 6) {
-                    if let dueInfo = task.dueInfo {
-                        HStack(spacing: 3) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 9))
-                            Text(dueInfo)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
-                    }
-
-                    if task.intent != .general {
-                        HStack(spacing: 3) {
-                            Image(systemName: task.intent.iconName)
-                                .font(.system(size: 9))
-                            Text(task.intent.displayName)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(task.intent.color.opacity(0.8))
-                    }
-
-                    if let resolvedHabit {
-                        HStack(spacing: 3) {
-                            Image(systemName: resolvedHabit.icon)
-                                .font(.system(size: 9))
-                            Text(resolvedHabit.title)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(resolvedHabit.accent.opacity(0.9))
-                    }
-
-                    if task.isRecurring {
-                        HStack(spacing: 3) {
-                            Image(systemName: "repeat")
-                                .font(.system(size: 9))
-                            Text("Repeats")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(DS.accent.opacity(0.85))
-                    }
-                }
+                boardTaskMetaRow(task, resolvedHabit: resolvedHabit)
             }
 
             Spacer(minLength: 0)
@@ -344,6 +303,65 @@ struct UpcomingBoardView: View {
                 taskActionButton(task)
             }
         }
+    }
+
+    @ViewBuilder
+    private func boardTaskMetaRow(_ task: TaskViewModel, resolvedHabit: HabitDefinition?) -> some View {
+        HStack(spacing: 6) {
+            if let dueInfo = task.dueInfo {
+                HStack(spacing: 3) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 9))
+                    Text(dueInfo)
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
+            }
+
+            if task.intent != .general {
+                HStack(spacing: 3) {
+                    Image(systemName: task.intent.iconName)
+                        .font(.system(size: 9))
+                    Text(task.intent.displayName)
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(task.intent.color.opacity(0.8))
+            }
+
+            if let resolvedHabit {
+                HStack(spacing: 3) {
+                    Image(systemName: resolvedHabit.icon)
+                        .font(.system(size: 9))
+                    Text(resolvedHabit.title)
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(resolvedHabit.accent.opacity(0.9))
+            }
+
+            if task.isRecurring {
+                HStack(spacing: 3) {
+                    Image(systemName: "repeat")
+                        .font(.system(size: 9))
+                    Text("Repeats")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(DS.accent.opacity(0.85))
+            }
+        }
+    }
+
+    private func boardTaskCard(_ task: TaskViewModel) -> some View {
+        let isSelected = selectedTaskUUIDs.contains(task.uuid)
+        let completionState = completionStates[task.uuid]
+        let isAnimatingCompletion = completionState != nil
+        let isCardHovered = hoveredBoardCardUUID == task.uuid && !isAnimatingCompletion
+        let borderColor: Color = isSelected ? DS.accent.opacity(0.4)
+            : isCardHovered ? DS.border
+            : DS.borderSubtle
+        let borderWidth: CGFloat = isSelected ? 2 : 1
+        let scale: CGFloat = isCardHovered ? 1.008 : (completionState?.rowScale ?? 1)
+
+        return boardTaskCardContent(task, completionState: completionState, isAnimatingCompletion: isAnimatingCompletion)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -351,13 +369,23 @@ struct UpcomingBoardView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isSelected ? DS.accent.opacity(0.4) : DS.borderSubtle, lineWidth: isSelected ? 2 : 1)
+                .stroke(borderColor, lineWidth: borderWidth)
         )
-        .scaleEffect(completionState?.rowScale ?? 1)
+        .shadow(
+            color: .black.opacity(isCardHovered ? 0.06 : 0.04),
+            radius: isCardHovered ? 16 : 8,
+            x: 0,
+            y: isCardHovered ? 4 : 2
+        )
+        .scaleEffect(scale)
         .opacity(completionState?.rowOpacity ?? 1)
         .offset(y: completionState?.rowOffsetY ?? 0)
         .blur(radius: completionState?.blurRadius ?? 0)
+        .animation(.easeOut(duration: 0.15), value: isCardHovered)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredBoardCardUUID = hovering ? task.uuid : (hoveredBoardCardUUID == task.uuid ? nil : hoveredBoardCardUUID)
+        }
         .onTapGesture {
             guard !isAnimatingCompletion else { return }
             if NSEvent.modifierFlags.contains(.shift) {

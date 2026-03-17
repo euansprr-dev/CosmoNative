@@ -15,7 +15,7 @@ struct ConnectionSectionView: View {
     @Binding var section: ConnectionSection
 
     /// Callback when item is added
-    let onAddItem: (String) -> Void
+    let onAddItem: (RichDocument, String) -> Void
 
     /// Callback when item is edited
     let onEditItem: (ConnectionItem) -> Void
@@ -37,6 +37,7 @@ struct ConnectionSectionView: View {
     @State private var isHovered = false
     @State private var isAddingItem = false
     @State private var newItemText = ""
+    @State private var newItemDocument: RichDocument = .empty
     @FocusState private var isNewItemFocused: Bool
 
     // MARK: - Body
@@ -54,7 +55,7 @@ struct ConnectionSectionView: View {
                         ConnectionItemRow(
                             item: item,
                             accentColor: section.type.accentColor,
-                            onEdit: { onEditItem(item) },
+                            onEdit: { updatedItem in onEditItem(updatedItem) },
                             onDelete: { onDeleteItem(item.id) },
                             onSourceTap: onSourceTap
                         )
@@ -191,15 +192,20 @@ struct ConnectionSectionView: View {
 
     private var addItemInput: some View {
         HStack(spacing: 8) {
-            TextField("Add item...", text: $newItemText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(DS.text)
-                .focused($isNewItemFocused)
-                .lineLimit(1...3)
-                .onSubmit {
-                    submitNewItem()
+            CosmoDocumentEditor(
+                document: $newItemDocument,
+                fontSize: 13,
+                compact: true,
+                placeholder: "Add item...",
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                onDocumentChange: { _, plainText in
+                    newItemText = plainText
                 }
+            )
+            .frame(minHeight: 28, maxHeight: 84)
 
             // Cancel button
             Button {
@@ -253,7 +259,7 @@ struct ConnectionSectionView: View {
     private func submitNewItem() {
         let trimmed = newItemText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            onAddItem(trimmed)
+            onAddItem(newItemDocument, trimmed)
         }
         cancelNewItem()
     }
@@ -262,6 +268,7 @@ struct ConnectionSectionView: View {
         withAnimation(ProMotionSprings.snappy) {
             isAddingItem = false
             newItemText = ""
+            newItemDocument = .empty
         }
     }
 }
@@ -272,11 +279,13 @@ struct ConnectionSectionView: View {
 struct ConnectionItemRow: View {
     let item: ConnectionItem
     let accentColor: Color
-    let onEdit: () -> Void
+    let onEdit: (ConnectionItem) -> Void
     let onDelete: () -> Void
     let onSourceTap: (String) -> Void
 
     @State private var isHovered = false
+    @State private var isEditing = false
+    @State private var editDocument: RichDocument = .empty
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -288,11 +297,27 @@ struct ConnectionItemRow: View {
 
             // Content
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.content)
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.text)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
+                if isEditing {
+                    CosmoDocumentEditor(
+                        document: $editDocument,
+                        fontSize: 13,
+                        compact: true,
+                        placeholder: "Add item...",
+                        allowSlashCommands: false,
+                        allowMentions: true,
+                        allowSelectionMenu: false,
+                        allowImages: false,
+                        onDocumentChange: { document, _ in
+                            var updated = item
+                            updated.applyDocument(document)
+                            onEdit(updated)
+                        }
+                    )
+                    .frame(minHeight: 28)
+                } else {
+                    CosmoDocumentRenderer(document: item.resolvedDocument)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 // Source attribution
                 if item.hasSource {
@@ -318,12 +343,26 @@ struct ConnectionItemRow: View {
             // Actions (on hover)
             if isHovered {
                 HStack(spacing: 8) {
-                    Button(action: onEdit) {
+                    Button {
+                        isEditing = true
+                        editDocument = item.resolvedDocument
+                    } label: {
                         Image(systemName: "pencil")
                             .font(.system(size: 11))
                             .foregroundColor(DS.textSecondary)
                     }
                     .buttonStyle(.plain)
+
+                    if isEditing {
+                        Button {
+                            isEditing = false
+                        } label: {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     Button(action: onDelete) {
                         Image(systemName: "trash")
@@ -500,7 +539,7 @@ struct ConnectionSectionView_Previews: PreviewProvider {
         var body: some View {
             ConnectionSectionView(
                 section: $section,
-                onAddItem: { print("Add: \($0)") },
+                onAddItem: { _, plainText in print("Add: \(plainText)") },
                 onEditItem: { print("Edit: \($0.content)") },
                 onDeleteItem: { print("Delete: \($0)") },
                 onSourceTap: { print("Source: \($0)") },

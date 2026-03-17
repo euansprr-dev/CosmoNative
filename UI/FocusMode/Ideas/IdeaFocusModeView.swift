@@ -145,20 +145,22 @@ struct IdeaFocusModeView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            // Back button
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+            // Back button (hidden in pane mode — X button handles close)
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.glassCardFill, in: Capsule())
                 }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.glassCardFill, in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Type badge
             HStack(spacing: 4) {

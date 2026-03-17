@@ -85,6 +85,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .note:       return CGSize(width: 320, height: 280)
         case .calendar:   return CGSize(width: 400, height: 500)
         case .image:      return CGSize(width: 320, height: 240)
+        case .stickyNote: return CGSize(width: 220, height: 220)
         default:          return CGSize(width: 280, height: 200)
         }
     }
@@ -327,6 +328,23 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,
             entityUuid: UUID().uuidString,
             title: "Note",
+            subtitle: nil,
+            metadata: [
+                "content": content,
+                "created": ISO8601DateFormatter().string(from: Date())
+            ]
+        )
+    }
+
+    /// Create a freeform sticky note block (warm yellow paper, no chrome)
+    static func stickyNoteBlock(position: CGPoint, content: String = "") -> CanvasBlock {
+        return CanvasBlock(
+            position: position,
+            size: CGSize(width: 220, height: 220),
+            entityType: .stickyNote,
+            entityId: -1,
+            entityUuid: UUID().uuidString,
+            title: "",
             subtitle: nil,
             metadata: [
                 "content": content,

@@ -39,10 +39,11 @@ enum UnifiedSidebarMetrics {
 
     static let expandedOuterPadding: CGFloat = 12
     static let collapsedOuterPadding: CGFloat = 8
-    static let contentVerticalPadding: CGFloat = 12
-    static let moduleSpacing: CGFloat = 16
-    static let modulePaddingExpanded: CGFloat = 12
-    static let modulePaddingCollapsed: CGFloat = 6
+    static let contentVerticalPadding: CGFloat = 8
+    static let sectionVerticalPaddingExpanded: CGFloat = 10
+    static let sectionVerticalPaddingCollapsed: CGFloat = 8
+    static let sectionHorizontalPaddingExpanded: CGFloat = 4
+    static let sectionHorizontalPaddingCollapsed: CGFloat = 2
 
     static let moduleRadius: CGFloat = 12
     static let rowRadius: CGFloat = 10
@@ -60,31 +61,54 @@ enum UnifiedSidebarMetrics {
     }
 }
 
+// MARK: - Sidebar Feature Flags
+
+private enum UnifiedSidebarFeatures {
+    /// Dimensions navigation is paused for a later release.
+    static let showsDimensionsSection = false
+}
+
 // MARK: - Shared Sidebar Chrome
 
-struct UnifiedSidebarSectionCard<Content: View>: View {
+struct UnifiedSidebarSection<Content: View>: View {
     let isCollapsed: Bool
+    let showsDivider: Bool
     let content: Content
 
-    init(isCollapsed: Bool, @ViewBuilder content: () -> Content) {
+    init(
+        isCollapsed: Bool,
+        showsDivider: Bool = false,
+        @ViewBuilder content: () -> Content
+    ) {
         self.isCollapsed = isCollapsed
+        self.showsDivider = showsDivider
         self.content = content()
     }
 
     var body: some View {
         VStack(spacing: 0) {
             content
+                .padding(
+                    .horizontal,
+                    isCollapsed
+                        ? UnifiedSidebarMetrics.sectionHorizontalPaddingCollapsed
+                        : UnifiedSidebarMetrics.sectionHorizontalPaddingExpanded
+                )
+                .padding(
+                    .vertical,
+                    isCollapsed
+                        ? UnifiedSidebarMetrics.sectionVerticalPaddingCollapsed
+                        : UnifiedSidebarMetrics.sectionVerticalPaddingExpanded
+                )
+
+            if showsDivider {
+                Rectangle()
+                    .fill(DS.borderSubtle)
+                    .frame(height: 1)
+                    .padding(.leading, isCollapsed ? 14 : 6)
+                    .padding(.trailing, 6)
+            }
         }
-        .padding(isCollapsed ? UnifiedSidebarMetrics.modulePaddingCollapsed : UnifiedSidebarMetrics.modulePaddingExpanded)
-        .background(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.moduleRadius, style: .continuous)
-                .fill(DS.surfaceElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.moduleRadius, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsRestingShadow()
     }
 }
 
@@ -115,8 +139,8 @@ extension View {
         isHovered: Bool,
         cornerRadius: CGFloat = UnifiedSidebarMetrics.rowRadius,
         activeFill: Color = DS.accentSoft,
-        hoverFill: Color = DS.surfaceHover,
-        activeBorder: Color = DS.accent.opacity(0.14)
+        hoverFill: Color = DS.bg,
+        activeBorder: Color = .clear
     ) -> some View {
         modifier(
             UnifiedSidebarRowChromeModifier(
@@ -172,16 +196,19 @@ struct UnifiedSidebar: View {
         VStack(spacing: 0) {
             sidebarHeader
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: UnifiedSidebarMetrics.moduleSpacing) {
-                    UnifiedSidebarSectionCard(isCollapsed: isCollapsed) {
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    UnifiedSidebarSection(isCollapsed: isCollapsed, showsDivider: true) {
                         SidebarNavSection(
                             currentDestination: $currentDestination,
                             isCollapsed: isCollapsed
                         )
                     }
 
-                    UnifiedSidebarSectionCard(isCollapsed: isCollapsed) {
+                    UnifiedSidebarSection(
+                        isCollapsed: isCollapsed,
+                        showsDivider: UnifiedSidebarFeatures.showsDimensionsSection
+                    ) {
                         SidebarThinkspaceSection(
                             manager: thinkspaceManager,
                             currentDestination: $currentDestination,
@@ -189,16 +216,19 @@ struct UnifiedSidebar: View {
                         )
                     }
 
-                    UnifiedSidebarSectionCard(isCollapsed: isCollapsed) {
-                        SidebarDimensionSection(
-                            currentDestination: $currentDestination,
-                            isCollapsed: isCollapsed
-                        )
+                    if UnifiedSidebarFeatures.showsDimensionsSection {
+                        UnifiedSidebarSection(isCollapsed: isCollapsed) {
+                            SidebarDimensionSection(
+                                currentDestination: $currentDestination,
+                                isCollapsed: isCollapsed
+                            )
+                        }
                     }
                 }
                 .padding(.horizontal, outerPadding)
                 .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
             }
+            .scrollIndicators(.hidden)
 
             sidebarFooter
         }
@@ -256,6 +286,7 @@ struct UnifiedSidebar: View {
                         .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Expand sidebar")
                 .frame(maxWidth: .infinity)
                 .help("Expand sidebar (Cmd+\\)")
             } else {
@@ -266,18 +297,18 @@ struct UnifiedSidebar: View {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
 
                             Text("Search or jump")
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .lineLimit(1)
 
                             Spacer(minLength: 8)
 
                             Text("Cmd K")
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 4)
                                 .background(DS.surface, in: Capsule())
@@ -298,21 +329,20 @@ struct UnifiedSidebar: View {
                     .onHover { hoveredHeaderItem = $0 ? "search" : nil }
                     .help("Search (Cmd+K)")
 
-                    Button {
+                    Button("Collapse sidebar", systemImage: "sidebar.left") {
                         withAnimation(motionAnimation) {
                             isCollapsed = true
                         }
-                    } label: {
-                        Image(systemName: "sidebar.left")
-                            .contentTransition(.symbolEffect(.replace))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
-                            .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(hoveredHeaderItem == "collapse" ? DS.surfaceHover : Color.clear)
-                            )
                     }
+                    .labelStyle(.iconOnly)
+                    .contentTransition(.symbolEffect(.replace))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(hoveredHeaderItem == "collapse" ? DS.surfaceHover : Color.clear)
+                    )
                     .buttonStyle(.plain)
                     .onHover { hoveredHeaderItem = $0 ? "collapse" : nil }
                     .help("Collapse sidebar (Cmd+\\)")
@@ -326,79 +356,71 @@ struct UnifiedSidebar: View {
     // MARK: - Footer
 
     private var sidebarFooter: some View {
-        HStack(spacing: 10) {
-            if isCollapsed {
-                Button {
-                    NotificationCenter.default.post(
-                        name: .showSettings,
-                        object: nil
-                    )
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                        .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(hoveredFooterItem == "settings" ? DS.surfaceHover : Color.clear)
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 1)
+                .padding(.horizontal, outerPadding)
+
+            HStack(spacing: 10) {
+                if isCollapsed {
+                    Button("Settings", systemImage: "gearshape") {
+                        NotificationCenter.default.post(
+                            name: .showSettings,
+                            object: nil
                         )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-                .onHover { hoveredFooterItem = $0 ? "settings" : nil }
-                .help("Settings")
-            } else {
-                HStack(spacing: 10) {
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(hoveredFooterItem == "settings" ? DS.surfaceHover : Color.clear)
+                    )
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .onHover { hoveredFooterItem = $0 ? "settings" : nil }
+                    .help("Settings")
+                } else {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(DS.accentSoft)
                         .frame(width: 32, height: 32)
                         .overlay(
                             Text(monogram)
                                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundColor(DS.accent)
+                                .foregroundStyle(DS.accent)
                         )
 
                     Text(userFirstName)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
 
                     Spacer(minLength: 8)
 
-                    Button {
+                    Button("Settings", systemImage: "gearshape") {
                         NotificationCenter.default.post(
                             name: .showSettings,
                             object: nil
                         )
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
-                            .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(hoveredFooterItem == "settings" ? DS.surfaceHover : Color.clear)
-                            )
                     }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(hoveredFooterItem == "settings" ? DS.surfaceHover : Color.clear)
+                    )
                     .buttonStyle(.plain)
                     .onHover { hoveredFooterItem = $0 ? "settings" : nil }
                     .help("Settings")
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.moduleRadius, style: .continuous)
-                        .fill(DS.surfaceElevated)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.moduleRadius, style: .continuous)
-                        .stroke(DS.border, lineWidth: 1)
-                )
-                .dsRestingShadow()
             }
+            .padding(.horizontal, outerPadding)
+            .frame(height: UnifiedSidebarMetrics.footerHeight)
         }
-        .padding(.horizontal, outerPadding)
-        .frame(height: UnifiedSidebarMetrics.footerHeight)
     }
 
     // MARK: - Resize Handle

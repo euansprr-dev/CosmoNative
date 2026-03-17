@@ -30,27 +30,13 @@ struct UnifiedSearchResultsView: View {
 
                             MasonryLayout(columnCount: columnCount, spacing: cardSpacing) {
                                 ForEach(Array(viewModel.unifiedCardItems.enumerated()), id: \.element.id) { index, item in
-                                    let isSelected = viewModel.selectedNodeId == item.uuid
-
-                                    LibraryCardView(
-                                        item: item,
-                                        cardWidth: cardWidth,
-                                        isSelected: isSelected
-                                    )
-                                    .id(item.uuid)
-                                    .onTapGesture {
-                                        openItem(item)
-                                    }
-                                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                                    .animation(
-                                        ProMotionSprings.cardEntrance.delay(Double(index % 16) * 0.03),
-                                        value: viewModel.unifiedCardItems.count
-                                    )
-                                }
-
-                                ForEach(readwiseResults) { result in
-                                    readwiseCard(result, cardWidth: cardWidth)
-                                        .id(result.id)
+                                    unifiedCard(item, cardWidth: cardWidth)
+                                        .id(item.selectionID)
+                                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                                        .animation(
+                                            ProMotionSprings.cardEntrance.delay(Double(index % 16) * 0.03),
+                                            value: viewModel.unifiedCardItems.count
+                                        )
                                 }
                             }
                             .padding(.horizontal, CommandKMetrics.contentPadding)
@@ -61,7 +47,7 @@ struct UnifiedSearchResultsView: View {
                         if viewModel.selectedResultIndex >= 0,
                            viewModel.selectedResultIndex < viewModel.unifiedFlatResults.count {
                             let result = viewModel.unifiedFlatResults[viewModel.selectedResultIndex]
-                            let scrollId = result.atomUUID ?? result.id
+                            let scrollId = result.selectionID
                             withAnimation(ProMotionSprings.snappy) {
                                 proxy.scrollTo(scrollId, anchor: .center)
                             }
@@ -72,14 +58,39 @@ struct UnifiedSearchResultsView: View {
         }
     }
 
-    // MARK: - Readwise Card
+    // MARK: - Cards
 
-    private var readwiseResults: [UnifiedSearchResult] {
-        viewModel.unifiedFlatResults.filter { $0.source == .readwise }
+    @ViewBuilder
+    private func unifiedCard(_ item: UnifiedCardItem, cardWidth: CGFloat) -> some View {
+        switch item {
+        case .library(let libraryItem):
+            SearchResultLibraryCard(
+                item: libraryItem,
+                isSelected: viewModel.selectedNodeId == libraryItem.uuid,
+                cardWidth: cardWidth
+            )
+        case .swipe(let swipeItem):
+            SearchResultSwipeCard(
+                item: swipeItem,
+                isSelected: viewModel.selectedNodeId == swipeItem.atomUUID,
+                cardWidth: cardWidth
+            )
+        case .readwise(let result):
+            readwiseCard(result, cardWidth: cardWidth)
+                .contextMenu {
+                    Button {
+                        if let bookId = result.readwiseBookId {
+                            viewModel.selectedReadwiseBookId = bookId
+                        }
+                    } label: {
+                        Label("Open", systemImage: "book")
+                    }
+                }
+        }
     }
 
     @ViewBuilder
-    private func readwiseCard(_ result: UnifiedSearchResult, cardWidth: CGFloat) -> some View {
+    private func readwiseCard(_ result: UnifiedSearchResult, cardWidth _: CGFloat) -> some View {
         let isSelected = viewModel.selectedNodeId == result.id
         let cornerRadius = CommandKMetrics.cardCornerRadius
 
@@ -225,17 +236,189 @@ struct UnifiedSearchResultsView: View {
             )
     }
 
-    // MARK: - Helpers
+}
 
-    private func openItem(_ item: LibraryItem) {
-        Task {
-            try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.uuid, type: .view)
+// MARK: - Search Result Library Card
+
+private struct SearchResultLibraryCard: View {
+    let item: LibraryItem
+    let isSelected: Bool
+    let cardWidth: CGFloat
+    @State private var showDeleteAlert = false
+
+    var body: some View {
+        LibraryCardView(item: item, cardWidth: cardWidth, isSelected: isSelected)
+            .onTapGesture { openInFocusMode() }
+            .contextMenu { contextMenuContent }
+            .alert("Delete \"\(item.title)\"?", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) { deleteItem() }
+            } message: {
+                Text("This item will be moved to Recently Deleted for 30 days.")
+            }
+    }
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button {
+            openInFocusMode()
+        } label: {
+            Label(
+                item.kind == .thinkspace ? "Open Thinkspace" : "Open in Focus Mode",
+                systemImage: item.kind == .thinkspace ? "rectangle.3.group" : "arrow.up.left.and.arrow.down.right"
+            )
         }
+
+        Button { openAsPane() } label: {
+            Label("Open as Pane", systemImage: "rectangle.split.2x1")
+        }
+
+        if item.kind == .atom {
+            Button { addToCanvas() } label: {
+                Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            showDeleteAlert = true
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func openInFocusMode() {
+        Task { try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.uuid, type: .view) }
+
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: item.uuid).userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
+        }
+
+        guard let entityType = EntityType(rawValue: item.atomType.rawValue),
+              item.entityId > 0 else { return }
+
         NotificationCenter.default.post(
-            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: ["type": entityType, "id": item.entityId]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    private func openAsPane() {
+        if item.kind == .thinkspace {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["thinkspaceId": item.uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            return
+        }
+
+        if let entityType = EntityType(rawValue: item.atomType.rawValue) {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openAsPane,
+                object: nil,
+                userInfo: ["type": entityType, "id": item.entityId]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
+    }
+
+    private func addToCanvas() {
+        guard item.kind == .atom else { return }
+        NotificationCenter.default.post(
+            name: CosmoNotification.NodeGraph.addToCanvas,
             object: nil,
             userInfo: ["atomUUID": item.uuid]
         )
+    }
+
+    private func deleteItem() {
+        Task { try? await AtomRepository.shared.delete(uuid: item.uuid) }
+    }
+}
+
+// MARK: - Search Result Swipe Card
+
+private struct SearchResultSwipeCard: View {
+    let item: SwipeGalleryItem
+    let isSelected: Bool
+    let cardWidth: CGFloat
+    @State private var showDeleteAlert = false
+
+    var body: some View {
+        SwipeGalleryCardView(item: item, cardWidth: cardWidth, isSelected: isSelected)
+            .onTapGesture { openInFocusMode() }
+            .contextMenu { contextMenuContent }
+            .alert("Delete Swipe?", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) { deleteSwipe() }
+            } message: {
+                Text("This will permanently remove this swipe file.")
+            }
+    }
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button { openInFocusMode() } label: {
+            Label("Open in Focus Mode", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+
+        Button { openAsPane() } label: {
+            Label("Open as Pane", systemImage: "rectangle.split.2x1")
+        }
+
+        Button { addToCanvas() } label: {
+            Label("Add to Canvas", systemImage: "plus.rectangle.on.rectangle")
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            showDeleteAlert = true
+        } label: {
+            Label("Delete Swipe", systemImage: "trash")
+        }
+    }
+
+    private func openInFocusMode() {
+        Task { try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.atomUUID, type: .view) }
+
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
+        )
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    private func openAsPane() {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openAsPane,
+            object: nil,
+            userInfo: ["type": EntityType.research, "id": item.entityId]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    private func addToCanvas() {
+        NotificationCenter.default.post(
+            name: Notification.Name("addSwipeToCanvas"),
+            object: nil,
+            userInfo: ["atomUUID": item.atomUUID]
+        )
+    }
+
+    private func deleteSwipe() {
+        Task { try? await SwipeFileEngine.shared.deleteSwipe(atomUUID: item.atomUUID) }
     }
 }

@@ -20,6 +20,7 @@ struct CreatorProfileView: View {
     @State private var patternAnalysis: String = ""
     @State private var isAnalyzingPattern = false
     @State private var isEditing = false
+    @State private var showingImport = false
     @State private var hasAppeared = false
 
     // Edit fields
@@ -33,7 +34,7 @@ struct CreatorProfileView: View {
     @State private var narrativeFilter: NarrativeStyle?
     @State private var formatFilter: ContentFormat?
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     init(creatorAtom: Atom, onClose: @escaping () -> Void, onCompare: @escaping (Atom) -> Void, onOpenSwipe: @escaping (Int64) -> Void) {
         self.creatorAtom = creatorAtom
@@ -121,6 +122,21 @@ struct CreatorProfileView: View {
             }
             .buttonStyle(.plain)
 
+            // Import posts button
+            Button { showingImport = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 11))
+                    Text("Import Posts")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(gold, in: Capsule())
+            }
+            .buttonStyle(.plain)
+
             // Edit button
             Button {
                 prepareEditFields()
@@ -141,6 +157,9 @@ struct CreatorProfileView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+        .sheet(isPresented: $showingImport) {
+            CreatorImportSheet()
+        }
     }
 
     // MARK: - Header Section
@@ -209,9 +228,9 @@ struct CreatorProfileView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .strokeBorder(DS.border, lineWidth: 1)
         )
     }
@@ -340,7 +359,7 @@ struct CreatorProfileView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+                .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
             } else if !patternAnalysis.isEmpty {
                 Text(patternAnalysis)
                     .font(.system(size: 13))
@@ -348,9 +367,9 @@ struct CreatorProfileView: View {
                     .lineSpacing(5)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
+                        RoundedRectangle(cornerRadius: DS.radiusMedium)
                             .strokeBorder(gold.opacity(0.15), lineWidth: 1)
                     )
             } else if swipes.count >= 2 {
@@ -375,7 +394,7 @@ struct CreatorProfileView: View {
                     .foregroundColor(DS.textMuted)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+                    .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
             }
         }
     }
@@ -584,9 +603,9 @@ struct CreatorProfileView: View {
                         .scrollContentBackground(.hidden)
                         .frame(height: 100)
                         .padding(8)
-                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                        .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
                                 .stroke(DS.border, lineWidth: 1)
                         )
                 }
@@ -626,9 +645,9 @@ struct CreatorProfileView: View {
                 .font(.system(size: 13))
                 .foregroundColor(DS.text)
                 .padding(8)
-                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .stroke(DS.border, lineWidth: 1)
                 )
         }
@@ -797,10 +816,10 @@ struct CreatorProfileView: View {
     }
 
     private func hookScoreColor(_ score: Double?) -> Color {
-        guard let score = score else { return Color(hex: "#64748B") }
-        if score >= 8.0 { return Color(hex: "#10B981") }
-        if score >= 5.0 { return Color(hex: "#3B82F6") }
-        return Color(hex: "#64748B")
+        guard let score = score else { return DS.textMuted }
+        if score >= 8.0 { return DS.green }
+        if score >= 5.0 { return DS.info }
+        return DS.textMuted
     }
 
     private func formatFollowers(_ count: Int) -> String {

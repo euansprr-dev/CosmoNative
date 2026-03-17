@@ -51,9 +51,9 @@ struct EmotionalArcView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {
@@ -340,7 +340,7 @@ private struct EmotionalArcTooltip: View {
         .frame(width: 190)
         .background(DS.surfaceElevated)
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(DS.border, lineWidth: 1)
         )
     }

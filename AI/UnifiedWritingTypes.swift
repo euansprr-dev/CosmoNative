@@ -388,6 +388,36 @@ enum WritingContentFormat: String, CaseIterable {
         return swipeFormatFamily.contains(format)
     }
 
+    /// Checks if a swipe atom matches this writing format, using richContent as fallback
+    /// when swipeAnalysis.swipeContentFormat is nil (not yet AI-classified).
+    func matchesSwipeAtom(_ atom: Atom) -> Bool {
+        // 1. Check analyzed format first (most precise)
+        if let format = atom.swipeAnalysis?.swipeContentFormat {
+            return swipeFormatFamily.contains(format)
+        }
+        // 2. Fallback: infer from richContent.instagramType (set at capture time)
+        if let igType = atom.richContent?.instagramType {
+            switch igType {
+            case "reel": return swipeFormatFamily.contains(.reel)
+            case "carousel": return swipeFormatFamily.contains(.carousel)
+            case "post": return swipeFormatFamily.contains(.post)
+            default: break
+            }
+        }
+        // 3. Fallback: infer from richContent.sourceType
+        if let sourceType = atom.richContent?.sourceType {
+            switch sourceType {
+            case .instagramReel, .tiktok: return swipeFormatFamily.contains(.reel)
+            case .instagramCarousel: return swipeFormatFamily.contains(.carousel)
+            case .instagramPost: return swipeFormatFamily.contains(.post)
+            case .twitter, .xPost, .threads: return swipeFormatFamily.contains(.thread)
+            case .youtube: return swipeFormatFamily.contains(.youtube)
+            default: break
+            }
+        }
+        return false
+    }
+
     static func detect(from atom: Atom) -> WritingContentFormat {
         if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String {
             switch explicitFormat {

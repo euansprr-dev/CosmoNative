@@ -1478,6 +1478,66 @@ class CosmoDatabase: ObservableObject {
             print("✅ canvas_drawings table created")
         }
 
+        // MARK: - Inbox Items
+        migrator.registerMigration("create_inbox_items") { db in
+            print("🔨 Creating inbox_items table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inbox_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    source TEXT NOT NULL,
+                    rawText TEXT NOT NULL,
+                    title TEXT,
+                    classification TEXT,
+                    confidence REAL DEFAULT 0.0,
+                    mergeTargetUuid TEXT,
+                    mergeTargetTitle TEXT,
+                    mergeTargetType TEXT,
+                    mergePreview TEXT,
+                    placeThinkspaceId TEXT,
+                    placeThinkspaceName TEXT,
+                    placeAtomType TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    isRead INTEGER DEFAULT 0,
+                    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+                    classifiedAt TEXT,
+                    actionedAt TEXT,
+                    metadata TEXT
+                )
+            """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_inbox_items_status
+                    ON inbox_items(status)
+            """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_inbox_items_created
+                    ON inbox_items(createdAt DESC)
+            """)
+            print("✅ inbox_items table created")
+        }
+
+        // Clean up duplicate canvas_blocks rows that accumulated due to
+        // saveBlock() generating new IDs instead of updating existing rows
+        migrator.registerMigration("deduplicate_canvas_blocks") { db in
+            print("🔨 Cleaning up duplicate canvas_blocks...")
+            try db.execute(sql: """
+                DELETE FROM canvas_blocks
+                WHERE id NOT IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY entity_uuid, COALESCE(thinkspace_id, ''), document_type, document_id
+                            ORDER BY updated_at DESC, created_at DESC
+                        ) AS rn
+                        FROM canvas_blocks
+                        WHERE entity_uuid IS NOT NULL AND entity_uuid != '' AND is_deleted = 0
+                    )
+                    WHERE rn = 1
+                )
+                AND entity_uuid IS NOT NULL AND entity_uuid != '' AND is_deleted = 0
+            """)
+            print("✅ Duplicate canvas_blocks cleanup complete")
+        }
+
         return migrator
     }
 

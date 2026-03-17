@@ -48,7 +48,7 @@ struct SlashCommandMenu: View {
             .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
             .shadow(color: shadowColor, radius: 16, y: 6)
             .shadow(color: accentColor.opacity(0.15), radius: 24, y: 8)
-            .withAccentSeam(accentColor, position: .leading)
+            .withAccentSeam(accentColor, position: .leading, cornerRadius: 14)
             .scaleEffect(menuAppeared ? 1 : 0.95)
             .opacity(menuAppeared ? 1 : 0)
             .blur(radius: menuAppeared ? 0 : 4)
@@ -106,23 +106,18 @@ struct SlashCommandMenu: View {
     }
 
     private var commandListView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(filteredCommands.enumerated()), id: \.element.id) { index, command in
-                        commandRow(command: command, index: index)
-                    }
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(filteredCommands.enumerated()), id: \.element.id) { index, command in
+                    commandRow(command: command, index: index)
                 }
-                .padding(.vertical, 4)
             }
-            .frame(maxHeight: 300)
-            .background(bgColor)
-            .onChange(of: selectedIndex) { _, newIndex in
-                withAnimation(ProMotionSprings.snappy) {
-                    proxy.scrollTo(newIndex, anchor: .center)
-                }
-                CosmicHaptics.shared.play(.threshold)
-            }
+            .padding(.vertical, 4)
+        }
+        .frame(maxHeight: 300)
+        .background(bgColor)
+        .onChange(of: selectedIndex) { _, _ in
+            CosmicHaptics.shared.play(.threshold)
         }
     }
 

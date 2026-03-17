@@ -15,7 +15,7 @@ struct TaxonomyManagementView: View {
     @State private var newValueText = ""
     @State private var showAddField = false
 
-    private let gold = Color(hex: "#FFD700")
+    private let gold = DS.entitySwipe
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,10 +82,10 @@ struct TaxonomyManagementView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(selectedDimension == dimension ? gold.opacity(0.15) : DS.surfaceHover)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
                                 .strokeBorder(
                                     selectedDimension == dimension ? gold.opacity(0.5) : DS.borderSubtle,
                                     lineWidth: 1
@@ -203,7 +203,7 @@ struct TaxonomyManagementView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
     }
 
     private var addValueBar: some View {
@@ -215,7 +215,7 @@ struct TaxonomyManagementView: View {
                     .foregroundColor(DS.text)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                     .onSubmit { addNewValue() }
 
                 Button {

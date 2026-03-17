@@ -24,8 +24,9 @@ struct NoteFocusModeView: View {
 
     @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
 
-    @State private var title: String = ""
-    @State private var attributedContent = NSAttributedString()
+    @State private var titleDocument: RichDocument = .empty
+    @State private var bodyDocument: RichDocument = .empty
+    @State private var titlePlainText: String = ""
     @State private var plainContent: String = ""
     @State private var tags: [String] = []
     @State private var createdAt: Date = Date()
@@ -40,7 +41,6 @@ struct NoteFocusModeView: View {
 
     // Animation states
     @State private var contentAppeared = false
-    @State private var isTitleFocused = false
     @State private var titleUnderlineProgress: CGFloat = 0
 
     // Save state
@@ -91,20 +91,23 @@ struct NoteFocusModeView: View {
                                 .frame(maxWidth: CosmoTypography.optimalReadingWidth)
 
                             // Rich text editor — use remaining height so it fills the page
-                            RichTextEditor(
-                                text: $attributedContent,
-                                plainText: $plainContent,
-                                placeholder: "Start writing......",
-                                darkMode: true,
-                                onSave: { _ in if !isInitialLoad { triggerAutoSave() } }
+                            CosmoDocumentEditor(
+                                document: $bodyDocument,
+                                placeholder: "Start writing...",
+                                darkMode: false,
+                                allowSlashCommands: true,
+                                allowMentions: true,
+                                allowSelectionMenu: true,
+                                allowImages: true,
+                                onDocumentChange: { _, plainText in
+                                    plainContent = plainText
+                                    if !isInitialLoad { triggerAutoSave() }
+                                }
                             )
                             .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
                             .frame(minHeight: max(400, geometry.size.height - 200))
                             .padding(.top, 24)
                             .padding(.bottom, 60)
-                            .onChange(of: plainContent) { _, _ in
-                                if !isInitialLoad { triggerAutoSave() }
-                            }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 40)
@@ -145,6 +148,7 @@ struct NoteFocusModeView: View {
             manager: floatingBlocksManager,
             ownerAtomUUID: atom.uuid
         )
+        .focusBlockInspector(manager: floatingBlocksManager)
         .onAppear {
             startObservingAtom()
             loadLinkedAtoms()
@@ -155,7 +159,7 @@ struct NoteFocusModeView: View {
                 }
             }
             // Register context provider for global Cosmo window
-            let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.title }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+            let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
             if !isPaneContext || isPaneActive {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
@@ -169,7 +173,7 @@ struct NoteFocusModeView: View {
         }
         .onChange(of: isPaneActive) { _, isActive in
             if isActive {
-                let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.title }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
+                let provider = NoteContextProvider(atom: atom, titleRef: { [self] in self.titlePlainText }, contentRef: { [self] in self.plainContent }, tagsRef: { [self] in self.tags })
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -179,6 +183,10 @@ struct NoteFocusModeView: View {
             saveAtomImmediately()
             floatingBlocksManager.saveImmediately()
             observationCancellable?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
+            autoSaveTask?.cancel()
+            saveAtomImmediately()
         }
         .onKeyPress(.escape) {
             onClose()
@@ -193,20 +201,22 @@ struct NoteFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Close button
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+            // Back button (hidden in pane mode — X button handles close)
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.border, in: Capsule())
                 }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Type badge
             HStack(spacing: 4) {
@@ -260,30 +270,26 @@ struct NoteFocusModeView: View {
 
     private var titleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            TextField("", text: $title, onEditingChanged: { editing in
-                withAnimation(ProMotionSprings.hover) {
-                    isTitleFocused = editing
+            CosmoDocumentEditor(
+                document: $titleDocument,
+                fontSize: 34,
+                placeholder: "Untitled Note",
+                darkMode: false,
+                allowSlashCommands: false,
+                allowMentions: true,
+                allowSelectionMenu: false,
+                allowImages: false,
+                singleLine: true,
+                baseFontWeight: .semibold,
+                onDocumentChange: { document, _ in
+                    titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
+                    withAnimation(ProMotionSprings.bouncy) {
+                        titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
+                    }
+                    if !isInitialLoad { triggerAutoSave() }
                 }
-                withAnimation(ProMotionSprings.bouncy) {
-                    titleUnderlineProgress = editing ? 1 : 0
-                }
-            })
-            .textFieldStyle(.plain)
-            .font(OnyxTypography.viewTitle)
-            .foregroundColor(.white)
-            .tracking(OnyxTypography.viewTitleTracking)
-            .onChange(of: title) { _, _ in
-                if !isInitialLoad { triggerAutoSave() }
-            }
-            .overlay(alignment: .leading) {
-                if title.isEmpty {
-                    Text("Untitled Note")
-                        .font(OnyxTypography.viewTitle)
-                        .tracking(OnyxTypography.viewTitleTracking)
-                        .foregroundColor(DS.textMuted)
-                        .allowsHitTesting(false)
-                }
-            }
+            )
+            .frame(height: 60)
 
             // Animated underline
             GeometryReader { geo in
@@ -299,7 +305,7 @@ struct NoteFocusModeView: View {
                             endPoint: .trailing
                         )
                     )
-                    .frame(width: geo.size.width * titleUnderlineProgress, height: 2)
+                    .frame(width: geo.size.width * max(0.16, titleUnderlineProgress), height: 2)
                     .shadow(
                         color: CosmoColors.blockNote.opacity(titleUnderlineProgress * 0.4),
                         radius: 4,
@@ -536,11 +542,25 @@ struct NoteFocusModeView: View {
                 receiveValue: { [self] fetchedAtom in
                     guard let fetchedAtom = fetchedAtom else { return }
 
-                    // Only update if content differs to prevent loops
-                    if fetchedAtom.content != plainContent || fetchedAtom.title != title {
-                        title = fetchedAtom.title ?? ""
-                        plainContent = fetchedAtom.content
-                        attributedContent = CosmoMarkdown.parse(fetchedAtom.content, fontSize: 15, darkMode: true)
+                    let nextTitleDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .title,
+                        metadata: fetchedAtom.metadata,
+                        fallbackPlainText: fetchedAtom.title
+                    )
+                    let nextBodyDocument = RichDocumentPersistence.loadAtomDocument(
+                        field: .body,
+                        metadata: fetchedAtom.metadata,
+                        fallbackPlainText: fetchedAtom.content
+                    )
+                    let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
+                    let nextBodyPlainText = nextBodyDocument.plainText
+
+                    if nextBodyPlainText != plainContent || nextTitlePlainText != titlePlainText || nextBodyDocument != bodyDocument || nextTitleDocument != titleDocument {
+                        titleDocument = nextTitleDocument
+                        bodyDocument = nextBodyDocument
+                        titlePlainText = nextTitlePlainText
+                        plainContent = nextBodyPlainText
+                        titleUnderlineProgress = nextTitlePlainText.isEmpty ? 0.28 : 1
                         tags = fetchedAtom.tagsList
                         if let date = ISO8601DateFormatter().date(from: fetchedAtom.createdAt) {
                             createdAt = date
@@ -594,32 +614,112 @@ struct NoteFocusModeView: View {
         }
     }
 
-    /// Immediate save without UI feedback (used on close)
+    /// Immediate synchronous save (used on close) — blocks until DB write completes.
+    /// Guarantees data is persisted before the view/app exits.
     private func saveAtomImmediately() {
-        performSave(completion: nil)
+        let titleDocumentCopy = titleDocument
+        let bodyDocumentCopy = bodyDocument
+        let uuid = atom.uuid
+
+        do {
+            try database.write { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    existingMetadata = row["metadata"]
+                }
+
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: titleDocumentCopy,
+                    bodyDocument: bodyDocumentCopy
+                )
+
+                var metadataDict: [String: Any] = [:]
+                if let metadata = fields.metadata,
+                   let data = metadata.data(using: .utf8),
+                   let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    metadataDict = decoded
+                }
+                if tags.isEmpty {
+                    metadataDict.removeValue(forKey: "tags")
+                } else {
+                    metadataDict["tags"] = tags
+                }
+                let metadataString = (try? JSONSerialization.data(withJSONObject: metadataDict)).flatMap { String(data: $0, encoding: .utf8) }
+
+                try db.execute(
+                    sql: """
+                    UPDATE atoms
+                    SET title = ?,
+                        body = ?,
+                        metadata = ?,
+                        updated_at = ?,
+                        _local_version = _local_version + 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [
+                        fields.title,
+                        fields.body ?? "",
+                        metadataString ?? fields.metadata,
+                        ISO8601DateFormatter().string(from: Date()),
+                        uuid
+                    ]
+                )
+            }
+        } catch {
+            print("Failed to save note (sync): \(error)")
+        }
     }
 
-    /// Core save logic — writes to DB using atom UUID (never fails due to nil id)
+    /// Async save with completion callback (used for debounced auto-save during editing)
     private func performSave(completion: ((Bool) -> Void)?) {
-        let titleCopy = title
+        let titleDocumentCopy = titleDocument
+        let bodyDocumentCopy = bodyDocument
+        let titleCopy = titlePlainText
         let contentCopy = plainContent
         let uuid = atom.uuid
 
         Task {
             do {
                 try await database.asyncWrite { db in
+                    var existingMetadata: String?
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                        existingMetadata = row["metadata"]
+                    }
+
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: existingMetadata,
+                        titleDocument: titleDocumentCopy,
+                        bodyDocument: bodyDocumentCopy
+                    )
+
+                    var metadataDict: [String: Any] = [:]
+                    if let metadata = fields.metadata,
+                       let data = metadata.data(using: .utf8),
+                       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        metadataDict = decoded
+                    }
+                    if tags.isEmpty {
+                        metadataDict.removeValue(forKey: "tags")
+                    } else {
+                        metadataDict["tags"] = tags
+                    }
+                    let metadataString = (try? JSONSerialization.data(withJSONObject: metadataDict)).flatMap { String(data: $0, encoding: .utf8) }
+
                     try db.execute(
                         sql: """
                         UPDATE atoms
                         SET title = ?,
                             body = ?,
+                            metadata = ?,
                             updated_at = ?,
                             _local_version = _local_version + 1
                         WHERE uuid = ?
                         """,
                         arguments: [
-                            titleCopy.isEmpty ? nil : titleCopy,
-                            contentCopy,
+                            fields.title,
+                            fields.body ?? "",
+                            metadataString ?? fields.metadata,
                             ISO8601DateFormatter().string(from: Date()),
                             uuid
                         ]
@@ -631,6 +731,11 @@ struct NoteFocusModeView: View {
                         name: .noteFocusStateDidChange,
                         object: nil,
                         userInfo: ["atomUUID": uuid, "title": titleCopy, "body": contentCopy]
+                    )
+                    NotificationCenter.default.post(
+                        name: .richDocumentDidChange,
+                        object: nil,
+                        userInfo: ["atomUUID": uuid]
                     )
                 }
                 if let completion {

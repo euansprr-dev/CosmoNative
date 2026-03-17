@@ -23,6 +23,8 @@ struct ContentFocusModeView: View {
     @State private var showAICollaborator = false
     @State private var showSettings = false
     @State private var editableTitle: String
+    @State private var titleDocument: RichDocument = .empty
+    @State private var draftDocument: RichDocument = .empty
     @StateObject private var writingEngine = UnifiedWritingEngine()
 
     /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
@@ -43,17 +45,18 @@ struct ContentFocusModeView: View {
     // Inline AI state (moved from ContentDraftView)
     @State private var selectionInfo: DraftSelectionInfo = .empty
     @State private var inlineAIState: InlineAIState = .idle
-    @State private var showCustomPrompt = false
-    @State private var customPromptText = ""
     @StateObject private var inlineAssistant = AIWritingAssistant()
     @State private var textContentHeight: CGFloat = 400
-    @State private var editorAreaFrame: CGRect = .zero
+    @State private var draftEditorOrigin: CGPoint = .zero
     @State private var selectedRephraseIndex: Int = 0
 
     // Auto-save state
     @State private var autoSaveTask: Task<Void, Never>?
     @State private var saveState: DraftSaveState = .idle
     private let autoSaveDelay: TimeInterval = 1.5
+
+    // Debounced polish analysis
+    @State private var polishDebounceTask: Task<Void, Never>?
 
     // AI Draft generation state
     @State private var isGeneratingDraft = false
@@ -64,13 +67,80 @@ struct ContentFocusModeView: View {
 
     enum DraftSaveState { case idle, saving, saved }
 
+    enum ContentLayoutMode { case compact, regular, full }
+
     // Feature flag: when true, the embedded AI Collaborator is hidden (replaced by global Cosmo window)
     @AppStorage("cosmoWindowEnabled") private var cosmoWindowEnabled = true
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
-    private let editorMaxWidth: CGFloat = 780
+    // Responsive layout
+    @State private var layoutMode: ContentLayoutMode = .full
+
+    private var editorMaxWidth: CGFloat {
+        switch layoutMode {
+        case .compact: return .infinity
+        case .regular: return 640
+        case .full: return 780
+        }
+    }
+
+    private var editorHorizontalPadding: CGFloat {
+        switch layoutMode {
+        case .compact: return 20
+        case .regular: return 32
+        case .full: return 48
+        }
+    }
+
+    private var editorTopPadding: CGFloat {
+        switch layoutMode {
+        case .compact: return 20
+        case .regular: return 32
+        case .full: return 48
+        }
+    }
+
+    private var editorBottomPadding: CGFloat {
+        switch layoutMode {
+        case .compact: return 24
+        case .regular: return 40
+        case .full: return 60
+        }
+    }
+
+    private var topSpacerHeight: CGFloat {
+        switch layoutMode {
+        case .compact: return 40
+        case .regular: return 56
+        case .full: return 72
+        }
+    }
+
+    private var titleFontSize: CGFloat {
+        switch layoutMode {
+        case .compact: return 24
+        case .regular: return 28
+        case .full: return 34
+        }
+    }
+
+    private var titleMinHeight: CGFloat {
+        switch layoutMode {
+        case .compact: return 40
+        case .regular: return 48
+        case .full: return 60
+        }
+    }
+
+    private func updateLayoutMode(for width: CGFloat) {
+        let newMode: ContentLayoutMode
+        if width < 500 { newMode = .compact }
+        else if width < 900 { newMode = .regular }
+        else { newMode = .full }
+        if layoutMode != newMode { layoutMode = newMode }
+    }
 
     // MARK: - Initialization
 
@@ -92,14 +162,11 @@ struct ContentFocusModeView: View {
             // Main content
             VStack(spacing: 0) {
                 // Top bar spacer
-                Spacer().frame(height: 72)
+                Spacer().frame(height: topSpacerHeight)
 
                 // Unified editor or post-creation phase
                 mainContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                // Bottom bar
-                unifiedBottomBar
             }
 
             // Top bar overlay (fixed)
@@ -113,6 +180,11 @@ struct ContentFocusModeView: View {
             if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
                 leftSidebarOverlay
                     .zIndex(50)
+            }
+
+            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
+                floatingPolishButtonOverlay
+                    .zIndex(40)
             }
 
             // AI Collaborator floating popover (hidden when global Cosmo window is enabled)
@@ -138,11 +210,11 @@ struct ContentFocusModeView: View {
                 .zIndex(100)
             }
 
-            // Settings cog overlay
-            VStack {
-                HStack {
-                    Spacer()
-                    if isPaneContext {
+            // Pane close button overlay
+            if isPaneContext {
+                VStack {
+                    HStack {
+                        Spacer()
                         Button(action: onClose) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 12, weight: .medium))
@@ -151,19 +223,11 @@ struct ContentFocusModeView: View {
                                 .background(DS.border, in: Circle())
                         }
                         .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .padding(.top, 16)
                     }
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundColor(DS.textMuted)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 16)
-                    .padding(.top, 16)
+                    Spacer()
                 }
-                Spacer()
             }
 
             // XP award animation overlay
@@ -194,12 +258,19 @@ struct ContentFocusModeView: View {
         .onAppear {
             viewModel.loadState()
             localDraftContent = viewModel.state.draftContent
+            draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(viewModel.state.draftContent)
+            titleDocument = RichDocumentPersistence.loadAtomDocument(
+                field: .title,
+                metadata: atom.metadata,
+                fallbackPlainText: atom.title
+            )
+            editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
             viewModel.startObservingState()
             Task {
                 await viewModel.searchRelatedAtoms()
             }
-            // Migration: auto-open sidebar if in brainstorm step, auto-activate polish if in polish step
-            if viewModel.state.currentStep == .brainstorm {
+            // Migration: auto-open sidebar if in brainstorm step (not in pane mode), auto-activate polish if in polish step
+            if viewModel.state.currentStep == .brainstorm && !isPaneContext {
                 sidebarVisible = true
             } else if viewModel.state.currentStep == .polish {
                 isPolishModeActive = true
@@ -229,6 +300,7 @@ struct ContentFocusModeView: View {
         .onDisappear {
             // Sync local draft to viewModel state before closing
             viewModel.state.draftContent = localDraftContent
+            viewModel.state.richDraftDocument = draftDocument
             // Sync engine conversation to state before saving (only when legacy AI Collaborator is active)
             if !cosmoWindowEnabled {
                 viewModel.state.conversationHistory = writingEngine.messages
@@ -248,6 +320,7 @@ struct ContentFocusModeView: View {
             // Sync external draft updates (AI engine, tool executor) back to local state
             if newValue != localDraftContent {
                 localDraftContent = newValue
+                draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(newValue)
             }
         }
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
@@ -358,13 +431,14 @@ struct ContentFocusModeView: View {
             editorArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Right sidebar: Polish sidebar only (context moved to left sidebar)
-            if isPolishModeActive {
+            // Right sidebar: Polish sidebar only (hidden in compact pane mode)
+            if isPolishModeActive && layoutMode != .compact {
                 ContentPolishSidebar(
                     state: $viewModel.state,
                     atom: atom,
                     analysis: polishAnalysis
                 )
+                .frame(width: layoutMode == .regular ? 260 : 320)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -413,12 +487,23 @@ struct ContentFocusModeView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         // Title (editable)
-                        TextField("Untitled Content", text: $editableTitle)
-                            .textFieldStyle(.plain)
-                            .font(DS.pageTitle)
-                            .foregroundColor(DS.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 8)
+                        CosmoDocumentEditor(
+                            document: $titleDocument,
+                            fontSize: titleFontSize,
+                            placeholder: "Untitled Content",
+                            allowSlashCommands: false,
+                            allowMentions: true,
+                            allowSelectionMenu: false,
+                            allowImages: false,
+                            singleLine: true,
+                            baseFontWeight: .semibold,
+                            onDocumentChange: { document, _ in
+                                editableTitle = RichDocumentPersistence.titlePlainText(from: document)
+                                viewModel.updateTitleDocument(document, plainTitle: editableTitle)
+                            }
+                        )
+                        .frame(minHeight: titleMinHeight)
+                        .padding(.bottom, 8)
 
                         // Description subtitle
                         if !viewModel.state.contentDescription.isEmpty {
@@ -444,59 +529,80 @@ struct ContentFocusModeView: View {
                         }
 
                         // Draft editor — NSTextView for selection tracking
-                        DraftEditorTextView(
-                            text: $localDraftContent,
-                            contentHeight: $textContentHeight,
+                        CosmoDocumentEditor(
+                            document: $draftDocument,
+                            placeholder: "Start writing...",
+                            allowSlashCommands: true,
+                            allowMentions: true,
+                            allowSelectionMenu: true,
+                            allowImages: true,
                             polishHighlights: isPolishModeActive ? polishAnalysis : nil,
-                            onSelectionChanged: { info in
-                                handleSelectionChange(info)
+                            onSelectionChanged: { snapshot in
+                                handleSelectionChange(
+                                    DraftSelectionInfo(
+                                        text: snapshot.text,
+                                        range: snapshot.range,
+                                        rectInEditor: snapshot.rectInEditor
+                                    )
+                                )
                             },
-                            onTextChanged: {
+                            onContentHeightChange: { measuredHeight in
+                                textContentHeight = max(400, measuredHeight)
+                            },
+                            onAIAction: { action in
+                                triggerInlineAction(action)
+                            },
+                            onCustomPrompt: { prompt in
+                                triggerCustomPrompt(prompt)
+                            },
+                            onDocumentChange: { document, plainText in
+                                localDraftContent = plainText
+                                draftDocument = document
                                 triggerAutoSave()
-                                if isPolishModeActive { updatePolishAnalysis() }
+                                if isPolishModeActive { debouncedPolishUpdate() }
                             }
                         )
-                        .frame(height: max(400, textContentHeight))
+                        .frame(minHeight: max(textContentHeight, geo.size.height - 150))
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .preference(key: DraftEditorFrameKey.self,
+                                                value: proxy.frame(in: .named("editorOverlay")))
+                            }
+                        )
                     }
                     .frame(maxWidth: editorMaxWidth)
-                    .padding(.vertical, 48)
-                    .padding(.horizontal, 48)
+                    .padding(.top, editorTopPadding)
+                    .padding(.bottom, editorBottomPadding)
+                    .padding(.horizontal, editorHorizontalPadding)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .frame(maxWidth: .infinity)
-
-                // Inline AI Action Bar — floats above selection
-                if inlineAIState == .showingBar && !selectionInfo.text.isEmpty {
-                    inlineActionBar
-                        .position(
-                            x: min(max(selectionInfo.rectInEditor.midX, 120), geo.size.width - 120),
-                            y: max(selectionInfo.rectInEditor.minY - 50, 20)
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
-                }
 
                 // Inline AI Result Popover
                 if case .processing = inlineAIState {
                     inlineResultPopover
                         .position(
-                            x: min(max(selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
-                            y: max(selectionInfo.rectInEditor.minY - 80, 60)
+                            x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                            y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
                 } else if inlineAIState == .showingResult {
                     inlineResultPopover
                         .position(
-                            x: min(max(selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
-                            y: max(selectionInfo.rectInEditor.minY - 80, 60)
+                            x: min(max(draftEditorOrigin.x + selectionInfo.rectInEditor.midX, 180), geo.size.width - 180),
+                            y: max(draftEditorOrigin.y + selectionInfo.rectInEditor.minY - 80, 60)
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
                 }
             }
-            .onAppear {
-                editorAreaFrame = geo.frame(in: .global)
+            .coordinateSpace(name: "editorOverlay")
+            .onPreferenceChange(DraftEditorFrameKey.self) { frame in
+                draftEditorOrigin = frame.origin
             }
-            .onChange(of: geo.size) { _, _ in
-                editorAreaFrame = geo.frame(in: .global)
+            .onAppear { updateLayoutMode(for: geo.size.width) }
+            .onChange(of: geo.size) { _, newSize in
+                updateLayoutMode(for: newSize.width)
             }
         }
     }
@@ -570,73 +676,31 @@ struct ContentFocusModeView: View {
         }
     }
 
-    // MARK: - Unified Bottom Bar
+    // MARK: - Floating Polish Button
 
-    private var unifiedBottomBar: some View {
-        HStack(spacing: 12) {
-            // Left: Save status
-            if saveState != .idle {
-                HStack(spacing: 4) {
-                    if saveState == .saving {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(DS.textMuted)
-                    } else {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.accent)
-                    }
-                    Text(saveState == .saving ? "Saving..." : "Saved")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
-                }
-                .transition(.opacity)
-            }
-
+    @ViewBuilder
+    private var floatingPolishButtonOverlay: some View {
+        VStack {
             Spacer()
+            HStack {
+                Spacer()
 
-            // Center: Phase name
-            Text(viewModel.displayPhase.displayName)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundColor(DS.textMuted)
-                .tracking(0.24)
-
-            // Word count — selection-aware
-            if !localDraftContent.isEmpty {
-                let textToCount = selectedText.isEmpty ? localDraftContent : selectedText
-                let words = textToCount.split(whereSeparator: \.isWhitespace).count
-                Text("\(words) words")
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(DS.textMuted)
-            }
-
-            Spacer()
-
-            // Polish toggle
-            if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        isPolishModeActive.toggle()
-                        if isPolishModeActive { updatePolishAnalysis() }
+                if ContentFocusModeState.stepForPhase(viewModel.displayPhase) != nil {
+                    Button {
+                        withAnimation(ProMotionSprings.snappy) {
+                            isPolishModeActive.toggle()
+                            if isPolishModeActive { updatePolishAnalysis() }
+                        }
+                    } label: {
+                        polishToggleLabel
                     }
-                } label: {
-                    polishToggleLabel
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 24)
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .frame(height: 48)
-        .background(
-            Rectangle()
-                .fill(DS.bg)
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(DS.border)
-                        .frame(height: 1)
-                }
-        )
+        .allowsHitTesting(true)
     }
 
     @ViewBuilder
@@ -671,6 +735,15 @@ struct ContentFocusModeView: View {
         polishAnalysis = WritingAnalyzer.shared.analyze(text: text)
     }
 
+    private func debouncedPolishUpdate() {
+        polishDebounceTask?.cancel()
+        polishDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            updatePolishAnalysis()
+        }
+    }
+
     // MARK: - Inline AI
 
     @ViewBuilder
@@ -687,110 +760,6 @@ struct ContentFocusModeView: View {
         }
         .frame(width: 0, height: 0)
         .opacity(0)
-    }
-
-    @ViewBuilder
-    private var inlineActionBar: some View {
-        HStack(spacing: 2) {
-            inlineBarButton(icon: "arrow.up.left.and.arrow.down.right", label: "Expand", action: .expand)
-            inlineBarButton(icon: "arrow.down.right.and.arrow.up.left", label: "Condense", action: .condense)
-            inlineBarButton(icon: "arrow.triangle.2.circlepath", label: "Rephrase", action: .rephrase)
-
-            Rectangle()
-                .fill(DS.borderActive)
-                .frame(width: 1, height: 20)
-                .padding(.horizontal, 2)
-
-            Button(action: {
-                withAnimation(ProMotionSprings.snappy) { showCustomPrompt.toggle() }
-            }) {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(DS.borderActive, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
-        )
-        .overlay(alignment: .bottom) {
-            if showCustomPrompt {
-                customPromptField
-                    .offset(y: 46)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func inlineBarButton(icon: String, label: String, action: AIWritingAction) -> some View {
-        Button(action: { triggerInlineAction(action) }) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(DS.text)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(DS.border))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var customPromptField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "text.bubble")
-                .font(.system(size: 11))
-                .foregroundColor(DS.accent.opacity(0.7))
-
-            TextField("Custom instruction...", text: $customPromptText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
-                .onSubmit {
-                    guard !customPromptText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    triggerCustomPrompt(customPromptText)
-                    customPromptText = ""
-                    showCustomPrompt = false
-                }
-
-            Button(action: {
-                guard !customPromptText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                triggerCustomPrompt(customPromptText)
-                customPromptText = ""
-                showCustomPrompt = false
-            }) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(DS.accent)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(width: 260)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(DS.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(DS.accent.opacity(0.3), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
-        )
     }
 
     @ViewBuilder
@@ -935,21 +904,6 @@ struct ContentFocusModeView: View {
     private func handleSelectionChange(_ info: DraftSelectionInfo) {
         selectionInfo = info
         selectedText = info.text
-
-        if info.text.isEmpty || info.range.length == 0 {
-            if inlineAIState == .showingBar {
-                withAnimation(ProMotionSprings.snappy) {
-                    inlineAIState = .idle
-                    showCustomPrompt = false
-                }
-            }
-        } else {
-            if inlineAIState == .idle {
-                withAnimation(ProMotionSprings.snappy) {
-                    inlineAIState = .showingBar
-                }
-            }
-        }
     }
 
     private func triggerInlineAction(_ action: AIWritingAction) {
@@ -958,7 +912,6 @@ struct ContentFocusModeView: View {
 
         withAnimation(ProMotionSprings.snappy) {
             inlineAIState = .processing(action)
-            showCustomPrompt = false
         }
 
         if action == .rephrase { selectedRephraseIndex = 0 }
@@ -1052,20 +1005,49 @@ struct ContentFocusModeView: View {
 
         if result.action == .continueWriting {
             localDraftContent = replacement
+            draftDocument = RichDocument.migrateLegacy(replacement)
         } else {
-            let nsString = localDraftContent as NSString
-            let range = selectionInfo.range
-            if range.location + range.length <= nsString.length {
-                localDraftContent = nsString.replacingCharacters(in: range, with: replacement)
-            } else {
-                localDraftContent = localDraftContent.replacingOccurrences(
-                    of: result.originalText, with: replacement
-                )
-            }
+            draftDocument = draftDocumentByReplacingSelection(with: replacement, originalText: result.originalText)
+            localDraftContent = draftDocument.plainText
         }
+        viewModel.state.richDraftDocument = draftDocument
 
         triggerAutoSave()
         dismissInlineAI()
+    }
+
+    private func draftDocumentByReplacingSelection(with replacement: String, originalText: String) -> RichDocument {
+        let currentPlainText = localDraftContent as NSString
+        var replacementRange = selectionInfo.range
+
+        if replacementRange.location == NSNotFound || replacementRange.location + replacementRange.length > currentPlainText.length {
+            replacementRange = currentPlainText.range(of: originalText)
+        }
+
+        guard replacementRange.location != NSNotFound else {
+            return RichDocument.migrateLegacy(localDraftContent.replacingOccurrences(of: originalText, with: replacement))
+        }
+
+        let attributed = NSMutableAttributedString(
+            attributedString: RichDocumentSerializer.attributedString(from: draftDocument, fontSize: 16, darkMode: false)
+        )
+        let attributedPlainText = attributed.string as NSString
+
+        guard replacementRange.location + replacementRange.length <= attributedPlainText.length else {
+            return RichDocument.migrateLegacy(currentPlainText.replacingCharacters(in: replacementRange, with: replacement))
+        }
+
+        attributed.replaceCharacters(
+            in: replacementRange,
+            with: NSAttributedString(
+                string: replacement,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 16),
+                    .foregroundColor: NSColor(CosmoColors.textPrimary)
+                ]
+            )
+        )
+        return RichDocumentSerializer.document(from: attributed)
     }
 
     private func dismissInlineAI() {
@@ -1073,7 +1055,6 @@ struct ContentFocusModeView: View {
             inlineAIState = .idle
             inlineAssistant.currentResult = nil
             inlineAssistant.error = nil
-            showCustomPrompt = false
         }
     }
 
@@ -1089,8 +1070,10 @@ struct ContentFocusModeView: View {
                     withAnimation(ProMotionSprings.snappy) { saveState = .saving }
                     // Sync local draft to viewModel state only at save time (avoids per-keystroke @Published churn)
                     viewModel.state.draftContent = localDraftContent
+                    viewModel.state.richDraftDocument = draftDocument
                     viewModel.state.lastModified = Date()
-                    viewModel.state.save()
+                    // Write directly to DB — skip the notification + ViewModel debounce (was adding 1.5s extra delay)
+                    viewModel.writeToAtom()
                     withAnimation(ProMotionSprings.snappy) { saveState = .saved }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         withAnimation(ProMotionSprings.gentle) { saveState = .idle }
@@ -1104,43 +1087,44 @@ struct ContentFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Back button
-            Button(action: onClose) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+            // Back button (hidden in pane mode — X button handles close)
+            if !isPaneContext {
+                Button(action: onClose) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(DS.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.border, in: Capsule())
                 }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.border, in: Capsule())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             // Editable title
-            TextField("Content title...", text: $editableTitle)
-                .textFieldStyle(.plain)
+            Text(editableTitle.isEmpty ? "Content title..." : editableTitle)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.text)
-                .frame(maxWidth: 300)
-                .onChange(of: editableTitle) { _, _ in
-                    viewModel.updateTitle(editableTitle)
-                }
+                .foregroundColor(editableTitle.isEmpty ? DS.textMuted : DS.text)
+                .lineLimit(1)
+                .frame(maxWidth: layoutMode == .compact ? 180 : 300, alignment: .leading)
 
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: "doc.text.fill")
-                    .font(.system(size: 10))
-                Text("Content")
-                    .font(.system(size: 10, weight: .medium))
-                    .tracking(OnyxTypography.labelTracking)
+            // Type badge (hidden in compact mode)
+            if layoutMode != .compact {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 10))
+                    Text("Content")
+                        .font(.system(size: 10, weight: .medium))
+                        .tracking(OnyxTypography.labelTracking)
+                }
+                .foregroundColor(OnyxColors.Dimension.creative)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(OnyxColors.Dimension.creative.opacity(0.12), in: Capsule())
             }
-            .foregroundColor(OnyxColors.Dimension.creative)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(OnyxColors.Dimension.creative.opacity(0.12), in: Capsule())
 
             Spacer()
 
@@ -1150,14 +1134,33 @@ struct ContentFocusModeView: View {
                 let words = textToCount.split(whereSeparator: \.isWhitespace).count
                 let chars = textToCount.count
                 Text("\(words) words · \(chars) chars")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundColor(DS.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(DS.border, in: Capsule())
             }
+
+            // Sidebar toggle (pane mode)
+            if isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        sidebarVisible.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13))
+                        .foregroundStyle(sidebarVisible ? DS.entityContent : DS.textSecondary)
+                        .padding(8)
+                        .background(
+                            sidebarVisible ? DS.entityContent.opacity(0.15) : DS.border,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, layoutMode == .compact ? 12 : 20)
         .padding(.vertical, 12)
         .background(
             LinearGradient(
@@ -1170,7 +1173,7 @@ struct ContentFocusModeView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 120)
+            .frame(height: layoutMode == .compact ? 80 : 120)
             .allowsHitTesting(false)
         , alignment: .top)
     }
@@ -1200,9 +1203,19 @@ class ContentFocusModeViewModel: ObservableObject {
 
     // MARK: - Initialization
 
+    private var terminationCancellable: AnyCancellable?
+
     init(atom: Atom) {
         self.atom = atom
         self.state = ContentFocusModeState(atomUUID: atom.uuid)
+
+        // Flush pending saves synchronously when the app is about to terminate
+        terminationCancellable = NotificationCenter.default
+            .publisher(for: .cosmoAppWillTerminate)
+            .sink { [weak self] _ in
+                guard let self, !self.isClosed else { return }
+                self.writeToAtomSync()
+            }
     }
 
     private var phaseChangeCancellable: AnyCancellable?
@@ -1211,6 +1224,7 @@ class ContentFocusModeViewModel: ObservableObject {
         autoSaveTask?.cancel()
         saveNotificationCancellable?.cancel()
         phaseChangeCancellable?.cancel()
+        terminationCancellable?.cancel()
         toolNotificationCancellables.removeAll()
     }
 
@@ -1283,6 +1297,7 @@ class ContentFocusModeViewModel: ObservableObject {
                 // Raw JSON stays in atom.body (written by handleWriteDraft); draftContent
                 // gets the human-readable version for the editor and read_draft tool.
                 self.state.draftContent = AgentToolExecutor.renderDraftForDisplay(content)
+                self.state.richDraftDocument = RichDocument.migrateLegacy(self.state.draftContent)
                 self.state.lastModified = Date()
                 self.writeToAtom()
             }
@@ -1300,6 +1315,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     description: "AI edit: \(sectionId)"
                 )
                 self.state.draftContent = newContent
+                self.state.richDraftDocument = RichDocument.migrateLegacy(newContent)
                 self.state.lastModified = Date()
                 self.writeToAtom()
             }
@@ -1336,6 +1352,7 @@ class ContentFocusModeViewModel: ObservableObject {
             // No saved focus state yet — initialize from atom fields
             if let body = atom.body, !body.isEmpty {
                 state.draftContent = body
+                state.richDraftDocument = RichDocument.migrateLegacy(body)
             }
             if let metadata = atom.metadata,
                let data = metadata.data(using: .utf8),
@@ -1425,7 +1442,49 @@ class ContentFocusModeViewModel: ObservableObject {
         }
     }
 
-    /// Called when view disappears — force immediate save
+    /// Synchronous write — blocks the calling thread until the DB write completes.
+    /// Use ONLY in save-on-close paths where the app may terminate before an async write finishes.
+    func writeToAtomSync() {
+        state.lastModified = Date()
+        let stateCopy = state
+        let atomUUID = atom.uuid
+
+        print("💾 Content focus: sync writing to atom \(atomUUID)")
+
+        do {
+            try CosmoDatabase.shared.write { db in
+                var existingMetadata: String? = nil
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]),
+                   let existing: String = row["metadata"] {
+                    existingMetadata = existing
+                }
+
+                let fields = stateCopy.toAtomFields(existingMetadata: existingMetadata)
+
+                try db.execute(
+                    sql: """
+                    UPDATE atoms
+                    SET body = ?,
+                        metadata = COALESCE(?, metadata),
+                        updated_at = ?,
+                        _local_version = _local_version + 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [
+                        fields.body,
+                        fields.metadata,
+                        ISO8601DateFormatter().string(from: Date()),
+                        atomUUID
+                    ]
+                )
+                print("💾 Content focus: sync wrote to atom \(atomUUID), rows affected: \(db.changesCount)")
+            }
+        } catch {
+            print("❌ Content focus: sync write failed: \(error)")
+        }
+    }
+
+    /// Called when view disappears — force immediate synchronous save
     func saveOnClose() {
         print("💾 Content focus: saveOnClose for atom \(atom.uuid)")
         isClosed = true
@@ -1436,7 +1495,7 @@ class ContentFocusModeViewModel: ObservableObject {
         phaseChangeCancellable?.cancel()
         phaseChangeCancellable = nil
         toolNotificationCancellables.removeAll()
-        writeToAtom()
+        writeToAtomSync()
     }
 
     /// Persist conversation messages directly to the atom's metadata in GRDB
@@ -1612,21 +1671,32 @@ class ContentFocusModeViewModel: ObservableObject {
     private var titleUpdateTask: Task<Void, Never>?
 
     func updateTitle(_ newTitle: String) {
+        updateTitleDocument(RichDocument.migrateLegacy(newTitle), plainTitle: newTitle)
+    }
+
+    func updateTitleDocument(_ document: RichDocument, plainTitle: String) {
         titleUpdateTask?.cancel()
         titleUpdateTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s debounce
             guard !Task.isCancelled else { return }
-            let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
+            let trimmed = RichDocumentPersistence.titlePlainText(from: document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document)
             let uuid = atom.uuid
             do {
                 try await CosmoDatabase.shared.asyncWrite { db in
+                    var existingMetadata: String?
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                        existingMetadata = row["metadata"]
+                    }
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: existingMetadata,
+                        titleDocument: document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+                    )
                     try db.execute(
                         sql: """
-                        UPDATE atoms SET title = ?, updated_at = ?, _local_version = _local_version + 1
+                        UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1
                         WHERE uuid = ?
                         """,
-                        arguments: [trimmed, ISO8601DateFormatter().string(from: Date()), uuid]
+                        arguments: [RichDocumentPersistence.nilIfEmpty(trimmed), fields.metadata, ISO8601DateFormatter().string(from: Date()), uuid]
                     )
                 }
             } catch {
@@ -1745,4 +1815,13 @@ class ContentContextProvider: CosmoContextProvider {
     }
 
     var availableActions: [CosmoWindowAction] { [] }
+}
+
+// MARK: - Preference Key for draft editor position tracking
+
+private struct DraftEditorFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
 }

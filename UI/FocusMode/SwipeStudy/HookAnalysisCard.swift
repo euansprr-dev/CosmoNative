@@ -16,9 +16,9 @@ struct HookAnalysisCard: View {
     private var hookScore: Double { analysis.effectiveHookScore }
 
     private var ringColor: Color {
-        if hookScore >= 8 { return Color(hex: "#22C55E") }
-        if hookScore >= 5 { return Color(hex: "#3B82F6") }
-        return Color(hex: "#64748B")
+        if hookScore >= 8 { return DS.green }
+        if hookScore >= 5 { return DS.info }
+        return DS.textMuted
     }
 
     var body: some View {
@@ -120,9 +120,9 @@ struct HookAnalysisCard: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
         )
         .onAppear {

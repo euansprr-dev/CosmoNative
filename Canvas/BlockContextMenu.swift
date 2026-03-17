@@ -7,112 +7,282 @@ struct BlockContextMenu: View {
     let blockId: String
     let block: CanvasBlock
     let position: CGPoint
-    let selectedBlockIds: [String]  // For multi-select cluster creation
+    let selectedBlockIds: [String]
     let onDismiss: () -> Void
 
     @State private var appeared = false
-    @State private var isHovered: String? = nil
+    @State private var hoveredItem: String? = nil
+    @State private var hoveredColor: StickyNoteColor? = nil
 
-    private var menuItems: [(id: String, icon: String, label: String, color: Color)] {
-        var items: [(id: String, icon: String, label: String, color: Color)] = []
+    private var isStickyNote: Bool { block.entityType == .stickyNote }
 
-        // Focus mode (for types that support it)
-        if [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) {
-            items.append(("focus", "arrow.up.left.and.arrow.down.right", "Open Focus Mode", DS.text))
+    private struct MenuItem: Identifiable {
+        let id: String
+        let icon: String
+        let label: String
+        let shortcut: String?
+        let isDestructive: Bool
+
+        init(_ id: String, icon: String, label: String, shortcut: String? = nil, isDestructive: Bool = false) {
+            self.id = id
+            self.icon = icon
+            self.label = label
+            self.shortcut = shortcut
+            self.isDestructive = isDestructive
         }
+    }
 
-        // Pane (for types that support focus modes + note)
-        if [.idea, .content, .research, .connection, .cosmoAI, .note].contains(block.entityType) {
-            items.append(("pane", "rectangle.split.2x1", "Open as Pane", DS.accent))
+    // MARK: - Menu Groups
+
+    private var navigationItems: [MenuItem] {
+        guard !isStickyNote else { return [] }
+        var items: [MenuItem] = []
+        let focusTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note]
+        if focusTypes.contains(block.entityType) {
+            items.append(MenuItem("focus", icon: "arrow.up.left.and.arrow.down.right", label: "Open Focus Mode", shortcut: "⏎"))
         }
-
-        items.append(("connect", "link", "Connect to...", DS.accent))
-
-        // Create Cluster (when multiple blocks selected)
-        if selectedBlockIds.count >= 2 {
-            items.append(("createCluster", "square.3.layers.3d", "Create Cluster", DS.accent))
+        let paneTypes: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note]
+        if paneTypes.contains(block.entityType) {
+            items.append(MenuItem("pane", icon: "rectangle.split.2x1", label: "Open as Pane"))
         }
-
-        // Ask Cosmo (for non-AI blocks)
-        if block.entityType != .cosmoAI {
-            items.append(("askCosmo", "sparkle", "Ask Cosmo", DS.accent))
-        }
-
-        items.append(("duplicate", "plus.square.on.square", "Duplicate", DS.text))
-        items.append(("delete", "trash", "Delete", DS.red))
-
         return items
     }
 
+    private var actionItems: [MenuItem] {
+        guard !isStickyNote else {
+            return [MenuItem("duplicate", icon: "plus.square.on.square", label: "Duplicate", shortcut: "⌘D")]
+        }
+        var items: [MenuItem] = []
+        items.append(MenuItem("connect", icon: "link", label: "Connect to..."))
+        if selectedBlockIds.count >= 2 {
+            items.append(MenuItem("createCluster", icon: "square.3.layers.3d", label: "Create Cluster"))
+        }
+        if block.entityType != .cosmoAI {
+            items.append(MenuItem("askCosmo", icon: "sparkle", label: "Ask Cosmo"))
+        }
+        items.append(MenuItem("duplicate", icon: "plus.square.on.square", label: "Duplicate", shortcut: "⌘D"))
+        return items
+    }
+
+    private var destructiveItems: [MenuItem] {
+        [MenuItem("delete", icon: "trash", label: "Delete", shortcut: "⌫", isDestructive: true)]
+    }
+
+    private var allGroups: [[MenuItem]] {
+        [navigationItems, actionItems, destructiveItems].filter { !$0.isEmpty }
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // Block type header
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(CosmoMentionColors.color(for: block.entityType))
-                    .frame(width: 6, height: 6)
-                Text(block.title.isEmpty ? block.entityType.rawValue.capitalized : block.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            headerBadge
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+
+            // Color palette for sticky notes
+            if isStickyNote {
+                colorPalette
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
 
-            Divider()
-                .background(DS.border)
-
-            ForEach(menuItems, id: \.id) { item in
-                Button {
-                    handleAction(item.id)
-                    onDismiss()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: item.icon)
-                            .font(.system(size: 12))
-                            .foregroundColor(item.color.opacity(0.8))
-                            .frame(width: 16)
-
-                        Text(item.label)
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundColor(DS.text)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isHovered == item.id ? DS.border : Color.clear)
-                    )
+            ForEach(Array(allGroups.enumerated()), id: \.offset) { groupIndex, group in
+                if groupIndex > 0 || isStickyNote {
+                    Divider()
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
                 }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    isHovered = hovering ? item.id : nil
+
+                ForEach(Array(group.enumerated()), id: \.element.id) { itemIndex, item in
+                    let flatIndex = flatIndexFor(groupIndex: groupIndex, itemIndex: itemIndex)
+                    menuRow(item, index: flatIndex)
                 }
             }
         }
-        .padding(.vertical, 4)
-        .frame(width: 200)
+        .padding(.vertical, 6)
+        .frame(width: 220)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(DS.surfaceElevated)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.5), lineWidth: 0.5)
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.border, lineWidth: 1)
         )
         .dsFloatingShadow()
-        .scaleEffect(appeared ? 1.0 : 0.8)
+        .scaleEffect(appeared ? 1.0 : 0.85)
         .opacity(appeared ? 1.0 : 0)
-        .position(x: position.x + 100, y: position.y)  // Offset right so menu doesn't cover click point
+        .position(x: position.x + 110, y: position.y)
         .onAppear {
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.75)) {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
                 appeared = true
             }
         }
     }
+
+    // MARK: - Header
+
+    private var headerBadge: some View {
+        let typeColor = CosmoMentionColors.color(for: block.entityType)
+        let title: String = isStickyNote
+            ? "Sticky Note"
+            : (block.title.isEmpty ? block.entityType.rawValue.capitalized : block.title)
+
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(typeColor)
+                .frame(width: 6, height: 6)
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundColor(typeColor)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(typeColor.opacity(0.1))
+        )
+    }
+
+    // MARK: - Color Palette
+
+    private var currentStickyColor: StickyNoteColor {
+        if let key = block.metadata["stickyColor"],
+           let color = StickyNoteColor(rawValue: key) {
+            return color
+        }
+        return .yellow
+    }
+
+    private var colorPalette: some View {
+        HStack(spacing: 8) {
+            ForEach(StickyNoteColor.allCases) { color in
+                colorSwatch(color)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func colorSwatch(_ color: StickyNoteColor) -> some View {
+        let isActive = color == currentStickyColor
+        let isHover = hoveredColor == color
+
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.changeStickyColor,
+                object: nil,
+                userInfo: [
+                    "blockId": blockId,
+                    "color": color.rawValue
+                ]
+            )
+            onDismiss()
+        } label: {
+            Circle()
+                .fill(color.paper)
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Circle()
+                        .stroke(color.selectedBorder, lineWidth: isActive ? 2 : (isHover ? 1.5 : 0))
+                )
+                .overlay {
+                    if isActive {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(color.selectedBorder)
+                    }
+                }
+                .scaleEffect(isHover ? 1.12 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredColor = hovering ? color : nil
+            }
+        }
+    }
+
+    // MARK: - Menu Row
+
+    @ViewBuilder
+    private func menuRow(_ item: MenuItem, index: Int) -> some View {
+        let isHovered = hoveredItem == item.id
+        let itemColor: Color = item.isDestructive ? DS.red : DS.text
+        let hoverBg: Color = item.isDestructive
+            ? DS.red.opacity(0.07)
+            : DS.accent.opacity(0.07)
+
+        Button {
+            handleAction(item.id)
+            onDismiss()
+        } label: {
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(isHovered ? (item.isDestructive ? DS.red : DS.accent) : Color.clear)
+                    .frame(width: 2, height: 16)
+                    .padding(.trailing, 8)
+
+                Image(systemName: item.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isHovered ? itemColor : DS.textMuted)
+                    .frame(width: 18)
+
+                Text(item.label)
+                    .font(.system(size: 13, weight: isHovered ? .medium : .regular))
+                    .foregroundColor(isHovered && item.isDestructive ? DS.red : DS.text)
+                    .padding(.leading, 8)
+
+                Spacer()
+
+                if let shortcut = item.shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(DS.textMuted.opacity(0.6))
+                        .padding(.trailing, 2)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? hoverBg : Color.clear)
+                    .padding(.horizontal, 4)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredItem = hovering ? item.id : nil
+            }
+        }
+        .opacity(appeared ? 1.0 : 0)
+        .offset(y: appeared ? 0 : 4)
+        .animation(
+            .spring(response: 0.3, dampingFraction: 0.8).delay(Double(index) * 0.02),
+            value: appeared
+        )
+    }
+
+    // MARK: - Helpers
+
+    private func flatIndexFor(groupIndex: Int, itemIndex: Int) -> Int {
+        var count = 0
+        for g in 0..<groupIndex {
+            count += allGroups[g].count
+        }
+        return count + itemIndex
+    }
+
+    // MARK: - Actions
 
     private func handleAction(_ actionId: String) {
         switch actionId {

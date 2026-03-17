@@ -150,7 +150,9 @@ class CosmoAgentService: ObservableObject {
 
     // MARK: - Published State
 
+    /// True when at least one session is processing (supports concurrent sessions).
     @Published var isProcessing = false
+    private var activeSessionCount = 0
     @Published var currentConversation: AgentConversation?
     @Published var activeProvider: AgentProvider = .anthropic
     @Published var selectedModel: String = AgentProvider.anthropic.defaultModel
@@ -305,9 +307,13 @@ class CosmoAgentService: ObservableObject {
         tierOverride: AgentModelTier? = nil,
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
+        activeSessionCount += 1
         isProcessing = true
         lastError = nil
-        defer { isProcessing = false }
+        defer {
+            activeSessionCount -= 1
+            if activeSessionCount == 0 { isProcessing = false }
+        }
 
         guard let provider = llmProvider else {
             let msg = "Cosmo Agent is not configured. Please set up an AI provider in Settings."
@@ -468,7 +474,11 @@ class CosmoAgentService: ObservableObject {
             var toolGuidance = "IMPORTANT: Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +
                 "Use generate_draft() or generate_outline() — the writing engine has full client context, swipe blueprints, and voice fingerprints that you lack."
 
-            if let lastUUID = linkedUUIDs.last {
+            if conversation.source == .telegram || conversation.source == .whatsapp {
+                // Remote sources: ALWAYS create fresh content to avoid overwriting in-app work
+                toolGuidance += "\n\nALWAYS call create_content() first to create a fresh content atom, then use the new UUID for generate_outline / generate_draft. " +
+                    "NEVER reuse an existing contentUUID — the user may have that content open in the app."
+            } else if let lastUUID = linkedUUIDs.last {
                 toolGuidance += "\n\nThe most recent content atom is \(lastUUID). " +
                     "If the user is continuing work on that same piece, use it. " +
                     "If the user is requesting NEW or DIFFERENT content, call create_content() first to create a fresh atom, then use the new UUID."
@@ -544,8 +554,11 @@ class CosmoAgentService: ObservableObject {
         var finalResponse = ""
 
         // Pass the activity callback to the tool executor so context-loading
-        // sub-tools (load_client_profile, load_swipe, etc.) can stream progress
-        toolExecutor.onToolActivity = onToolActivity
+        // sub-tools (load_client_profile, load_swipe, etc.) can stream progress.
+        // Each session gets a unique token so concurrent sessions on different chats
+        // don't clear each other's callbacks.
+        let sessionToken = UUID()
+        toolExecutor.setToolActivity(onToolActivity, token: sessionToken)
 
         while iterations < iterationLimit {
             iterations += 1
@@ -649,8 +662,9 @@ class CosmoAgentService: ObservableObject {
         // Emit all-done event for live activity UI
         onToolActivity?(.allDone(totalCalls: contextTrace.toolCalls.count))
 
-        // Clear the callback on the executor to avoid stale references
-        toolExecutor.onToolActivity = nil
+        // Clear the callback only if this session's token still owns it.
+        // Prevents Session A from nilling out Session B's callback in concurrent chats.
+        toolExecutor.clearToolActivity(token: sessionToken)
 
         // Track token usage for cost guard (internal only — never shown to user)
         let messageTokens = conversation.estimatedTokenCount
@@ -685,9 +699,13 @@ class CosmoAgentService: ObservableObject {
         source: MessageSource = .telegram,
         onChunk: @escaping @Sendable (String) -> Void
     ) async -> (String, AgentContextTrace) {
+        activeSessionCount += 1
         isProcessing = true
         lastError = nil
-        defer { isProcessing = false }
+        defer {
+            activeSessionCount -= 1
+            if activeSessionCount == 0 { isProcessing = false }
+        }
 
         guard let provider = llmProvider else {
             let msg = "Cosmo Agent is not configured. Please set up an AI provider in Settings."
@@ -758,7 +776,14 @@ class CosmoAgentService: ObservableObject {
         // For draft intent with active content, inject a system message forcing tool use
         if effectiveIntent == .draft || effectiveIntent == .brainstorm {
             let linkedUUIDs = conversation.linkedAtomUUIDs
-            if let activeUUID = linkedUUIDs.last {
+            if conversation.source == .telegram || conversation.source == .whatsapp {
+                // Remote sources: ALWAYS create fresh content to avoid overwriting in-app work
+                let forceToolMsg = AgentMessage.system(
+                    "REMINDER: ALWAYS call create_content() first, then use the NEW UUID for generate_draft() or generate_outline(). " +
+                    "NEVER reuse an existing contentUUID — the user may have that content open in the app."
+                )
+                llmMessages.append(forceToolMsg)
+            } else if let activeUUID = linkedUUIDs.last {
                 let forceToolMsg = AgentMessage.system(
                     "REMINDER: You MUST use generate_draft(contentUUID: \"\(activeUUID)\") or generate_outline(contentUUID: \"\(activeUUID)\") for ALL content creation. " +
                     "Do NOT write slides, tweets, scripts, or any content longer than 3 sentences directly in your response. " +

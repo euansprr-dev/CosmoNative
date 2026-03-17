@@ -319,9 +319,11 @@ struct DashboardTaskList: View {
     private func taskRow(_ task: TaskViewModel) -> some View {
         let isActiveSession = viewModel.sessionEngine.activeSession?.taskUUID == task.uuid
             && viewModel.sessionEngine.isTimerRunning
-        let isKeyboardSelected = viewModel.selectedTaskIndex != nil
-            && viewModel.currentVisibleTasks.indices.contains(viewModel.selectedTaskIndex!)
-            && viewModel.currentVisibleTasks[viewModel.selectedTaskIndex!].uuid == task.uuid
+        let isKeyboardSelected: Bool = {
+            guard let idx = viewModel.selectedTaskIndex,
+                  viewModel.currentVisibleTasks.indices.contains(idx) else { return false }
+            return viewModel.currentVisibleTasks[idx].uuid == task.uuid
+        }()
         let isMultiSelected = selectedTaskUUIDs.contains(task.uuid)
         let completionState = completionStates[task.uuid]
         let isAnimatingCompletion = completionState != nil

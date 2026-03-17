@@ -92,7 +92,10 @@ class WhisperTranscriptionService {
         }
 
         let boundary = UUID().uuidString
-        var request = URLRequest(url: URL(string: whisperURL)!)
+        guard let url = URL(string: whisperURL) else {
+            throw TranscriptionError.invalidResponse
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -102,7 +105,7 @@ class WhisperTranscriptionService {
         body.appendFormValue("whisper-1", for: "model", boundary: boundary)
         body.appendFormValue("verbose_json", for: "response_format", boundary: boundary)
         body.appendFormValue("segment", for: "timestamp_granularities[]", boundary: boundary)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append(Data("--\(boundary)--\r\n".utf8))
         request.httpBody = body
 
         do {
@@ -134,16 +137,16 @@ class WhisperTranscriptionService {
 
 private extension Data {
     mutating func appendFormField(named name: String, filename: String, mimeType: String, data: Data, boundary: String) {
-        append("--\(boundary)\r\n".data(using: .utf8)!)
-        append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        append(Data("--\(boundary)\r\n".utf8))
+        append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n".utf8))
+        append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
         append(data)
-        append("\r\n".data(using: .utf8)!)
+        append(Data("\r\n".utf8))
     }
 
     mutating func appendFormValue(_ value: String, for name: String, boundary: String) {
-        append("--\(boundary)\r\n".data(using: .utf8)!)
-        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-        append("\(value)\r\n".data(using: .utf8)!)
+        append(Data("--\(boundary)\r\n".utf8))
+        append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+        append(Data("\(value)\r\n".utf8))
     }
 }

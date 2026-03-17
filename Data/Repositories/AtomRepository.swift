@@ -300,7 +300,11 @@ class AtomRepository: ObservableObject {
         await changeTracker.trackInsert(table: Atom.databaseTableName, entity: savedAtom)
 
         // Sync to NodeGraph
-        try? await NodeGraphEngine.shared.handleAtomCreated(savedAtom)
+        do {
+            try await NodeGraphEngine.shared.handleAtomCreated(savedAtom)
+        } catch {
+            print("AtomRepository: NodeGraph sync failed for created atom \(savedAtom.uuid): \(error)")
+        }
 
         return savedAtom
     }
@@ -345,7 +349,11 @@ class AtomRepository: ObservableObject {
         await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom)
 
         // Sync to NodeGraph
-        try? await NodeGraphEngine.shared.handleAtomUpdated(updatedAtom, changedFields: ["title", "body", "links", "metadata"])
+        do {
+            try await NodeGraphEngine.shared.handleAtomUpdated(updatedAtom, changedFields: ["title", "body", "links", "metadata"])
+        } catch {
+            print("AtomRepository: NodeGraph sync failed for updated atom \(updatedAtom.uuid): \(error)")
+        }
 
         return updatedAtom
     }
@@ -398,7 +406,11 @@ class AtomRepository: ObservableObject {
         await changeTracker.trackDelete(table: Atom.databaseTableName, uuid: uuid, rowId: nil)
 
         // Sync to NodeGraph
-        try? await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)
+        do {
+            try await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)
+        } catch {
+            print("AtomRepository: NodeGraph sync failed for deleted atom \(uuid): \(error)")
+        }
 
         // Notify canvas to remove blocks for this atom
         await MainActor.run {

@@ -92,18 +92,18 @@ public enum SchedulerTimePeriod: Equatable {
         switch self {
         case .today:
             let start = calendar.startOfDay(for: now)
-            let end = calendar.date(byAdding: .day, value: 1, to: start)!
+            let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
             return (start, end)
 
         case .tomorrow:
-            let tomorrow = calendar.date(byAdding: .day, value: 1, to: now)!
+            let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now
             let start = calendar.startOfDay(for: tomorrow)
-            let end = calendar.date(byAdding: .day, value: 1, to: start)!
+            let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
             return (start, end)
 
         case .thisWeek:
-            let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
-            let weekEnd = calendar.date(byAdding: .day, value: 7, to: weekStart)!
+            let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) ?? now
+            let weekEnd = calendar.date(byAdding: .day, value: 7, to: weekStart) ?? now
             return (weekStart, weekEnd)
 
         case .custom(let start, let end):
@@ -174,7 +174,7 @@ public final class SchedulerEngine: ObservableObject {
     /// Blocks for today only (for Today Mode)
     public var todayBlocks: [ScheduleBlock] {
         let today = Calendar.current.startOfDay(for: selectedDate)
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? Date.distantFuture
 
         return allBlocks.filter { block in
             // Include unscheduled tasks with focusDate = today
@@ -229,13 +229,13 @@ public final class SchedulerEngine: ObservableObject {
     /// Start date of currently visible week
     public var weekStartDate: Date {
         let calendar = Calendar.current
-        return calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate))!
+        return calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate)) ?? selectedDate
     }
 
     /// Date range for current week
     public var weekDateRange: (start: Date, end: Date) {
         let start = weekStartDate
-        let end = Calendar.current.date(byAdding: .day, value: 7, to: start)!
+        let end = Calendar.current.date(byAdding: .day, value: 7, to: start) ?? start
         return (start, end)
     }
 
@@ -287,8 +287,8 @@ public final class SchedulerEngine: ObservableObject {
 
             do {
                 let calendar = Calendar.current
-                let rangeStart = calendar.date(byAdding: .month, value: -1, to: selectedDate)!
-                let rangeEnd = calendar.date(byAdding: .month, value: 2, to: selectedDate)!
+                let rangeStart = calendar.date(byAdding: .month, value: -1, to: selectedDate) ?? selectedDate
+                let rangeEnd = calendar.date(byAdding: .month, value: 2, to: selectedDate) ?? selectedDate
 
                 let startString = ISO8601DateFormatter().string(from: rangeStart)
                 let endString = ISO8601DateFormatter().string(from: rangeEnd)
@@ -536,7 +536,7 @@ public final class SchedulerEngine: ObservableObject {
     /// Navigate to previous week
     public func previousWeek() {
         withAnimation(SchedulerSprings.modeSwitch) {
-            selectedDate = Calendar.current.date(byAdding: .weekOfYear, value: -1, to: selectedDate)!
+            selectedDate = Calendar.current.date(byAdding: .weekOfYear, value: -1, to: selectedDate) ?? selectedDate
         }
         SchedulerHaptics.light()
     }
@@ -544,7 +544,7 @@ public final class SchedulerEngine: ObservableObject {
     /// Navigate to next week
     public func nextWeek() {
         withAnimation(SchedulerSprings.modeSwitch) {
-            selectedDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: selectedDate)!
+            selectedDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: selectedDate) ?? selectedDate
         }
         SchedulerHaptics.light()
     }
@@ -552,7 +552,7 @@ public final class SchedulerEngine: ObservableObject {
     /// Navigate to previous day
     public func previousDay() {
         withAnimation(SchedulerSprings.modeSwitch) {
-            selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate)!
+            selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
         }
         SchedulerHaptics.light()
     }
@@ -560,7 +560,7 @@ public final class SchedulerEngine: ObservableObject {
     /// Navigate to next day
     public func nextDay() {
         withAnimation(SchedulerSprings.modeSwitch) {
-            selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate)!
+            selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate
         }
         SchedulerHaptics.light()
     }

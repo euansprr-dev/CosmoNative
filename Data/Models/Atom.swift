@@ -1118,11 +1118,15 @@ extension Atom {
     /// Parsed links array
     var linksList: [AtomLink] {
         guard let links = links,
-              let data = links.data(using: .utf8),
-              let array = try? JSONDecoder().decode([AtomLink].self, from: data) else {
+              let data = links.data(using: .utf8) else {
             return []
         }
-        return array
+        do {
+            return try JSONDecoder().decode([AtomLink].self, from: data)
+        } catch {
+            print("Atom[\(uuid.prefix(8))]: Failed to decode links JSON: \(error.localizedDescription)")
+            return []
+        }
     }
 
     /// Get links of a specific type (string-based)
@@ -1252,7 +1256,12 @@ extension Atom {
               let data = structured.data(using: .utf8) else {
             return nil
         }
-        return try? JSONDecoder().decode(type, from: data)
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            print("Atom[\(uuid.prefix(8))]: Failed to decode structured as \(T.self): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// Create a copy with encoded structured data
@@ -1270,7 +1279,12 @@ extension Atom {
               let data = metadata.data(using: .utf8) else {
             return nil
         }
-        return try? JSONDecoder().decode(type, from: data)
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            print("Atom[\(uuid.prefix(8))]: Failed to decode metadata as \(T.self): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// Create a copy with encoded metadata

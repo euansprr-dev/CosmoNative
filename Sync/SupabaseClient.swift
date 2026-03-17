@@ -43,7 +43,9 @@ final class SupabaseClient {
 
     // MARK: - Insert
     func insert(table: String, data: [String: Any]) async throws {
-        let url = URL(string: "\(baseURL)/rest/v1/\(table)")!
+        guard let url = URL(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -63,10 +65,15 @@ final class SupabaseClient {
 
     // MARK: - Update
     func update(table: String, uuid: String, data: [String: Any]) async throws {
-        var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)")!
+        guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
         urlComponents.queryItems = [URLQueryItem(name: "uuid", value: "eq.\(uuid)")]
 
-        var request = URLRequest(url: urlComponents.url!)
+        guard let url = urlComponents.url else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
@@ -93,7 +100,9 @@ final class SupabaseClient {
 
     // MARK: - Fetch Changes
     func fetchChanges(table: String, since: Date?) async throws -> [[String: Any]] {
-        var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)")!
+        guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
 
         var queryItems = [URLQueryItem(name: "is_deleted", value: "eq.false")]
 
@@ -107,7 +116,10 @@ final class SupabaseClient {
 
         urlComponents.queryItems = queryItems
 
-        var request = URLRequest(url: urlComponents.url!)
+        guard let url = urlComponents.url else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
@@ -141,6 +153,7 @@ final class SupabaseClient {
 
 // MARK: - Supabase Errors
 enum SupabaseError: LocalizedError {
+    case invalidURL
     case insertFailed
     case updateFailed
     case fetchFailed
@@ -148,6 +161,7 @@ enum SupabaseError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidURL: return "Invalid Supabase URL"
         case .insertFailed: return "Failed to insert to Supabase"
         case .updateFailed: return "Failed to update Supabase"
         case .fetchFailed: return "Failed to fetch from Supabase"

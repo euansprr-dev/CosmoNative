@@ -55,7 +55,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     var upcomingWeekStart: Date {
         let today = Calendar.current.startOfDay(for: Date())
-        return Calendar.current.date(byAdding: .day, value: upcomingWeekOffset * 7, to: today)!
+        return Calendar.current.date(byAdding: .day, value: upcomingWeekOffset * 7, to: today) ?? today
     }
 
     // MARK: - Timeline Sessions
@@ -264,7 +264,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             do {
                 let atoms = try await AtomRepository.shared.fetchAll(type: .task)
                 let dayStart = Calendar.current.startOfDay(for: selectedDate)
-                let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart)!
+                let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
 
                 allTasks = atoms.compactMap { atom -> TaskViewModel? in
                     guard let vm = TaskViewModel.from(atom: atom) else { return nil }
@@ -546,7 +546,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     private func refreshCalendarEvents() {
         let dayStart = Calendar.current.startOfDay(for: selectedDate)
-        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart)!
+        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
 
         todayEvents = calendarService.externalEvents
             .filter { $0.startDate >= dayStart && $0.startDate < dayEnd }

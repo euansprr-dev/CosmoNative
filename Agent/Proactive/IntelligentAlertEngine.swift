@@ -11,12 +11,16 @@ class IntelligentAlertEngine {
 
     /// Track when each alert type was last sent (prevent spam).
     /// Persisted to UserDefaults so alerts don't spam on app restart.
+    /// Capped at 100 entries to prevent unbounded growth.
     private var lastAlertTimes: [String: Date] = [:] {
         didSet { persistCooldowns() }
     }
 
     /// Minimum 1 hour between same alert type
     private let minimumAlertInterval: TimeInterval = 3600
+
+    /// Maximum tracked alert types to prevent unbounded UserDefaults growth
+    private let maxAlertCooldowns = 100
 
     private let atomRepo = AtomRepository.shared
 
@@ -30,12 +34,27 @@ class IntelligentAlertEngine {
         for (key, interval) in dict {
             lastAlertTimes[key] = Date(timeIntervalSince1970: interval)
         }
+        pruneOldAlertTimes()
     }
 
     /// Persist cooldown times to UserDefaults.
     private func persistCooldowns() {
         let dict = lastAlertTimes.mapValues { $0.timeIntervalSince1970 }
         UserDefaults.standard.set(dict, forKey: "intelligent_alert_cooldowns")
+    }
+
+    /// Remove oldest entries when cache exceeds max capacity.
+    /// Safe to call from didSet — only mutates if over capacity, and converges in one pass.
+    private func pruneOldAlertTimes() {
+        let count = lastAlertTimes.count
+        guard count > maxAlertCooldowns else { return }
+        let keysToRemove = lastAlertTimes
+            .sorted { $0.value < $1.value }
+            .prefix(count - maxAlertCooldowns)
+            .map(\.key)
+        for key in keysToRemove {
+            lastAlertTimes.removeValue(forKey: key)
+        }
     }
 
     // MARK: - Alert Evaluation
@@ -392,6 +411,7 @@ class IntelligentAlertEngine {
     /// Record that an alert was sent, resetting its cooldown.
     private func markAlertSent(type: String) {
         lastAlertTimes[type] = Date()
+        pruneOldAlertTimes()
     }
 
     // MARK: - Private Helpers

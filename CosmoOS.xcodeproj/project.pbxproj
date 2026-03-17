@@ -113,6 +113,7 @@
 		204EBD5CBDF579E7E4C0CBAE /* RecurrenceRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF684659531F285E1546AD5E /* RecurrenceRule.swift */; };
 		205678E44AB3EACAE59D16A5 /* PositionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C90F47CDE826D1C79E0775 /* PositionResolver.swift */; };
 		205DE39C4BD6D48F127BBB54 /* L2WhisperASR.swift in Sources */ = {isa = PBXBuildFile; fileRef = D94ACA2D8C52F23EBD570E28 /* L2WhisperASR.swift */; };
+		1A9974CAD679A00BF0D9B9E8 /* NetworkRetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 355E3DAAFE562542FEA94072 /* NetworkRetry.swift */; };
 		2178AC1370D1C861E39EEAF4 /* ContextCaptureClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696615220B224367647BA958 /* ContextCaptureClient.swift */; };
 		21B6A1636F7AECD3C22B4D53 /* CosmoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D174FED1EFA89B96545A44 /* CosmoApp.swift */; };
 		21B763DBE0ABA48B11CBE9B5 /* CosmoGlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8473D74FB0D77A055B7A9E5B /* CosmoGlassCard.swift */; };
@@ -611,6 +612,8 @@
 		B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */; };
 		D1A83F4B2E9D5C67B2F53A19 /* SelectionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */; };
 		F4C29D8A3B7E1F06D5A8E472 /* CommandKPremiumChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */; };
+		D7E41C5F3A9B28D60E7F4C1A /* SwipeGalleryCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F52D603B0C39E71F8A5D2B /* SwipeGalleryCardView.swift */; };
+		C6D30B4E2F8A17C5D96E3B09 /* FloatingOverlayChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A63E714C1D28F60A7B4E3C /* FloatingOverlayChrome.swift */; };
 		7F3A8E1B9C4D5026E8B71FA3 /* UnifiedSearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */; };
 		8CFF85A6A9C558362F60F208 /* UndoableAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E28407D5C8F3C38135000D /* UndoableAction.swift */; };
 		D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */; };
@@ -878,6 +881,7 @@
 		681554C47EC52A53784848E6 /* ContentPipelineMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentPipelineMetadata.swift; sourceTree = "<group>"; };
 		69417390C813CD9255A1260D /* CosmoAIFocusModeViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CosmoAIFocusModeViewModel.swift; path = UI/FocusMode/CosmoAI/CosmoAIFocusModeViewModel.swift; sourceTree = SOURCE_ROOT; };
 		696615220B224367647BA958 /* ContextCaptureClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextCaptureClient.swift; sourceTree = "<group>"; };
+		355E3DAAFE562542FEA94072 /* NetworkRetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkRetry.swift; sourceTree = "<group>"; };
 		6B2F41E8C9A73D5014E8B6A2 /* CognitiveDataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CognitiveDataProvider.swift; sourceTree = "<group>"; };
 		6CE426AAA80BF292754575D2 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		6D953C9D983841CEA0ED0462 /* CompareCreatorsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompareCreatorsView.swift; path = UI/FocusMode/SwipeStudy/CompareCreatorsView.swift; sourceTree = SOURCE_ROOT; };
@@ -1251,6 +1255,8 @@
 		C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSelectionOverlay.swift; sourceTree = "<group>"; };
 		E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionBar.swift; sourceTree = "<group>"; };
 		A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKPremiumChrome.swift; sourceTree = "<group>"; };
+		E8F52D603B0C39E71F8A5D2B /* SwipeGalleryCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeGalleryCardView.swift; sourceTree = "<group>"; };
+		F9A63E714C1D28F60A7B4E3C /* FloatingOverlayChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingOverlayChrome.swift; sourceTree = "<group>"; };
 		2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedSearchResultsView.swift; sourceTree = "<group>"; };
 		5A1B2C3D4E5F6A7B8C9D0E01 /* LassoGestureDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LassoGestureDetector.swift; sourceTree = "<group>"; };
 		5A2B3C4D5E6F7A8B9C0D1E01 /* SynthesisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisEngine.swift; sourceTree = "<group>"; };
@@ -1861,6 +1867,7 @@
 			children = (
 				696615220B224367647BA958 /* ContextCaptureClient.swift */,
 				4E1562073D0F5F4576BEC578 /* ContextDetectionEngine.swift */,
+				355E3DAAFE562542FEA94072 /* NetworkRetry.swift */,
 				B34D6F15772B410608EF6018 /* PromptTemplateStore.swift */,
 				F7E3A91D04C82B6E9D3F1A47 /* WritingContextExporter.swift */,
 			);
@@ -2512,6 +2519,8 @@
 				C8E61D290A7B3E45B1F42E08 /* CardSelectionOverlay.swift */,
 				E2B94E5A3FAE6D78C3A64B2A /* SelectionBar.swift */,
 				A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */,
+				E8F52D603B0C39E71F8A5D2B /* SwipeGalleryCardView.swift */,
+				F9A63E714C1D28F60A7B4E3C /* FloatingOverlayChrome.swift */,
 				2E8F4A7C1B3D6950A4C28E71 /* UnifiedSearchResultsView.swift */,
 			);
 			path = CommandK;
@@ -3005,6 +3014,7 @@
 				549FC1CAC02FA806F3BAF404 /* ContextAssembler.swift in Sources */,
 				2178AC1370D1C861E39EEAF4 /* ContextCaptureClient.swift in Sources */,
 				2549BB0F68097A6706762EBA /* ContextDetectionEngine.swift in Sources */,
+				1A9974CAD679A00BF0D9B9E8 /* NetworkRetry.swift in Sources */,
 				ECA6C88E11888E28815DEBB8 /* PromptTemplateStore.swift in Sources */,
 				A8F2B73C15D94E0FA61C8B29 /* WritingContextExporter.swift in Sources */,
 				D9F3C08081869ED4424BC7C7 /* ContextDrawerView.swift in Sources */,
@@ -3407,6 +3417,8 @@
 				B9F72E3A1D8C4B56A0E31F07 /* CardSelectionOverlay.swift in Sources */,
 				D1A83F4B2E9D5C67B2F53A19 /* SelectionBar.swift in Sources */,
 				F4C29D8A3B7E1F06D5A8E472 /* CommandKPremiumChrome.swift in Sources */,
+				D7E41C5F3A9B28D60E7F4C1A /* SwipeGalleryCardView.swift in Sources */,
+				C6D30B4E2F8A17C5D96E3B09 /* FloatingOverlayChrome.swift in Sources */,
 				7F3A8E1B9C4D5026E8B71FA3 /* UnifiedSearchResultsView.swift in Sources */,
 				A4B5C6D7E8F9A0B1C2D3E4F5 /* IdeaFocusModeView.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* IdeaFocusModeViewModel.swift in Sources */,

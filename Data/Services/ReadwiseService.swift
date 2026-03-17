@@ -346,18 +346,17 @@ class ReadwiseService: ObservableObject {
             request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ReadwiseError.invalidResponse
+            let (data, httpResponse) = try await withNetworkRetry(
+                maxAttempts: 3,
+                baseBackoff: 2.0,
+                label: "ReadwiseBooks"
+            ) {
+                try await URLSession.shared.data(for: request)
             }
 
             guard httpResponse.statusCode == 200 else {
                 if httpResponse.statusCode == 401 {
                     throw ReadwiseError.unauthorized
-                }
-                if httpResponse.statusCode == 429 {
-                    throw ReadwiseError.rateLimited
                 }
                 throw ReadwiseError.httpError(httpResponse.statusCode)
             }
@@ -447,10 +446,12 @@ class ReadwiseService: ObservableObject {
             request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
             request.timeoutInterval = 30
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ReadwiseError.invalidResponse
+            let (data, httpResponse) = try await withNetworkRetry(
+                maxAttempts: 3,
+                baseBackoff: 2.0,
+                label: "ReadwiseExport"
+            ) {
+                try await URLSession.shared.data(for: request)
             }
 
             guard httpResponse.statusCode == 200 else {
@@ -458,9 +459,6 @@ class ReadwiseService: ObservableObject {
                     isConnected = false
                     isTokenValid = false
                     throw ReadwiseError.unauthorized
-                }
-                if httpResponse.statusCode == 429 {
-                    throw ReadwiseError.rateLimited
                 }
                 throw ReadwiseError.httpError(httpResponse.statusCode)
             }
@@ -520,10 +518,12 @@ class ReadwiseService: ObservableObject {
         request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ReadwiseError.invalidResponse
+        let (data, httpResponse) = try await withNetworkRetry(
+            maxAttempts: 3,
+            baseBackoff: 2.0,
+            label: "ReadwiseHighlights"
+        ) {
+            try await URLSession.shared.data(for: request)
         }
 
         guard httpResponse.statusCode == 200 else {
@@ -531,9 +531,6 @@ class ReadwiseService: ObservableObject {
                 isConnected = false
                 isTokenValid = false
                 throw ReadwiseError.unauthorized
-            }
-            if httpResponse.statusCode == 429 {
-                throw ReadwiseError.rateLimited
             }
             throw ReadwiseError.httpError(httpResponse.statusCode)
         }

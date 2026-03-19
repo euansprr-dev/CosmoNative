@@ -84,8 +84,14 @@ class ConflictResolver {
         // Fields that prefer remote (metadata)
         let remotePreferredFields = ["synced_at", "updated_at", "_server_version"]
 
-        // Fields that prefer local (user content)
-        let localPreferredFields = ["title", "content", "body", "description", "position_x", "position_y"]
+        // Fields that prefer local (user content + AI-generated content the user may have edited)
+        let localPreferredFields = [
+            "title", "content", "body", "description",
+            "position_x", "position_y",
+            "structured",  // richContent, swipeAnalysis, outlines, etc.
+            "metadata",    // processingStatus, hook, tags, personalNotes, etc.
+            "links",       // atom relationships
+        ]
 
         // Merge strategy
         for (key, remoteValue) in remoteData {

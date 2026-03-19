@@ -999,6 +999,25 @@ class TelegramBridgeService: ObservableObject {
     /// Check if a message is a follow-up about already-captured content, meaning it should
     /// bypass FlashLiteRouter and go to the full agent for multi-turn reasoning.
     private func shouldBypassFlashRouter(text: String, chatId: String) async -> Bool {
+        let lower = text.lowercased()
+
+        // Always bypass for writing/drafting requests — these need the full agent pipeline
+        // (Opus + UnifiedWritingEngine) which FlashLiteRouter cannot provide.
+        // Long messages with writing keywords get misclassified by Gemini Flash Lite
+        // (e.g. as create_content instead of agent), bypassing brainstorming and self-correction.
+        let writingKeywords = [
+            "let's write", "write a thread", "write a reel", "write about",
+            "write this", "write for ", "draft", "let's draft",
+            "generate an outline", "give me an outline", "write the draft",
+            "generate hooks", "hook variants", "let's make this",
+            "brainstorm", "let's think", "riff on",
+            "using this as the swipe", "using the swipe", "using that as",
+            "using the blueprint", "use the blueprint", "using this blueprint"
+        ]
+        if writingKeywords.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
         guard let conversation = await ConversationMemoryService.shared.loadConversation(id: chatId) else {
             return false
         }
@@ -1019,7 +1038,6 @@ class TelegramBridgeService: ObservableObject {
         guard hasCaptureHistory else { return false }
 
         // Check if current message contains follow-up reference signals
-        let lower = text.lowercased()
         let followUpSignals = [
             "this idea", "that idea", "the idea", "this swipe", "that swipe", "the swipe",
             "take action", "action on", "action this", "act on this",

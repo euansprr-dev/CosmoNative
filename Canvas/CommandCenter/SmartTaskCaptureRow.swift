@@ -8,6 +8,9 @@ import Combine
 struct SmartTaskCaptureRow: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var contextProjectUUID: String? = nil
+    var contextHeadingUUID: String? = nil
+    var placeholderText: String = "Add task... (try \"Write at 6pm every Tue\")"
     @State private var parsedInput = ParsedTaskInput(title: "")
     @State private var parseDebounce: AnyCancellable?
     @FocusState private var isFocused: Bool
@@ -18,19 +21,19 @@ struct SmartTaskCaptureRow: View {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isFocused ? DS.accent : DS.textMuted)
+                    .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
 
                 ZStack(alignment: .leading) {
                     if viewModel.newTaskTitle.isEmpty {
-                        Text("Add task... (try \"Write at 6pm every Tue\")")
+                        Text(placeholderText)
                             .font(.system(size: 13))
-                            .foregroundColor(Color(hex: "767685"))
+                            .foregroundStyle(Color(hex: "767685"))
                             .allowsHitTesting(false)
                     }
                     TextField("", text: $viewModel.newTaskTitle)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
-                        .foregroundColor(Color(hex: "1A1A1F"))
+                        .foregroundStyle(Color(hex: "1A1A1F"))
                         .focused($isFocused)
                         .onSubmit {
                             Task { await submitTask() }
@@ -47,7 +50,7 @@ struct SmartTaskCaptureRow: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -70,7 +73,7 @@ struct SmartTaskCaptureRow: View {
     // MARK: - Metadata Chips
 
     private var metadataChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal) {
             HStack(spacing: 6) {
                 if let priority = parsedInput.priority {
                     metadataChip(
@@ -122,10 +125,44 @@ struct SmartTaskCaptureRow: View {
                         color: DS.accent
                     )
                 }
+
+                // Things 3 scheduling chips
+                if let projectName = parsedInput.projectName {
+                    metadataChip(
+                        icon: "folder.fill",
+                        label: "#\(projectName)",
+                        color: DS.accent
+                    )
+                }
+
+                if let timeOfDay = parsedInput.timeOfDay {
+                    metadataChip(
+                        icon: timeOfDay == "morning" ? "sun.horizon" : "moon.stars",
+                        label: timeOfDay.capitalized,
+                        color: timeOfDay == "morning" ? Color(hex: "F59E0B") : Color(hex: "6366F1")
+                    )
+                }
+
+                if let state = parsedInput.schedulingState {
+                    metadataChip(
+                        icon: state == "someday" ? "archivebox" : "tray.full",
+                        label: state.capitalized,
+                        color: Color(hex: "8B5CF6")
+                    )
+                }
+
+                if let deadline = parsedInput.deadline {
+                    metadataChip(
+                        icon: "flag.fill",
+                        label: "Deadline: \(formatChipDate(deadline))",
+                        color: .orange
+                    )
+                }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
+        .scrollIndicators(.hidden)
     }
 
     @ViewBuilder
@@ -140,7 +177,7 @@ struct SmartTaskCaptureRow: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundColor(color)
+            .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(color.opacity(0.1), in: Capsule())
@@ -157,6 +194,10 @@ struct SmartTaskCaptureRow: View {
             || parsedInput.intent != nil
             || parsedInput.habitUUID != nil
             || parsedInput.recurrenceRule != nil
+            || parsedInput.projectName != nil
+            || parsedInput.timeOfDay != nil
+            || parsedInput.schedulingState != nil
+            || parsedInput.deadline != nil
     }
 
     private func debounceParseInput(_ text: String) {
@@ -176,7 +217,10 @@ struct SmartTaskCaptureRow: View {
         let title = viewModel.newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
 
-        let parsed = TaskInputParser.parse(title)
+        var parsed = TaskInputParser.parse(title)
+        // Inject context from the current view (project/heading)
+        parsed.contextProjectUUID = contextProjectUUID
+        parsed.contextHeadingUUID = contextHeadingUUID
         viewModel.newTaskTitle = ""
         parsedInput = ParsedTaskInput(title: "")
 

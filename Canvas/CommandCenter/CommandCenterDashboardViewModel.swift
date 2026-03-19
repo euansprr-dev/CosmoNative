@@ -58,6 +58,21 @@ class CommandCenterDashboardViewModel: ObservableObject {
         return Calendar.current.date(byAdding: .day, value: upcomingWeekOffset * 7, to: today) ?? today
     }
 
+    // MARK: - Things 3 Smart Lists
+
+    @Published var anytimeTasks: [TaskViewModel] = []
+    @Published var somedayTasks: [TaskViewModel] = []
+    @Published var logbookTasks: [TaskViewModel] = []
+
+    // MARK: - Areas & Projects (Sidebar)
+
+    @Published var areas: [Atom] = []
+    @Published var projects: [Atom] = []
+    @Published var selectedProjectUUID: String?
+    @Published var selectedAreaUUID: String?
+    @Published var projectTasks: [TaskViewModel] = []
+    @Published var projectHeadings: [ProjectHeading] = []
+
     // MARK: - Timeline Sessions
 
     @Published var todaySessions: [SessionTimelineEntry] = []
@@ -117,8 +132,16 @@ class CommandCenterDashboardViewModel: ObservableObject {
             return overdueTasks + scheduledTasks + unscheduledTasks
         case .upcoming:
             return upcomingDayGroups.flatMap { $0.tasks }
-        case .completed:
+        case .logbook:
             return completedTasksByDay.flatMap { $0.tasks }
+        case .anytime:
+            return anytimeTasks
+        case .someday:
+            return somedayTasks
+        case .project:
+            return projectTasks
+        case .area:
+            return []  // Area view aggregates from projects
         }
     }
 
@@ -174,8 +197,18 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         await self?.refreshTasks()
                     case .upcoming:
                         await self?.loadUpcomingTasks()
-                    case .completed:
+                    case .logbook:
                         await self?.loadCompletedTasks()
+                    case .anytime:
+                        await self?.loadAnytimeTasks()
+                    case .someday:
+                        await self?.loadSomedayTasks()
+                    case .project:
+                        if let uuid = self?.selectedProjectUUID {
+                            await self?.loadProjectTasks(projectUUID: uuid)
+                        }
+                    case .area:
+                        break
                     }
                     self?.selectedTaskIndex = nil
                 }
@@ -188,7 +221,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { [weak self] in
                     await self?.refreshTasks()
-                    if self?.viewMode == .completed {
+                    if self?.viewMode == .logbook {
                         await self?.loadCompletedTasks()
                     }
                 }
@@ -200,6 +233,9 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { [weak self] in
                     await self?.loadHabits()
+                    await self?.loadWeeklyReport()
+                    await self?.loadTodaySessions()
+                    await self?.loadTodayTimeData()
                 }
             }
             .store(in: &cancellables)
@@ -542,6 +578,282 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Anytime Tasks
+
+    func loadAnytimeTasks() async {
+        do {
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            anytimeTasks = atoms.compactMap { atom -> TaskViewModel? in
+                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
+                guard !vm.isCompleted else { return nil }
+                // Anytime: schedulingState == "anytime" OR (no whenDate and no schedulingState)
+                let meta = atom.metadataValue(as: TaskMetadata.self)
+                let state = meta?.schedulingState
+                let when = meta?.whenDate
+                if state == "anytime" || (state == nil && when == nil && meta?.focusDate == nil) {
+                    return vm
+                }
+                return nil
+            }
+            .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+        } catch {
+            print("❌ Dashboard: Failed to load anytime tasks: \(error)")
+        }
+    }
+
+    // MARK: - Someday Tasks
+
+    func loadSomedayTasks() async {
+        do {
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            somedayTasks = atoms.compactMap { atom -> TaskViewModel? in
+                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
+                guard !vm.isCompleted else { return nil }
+                let meta = atom.metadataValue(as: TaskMetadata.self)
+                guard meta?.schedulingState == "someday" else { return nil }
+                return vm
+            }
+            .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+        } catch {
+            print("❌ Dashboard: Failed to load someday tasks: \(error)")
+        }
+    }
+
+    // MARK: - Project Tasks (drill-in view)
+
+    func loadProjectTasks(projectUUID: String) async {
+        do {
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+
+            // Load project metadata for headings
+            if let projectAtom = try await AtomRepository.shared.fetch(uuid: projectUUID) {
+                let meta = projectAtom.metadataValue(as: ProjectMetadata.self)
+                if let headingsJSON = meta?.headings,
+                   let data = headingsJSON.data(using: .utf8) {
+                    projectHeadings = (try? JSONDecoder().decode([ProjectHeading].self, from: data)) ?? []
+                } else {
+                    projectHeadings = []
+                }
+            }
+
+            // Filter tasks linked to this project
+            projectTasks = atoms.compactMap { atom -> TaskViewModel? in
+                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
+                // Check if task is linked to this project via AtomLinks
+                let links = atom.linksList
+                let isLinked = links.contains { $0.type == "project" && $0.uuid == projectUUID }
+                guard isLinked else { return nil }
+                return vm
+            }
+            .sorted { ($0.manualSortOrder ?? Int.max) < ($1.manualSortOrder ?? Int.max) }
+        } catch {
+            print("❌ Dashboard: Failed to load project tasks: \(error)")
+        }
+    }
+
+    // MARK: - Areas & Projects Loading
+
+    func loadAreas() async {
+        do {
+            areas = try await AtomRepository.shared.fetchAll(type: .area)
+                .filter { !$0.isDeleted }
+                .sorted {
+                    let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
+                    let b = $1.metadataValue(as: AreaMetadata.self)?.sortOrder ?? Int.max
+                    return a < b
+                }
+        } catch {
+            print("❌ Dashboard: Failed to load areas: \(error)")
+        }
+    }
+
+    func loadProjects() async {
+        do {
+            projects = try await AtomRepository.shared.fetchAll(type: .project)
+                .filter { !$0.isDeleted }
+                .filter { ($0.metadataValue(as: ProjectMetadata.self)?.isCompleted ?? false) == false }
+        } catch {
+            print("❌ Dashboard: Failed to load projects: \(error)")
+        }
+    }
+
+    // MARK: - Things 3 Scheduling Operations
+
+    func setWhenDate(taskUUID: String, date: Date?) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            if let date = date {
+                meta.whenDate = PlannerumFormatters.iso8601.string(from: date)
+                meta.focusDate = meta.whenDate  // Keep backward compat
+                meta.schedulingState = nil  // Scheduled tasks have no scheduling state
+            } else {
+                meta.whenDate = nil
+                meta.focusDate = nil
+            }
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to set when date: \(error)")
+        }
+    }
+
+    func setDeadline(taskUUID: String, date: Date?) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            meta.dueDate = date.map { PlannerumFormatters.iso8601.string(from: $0) }
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to set deadline: \(error)")
+        }
+    }
+
+    func setTimeOfDay(taskUUID: String, value: String?) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            meta.timeOfDay = value
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to set time of day: \(error)")
+        }
+    }
+
+    func setSchedulingState(taskUUID: String, state: String?) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            meta.schedulingState = state
+            if state != nil {
+                // Moving to anytime/someday clears the when date
+                meta.whenDate = nil
+                meta.focusDate = nil
+            }
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to set scheduling state: \(error)")
+        }
+    }
+
+    func moveTaskToProject(taskUUID: String, projectUUID: String) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            // Remove existing project links
+            atom = atom.removingLinks(ofType: .project)
+            // Add new project link
+            atom = atom.addingLink(.project(projectUUID))
+            // Clear heading (headings are project-specific)
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            meta.headingUUID = nil
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            await refreshTasks()
+        } catch {
+            print("❌ Dashboard: Failed to move task to project: \(error)")
+        }
+    }
+
+    func moveTaskToHeading(taskUUID: String, headingUUID: String?) async {
+        do {
+            guard var atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            var meta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+            meta.headingUUID = headingUUID
+            atom = atom.withMetadata(meta)
+            try await AtomRepository.shared.update(atom)
+            if let projectUUID = selectedProjectUUID {
+                await loadProjectTasks(projectUUID: projectUUID)
+            }
+        } catch {
+            print("❌ Dashboard: Failed to move task to heading: \(error)")
+        }
+    }
+
+    func createArea(title: String, icon: String? = nil, color: String? = nil) async {
+        do {
+            let meta = AreaMetadata(icon: icon ?? "square.stack.fill", color: color, sortOrder: areas.count, isCollapsed: false)
+            let metaJSON = try? JSONEncoder().encode(meta)
+            let metaString = metaJSON.flatMap { String(data: $0, encoding: .utf8) }
+            let atom = Atom.new(type: .area, title: title, metadata: metaString)
+            _ = try await AtomRepository.shared.create(atom)
+            await loadAreas()
+        } catch {
+            print("❌ Dashboard: Failed to create area: \(error)")
+        }
+    }
+
+    func createHeading(projectUUID: String, title: String) async {
+        do {
+            guard var projectAtom = try await AtomRepository.shared.fetch(uuid: projectUUID) else { return }
+            var meta = projectAtom.metadataValue(as: ProjectMetadata.self) ?? ProjectMetadata()
+
+            // Parse existing headings
+            var headings: [ProjectHeading] = []
+            if let headingsJSON = meta.headings, let data = headingsJSON.data(using: .utf8) {
+                headings = (try? JSONDecoder().decode([ProjectHeading].self, from: data)) ?? []
+            }
+
+            // Add new heading
+            let newHeading = ProjectHeading(title: title, sortOrder: headings.count)
+            headings.append(newHeading)
+
+            // Save back
+            let encoded = try JSONEncoder().encode(headings)
+            meta.headings = String(data: encoded, encoding: .utf8)
+            projectAtom = projectAtom.withMetadata(meta)
+            try await AtomRepository.shared.update(projectAtom)
+
+            projectHeadings = headings
+        } catch {
+            print("❌ Dashboard: Failed to create heading: \(error)")
+        }
+    }
+
+    func deleteHeading(projectUUID: String, headingUUID: String) async {
+        do {
+            guard var projectAtom = try await AtomRepository.shared.fetch(uuid: projectUUID) else { return }
+            var meta = projectAtom.metadataValue(as: ProjectMetadata.self) ?? ProjectMetadata()
+
+            // Parse and remove heading
+            var headings: [ProjectHeading] = []
+            if let headingsJSON = meta.headings, let data = headingsJSON.data(using: .utf8) {
+                headings = (try? JSONDecoder().decode([ProjectHeading].self, from: data)) ?? []
+            }
+            headings.removeAll { $0.id == headingUUID }
+
+            // Save back
+            let encoded = try JSONEncoder().encode(headings)
+            meta.headings = String(data: encoded, encoding: .utf8)
+            projectAtom = projectAtom.withMetadata(meta)
+            try await AtomRepository.shared.update(projectAtom)
+
+            projectHeadings = headings
+
+            // Clear headingUUID from tasks that referenced this heading
+            let tasks = try await AtomRepository.shared.fetchAll(type: .task)
+            for var task in tasks {
+                let taskMeta = task.metadataValue(as: TaskMetadata.self)
+                if taskMeta?.headingUUID == headingUUID {
+                    var updatedMeta = taskMeta ?? TaskMetadata()
+                    updatedMeta.headingUUID = nil
+                    task = task.withMetadata(updatedMeta)
+                    try await AtomRepository.shared.update(task)
+                }
+            }
+
+            await loadProjectTasks(projectUUID: projectUUID)
+        } catch {
+            print("❌ Dashboard: Failed to delete heading: \(error)")
+        }
+    }
+
     // MARK: - Calendar Events
 
     private func refreshCalendarEvents() {
@@ -726,7 +1038,46 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         metadata.habitAssignmentSource = derived.source.rawValue
                     }
 
+                    // Things 3 scheduling fields
+                    if let timeOfDay = parsed.timeOfDay {
+                        metadata.timeOfDay = timeOfDay
+                    }
+                    if let schedulingState = parsed.schedulingState {
+                        metadata.schedulingState = schedulingState
+                        // Someday/Anytime tasks don't get a date
+                        metadata.dueDate = nil
+                        metadata.focusDate = nil
+                        metadata.whenDate = nil
+                    }
+                    if let deadline = parsed.deadline {
+                        metadata.dueDate = PlannerumFormatters.iso8601.string(from: deadline)
+                    }
+
+                    // Set whenDate from dueDate if we have one (new semantic)
+                    if metadata.schedulingState == nil, let focusDate = metadata.focusDate {
+                        metadata.whenDate = focusDate
+                    }
+
                     a = a.withMetadata(metadata)
+
+                    // Project assignment — context (from project view) or #tag (from parser)
+                    if let contextProject = parsed.contextProjectUUID {
+                        a = a.addingLink(.project(contextProject))
+                    } else if let projectName = parsed.projectName {
+                        let matchingProject = projects.first { ($0.title ?? "").lowercased() == projectName.lowercased() }
+                        if let project = matchingProject {
+                            a = a.addingLink(.project(project.uuid))
+                        }
+                    } else if viewMode == .project, let selectedProject = selectedProjectUUID {
+                        // Auto-link when in project view with no explicit project
+                        a = a.addingLink(.project(selectedProject))
+                    }
+
+                    // Heading assignment from context
+                    if let headingUUID = parsed.contextHeadingUUID {
+                        metadata.headingUUID = headingUUID
+                        a = a.withMetadata(metadata)
+                    }
                 }
 
                 if let recurrenceRule = parsed.recurrenceRule {
@@ -738,6 +1089,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
 
         pendingTaskDate = nil
+
+        // Reload appropriate view
+        if viewMode == .project, let uuid = selectedProjectUUID {
+            await loadProjectTasks(projectUUID: uuid)
+        }
         await refreshTasks()
         await loadHabits()
     }
@@ -908,7 +1264,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         if viewMode == .upcoming {
             await loadUpcomingTasks()
         }
-        if viewMode == .completed {
+        if viewMode == .logbook {
             await loadCompletedTasks()
         }
     }
@@ -921,8 +1277,72 @@ class CommandCenterDashboardViewModel: ObservableObject {
             intent: task.intent,
             habitUUID: habit?.id,
             habitTitleSnapshot: habit?.title,
-            plannedMinutes: 0
+            plannedMinutes: task.estimatedMinutes
         )
+
+        // Route to focus mode — use linkedAtoms (primary = main, others = panes)
+        let allLinked = task.linkedAtoms
+        if !allLinked.isEmpty {
+            let primary = allLinked.first(where: \.isPrimary) ?? allLinked.first
+            let panes = allLinked.filter { $0.id != primary?.id }
+
+            if let primary {
+                NotificationCenter.default.post(
+                    name: .init("com.cosmo.navigateToAtom"),
+                    object: nil,
+                    userInfo: [
+                        "uuid": primary.atomUUID,
+                        "atomType": primary.atomType,
+                        "intent": task.intent.rawValue,
+                        "paneAtomUUIDs": panes.map(\.atomUUID),
+                        "paneAtomTypes": panes.map(\.atomType)
+                    ] as [String: Any]
+                )
+            }
+        } else {
+            // Legacy fallback — use old single-UUID fields
+            switch task.intent {
+            case .writeContent:
+                if let uuid = task.linkedContentUUID ?? task.linkedIdeaUUID {
+                    NotificationCenter.default.post(
+                        name: .init("com.cosmo.navigateToAtom"),
+                        object: nil,
+                        userInfo: ["uuid": uuid, "intent": "writeContent"]
+                    )
+                }
+            case .research:
+                if let uuid = task.linkedAtomUUID {
+                    NotificationCenter.default.post(
+                        name: .init("com.cosmo.navigateToAtom"),
+                        object: nil,
+                        userInfo: ["uuid": uuid, "intent": "research"]
+                    )
+                }
+            case .studySwipes:
+                NotificationCenter.default.post(
+                    name: .init("com.cosmo.navigateToSwipeStudy"),
+                    object: nil
+                )
+            case .deepThink:
+                if let uuid = task.linkedAtomUUID {
+                    NotificationCenter.default.post(
+                        name: .init("com.cosmo.navigateToAtom"),
+                        object: nil,
+                        userInfo: ["uuid": uuid, "intent": "deepThink"]
+                    )
+                }
+            case .review:
+                if let uuid = task.linkedAtomUUID ?? task.linkedContentUUID {
+                    NotificationCenter.default.post(
+                        name: .init("com.cosmo.navigateToAtom"),
+                        object: nil,
+                        userInfo: ["uuid": uuid, "intent": "review"]
+                    )
+                }
+            case .general, .custom:
+                break
+            }
+        }
     }
 
     // MARK: - Time Tracking Data
@@ -1109,8 +1529,18 @@ class CommandCenterDashboardViewModel: ObservableObject {
         case .upcoming:
             await loadUpcomingTasks()
             await loadCompletedTasks()
-        case .completed:
+        case .logbook:
             await loadCompletedTasks()
+        case .anytime:
+            await loadAnytimeTasks()
+        case .someday:
+            await loadSomedayTasks()
+        case .project:
+            if let uuid = selectedProjectUUID {
+                await loadProjectTasks(projectUUID: uuid)
+            }
+        case .area:
+            break
         }
         await loadTodayTimeData()
         await loadTodaySessions()

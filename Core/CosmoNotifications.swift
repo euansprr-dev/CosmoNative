@@ -338,6 +338,7 @@ enum CosmoNotification {
         /// Command-K notifications
         static let openCommandK = Notification.Name("com.cosmo.nodegraph.openCommandK")
         static let closeCommandK = Notification.Name("com.cosmo.nodegraph.closeCommandK")
+        static let hideCommandK = Notification.Name("com.cosmo.nodegraph.hideCommandK")
         static let openAtomFromCommandK = Notification.Name("com.cosmo.nodegraph.openAtomFromCommandK")
 
         /// Canvas item management

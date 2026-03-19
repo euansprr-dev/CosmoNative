@@ -666,6 +666,25 @@ struct NoteFocusModeView: View {
                     ]
                 )
             }
+            // Post notification for immediate canvas update (sync path)
+            var userInfo: [String: Any] = [
+                "atomUUID": uuid,
+                "title": titleDocumentCopy.plainText,
+                "body": bodyDocumentCopy.plainText
+            ]
+            if let bodyDocData = try? JSONEncoder().encode(bodyDocumentCopy),
+               let bodyDocString = String(data: bodyDocData, encoding: .utf8) {
+                userInfo["bodyDocumentJSON"] = bodyDocString
+            }
+            if let titleDocData = try? JSONEncoder().encode(titleDocumentCopy),
+               let titleDocString = String(data: titleDocData, encoding: .utf8) {
+                userInfo["titleDocumentJSON"] = titleDocString
+            }
+            NotificationCenter.default.post(
+                name: .noteFocusStateDidChange,
+                object: nil,
+                userInfo: userInfo
+            )
         } catch {
             print("Failed to save note (sync): \(error)")
         }
@@ -727,10 +746,19 @@ struct NoteFocusModeView: View {
                 }
                 // Notify floating blocks to reload immediately (GRDB observation is backup)
                 await MainActor.run {
+                    var userInfo: [String: Any] = ["atomUUID": uuid, "title": titleCopy, "body": contentCopy]
+                    if let bodyDocData = try? JSONEncoder().encode(bodyDocumentCopy),
+                       let bodyDocString = String(data: bodyDocData, encoding: .utf8) {
+                        userInfo["bodyDocumentJSON"] = bodyDocString
+                    }
+                    if let titleDocData = try? JSONEncoder().encode(titleDocumentCopy),
+                       let titleDocString = String(data: titleDocData, encoding: .utf8) {
+                        userInfo["titleDocumentJSON"] = titleDocString
+                    }
                     NotificationCenter.default.post(
                         name: .noteFocusStateDidChange,
                         object: nil,
-                        userInfo: ["atomUUID": uuid, "title": titleCopy, "body": contentCopy]
+                        userInfo: userInfo
                     )
                     NotificationCenter.default.post(
                         name: .richDocumentDidChange,

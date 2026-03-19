@@ -4,11 +4,16 @@
 // February 2026
 
 import Foundation
+import GRDB
 
 @MainActor
 final class SwipeClassificationEngine: ObservableObject {
     static let shared = SwipeClassificationEngine()
 
+    /// UUIDs currently being classified — supports concurrent batch processing
+    private var classifyingUUIDs: Set<String> = []
+
+    /// Whether any classification is in progress (for UI binding)
     @Published var isClassifying = false
 
     /// Current schema version — bump when classification prompt/output format changes
@@ -21,8 +26,12 @@ final class SwipeClassificationEngine: ObservableObject {
     /// Classify and deep-analyze a swipe atom in a single Claude call.
     /// Returns an enriched SwipeAnalysis with taxonomy fields + deep analysis.
     func classifyAndAnalyze(atom: Atom) async -> SwipeAnalysis {
+        classifyingUUIDs.insert(atom.uuid)
         isClassifying = true
-        defer { isClassifying = false }
+        defer {
+            classifyingUUIDs.remove(atom.uuid)
+            isClassifying = !classifyingUUIDs.isEmpty
+        }
 
         let text = extractText(from: atom)
         guard !text.isEmpty else {
@@ -555,8 +564,12 @@ final class SwipeClassificationEngine: ObservableObject {
     // MARK: - Persistence
 
     private func persistAnalysis(_ analysis: SwipeAnalysis, to atom: Atom) async {
+        // Use field-level update to only write structured (where swipeAnalysis lives)
+        // This prevents overwriting user edits to body/title/metadata
         let updated = atom.withSwipeAnalysis(analysis)
-        try? await AtomRepository.shared.update(updated)
+        _ = try? await AtomRepository.shared.updateFields(uuid: atom.uuid, columns: [
+            "structured": updated.structured,
+        ])
     }
 
     // MARK: - Text Extraction

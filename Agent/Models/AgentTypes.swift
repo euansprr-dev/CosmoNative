@@ -534,6 +534,12 @@ struct AgentConfiguration: Codable, Sendable {
 struct AgentContextTrace: Sendable {
     var toolCalls: [TracedToolCall] = []
 
+    /// True if the response was served by a fallback model (e.g. Opus → GPT 5.4)
+    var failoverOccurred: Bool = false
+
+    /// The model that actually served the response (set when failover occurs)
+    var actualModel: String? = nil
+
     /// True if any tools were called during this response
     var hasContent: Bool { !toolCalls.isEmpty }
 
@@ -566,10 +572,25 @@ struct AgentContextTrace: Sendable {
             .filter { $0.name.hasPrefix("generate_") || $0.name == "revise_draft" }
             .compactMap(\.resultSummary)
             .flatMap { summary -> [String] in
-                // Extract swipe titles from "... | Swipes: title1, title2" format
-                guard let range = summary.range(of: "| Swipes: ") else { return [] }
-                return summary[range.upperBound...].components(separatedBy: ", ")
+                // Extract swipe titles from "... | Swipes(N): title1, title2" or "... | Swipes: title1, title2"
+                guard let pipeRange = summary.range(of: "| Swipes") else { return [] }
+                let afterPipe = summary[pipeRange.upperBound...]
+                guard let colonRange = afterPipe.range(of: ": ") else { return [] }
+                return String(afterPipe[colonRange.upperBound...]).components(separatedBy: ", ")
             }
+    }
+
+    /// Total swipe count loaded by the inner writing engine (parsed from "Swipes(N):" in summary)
+    var writingEngineSwipeCount: Int {
+        for call in toolCalls where call.name.hasPrefix("generate_") || call.name == "revise_draft" {
+            guard let summary = call.resultSummary,
+                  let openParen = summary.range(of: "Swipes("),
+                  let closeParen = summary[openParen.upperBound...].range(of: ")") else { continue }
+            if let count = Int(summary[openParen.upperBound..<closeParen.lowerBound]) {
+                return count
+            }
+        }
+        return 0
     }
 
     /// Beat pattern names used
@@ -620,11 +641,12 @@ struct FailoverModel: Sendable {
 struct ModelFailoverChain: Sendable {
     let models: [FailoverModel]
 
-    /// Writer chain: Opus → Sonnet → Haiku
+    /// Writer chain: Opus (3 retries) → GPT 5.4
+    /// GPT 5.4 follows tool-use instructions reliably and produces better writing quality
+    /// than Sonnet/Haiku as a fallback orchestrator for the UnifiedWritingEngine pipeline.
     static let writerChain = ModelFailoverChain(models: [
-        FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 1, label: "Opus"),
-        FailoverModel(modelId: "anthropic/claude-sonnet-4.5", maxRetries: 1, label: "Sonnet"),
-        FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
+        FailoverModel(modelId: "anthropic/claude-opus-4.6", maxRetries: 3, label: "Opus"),
+        FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),
     ])
 
     /// Default chain: Sonnet → Haiku → Gemini Flash

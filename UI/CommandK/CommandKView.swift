@@ -87,12 +87,7 @@ public struct CommandKView: View {
 
     // MARK: - Background Layer
     private var backgroundLayer: some View {
-        ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            DS.bg.opacity(0.45)
-        }
-        .ignoresSafeArea()
-        .onTapGesture {
+        FloatingOverlayBackdrop {
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         }
     }
@@ -133,16 +128,7 @@ public struct CommandKView: View {
             }
         }
         .frame(width: width, height: height)
-        .background(
-            RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                .fill(DS.surfaceElevated)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: CommandKMetrics.overlayCornerRadius, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
-        )
-        .dsFloatingShadow()
+        .floatingOverlayPanel()
     }
 
     // Glass background removed — using solid DS.surfaceElevated + DS.border overlay inline

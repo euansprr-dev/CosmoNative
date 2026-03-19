@@ -160,12 +160,16 @@ struct SwipeStudyFocusModeView: View {
             }
         }
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadAtom()
             // Register context provider for global Cosmo window
             let provider = SwipeStudyContextProvider(atom: atom, analysisRef: { [self] in self.analysis }, transcriptRef: { [self] in self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText })
             if !isPaneContext || isPaneActive {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
+        }
+        .onDisappear {
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
         }
         .onChange(of: isPaneActive) { _, isActive in
             if isActive {
@@ -176,6 +180,17 @@ struct SwipeStudyFocusModeView: View {
         .onKeyPress(.escape) {
             onClose()
             return .handled
+        }
+        .overlay {
+            if showTaxonomyManagement {
+                ZStack {
+                    FloatingOverlayBackdrop { showTaxonomyManagement = false }
+                    TaxonomyManagementView(onClose: { showTaxonomyManagement = false })
+                        .frame(maxWidth: 520, maxHeight: 560)
+                        .floatingOverlayPanel()
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
         }
     }
 
@@ -367,15 +382,12 @@ struct SwipeStudyFocusModeView: View {
             } label: {
                 Image(systemName: "tag.fill")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(8)
                     .background(DS.border, in: Circle())
             }
             .buttonStyle(.plain)
             .help("Taxonomy Management")
-            .sheet(isPresented: $showTaxonomyManagement) {
-                TaxonomyManagementView()
-            }
 
         }
         .padding(.horizontal, panelPadding)

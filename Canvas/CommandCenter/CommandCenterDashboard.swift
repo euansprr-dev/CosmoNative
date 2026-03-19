@@ -1,6 +1,6 @@
 // Canvas/CommandCenter/CommandCenterDashboard.swift
-// Unified 3-column dashboard: Todoist + Timery hybrid
-// Left: Calendar + Timeline | Center: Tasks + Timer | Right: Habits/Reports + Stats
+// Things 3-inspired 3-column dashboard: Sidebar + Smart Lists + Context Panel
+// Left: Navigation Sidebar | Center: Tasks + Timer | Right: Context Panel
 // March 2026
 
 import SwiftUI
@@ -9,6 +9,7 @@ struct CommandCenterDashboard: View {
 
     @StateObject private var viewModel = CommandCenterDashboardViewModel()
     @State private var isEditing = false
+    @State private var selectedTaskForDetail: TaskViewModel?
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -18,25 +19,23 @@ struct CommandCenterDashboard: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .task {
+            await viewModel.loadAreas()
+            await viewModel.loadProjects()
+            await viewModel.loadAnytimeTasks()
+            await viewModel.loadSomedayTasks()
+        }
     }
 
-    // MARK: - Left Column (260px) — Calendar + Timeline
+    // MARK: - Left Column (240px) — Things 3-style Navigation Sidebar
 
     private var leftColumn: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                DashboardMonthCalendar(viewModel: viewModel)
-
-                gradientDivider
-
-                DashboardScheduleStrip(viewModel: viewModel)
-            }
-        }
-        .frame(width: 280)
-        .padding(.trailing, 24)
+        CommandCenterSidebar(viewModel: viewModel)
+            .frame(width: 240)
+            .padding(.trailing, 24)
     }
 
-    // MARK: - Center Column — Timer + Tabs + Tasks
+    // MARK: - Center Column — Timer + Content (Smart List or Project)
 
     private var centerColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -48,17 +47,30 @@ struct CommandCenterDashboard: View {
 
             gradientDivider
 
-            // View mode tabs
-            DashboardViewModeBar(
-                selectedMode: $viewModel.viewMode,
-                todayCount: viewModel.todayActiveCount,
-                upcomingCount: viewModel.upcomingTotalCount,
-                completedCount: viewModel.completedTodayTasks.count,
-                completedArrivalToken: viewModel.completedArrivalToken
-            )
+            // Content switches between smart list task view and project detail view
+            if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
+               let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
+                ProjectDetailView(project: project, viewModel: viewModel)
+            } else {
+                // View mode tabs (for smart lists)
+                DashboardViewModeBar(
+                    selectedMode: $viewModel.viewMode,
+                    todayCount: viewModel.todayActiveCount,
+                    upcomingCount: viewModel.upcomingTotalCount,
+                    anytimeCount: viewModel.anytimeTasks.count,
+                    somedayCount: viewModel.somedayTasks.count,
+                    completedCount: viewModel.completedTodayTasks.count,
+                    completedArrivalToken: viewModel.completedArrivalToken
+                )
 
-            // Task list (scrollable)
-            DashboardTaskList(viewModel: viewModel)
+                // Task list (scrollable)
+                DashboardTaskList(viewModel: viewModel) { task in
+                    withAnimation(ProMotionSprings.snappy) {
+                        selectedTaskForDetail = task
+                        viewModel.showReports = false
+                    }
+                }
+            }
 
             Spacer(minLength: 0)
 
@@ -123,12 +135,14 @@ struct CommandCenterDashboard: View {
                 }
             }
 
-        case 48: // Tab — cycle view modes
+        case 48: // Tab — cycle view modes (smart lists only)
             withAnimation(ProMotionSprings.snappy) {
-                switch viewModel.viewMode {
-                case .today: viewModel.viewMode = .upcoming
-                case .upcoming: viewModel.viewMode = .completed
-                case .completed: viewModel.viewMode = .today
+                let smartLists = DashboardViewMode.smartLists
+                if let idx = smartLists.firstIndex(of: viewModel.viewMode) {
+                    let next = smartLists[(idx + 1) % smartLists.count]
+                    viewModel.viewMode = next
+                } else {
+                    viewModel.viewMode = .today
                 }
             }
 
@@ -138,19 +152,70 @@ struct CommandCenterDashboard: View {
                 Task { await viewModel.toggleTaskCompletion(task) }
             }
 
+        case 17: // T — set selected task's whenDate to Today
+            if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
+                let task = tasks[idx]
+                Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: Date()) }
+            }
+
+        case 14: // E — set selected task to This Evening
+            if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
+                let task = tasks[idx]
+                Task {
+                    await viewModel.setWhenDate(taskUUID: task.uuid, date: Date())
+                    await viewModel.setTimeOfDay(taskUUID: task.uuid, value: "evening")
+                }
+            }
+
         default:
             break
         }
+
+        // Cmd+ shortcuts (check modifier flags)
+        let modifiers = notification.userInfo?["modifiers"] as? UInt ?? 0
+        let hasCmd = (modifiers & (1 << 20)) != 0  // NSEvent.ModifierFlags.command
+        let hasShift = (modifiers & (1 << 17)) != 0  // NSEvent.ModifierFlags.shift
+
+        if hasCmd {
+            switch keyCode {
+            case 1: // Cmd+S — Move to Someday
+                if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
+                    let task = tasks[idx]
+                    Task { await viewModel.setSchedulingState(taskUUID: task.uuid, state: "someday") }
+                }
+            case 18: // Cmd+1 — Today
+                withAnimation(ProMotionSprings.snappy) { viewModel.viewMode = .today }
+            case 19: // Cmd+2 — Upcoming
+                withAnimation(ProMotionSprings.snappy) { viewModel.viewMode = .upcoming }
+            case 20: // Cmd+3 — Anytime
+                withAnimation(ProMotionSprings.snappy) { viewModel.viewMode = .anytime }
+            case 21: // Cmd+4 — Someday
+                withAnimation(ProMotionSprings.snappy) { viewModel.viewMode = .someday }
+            case 23: // Cmd+5 — Logbook
+                withAnimation(ProMotionSprings.snappy) { viewModel.viewMode = .logbook }
+            case 45: // Cmd+N — New task
+                NotificationCenter.default.post(name: .init("com.cosmo.commandCenter.quickAddTask"), object: nil)
+            case 7 where hasShift: // Cmd+Shift+N — New heading (project view)
+                if viewModel.viewMode == .project, let uuid = viewModel.selectedProjectUUID {
+                    Task { await viewModel.createHeading(projectUUID: uuid, title: "New Section") }
+                }
+            default:
+                break
+            }
+        }
     }
 
-    // MARK: - Right Column (260px) — Habits + Stats
+    // MARK: - Right Column (280px) — Context-Sensitive Panel
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Toggle header
+            // Context-sensitive tab bar
             HStack(spacing: 0) {
-                rightColumnTab("Habits", icon: "checkmark.circle", isActive: !viewModel.showReports)
-                rightColumnTab("Reports", icon: "chart.bar", isActive: viewModel.showReports)
+                if selectedTaskForDetail != nil {
+                    rightColumnTab("Details", icon: "info.circle", isActive: showingDetailTab == .details)
+                }
+                rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
+                rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
             }
             .padding(2)
             .background(DS.surface, in: RoundedRectangle(cornerRadius: 10))
@@ -159,11 +224,19 @@ struct CommandCenterDashboard: View {
                     .stroke(DS.borderSubtle, lineWidth: 1)
             )
 
-            if viewModel.showReports {
-                ScrollView(.vertical, showsIndicators: false) {
+            // Content
+            switch showingDetailTab {
+            case .details:
+                if let task = selectedTaskForDetail {
+                    TaskDetailPanel(task: task, viewModel: viewModel)
+                        .id(task.uuid)
+                }
+            case .reports:
+                ScrollView(.vertical) {
                     DashboardReportsPanel(viewModel: viewModel)
                 }
-            } else {
+                .scrollIndicators(.hidden)
+            case .habits:
                 DashboardHabitPanel(viewModel: viewModel)
             }
 
@@ -175,10 +248,37 @@ struct CommandCenterDashboard: View {
         .padding(.leading, 24)
     }
 
+    private enum RightColumnTab {
+        case details, habits, reports
+    }
+
+    private var showingDetailTab: RightColumnTab {
+        if selectedTaskForDetail != nil && !viewModel.showReports {
+            return .details
+        } else if viewModel.showReports {
+            return .reports
+        } else {
+            return .habits
+        }
+    }
+
     private func rightColumnTab(_ title: String, icon: String, isActive: Bool) -> some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
-                viewModel.showReports = (title == "Reports")
+                switch title {
+                case "Reports":
+                    viewModel.showReports = true
+                    selectedTaskForDetail = nil
+                case "Habits":
+                    viewModel.showReports = false
+                    selectedTaskForDetail = nil
+                case "Details":
+                    viewModel.showReports = false
+                    // selectedTaskForDetail stays as-is
+                    break
+                default:
+                    break
+                }
             }
         } label: {
             HStack(spacing: 4) {
@@ -187,7 +287,7 @@ struct CommandCenterDashboard: View {
                 Text(title)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(isActive ? DS.text : DS.textMuted)
+            .foregroundStyle(isActive ? DS.text : DS.textMuted)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
             .background(isActive ? DS.surfaceElevated : Color.clear, in: RoundedRectangle(cornerRadius: 8))
@@ -216,7 +316,7 @@ struct CommandCenterDashboard: View {
             Text(viewModel.greetingText)
                 .font(DS.pageTitle)
                 .tracking(-0.3)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             HStack(spacing: 6) {
                 Circle()
@@ -225,7 +325,7 @@ struct CommandCenterDashboard: View {
 
                 Text(viewModel.dateText)
                     .font(DS.cardMeta)
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
         }
     }
@@ -258,15 +358,15 @@ struct CommandCenterDashboard: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11))
-                .foregroundColor(color)
+                .foregroundStyle(color)
 
             Text(value)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Text(detail)
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)

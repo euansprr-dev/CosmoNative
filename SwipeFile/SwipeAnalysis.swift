@@ -722,6 +722,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let clientUUID: String?
     public let clientName: String?
     public let instagramId: String?
+    // Engagement metrics (from imported posts with Apify data)
+    public let likesCount: Int?
+    public let viewsCount: Int?
+    public let commentsCount: Int?
 
     /// Pre-lowercased concatenation of searchable fields for fast filtering
     public let searchableText: String
@@ -747,7 +751,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         creatorName: String? = nil,
         clientUUID: String? = nil,
         clientName: String? = nil,
-        instagramId: String? = nil
+        instagramId: String? = nil,
+        likesCount: Int? = nil,
+        viewsCount: Int? = nil,
+        commentsCount: Int? = nil
     ) {
         self.id = atomUUID
         self.atomUUID = atomUUID
@@ -771,6 +778,9 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.clientUUID = clientUUID
         self.clientName = clientName
         self.instagramId = instagramId
+        self.likesCount = likesCount
+        self.viewsCount = viewsCount
+        self.commentsCount = commentsCount
         self.searchableText = CommandKSearchMatcher.searchableText(
             from: [title, hookText, author, niche, creatorName]
         )
@@ -963,7 +973,10 @@ extension Atom {
             swipeContentFormat: analysis?.swipeContentFormat,
             niche: analysis?.niche,
             creatorName: author,
-            instagramId: instagramId
+            instagramId: instagramId,
+            likesCount: analysis?.likesCount,
+            viewsCount: analysis?.viewsCount,
+            commentsCount: analysis?.commentsCount
         )
     }
 

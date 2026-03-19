@@ -659,6 +659,12 @@ class CosmoAgentService: ObservableObject {
             finalResponse = "I ran out of processing steps. Please try a simpler request."
         }
 
+        // Track failover in context trace for transparency
+        if let failover = provider as? FailoverLLMProvider, failover.failoverOccurred {
+            contextTrace.failoverOccurred = true
+            contextTrace.actualModel = failover.lastUsedModel
+        }
+
         // Emit all-done event for live activity UI
         onToolActivity?(.allDone(totalCalls: contextTrace.toolCalls.count))
 
@@ -897,6 +903,12 @@ class CosmoAgentService: ObservableObject {
 
         if finalResponse.isEmpty {
             finalResponse = "I ran out of processing steps. Please try a simpler request."
+        }
+
+        // Track failover in context trace for transparency
+        if let failover = activeProvider as? FailoverLLMProvider, failover.failoverOccurred {
+            contextTrace.failoverOccurred = true
+            contextTrace.actualModel = failover.lastUsedModel
         }
 
         compressOldToolResults(&conversation)
@@ -1663,9 +1675,10 @@ class CosmoAgentService: ObservableObject {
         // Writing engine tools — surface the swipes they used internally
         if toolName.hasPrefix("generate_") || toolName == "revise_draft" {
             if let swipeTitles = json["swipesUsed"] as? [String], !swipeTitles.isEmpty {
+                let count = json["swipeCount"] as? Int ?? swipeTitles.count
                 let swipeInfo = swipeTitles.prefix(4).joined(separator: ", ")
                 let label = json["message"] as? String ?? toolName
-                return "\(String(label.prefix(60))) | Swipes: \(swipeInfo)"
+                return "\(String(label.prefix(60))) | Swipes(\(count)): \(swipeInfo)"
             }
             if let message = json["message"] as? String {
                 return String(message.prefix(200))

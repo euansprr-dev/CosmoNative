@@ -77,6 +77,36 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let recommendationScore: Double
     public let recommendationReason: String?
 
+    // MARK: - Things 3 Scheduling
+
+    /// "When" date — when the user plans to work on this (distinct from deadline)
+    public let whenDate: Date?
+
+    /// Hard deadline (semantic rename of dueDate for clarity)
+    public let deadline: Date?
+
+    /// Time of day preference: "morning", "evening", or nil
+    public let timeOfDay: String?
+
+    /// Scheduling bucket: "anytime", "someday", or nil
+    public let schedulingState: String?
+
+    // MARK: - Project Hierarchy
+
+    /// UUID of heading this task belongs to within a project
+    public let headingUUID: String?
+
+    /// Parsed checklist items
+    public let checklist: [ChecklistItem]
+
+    // MARK: - Linked Atoms
+
+    /// Atoms linked to this task (max 3)
+    public let linkedAtoms: [TaskLinkedAtom]
+
+    /// @ mentions embedded in the task title
+    public let titleMentions: [RichMention]
+
     // MARK: - Metadata
 
     public let createdAt: Date
@@ -142,6 +172,62 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         return due.timeIntervalSinceNow / 3600
     }
 
+    /// Whether the task is in the "Anytime" bucket
+    public var isAnytime: Bool {
+        schedulingState == "anytime"
+    }
+
+    /// Whether the task is in the "Someday" bucket
+    public var isSomeday: Bool {
+        schedulingState == "someday"
+    }
+
+    /// Whether the task has a hard deadline
+    public var hasDeadline: Bool {
+        deadline != nil
+    }
+
+    /// Checklist completion progress
+    public var checklistProgress: (completed: Int, total: Int) {
+        let total = checklist.count
+        let completed = checklist.filter(\.isCompleted).count
+        return (completed, total)
+    }
+
+    /// Whether all checklist items are completed
+    public var isChecklistComplete: Bool {
+        !checklist.isEmpty && checklist.allSatisfy(\.isCompleted)
+    }
+
+    /// The primary linked atom (opens as main view on play)
+    public var primaryLinkedAtom: TaskLinkedAtom? {
+        linkedAtoms.first(where: \.isPrimary) ?? linkedAtoms.first
+    }
+
+    /// Linked thinkspaces
+    public var linkedThinkspaces: [TaskLinkedAtom] {
+        linkedAtoms.filter { $0.atomType == "thinkspace" }
+    }
+
+    /// Title with colored mention spans as AttributedString
+    public var attributedTitle: AttributedString {
+        guard !titleMentions.isEmpty else {
+            return AttributedString(title)
+        }
+
+        var result = AttributedString(title)
+
+        for mention in titleMentions {
+            let mentionText = "@\(mention.titleSnapshot)"
+            if let range = result.range(of: mentionText) {
+                result[range].foregroundColor = CosmoMentionColors.color(for: mention.entityType)
+                result[range].font = .system(size: 13, weight: .semibold)
+            }
+        }
+
+        return result
+    }
+
     // MARK: - Initialization
 
     public init(
@@ -177,6 +263,14 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         cognitiveLoad: CognitiveLoad? = nil,
         recommendationScore: Double = 0.0,
         recommendationReason: String? = nil,
+        whenDate: Date? = nil,
+        deadline: Date? = nil,
+        timeOfDay: String? = nil,
+        schedulingState: String? = nil,
+        headingUUID: String? = nil,
+        checklist: [ChecklistItem] = [],
+        linkedAtoms: [TaskLinkedAtom] = [],
+        titleMentions: [RichMention] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -212,6 +306,14 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.cognitiveLoad = cognitiveLoad
         self.recommendationScore = recommendationScore
         self.recommendationReason = recommendationReason
+        self.whenDate = whenDate
+        self.deadline = deadline
+        self.timeOfDay = timeOfDay
+        self.schedulingState = schedulingState
+        self.headingUUID = headingUUID
+        self.checklist = checklist
+        self.linkedAtoms = linkedAtoms
+        self.titleMentions = titleMentions
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -360,6 +462,43 @@ extension TaskViewModel {
         let scheduledStart = metadata?.scheduledStart.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
         let scheduledEnd = metadata?.scheduledEnd.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
 
+        // Parse Things 3 scheduling fields
+        let whenDate = metadata?.whenDate.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
+        // dueDate doubles as deadline — also expose as `deadline` for semantic clarity
+        let deadline = dueDate
+
+        // Parse checklist from JSON
+        var checklistItems: [ChecklistItem] = []
+        if let checklistJSON = metadata?.checklist,
+           let data = checklistJSON.data(using: .utf8) {
+            checklistItems = (try? JSONDecoder().decode([ChecklistItem].self, from: data)) ?? []
+        }
+
+        // Parse linked atoms from JSON (with legacy migration)
+        var parsedLinkedAtoms: [TaskLinkedAtom] = []
+        if let linkedAtomsJSON = metadata?.linkedAtoms,
+           let data = linkedAtomsJSON.data(using: .utf8) {
+            parsedLinkedAtoms = (try? JSONDecoder().decode([TaskLinkedAtom].self, from: data)) ?? []
+        } else {
+            // Migrate legacy single-UUID fields
+            if let ideaUUID = metadata?.linkedIdeaUUID, !ideaUUID.isEmpty {
+                parsedLinkedAtoms.append(TaskLinkedAtom(atomUUID: ideaUUID, atomType: "idea", titleSnapshot: "Linked Idea", isPrimary: parsedLinkedAtoms.isEmpty))
+            }
+            if let contentUUID = metadata?.linkedContentUUID, !contentUUID.isEmpty {
+                parsedLinkedAtoms.append(TaskLinkedAtom(atomUUID: contentUUID, atomType: "content", titleSnapshot: "Linked Content", isPrimary: parsedLinkedAtoms.isEmpty))
+            }
+            if let atomUUID = metadata?.linkedAtomUUID, !atomUUID.isEmpty {
+                parsedLinkedAtoms.append(TaskLinkedAtom(atomUUID: atomUUID, atomType: "research", titleSnapshot: "Linked Atom", isPrimary: parsedLinkedAtoms.isEmpty))
+            }
+        }
+
+        // Parse title mentions from JSON
+        var parsedTitleMentions: [RichMention] = []
+        if let mentionsJSON = metadata?.titleMentions,
+           let data = mentionsJSON.data(using: .utf8) {
+            parsedTitleMentions = (try? JSONDecoder().decode([RichMention].self, from: data)) ?? []
+        }
+
         return TaskViewModel(
             id: atom.uuid,
             uuid: atom.uuid,
@@ -393,6 +532,14 @@ extension TaskViewModel {
             cognitiveLoad: cognitiveLoad,
             recommendationScore: recommendationScore,
             recommendationReason: recommendationReason,
+            whenDate: whenDate,
+            deadline: deadline,
+            timeOfDay: metadata?.timeOfDay,
+            schedulingState: metadata?.schedulingState,
+            headingUUID: metadata?.headingUUID,
+            checklist: checklistItems,
+            linkedAtoms: parsedLinkedAtoms,
+            titleMentions: parsedTitleMentions,
             createdAt: PlannerumFormatters.iso8601.date(from: atom.createdAt) ?? Date(),
             updatedAt: PlannerumFormatters.iso8601.date(from: atom.updatedAt) ?? Date()
         )

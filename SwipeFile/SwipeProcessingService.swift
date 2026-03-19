@@ -1,11 +1,30 @@
 // CosmoOS/SwipeFile/SwipeProcessingService.swift
 // Background processing service for auto-transcription + analysis of swipe files on capture
-// February 2026
+// February 2026 — March 2026 parallel batch support
 
 import Foundation
+import GRDB
+
+// MARK: - Transcription Output
+
+/// Data produced by Phase 1 (transcription) and consumed by Phase 2 (persist + analyze).
+/// All types are Sendable so this can cross actor boundaries safely.
+struct SwipeTranscriptionOutput: Sendable {
+    let uuid: String
+    let result: TranscriptionResult
+    let carouselItems: [CarouselItem]?
+    let mediaData: InstagramMediaData
+    let sourceURL: URL
+}
+
+// MARK: - SwipeProcessingService
 
 /// Singleton service that processes swipe files in the background after capture.
 /// Handles transcription (video or carousel), Claude cleanup, analysis, and re-indexing.
+///
+/// Architecture:
+/// - Phase 1 (transcription): Runs off MainActor via nonisolated methods for true parallelism
+/// - Phase 2 (persist + analyze): Runs on MainActor for safe DB/NLP/classification access
 @MainActor
 final class SwipeProcessingService {
     static let shared = SwipeProcessingService()
@@ -20,7 +39,9 @@ final class SwipeProcessingService {
         inFlightUUIDs.contains(uuid)
     }
 
-    /// Fire-and-forget background processing for a newly captured swipe
+    // MARK: - Single-Post Entry Point
+
+    /// Fire-and-forget background processing for a single swipe (clipboard capture path)
     func processSwipeInBackground(uuid: String) {
         guard !inFlightUUIDs.contains(uuid) else {
             print("SwipeProcessingService: Already processing \(uuid), skipping")
@@ -28,21 +49,67 @@ final class SwipeProcessingService {
         }
         inFlightUUIDs.insert(uuid)
 
-        Task {
-            await processSwipe(uuid: uuid)
-            inFlightUUIDs.remove(uuid)
+        // Protect this atom from remote sync overwrites during long processing
+        Task { @MainActor in
+            await SyncEngine.shared.setExtendedFence(uuid: uuid)
+        }
+
+        Task.detached { [weak self] in
+            if let output = await self?.transcribe(uuid: uuid) {
+                await self?.persistAndAnalyze(output: output)
+            }
+            await MainActor.run { self?.inFlightUUIDs.remove(uuid) }
         }
     }
 
-    // MARK: - Main Processing Pipeline
+    // MARK: - Batch Entry Point
 
-    private func processSwipe(uuid: String) async {
-        print("SwipeProcessingService: Starting background processing for \(uuid)")
+    /// Process multiple swipes concurrently with bounded parallelism (max 3).
+    /// Each transcription runs in isolation off MainActor; persistence is serialized on MainActor.
+    func processBatch(uuids: [String]) {
+        let newUUIDs = uuids.filter { !inFlightUUIDs.contains($0) }
+        guard !newUUIDs.isEmpty else { return }
+        for uuid in newUUIDs { inFlightUUIDs.insert(uuid) }
 
-        // Step 1: Fetch atom
+        print("SwipeProcessingService: Starting batch of \(newUUIDs.count) transcriptions")
+
+        Task.detached { [weak self] in
+            let semaphore = AsyncSemaphore(value: 3)
+
+            await withTaskGroup(of: Void.self) { group in
+                for uuid in newUUIDs {
+                    group.addTask {
+                        await semaphore.wait()
+                        defer { Task { await semaphore.signal() } }
+
+                        // Phase 1: Transcribe off MainActor (parallel)
+                        if let output = await self?.transcribe(uuid: uuid) {
+                            // Phase 2: Persist + analyze on MainActor (interleaved)
+                            await self?.persistAndAnalyze(output: output)
+                        }
+
+                        await MainActor.run { self?.inFlightUUIDs.remove(uuid) }
+                    }
+                }
+            }
+
+            await MainActor.run {
+                print("SwipeProcessingService: Batch complete")
+            }
+        }
+    }
+
+    // MARK: - Phase 1: Transcription (off MainActor)
+
+    /// Runs transcription off MainActor for true parallelism.
+    /// Hops to MainActor briefly for DB reads/writes and media cache lookups.
+    private nonisolated func transcribe(uuid: String) async -> SwipeTranscriptionOutput? {
+        print("SwipeProcessingService: Starting transcription for \(uuid)")
+
+        // Step 1: Fetch atom (brief MainActor hop)
         guard var atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
             print("SwipeProcessingService: Could not fetch atom \(uuid)")
-            return
+            return nil
         }
 
         // Step 2: Skip if already transcribed
@@ -50,19 +117,19 @@ final class SwipeProcessingService {
         let hasBody = !(atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasTranscript && hasBody {
             print("SwipeProcessingService: Atom \(uuid) already has transcript, skipping")
-            return
+            return nil
         }
 
-        // Update status
+        // Update status (brief MainActor hop)
         atom.processingStatus = "extracting"
-        try? await AtomRepository.shared.update(atom)
+        _ = try? await AtomRepository.shared.update(atom)
 
-        // Step 3: Determine content type and extract media
+        // Step 3: Extract media
         guard let urlString = atom.url, let url = URL(string: urlString) else {
             print("SwipeProcessingService: No URL for atom \(uuid)")
             atom.processingStatus = "error"
-            try? await AtomRepository.shared.update(atom)
-            return
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
         }
 
         let mediaData: InstagramMediaData
@@ -71,42 +138,38 @@ final class SwipeProcessingService {
         } catch {
             print("SwipeProcessingService: Media extraction failed for \(uuid): \(error)")
             atom.processingStatus = "error"
-            try? await AtomRepository.shared.update(atom)
-            return
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
         }
 
         // Update status
         atom.processingStatus = "transcribing"
-        try? await AtomRepository.shared.update(atom)
+        _ = try? await AtomRepository.shared.update(atom)
 
-        // Step 4: Branch by content type
+        // Step 4: Branch by content type — transcription runs off MainActor
         var transcriptionResult: TranscriptionResult
 
-        // Primary: use freshly extracted carousel items
-        // Fallback: use stored carousel items from initial capture
         let carouselItems = mediaData.carouselItems
             ?? atom.richContent?.instagramData?.carouselItems
 
         if let items = carouselItems, !items.isEmpty {
-            // Carousel path (check items regardless of content type label)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
                 items: items
             ) { progress in
                 switch progress {
                 case .recognizingText(let pct):
                     if Int(pct * 100) % 25 == 0 {
-                        print("SwipeProcessingService: OCR \(Int(pct * 100))%")
+                        print("SwipeProcessingService [\(uuid.prefix(8))]: OCR \(Int(pct * 100))%")
                     }
                 case .analyzingWithAI(let pct):
                     if Int(pct * 100) % 25 == 0 {
-                        print("SwipeProcessingService: AI \(Int(pct * 100))%")
+                        print("SwipeProcessingService [\(uuid.prefix(8))]: AI \(Int(pct * 100))%")
                     }
                 default: break
                 }
             }
         } else if let videoURL = mediaData.videoURL {
-            // Video/Reel path — download locally first
-            let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
+            let shortcode = await InstagramExtractor.shared.extractShortcode(from: url)
             let playableURL = await InstagramVideoLocalCache.resolvePlayableURL(from: videoURL, shortcode: shortcode)
             let duration = mediaData.duration ?? 60
 
@@ -117,13 +180,12 @@ final class SwipeProcessingService {
                 switch progress {
                 case .extractingFrames(let pct):
                     if Int(pct * 100) % 25 == 0 {
-                        print("SwipeProcessingService: Frames \(Int(pct * 100))%")
+                        print("SwipeProcessingService [\(uuid.prefix(8))]: Frames \(Int(pct * 100))%")
                     }
                 default: break
                 }
             }
         } else if let thumbnailURL = mediaData.thumbnailURL {
-            // Image post with thumbnail — OCR the thumbnail image
             print("SwipeProcessingService: Image post, transcribing thumbnail for \(uuid)")
             let singleItem = CarouselItem(
                 index: 0,
@@ -136,7 +198,7 @@ final class SwipeProcessingService {
                 switch progress {
                 case .recognizingText(let pct):
                     if Int(pct * 100) % 50 == 0 {
-                        print("SwipeProcessingService: OCR \(Int(pct * 100))%")
+                        print("SwipeProcessingService [\(uuid.prefix(8))]: OCR \(Int(pct * 100))%")
                     }
                 default: break
                 }
@@ -151,11 +213,61 @@ final class SwipeProcessingService {
                 }
             }
         } else {
-            // No video, no carousel items, no thumbnail — nothing to transcribe
             print("SwipeProcessingService: No transcribable content for \(uuid)")
             atom.processingStatus = "complete"
-            try? await AtomRepository.shared.update(atom)
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
+        }
+
+        // Step 5: Skip if transcription returned nothing
+        guard transcriptionResult.contentType != .empty,
+              !transcriptionResult.slides.isEmpty else {
+            print("SwipeProcessingService: Transcription returned empty for \(uuid)")
+            atom.processingStatus = "complete"
+            _ = try? await AtomRepository.shared.update(atom)
+            return nil
+        }
+
+        return SwipeTranscriptionOutput(
+            uuid: uuid,
+            result: transcriptionResult,
+            carouselItems: carouselItems,
+            mediaData: mediaData,
+            sourceURL: url
+        )
+    }
+
+    // MARK: - Phase 2: Persist + Analyze (on MainActor)
+
+    /// Persists transcription results and runs NLP/classification analysis.
+    /// Must run on MainActor for safe access to AtomRepository, SwipeAnalyzer, etc.
+    private func persistAndAnalyze(output: SwipeTranscriptionOutput) async {
+        let uuid = output.uuid
+        let transcriptionResult = output.result
+        let carouselItems = output.carouselItems
+        let url = output.sourceURL
+
+        let finalSlides = transcriptionResult.cleanedSlides
+        let rawSlides = transcriptionResult.rawSlides
+        let speechSegments = transcriptionResult.speechSegments
+        let transcriptionWarnings = transcriptionResult.warnings
+        let transcriptionQuality = transcriptionResult.quality
+
+        let combined = finalSlides
+            .map(\.text)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+
+        // Re-fetch atom to avoid overwriting concurrent changes
+        guard var atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
+            print("SwipeProcessingService: Could not re-fetch atom \(uuid) for persist")
             return
+        }
+
+        // Check if user is actively editing this atom — skip body/title if so
+        let userIsEditing = AtomRepository.shared.isBeingEdited(uuid)
+        if userIsEditing {
+            print("SwipeProcessingService: Atom \(uuid) is being edited, preserving user's body/title")
         }
 
         // Ensure sourceType + thumbnail are correct if carousel items were used
@@ -169,7 +281,6 @@ final class SwipeProcessingService {
                 needsUpdate = true
             }
 
-            // Set thumbnail from first carousel image if missing
             let hasThumbnail = !(rc.thumbnailUrl ?? "").isEmpty
             if !hasThumbnail, let firstImage = items.first(where: { $0.mediaType == .image }) ?? items.first {
                 rc.thumbnailUrl = firstImage.mediaURL.absoluteString
@@ -182,33 +293,7 @@ final class SwipeProcessingService {
             }
         }
 
-        // Step 5: Skip if transcription returned nothing
-        guard transcriptionResult.contentType != .empty,
-              !transcriptionResult.slides.isEmpty else {
-            print("SwipeProcessingService: Transcription returned empty for \(uuid)")
-            atom.processingStatus = "complete"
-            try? await AtomRepository.shared.update(atom)
-            return
-        }
-
-        // Step 6: Persist the transcriber-owned cleaned/raw outputs as-is.
-        let finalSlides = transcriptionResult.cleanedSlides
-        let rawSlides = transcriptionResult.rawSlides
-        let speechSegments = transcriptionResult.speechSegments
-        let transcriptionWarnings = transcriptionResult.warnings
-        let transcriptionQuality = transcriptionResult.quality
-
-        // Step 7: Save transcript to atom
-        let combined = finalSlides
-            .map(\.text)
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-
-        // Re-fetch atom to avoid overwriting concurrent changes
-        if let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) {
-            atom = fresh
-        }
-
+        // Build in-memory atom with transcript (needed as analyzer input)
         atom.body = combined
         var richContent = atom.richContent ?? ResearchRichContent()
         richContent.transcript = combined
@@ -243,10 +328,9 @@ final class SwipeProcessingService {
             }
         }
 
-        // Set hook/title from first slide.
-        // Hook = the ENTIRETY of slide 1, nothing more, nothing less.
-        // The 500-char limit covers TranscriptSlide.characterLimit (450) with buffer.
-        if let firstText = finalSlides.first(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.text {
+        // Set hook/title from first slide (skip if user is editing)
+        if !userIsEditing,
+           let firstText = finalSlides.first(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.text {
             let hook = firstText
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
@@ -268,13 +352,23 @@ final class SwipeProcessingService {
         atom = atom.withSwipeAnalysis(sa)
 
         atom.processingStatus = "analyzing"
+
+        // FIELD-LEVEL UPDATE: Only write columns this stage owns
         do {
-            atom = try await AtomRepository.shared.update(atom)
+            var columns: [String: (any DatabaseValueConvertible)?] = [
+                "structured": atom.structured,
+                "metadata": atom.metadata,
+            ]
+            if !userIsEditing {
+                columns["body"] = combined
+                columns["title"] = atom.title
+            }
+            atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: columns)
         } catch {
             print("SwipeProcessingService: Failed to save transcript: \(error)")
         }
 
-        // Step 8: Run analysis
+        // Run NLP analysis
         print("SwipeProcessingService: Running analysis for \(uuid)")
         var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atom)
         nlpResult.transcriptSlides = finalSlides
@@ -283,8 +377,12 @@ final class SwipeProcessingService {
         nlpResult.transcriptionQuality = transcriptionQuality
         nlpResult.transcriptionWarnings = transcriptionWarnings
         atom = atom.withSwipeAnalysis(nlpResult)
+
+        // FIELD-LEVEL UPDATE: Only structured (swipeAnalysis lives here)
         do {
-            atom = try await AtomRepository.shared.update(atom)
+            atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
+                "structured": atom.structured,
+            ])
         } catch {
             print("SwipeProcessingService: Failed to save NLP analysis: \(error)")
         }
@@ -299,14 +397,18 @@ final class SwipeProcessingService {
             enriched.transcriptionQuality = transcriptionQuality
             enriched.transcriptionWarnings = transcriptionWarnings
             atom = atom.withSwipeAnalysis(enriched)
+
+            // FIELD-LEVEL UPDATE: Only structured
             do {
-                atom = try await AtomRepository.shared.update(atom)
+                atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
+                    "structured": atom.structured,
+                ])
             } catch {
                 print("SwipeProcessingService: Failed to save deep analysis: \(error)")
             }
         }
 
-        // Step 9: Re-index embedding with transcript text
+        // Re-index embedding with transcript text
         var textToEmbed = ""
         if let hook = atom.hook { textToEmbed += hook + " " }
         textToEmbed += combined
@@ -319,20 +421,22 @@ final class SwipeProcessingService {
             )
         }
 
-        // Step 10: Mark complete
-        atom.processingStatus = "complete"
+        // FIELD-LEVEL UPDATE: Only metadata (processingStatus)
         do {
-            try await AtomRepository.shared.update(atom)
+            atom.processingStatus = "complete"
+            _ = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
+                "metadata": atom.metadata,
+            ])
         } catch {
             print("SwipeProcessingService: Failed to mark complete: \(error)")
         }
 
-        // Step 11: Cache carousel thumbnail locally (CDN URLs expire)
+        // Cache carousel thumbnail locally (CDN URLs expire)
         if let items = carouselItems, !items.isEmpty {
             let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
             await SwipeFileEngine.cacheCarouselThumbnail(items: items, shortcode: shortcode)
         }
 
-        print("SwipeProcessingService: Background processing complete for \(uuid) — \(finalSlides.count) slides")
+        print("SwipeProcessingService: Processing complete for \(uuid) — \(finalSlides.count) slides")
     }
 }

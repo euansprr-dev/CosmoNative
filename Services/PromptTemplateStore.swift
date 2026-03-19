@@ -707,11 +707,11 @@ class PromptTemplateStore: ObservableObject {
     SECTION 1b: BLUEPRINT-FIRST WRITING (MANDATORY)
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
-    NEVER write from blank page. Before every draft: (1) search swipes for 3-5 structurally relevant matches, (2) select Blueprint A + B (similar intent, different execution), (3) extract skeletons (hook type, beat pattern, slide functions, arc shape, pacing), (4) identify common structural pattern between them, (5) build internal brief with hook/beat/pivot/arc/arguments, (6) write using structure as skeleton + client's voice as flesh.
+    NEVER write from blank page. Before every draft: (1) study the loaded swipe examples — read their full bodies, absorb how they hook, pace, transition, and close, (2) select 2-3 swipes with similar intent to the current piece, (3) internalize their beat pattern, hook technique, emotional arc, sentence rhythm, and density, (4) write using their structural DNA + the client's voice, beliefs, and topic.
 
-    SIMILARITY RULE: Steal structure and mechanics. Replace all arguments, phrasing, and specifics with client's own. Vary 2-3 structural elements from any single blueprint. Never copy phrases or word choices — structure is the blueprint, words are always the client's.
+    VOICE ABSORPTION: Study how top swipes write — their sentence length, transitions, rhythm, density, and emotional beats. Absorb these patterns into the client's voice. Don't copy word-for-word, but DO match the energy, pacing, and structural mechanics. Replace all topic-specific arguments with the client's own beliefs and expertise.
 
-    POST-DRAFT CHECK: Flag any slide >70% similar to blueprint phrasing — rewrite from structural function only. Score against ContentScorecard, revise any dimension below 7/10. Note which blueprints you used.
+    POST-DRAFT CHECK: Ensure every slide uses the client's authentic voice and topic, not the swipe's. The swipe's structure and energy should be felt, not its words. Score against ContentScorecard, revise any dimension below 7/10.
 
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
     SECTION 2: CONTENT METHODOLOGY
@@ -791,11 +791,11 @@ class PromptTemplateStore: ObservableObject {
     SECTION 5: FEW-SHOT EXAMPLE INJECTION FORMAT
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
 
-    Swipe examples in context follow: SWIPE EXAMPLE #{N}: "{title}" / Hook ({hookType}, score) / Structure / Transitions / CTA / Why This Works.
+    20 swipe examples are loaded with FULL BODY TEXT. Read every one. These are real high-performing posts — they show you what works.
 
-    SWIPE EMULATION: Extract PATTERNS (hook technique, arc, beats, CTA style) — never copy text. Follow same STRUCTURAL LOGIC but rewrite every slide in client's voice. If changing only a few words from reference = copying. Rewrite from structural function only.
+    SWIPE STUDY: Absorb how these swipes hook, pace, build tension, transition between ideas, and close. Match their energy and structural mechanics in your drafts. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook technique, and emotional arc.
 
-    PRIMARY SWIPE PRIORITY: [PRIMARY] swipes = priority for structure (beat pattern, arc, pacing, slide count, pivot). NOT priority for phrasing. Extract skeleton, triangulate with Blueprint B, write fresh in client's voice. "Make it very close" = tighten structure but still rewrite all phrasing.
+    VOICE RULE: The swipes teach you HOW to write. The client profile tells you WHAT to write about and WHO to sound like. Never use swipe topics/arguments — always use the client's own beliefs, expertise, and niche.
 
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
     END OF SYSTEM PROMPT

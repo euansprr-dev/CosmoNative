@@ -77,11 +77,8 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
 
         let cleanHandle = handle.replacingOccurrences(of: "@", with: "")
         let input: [String: Any] = [
-            "directUrls": ["https://www.instagram.com/\(cleanHandle)/"],
-            "resultsType": "posts",
-            "resultsLimit": maxPosts,
-            "searchType": "user",
-            "searchLimit": 1
+            "username": [cleanHandle],
+            "resultsLimit": maxPosts
         ]
 
         let results: [[String: Any]] = try await runActor(
@@ -157,9 +154,12 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
 
         // Poll for completion
         let statusURL = URL(string: "\(baseURL)/actor-runs/\(runId)?token=\(token)")!
+        let datasetInfoURL = URL(string: "\(baseURL)/datasets/\(defaultDatasetId)?token=\(token)")!
+        var pollCount = 0
 
         while true {
             try await Task.sleep(for: .seconds(pollInterval))
+            pollCount += 1
 
             let (statusData, _) = try await session.data(for: URLRequest(url: statusURL))
             guard let statusJSON = try? JSONSerialization.jsonObject(with: statusData) as? [String: Any],
@@ -168,11 +168,25 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
                 continue
             }
 
-            // Report progress via dataset item count
+            // Try run stats first for item count
+            var reportedItemCount = 0
             if let stats = data["stats"] as? [String: Any],
-               let itemCount = stats["datasetItemCount"] as? Int {
-                onPoll?(itemCount)
+               let itemCount = stats["datasetItemCount"] as? Int,
+               itemCount > 0 {
+                reportedItemCount = itemCount
             }
+
+            // Fallback: poll dataset directly every 3rd cycle (more reliable for batch-write actors)
+            if reportedItemCount == 0 && pollCount % 3 == 0 {
+                if let (dsData, _) = try? await session.data(for: URLRequest(url: datasetInfoURL)),
+                   let dsJSON = try? JSONSerialization.jsonObject(with: dsData) as? [String: Any],
+                   let dsInfo = dsJSON["data"] as? [String: Any],
+                   let dsItemCount = dsInfo["itemCount"] as? Int {
+                    reportedItemCount = dsItemCount
+                }
+            }
+
+            onPoll?(reportedItemCount)
 
             switch status {
             case "SUCCEEDED":

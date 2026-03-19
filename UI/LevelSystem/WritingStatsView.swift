@@ -544,7 +544,7 @@ struct WeeklyHeatmapView: View {
             HStack(spacing: 3) {
                 // Day labels
                 VStack(spacing: 3) {
-                    ForEach(["M", "T", "W", "T", "F", "S", "S"], id: \.self) { day in
+                    ForEach(Array(["M", "T", "W", "T", "F", "S", "S"].enumerated()), id: \.offset) { _, day in
                         Text(day)
                             .font(.system(size: 8, weight: .medium))
                             .foregroundColor(.secondary)

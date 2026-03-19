@@ -9,6 +9,8 @@ import SwiftUI
 struct TaxonomyManagementView: View {
     @Environment(\.dismiss) private var dismiss
 
+    var onClose: (() -> Void)? = nil
+
     @State private var selectedDimension: TaxonomyDimension = .narrative
     @State private var dimensionValues: [TaxonomyValueRow] = []
     @State private var isLoading = false
@@ -16,6 +18,10 @@ struct TaxonomyManagementView: View {
     @State private var showAddField = false
 
     private let gold = DS.entitySwipe
+
+    private func performClose() {
+        if let onClose { onClose() } else { dismiss() }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,8 +31,6 @@ struct TaxonomyManagementView: View {
             Divider().background(DS.borderSubtle)
             valuesList
         }
-        .frame(width: 480, height: 520)
-        .background(DS.bg)
         .onAppear { loadValues() }
         .onChange(of: selectedDimension) { _, _ in loadValues() }
     }
@@ -38,20 +42,20 @@ struct TaxonomyManagementView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Taxonomy Management")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Text("Manage classification values for swipe intelligence")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             Spacer()
 
             Button {
-                dismiss()
+                performClose()
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -69,7 +73,6 @@ struct TaxonomyManagementView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(DS.bg)
     }
 
     private func dimensionTab(_ dimension: TaxonomyDimension) -> some View {
@@ -78,19 +81,11 @@ struct TaxonomyManagementView: View {
         } label: {
             Text(dimension.displayName)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(selectedDimension == dimension ? DS.text : DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .fill(selectedDimension == dimension ? gold.opacity(0.15) : DS.surfaceHover)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                .strokeBorder(
-                                    selectedDimension == dimension ? gold.opacity(0.5) : DS.borderSubtle,
-                                    lineWidth: 1
-                                )
-                        )
+                .foregroundStyle(selectedDimension == dimension ? DS.text : DS.textSecondary)
+                .commandKToolbarChip(
+                    isActive: selectedDimension == dimension,
+                    activeFill: gold.opacity(0.15),
+                    activeBorder: gold.opacity(0.5)
                 )
         }
         .buttonStyle(.plain)
@@ -128,7 +123,7 @@ struct TaxonomyManagementView: View {
             // Drag handle / order indicator
             Text("\(index + 1)")
                 .font(.system(size: 10, weight: .medium).monospacedDigit())
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 20)
 
             // Color dot
@@ -140,16 +135,16 @@ struct TaxonomyManagementView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.displayName)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 if row.isDefault {
                     Text("Default")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 } else {
                     Text("Custom")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(gold.opacity(0.5))
+                        .foregroundStyle(gold.opacity(0.5))
                 }
             }
 
@@ -159,7 +154,7 @@ struct TaxonomyManagementView: View {
             if row.usageCount > 0 {
                 Text("\(row.usageCount)")
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(DS.surfaceHover, in: Capsule())
@@ -173,7 +168,7 @@ struct TaxonomyManagementView: View {
                     } label: {
                         Image(systemName: "chevron.up")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                     .disabled(index == 0)
@@ -183,7 +178,7 @@ struct TaxonomyManagementView: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                     .disabled(index == dimensionValues.count - 1)
@@ -195,7 +190,7 @@ struct TaxonomyManagementView: View {
                 } label: {
                     Image(systemName: "archivebox")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
                 .help("Archive this value")
@@ -212,7 +207,7 @@ struct TaxonomyManagementView: View {
                 TextField("New value name", text: $newValueText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
@@ -223,7 +218,7 @@ struct TaxonomyManagementView: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(gold)
+                        .foregroundStyle(gold)
                 }
                 .buttonStyle(.plain)
                 .disabled(newValueText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -234,7 +229,7 @@ struct TaxonomyManagementView: View {
                 } label: {
                     Image(systemName: "xmark.circle")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             } else {
@@ -247,7 +242,7 @@ struct TaxonomyManagementView: View {
                         Text("Add Custom Value")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(gold.opacity(0.8))
+                    .foregroundStyle(gold.opacity(0.8))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(gold.opacity(0.1), in: Capsule())
@@ -258,7 +253,6 @@ struct TaxonomyManagementView: View {
             Spacer()
         }
         .padding(16)
-        .background(DS.bg)
     }
 
     // MARK: - Data Loading

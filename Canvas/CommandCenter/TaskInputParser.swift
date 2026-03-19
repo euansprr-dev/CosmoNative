@@ -16,6 +16,17 @@ struct ParsedTaskInput {
     var habitIcon: String?
     var habitColorHex: String?
     var habitAssignmentSource: HabitAssignmentSource?
+
+    // MARK: - Things 3 Extensions
+    var projectName: String?         // Parsed from #projectname
+    var headingName: String?         // Parsed from +heading
+    var timeOfDay: String?           // "morning" or "evening"
+    var schedulingState: String?     // "someday" or "anytime"
+    var deadline: Date?              // Parsed from "deadline: friday"
+
+    // MARK: - Context (set by view, not parsed)
+    var contextProjectUUID: String?  // Auto-set when adding from project view
+    var contextHeadingUUID: String?  // Auto-set when adding under a heading
 }
 
 @MainActor
@@ -25,6 +36,13 @@ enum TaskInputParser {
     static func parse(_ input: String) -> ParsedTaskInput {
         var remaining = input
         var result = ParsedTaskInput(title: "")
+
+        // Extract Things 3 scheduling keywords first (before date parsing)
+        result.schedulingState = extractSchedulingState(&remaining)
+        result.timeOfDay = extractTimeOfDay(&remaining)
+        result.projectName = extractProjectTag(&remaining)
+        result.headingName = extractHeadingTag(&remaining)
+        result.deadline = extractDeadline(&remaining)
 
         // Extract priority (p1/p2/p3/p4)
         result.priority = extractPriority(&remaining)
@@ -65,6 +83,88 @@ enum TaskInputParser {
         }
 
         return result
+    }
+
+    // MARK: - Things 3 Scheduling Extractions
+
+    /// Extract /someday or /anytime from input
+    private static func extractSchedulingState(_ input: inout String) -> String? {
+        let patterns: [(String, String)] = [
+            ("\\/someday\\b", "someday"),
+            ("\\/anytime\\b", "anytime"),
+        ]
+
+        for (pattern, state) in patterns {
+            if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                input.removeSubrange(range)
+                return state
+            }
+        }
+        return nil
+    }
+
+    /// Extract /morning, /am, /evening, /eve from input
+    private static func extractTimeOfDay(_ input: inout String) -> String? {
+        let patterns: [(String, String)] = [
+            ("\\/morning\\b", "morning"),
+            ("\\/am\\b", "morning"),
+            ("\\/evening\\b", "evening"),
+            ("\\/eve\\b", "evening"),
+        ]
+
+        for (pattern, timeOfDay) in patterns {
+            if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                input.removeSubrange(range)
+                return timeOfDay
+            }
+        }
+        return nil
+    }
+
+    /// Extract #projectname from input
+    private static func extractProjectTag(_ input: inout String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "#(\\S+)", options: []) else { return nil }
+        let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, range: nsRange),
+              let nameRange = Range(match.range(at: 1), in: input),
+              let fullRange = Range(match.range, in: input) else { return nil }
+
+        let name = String(input[nameRange])
+        input.removeSubrange(fullRange)
+        return name
+    }
+
+    /// Extract +heading from input (only meaningful in project view)
+    private static func extractHeadingTag(_ input: inout String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "\\+(\\S+)", options: []) else { return nil }
+        let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, range: nsRange),
+              let nameRange = Range(match.range(at: 1), in: input),
+              let fullRange = Range(match.range, in: input) else { return nil }
+
+        let name = String(input[nameRange])
+        input.removeSubrange(fullRange)
+        return name
+    }
+
+    /// Extract "deadline: friday" or "deadline: mar 15" from input
+    private static func extractDeadline(_ input: inout String) -> Date? {
+        guard let regex = try? NSRegularExpression(
+            pattern: "\\bdeadline:\\s*(\\S+(?:\\s+\\d{1,2})?)",
+            options: .caseInsensitive
+        ) else { return nil }
+
+        let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, range: nsRange),
+              let dateStrRange = Range(match.range(at: 1), in: input),
+              let fullRange = Range(match.range, in: input) else { return nil }
+
+        var dateStr = String(input[dateStrRange])
+        input.removeSubrange(fullRange)
+
+        // Try to parse the deadline date expression
+        let parsedDate = extractDate(&dateStr)
+        return parsedDate
     }
 
     // MARK: - Priority

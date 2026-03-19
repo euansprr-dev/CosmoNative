@@ -1310,7 +1310,7 @@ final class UnifiedWritingEngine: ObservableObject {
             let clientNiche = clientMeta?.intelligenceModel?.nicheAndPositioning.specificNiche
                 ?? clientMeta?.niche
             if let niche = clientNiche, !niche.isEmpty {
-                lines.append("CLIENT NICHE: \(niche). All generated content must be about this niche. Swipe examples below are STRUCTURAL references — their topics may differ.")
+                lines.append("CLIENT NICHE: \(niche). All content must be about this niche. The swipe examples below are high-performing posts — study their voice, pacing, and structure. Their topics may differ from the client's niche.")
                 lines.append("")
             }
 
@@ -1339,14 +1339,12 @@ final class UnifiedWritingEngine: ObservableObject {
             }
             lines.append("""
             RULES:
-            1. These \(selectedSwipes.count) swipe examples are your PERMANENT same-type reference set for this session.
-            2. The PRIMARY BLUEPRINT is the core structural anchor. The other \(max(selectedSwipes.count - 1, 0)) swipes are supporting evidence for rhythm, pacing, hooks, and density in this exact format.
-            3. On EVERY revision, maintain the PRIMARY swipe's structural DNA — beat pattern, hook type, section count, and emotional arc.
-            4. When the user asks to shorten/lengthen slides, REDISTRIBUTE content to maintain the same beat pattern — do NOT flatten or simplify the structure.
-            5. When the user asks for stats or data, pull from the swipe examples above — they contain real data points.
-            6. NEVER drop the structural patterns from these swipes, even when making formatting changes.
-            7. Use read_swipe_body to load full body text of any swipe for deeper analysis. The PRIMARY swipe body is pre-loaded in REFERENCE MATERIAL.
-            8. Use list_client_posts + read_client_post to access the client's post bodies on demand.
+            1. These \(selectedSwipes.count) swipes are your PERMANENT reference library for this session. Their full bodies are loaded — read and absorb them.
+            2. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook type, and emotional arc.
+            3. On EVERY revision, maintain the PRIMARY swipe's structural DNA — beat pattern, section count, and emotional arc.
+            4. When shortening/lengthening, REDISTRIBUTE content to preserve the beat pattern — don't flatten the structure.
+            5. Study how the top-scoring swipes write transitions, hooks, and CTAs. Match their energy in the client's voice.
+            6. Use list_client_posts + read_client_post to access the client's own post bodies on demand.
             """)
             lines.append("")
         }
@@ -2073,6 +2071,17 @@ final class UnifiedWritingEngine: ObservableObject {
                 try await database.asyncWrite { db in
                     if var atom = try Atom.filter(Column("uuid") == atomUUID).filter(Column("is_deleted") == false).fetchOne(db) {
                         atom.body = renderedContent
+
+                        // Sync richDraftDocument in metadata so the UI sees the fresh draft.
+                        // The UI prefers richDraftDocument over atom.body — without this,
+                        // a stale rich document from a previous session overrides the fresh draft.
+                        let richDoc = RichDocument.migrateLegacy(renderedContent)
+                        atom.metadata = RichDocumentMetadataStorage.writeDocument(
+                            richDoc,
+                            into: atom.metadata,
+                            key: RichDocumentMetadataKeys.contentDraftDocument
+                        )
+
                         atom.updatedAt = ISO8601DateFormatter().string(from: Date())
                         try atom.update(db)
                     }
@@ -2697,21 +2706,13 @@ final class UnifiedWritingEngine: ObservableObject {
             }
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let existingUUIDs = Set(sameTypeCandidates.map(\.uuid))
-                if let results = try? await HybridSearchEngine.shared.search(
-                    query: query,
-                    limit: 40,
-                    entityTypes: [.research]
-                ) {
-                    for result in results {
-                        guard let uuid = result.entityUUID, !existingUUIDs.contains(uuid) else { continue }
-                        if let atom = try? await database.asyncRead({ db in
-                            try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
-                        }), atom.isSwipeFileAtom,
-                           targetWritingFormat.matchesSwipeAtom(atom) {
-                            candidates.append(atom)
-                        }
-                        if candidates.count >= 50 { break }
-                    }
+                // Use direct FTS on atoms_fts — HybridSearchEngine queries semantic_fts
+                // which does NOT index swipe atoms, causing 0 results for swipe backfill.
+                let ftsResults = await searchSwipesFTS(query: query, limit: 40, excludeUUIDs: existingUUIDs)
+                for atom in ftsResults {
+                    guard targetWritingFormat.matchesSwipeAtom(atom) else { continue }
+                    candidates.append(atom)
+                    if candidates.count >= 50 { break }
                 }
             }
         }
@@ -2721,7 +2722,8 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Filter: must have analysis with hook type
         let analyzed = exactTypeCandidates.filter { $0.swipeAnalysis?.hookType != nil }
-        let targetSwipeCount = 10
+        let targetSwipeCount = 20
+        print("📊 [selectSwipes] inherited=\(sameTypeCandidates.count), total candidates=\(candidates.count), exactType=\(exactTypeCandidates.count), analyzed=\(analyzed.count)")
 
         guard !analyzed.isEmpty else {
             // Same-type-only fallback when we have no analyzed matches.
@@ -2871,8 +2873,8 @@ final class UnifiedWritingEngine: ObservableObject {
     }
 
     /// Same-type fallback search when scored selection does not fill the target set.
-    /// Searches HybridSearchEngine using exact format-family terms and includes only
-    /// same-type library swipes, even if they lack hookType analysis.
+    /// Uses direct FTS on atoms_fts and includes same-type library swipes,
+    /// even if they lack hookType analysis (compressSwipeMinimal handles those).
     private func selectSwipesFallback(
         contentAtom: Atom,
         targetFormat: WritingContentFormat,
@@ -2890,22 +2892,16 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         for query in queries where fallbackSwipes.count < needed {
-            guard let results = try? await HybridSearchEngine.shared.search(
-                query: query,
-                limit: 25,
-                entityTypes: [.research]
-            ) else { continue }
-
-            for result in results {
+            // Use direct FTS on atoms_fts — HybridSearchEngine queries semantic_fts
+            // which does NOT index swipe atoms.
+            let ftsResults = await searchSwipesFTS(query: query, limit: 25, excludeUUIDs: seenUUIDs)
+            for atom in ftsResults {
                 guard fallbackSwipes.count < needed else { break }
-                guard let uuid = result.entityUUID, !seenUUIDs.contains(uuid) else { continue }
-                guard let atom = try? await database.asyncRead({ db in
-                    try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
-                }), atom.isSwipeFileAtom else { continue }
                 guard targetFormat.matchesSwipeAtom(atom) else { continue }
-                guard var compressed = compressSwipe(atom) else { continue }
+                // Use compressSwipe first, fall back to minimal for un-analyzed swipes
+                guard var compressed = compressSwipe(atom) ?? compressSwipeMinimal(atom) else { continue }
 
-                seenUUIDs.insert(uuid)
+                seenUUIDs.insert(atom.uuid)
                 if !fallbackSwipes.isEmpty {
                     compressed.isPrimary = false
                 }
@@ -2915,6 +2911,43 @@ final class UnifiedWritingEngine: ObservableObject {
 
         print("🔧 [UnifiedWritingEngine] Same-type fallback found \(fallbackSwipes.count) additional swipes for format '\(targetFormat.displayName)'")
         return fallbackSwipes
+    }
+
+    // MARK: - Direct FTS Swipe Search
+
+    /// Search swipe atoms via atoms_fts (NOT semantic_fts which doesn't index swipe atoms).
+    /// Reuses the proven BM25 pattern from handleSearchSwipes.
+    private func searchSwipesFTS(query: String, limit: Int, excludeUUIDs: Set<String> = []) async -> [Atom] {
+        let ftsQuery = query.split(separator: " ")
+            .map { word in
+                var w = String(word)
+                for ch in ["\"", "*", "(", ")", "{", "}", "^", "~"] {
+                    w = w.replacingOccurrences(of: ch, with: "")
+                }
+                return w
+            }
+            .filter { $0.count > 2 }
+            .joined(separator: " OR ")
+
+        guard !ftsQuery.isEmpty else { return [] }
+
+        do {
+            let atoms: [Atom] = try await database.asyncRead { db in
+                try Atom.fetchAll(db, sql: """
+                    SELECT atoms.* FROM atoms
+                    JOIN atoms_fts ON atoms.uuid = atoms_fts.uuid
+                    WHERE atoms_fts MATCH ?
+                      AND atoms.type = 'research'
+                      AND atoms.is_deleted = 0
+                    ORDER BY bm25(atoms_fts, 0, 0, 1, 2, 1)
+                    LIMIT ?
+                    """, arguments: [ftsQuery, limit])
+            }
+            return atoms.filter { $0.isSwipeFileAtom && !excludeUUIDs.contains($0.uuid) }
+        } catch {
+            print("⚠️ [UnifiedWritingEngine] searchSwipesFTS error: \(error.localizedDescription)")
+            return []
+        }
     }
 
     nonisolated static func filterSameTypeLibrarySwipes(
@@ -3163,7 +3196,29 @@ final class UnifiedWritingEngine: ObservableObject {
             ctaText: String(ctaText.prefix(150)),
             framework: analysis.frameworkType?.displayName ?? "Unknown",
             format: analysis.swipeContentFormat?.displayName ?? "Unknown",
+            fullBody: body,
             structuralBreakdown: buildStructuralBreakdown(analysis: analysis, body: body)
+        )
+    }
+
+    /// Minimal compression for swipes that lack full SwipeAnalysis (used in fallback path).
+    /// Creates a basic CompressedSwipe from title + body so the swipe isn't silently dropped.
+    private func compressSwipeMinimal(_ atom: Atom) -> CompressedSwipe? {
+        guard let body = atom.body, !body.isEmpty else { return nil }
+        let sentences = body.components(separatedBy: ". ")
+        let hookText = sentences.prefix(4).joined(separator: ". ")
+        return CompressedSwipe(
+            id: UUID(uuidString: atom.uuid) ?? UUID(),
+            title: atom.title ?? "Untitled",
+            hookText: String(hookText.prefix(500)),
+            hookType: atom.swipeAnalysis?.hookType?.displayName ?? "Unknown",
+            hookScore: atom.swipeAnalysis?.hookScore ?? 0,
+            beatSequence: [],
+            keyTransitions: [],
+            ctaText: "",
+            framework: "Unknown",
+            format: "Unknown",
+            fullBody: body
         )
     }
 

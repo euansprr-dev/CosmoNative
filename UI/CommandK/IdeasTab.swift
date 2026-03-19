@@ -45,6 +45,7 @@ struct IdeasTab: View {
     @State private var ideaStatusFilter: IdeaStatus? = nil
     @State private var ideaFormatFilter: ContentFormat? = nil
     @State private var clientProfiles: [Atom] = []
+    @State private var cachedFilteredItems: [IdeaGalleryItem] = []
 
     private let indigo = DS.entityIdea
 
@@ -59,7 +60,7 @@ struct IdeasTab: View {
                 Divider().background(DS.borderSubtle)
 
                 // Content area — grid or list
-                if filteredItems.isEmpty {
+                if cachedFilteredItems.isEmpty {
                     emptyState
                 } else {
                     contentView
@@ -82,8 +83,14 @@ struct IdeasTab: View {
             if viewModel.ideaGalleryItems.isEmpty {
                 Task { await viewModel.loadIdeaGallery() }
             }
+            recomputeFilteredItems()
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
         }
+        .onChange(of: viewModel.ideaGalleryItems.count) { recomputeFilteredItems() }
+        .onChange(of: searchQuery) { recomputeFilteredItems() }
+        .onChange(of: ideaStatusFilter) { recomputeFilteredItems() }
+        .onChange(of: ideaFormatFilter) { recomputeFilteredItems() }
+        .onChange(of: ideaSortMode) { recomputeFilteredItems() }
         .task {
             if let profiles = try? await AtomRepository.shared.fetchAll(type: .clientProfile) {
                 clientProfiles = profiles
@@ -109,7 +116,7 @@ struct IdeasTab: View {
 
     private var contentView: some View {
         IdeaBoardView(
-            items: filteredItems,
+            items: cachedFilteredItems,
             clientProfiles: clientProfiles,
             viewModel: viewModel,
             hasAppeared: hasAppeared
@@ -141,8 +148,7 @@ struct IdeasTab: View {
     /// Statuses that represent activated/post-activation ideas — hidden from the library
     private static let activatedStatuses: Set<IdeaStatus> = [.inProduction, .published, .archived]
 
-    private var filteredItems: [IdeaGalleryItem] {
-        // Exclude activated ideas — they live in the content pipeline now
+    private func recomputeFilteredItems() {
         var items = viewModel.ideaGalleryItems.filter { !Self.activatedStatuses.contains($0.status) }
 
         if !searchQuery.isEmpty {
@@ -169,7 +175,7 @@ struct IdeasTab: View {
             items.sort { ($0.insightScore ?? 0) > ($1.insightScore ?? 0) }
         }
 
-        return items
+        cachedFilteredItems = items
     }
 
     // MARK: - Filter Bar (Library style)
@@ -906,7 +912,7 @@ private struct IdeaBoardCard: View {
                 userInfo: ["type": EntityType.idea, "id": item.entityId, "commandKTab": "ideas"]
             )
             NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.closeCommandK,
+                name: CosmoNotification.NodeGraph.hideCommandK,
                 object: nil
             )
         }
@@ -923,7 +929,7 @@ private struct IdeaBoardCard: View {
                 userInfo: ["type": EntityType.idea, "id": item.entityId, "commandKTab": "ideas"]
             )
             NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.closeCommandK,
+                name: CosmoNotification.NodeGraph.hideCommandK,
                 object: nil
             )
         } label: {

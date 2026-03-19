@@ -153,6 +153,7 @@ struct RichTextEditor: View {
                 // Placeholder - aligned with textContainerInset (16x16)
                 if plainText.isEmpty {
                     Text(placeholder)
+                        .font(.system(size: fontSize, weight: swiftUIFontWeight))
                         .foregroundColor(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
                         .padding(.top, editorInsets.top)
                         .padding(.leading, editorInsets.leading)
@@ -209,6 +210,7 @@ struct RichTextEditor: View {
                         },
                         darkMode: darkMode
                     )
+                    .background(ScrollEventBlocker())
                     .zIndex(1000)
                     .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
                 }
@@ -233,6 +235,7 @@ struct RichTextEditor: View {
                         },
                         darkMode: darkMode
                     )
+                    .background(ScrollEventBlocker())
                     .zIndex(1000)
                     .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
                 }
@@ -346,6 +349,21 @@ struct RichTextEditor: View {
         )
     }
 
+    /// Convert NSFont.Weight to SwiftUI Font.Weight for placeholder text
+    private var swiftUIFontWeight: Font.Weight {
+        switch baseFontWeight {
+        case .ultraLight: return .ultraLight
+        case .thin: return .thin
+        case .light: return .light
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
+        case .heavy: return .heavy
+        case .black: return .black
+        default: return .regular
+        }
+    }
+
     private var editorInsets: EdgeInsets {
         if singleLine {
             return EdgeInsets(top: compact ? 4 : max(4, floor(fontSize * 0.12)),
@@ -435,6 +453,22 @@ struct MentionEntity: Identifiable {
     let updatedAt: String
 
     var id: String { uuid }
+}
+
+// MARK: - Scroll Event Blocker
+
+/// Prevents scroll events from propagating through overlay menus to the underlying page
+private struct ScrollEventBlocker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        ScrollBlockingNSView()
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private class ScrollBlockingNSView: NSView {
+    override func scrollWheel(with event: NSEvent) {
+        // Consume — do not forward to parent
+    }
 }
 
 // MARK: - Preview

@@ -159,6 +159,7 @@ struct ConnectionFocusModeView: View {
             }
         }
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadState()
             listenForAtomPicker()
             setupRightClickMonitor()
@@ -185,6 +186,7 @@ struct ConnectionFocusModeView: View {
             }
         )
         .onDisappear {
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             viewModel.flushTitleSave(editableTitle)
             viewModel.saveToAtom()
             saveState()

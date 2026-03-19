@@ -88,6 +88,7 @@ struct StickyNoteBlockView: View {
 
     @State private var noteBodyDocument: RichDocument = .empty
     @State private var noteText: String = ""
+    @State private var isEditingBody = false
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
@@ -108,21 +109,37 @@ struct StickyNoteBlockView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CosmoDocumentEditor(
-                document: $noteBodyDocument,
-                fontSize: 14,
-                compact: true,
-                placeholder: "Type here...",
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                onDocumentChange: { _, plainText in
-                    noteText = plainText
-                    if !isSyncingFromDB { scheduleAutoSave() }
+            if isEditingBody {
+                CosmoDocumentEditor(
+                    document: $noteBodyDocument,
+                    fontSize: 14,
+                    compact: true,
+                    placeholder: "Type here...",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    onDocumentChange: { _, plainText in
+                        noteText = plainText
+                        if !isSyncingFromDB { scheduleAutoSave() }
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                Group {
+                    if noteText.isEmpty {
+                        Text("Type here...")
+                            .font(.system(size: 14))
+                            .foregroundStyle(DS.textMuted)
+                            .italic()
+                    } else {
+                        CosmoDocumentRenderer(document: noteBodyDocument, fontSize: 14, lineLimit: 10)
+                    }
                 }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .onTapGesture { isEditingBody = true }
+            }
         }
         .padding(16)
         .frame(
@@ -209,6 +226,9 @@ struct StickyNoteBlockView: View {
         }
         .onDisappear {
             observationCancellable?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            isEditingBody = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .noteFocusStateDidChange)) { notification in
             if let uuid = notification.userInfo?["atomUUID"] as? String,

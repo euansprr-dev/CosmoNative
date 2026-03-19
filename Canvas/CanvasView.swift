@@ -43,7 +43,7 @@ struct CanvasView: View {
     @State private var spacePanOffset: CGSize = .zero
     private let minScale: CGFloat = 0.25
     private let maxScale: CGFloat = 3.0
-    private let zoomSensitivity: CGFloat = 0.008  // For scroll wheel
+    private let zoomSensitivity: CGFloat = 0.012  // For scroll wheel
 
     // PERFORMANCE: Track the active drag without mutating the published block array.
     @State private var blockDragState = ActiveCanvasDragState<String>()
@@ -1011,6 +1011,16 @@ struct CanvasView: View {
                     handleUpdateBlockMetadata(notification: notification)
                 }
                 
+                // Listen for block entity linkage updates (freeform → atom-backed)
+                addCanvasObserver(
+                    forName: .updateBlockEntity,
+                    object: nil,
+                    queue: .main
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handleUpdateBlockEntity(notification: notification)
+                }
+
                 // Listen for block size updates (e.g., Note resize)
                 addCanvasObserver(
                     forName: .updateBlockSize,
@@ -1323,10 +1333,9 @@ struct CanvasView: View {
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
                 scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
                     guard canvasIsActive else { return event }
-                    let isMouseWheel = event.momentumPhase == [] && event.phase == []
                     let isOptionHeld = event.modifierFlags.contains(.option)
 
-                    if isMouseWheel || isOptionHeld {
+                    if isOptionHeld {
                         // Use scrollingDeltaY for zoom
                         let delta = event.scrollingDeltaY
                         if abs(delta) > 0.1 {  // Threshold to avoid micro-zooms
@@ -1379,11 +1388,8 @@ struct CanvasView: View {
             .onChange(of: thinkspaceId) { _, newId in
                 // Reload canvas content when switching between Command Center ↔ thinkspaces
                 Task { @MainActor in
-                    await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
-                    drawingState.loadDrawings(thinkspaceId: newId)
-                    CosmoUndoManager.shared.clearHistory()
-
-                    // Restore zoom/pan for the new thinkspace
+                    // Restore zoom/pan BEFORE loading blocks so the viewport is correct
+                    // when blocks appear (prevents position snap jank)
                     if let tsId = newId,
                        let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
                         canvasScale = CGFloat(ts.zoomLevel)
@@ -1393,13 +1399,16 @@ struct CanvasView: View {
                         canvasOffset = .zero
                     }
 
+                    await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
+                    drawingState.loadDrawings(thinkspaceId: newId)
+                    CosmoUndoManager.shared.clearHistory()
+
                     // Reload clusters
                     await clusterEngine.loadUserClusters(
                         thinkspaceId: newId,
                         blocks: spatialEngine.blocks
                     )
                     rebuildMediaContentCache()
-                    
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
@@ -1920,6 +1929,23 @@ struct CanvasView: View {
         }
     }
     
+    // MARK: - Block Entity Linkage Update Handler
+    private func handleUpdateBlockEntity(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let blockId = userInfo["blockId"] as? String,
+              let entityId = userInfo["entityId"] as? Int64,
+              let entityUuid = userInfo["entityUuid"] as? String else {
+            return
+        }
+
+        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
+            return
+        }
+
+        spatialEngine.blocks[blockIndex].entityId = entityId
+        spatialEngine.blocks[blockIndex].entityUuid = entityUuid
+    }
+
     // MARK: - Block Size Update Handler
     private func handleUpdateBlockSize(notification: Notification) {
         guard let userInfo = notification.userInfo,
@@ -3511,10 +3537,13 @@ struct CanvasView: View {
             }
         }
 
-        // Save atom to database
+        // Save atom to database (return inserted copy to get auto-incremented ID)
+        let atomToInsert = atom
         do {
-            try await CosmoDatabase.shared.asyncWrite { db in
-                try atom.insert(db)
+            atom = try await CosmoDatabase.shared.asyncWrite { db in
+                var inserted = atomToInsert
+                try inserted.insert(db)
+                return inserted
             }
         } catch {
             print("⚠️ [CanvasView] Failed to save pasted atom: \(error)")

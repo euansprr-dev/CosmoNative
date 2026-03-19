@@ -1,4 +1,11 @@
+// Canvas/CommandCenter/CommandCenterTaskMenus.swift
+// Redesigned task action popover + reschedule panel
+// Tabbed command palette with horizontal date chips + always-visible calendar
+// March 2026
+
 import SwiftUI
+
+// MARK: - Standalone Reschedule Panel (for overdue batch actions)
 
 struct CommandCenterReschedulePanel: View {
     let title: String
@@ -7,190 +14,111 @@ struct CommandCenterReschedulePanel: View {
 
     @State private var manualInput = ""
     @State private var selectedDate = Date()
-    @State private var hoveredOptionId: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Title
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
-            TextField("Type a date", text: $manualInput)
+            // Quick date chips
+            quickDateChips { date in
+                onSelectDate(date)
+            }
+
+            // Calendar
+            inlineCalendar
+
+            // Manual input (fallback, at bottom)
+            TextField("Type a date...", text: $manualInput)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundColor(DS.text)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(DS.surface)
-                )
+                .font(.system(size: 12))
+                .foregroundStyle(DS.text)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
                 .onSubmit {
                     guard let parsed = parseDateInput(manualInput) else { return }
                     onSelectDate(parsed)
                 }
-
-            VStack(spacing: 6) {
-                ForEach(quickOptions) { option in
-                    Button {
-                        onSelectDate(option.date)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: option.icon)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(option.tint)
-                                .frame(width: 22, height: 22)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(option.title)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(DS.text)
-
-                                if let subtitle = option.subtitle {
-                                    Text(subtitle)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundColor(DS.textMuted)
-                                }
-                            }
-
-                            Spacer()
-
-                            if let trailing = option.trailing {
-                                Text(trailing)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(DS.textSecondary)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(hoveredOptionId == option.id ? DS.surfaceHover : Color.clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { isHovering in
-                        hoveredOptionId = isHovering ? option.id : (hoveredOptionId == option.id ? nil : hoveredOptionId)
-                    }
-                }
-            }
-
-            Divider()
-                .foregroundColor(DS.borderSubtle)
-                .padding(.vertical, 2)
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(monthLabel(for: selectedDate))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(DS.text)
-
-                    Spacer()
-
-                    Text("Calendar")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                }
-
-                DatePicker(
-                    "",
-                    selection: $selectedDate,
-                    displayedComponents: [.date]
-                )
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .tint(DS.accent)
-                .environment(\.colorScheme, .light)
-                .background(DS.surfaceElevated)
-                .onChange(of: selectedDate) {
-                    onSelectDate(selectedDate)
-                }
-            }
         }
-        .padding(14)
-        .frame(width: 320)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(12)
+        .frame(width: 280)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
-        .shadow(color: .black.opacity(0.05), radius: 32, y: 16)
+        .shadow(color: .black.opacity(0.04), radius: 24, y: 12)
         .environment(\.colorScheme, .light)
     }
 
-    private var quickOptions: [CommandCenterQuickDateOption] {
-        var options: [CommandCenterQuickDateOption] = [
-            .init(
-                title: "Today",
-                subtitle: "Move overdue work back into today",
-                trailing: weekdayAbbrev(for: Date()),
-                icon: "calendar",
-                tint: DS.green,
-                date: Date()
-            ),
-            .init(
-                title: "Tomorrow",
-                subtitle: "Push it one day forward",
-                trailing: weekdayAbbrev(for: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()),
-                icon: "sun.max",
-                tint: DS.orange,
-                date: Calendar.current.date(byAdding: .day, value: 1, to: Date())
-            ),
-            .init(
-                title: "This weekend",
-                subtitle: "Land it on the next Saturday",
-                trailing: shortDate(for: nextWeekendDate()),
-                icon: "sparkles",
-                tint: DS.accent,
-                date: nextWeekendDate()
-            ),
-            .init(
-                title: "Next week",
-                subtitle: "Move it to next Monday",
-                trailing: shortDate(for: nextWeekStart()),
-                icon: "arrow.right",
-                tint: DS.textSecondary,
-                date: nextWeekStart()
-            )
-        ]
+    // MARK: - Quick Date Chips
 
-        if includeNoDate {
-            options.append(
-                .init(
-                    title: "No date",
-                    subtitle: "Keep it unscheduled",
-                    trailing: nil,
-                    icon: "slash.circle",
-                    tint: DS.textMuted,
-                    date: nil
-                )
-            )
+    @ViewBuilder
+    private func quickDateChips(onSelect: @escaping (Date?) -> Void) -> some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                dateChip("Today", icon: "sun.max", tint: DS.green, date: Date(), onSelect: onSelect)
+                dateChip("Tomorrow", icon: "sunrise", tint: DS.orange, date: Calendar.current.date(byAdding: .day, value: 1, to: Date()), onSelect: onSelect)
+                dateChip("Weekend", icon: "sparkles", tint: DS.accent, date: nextWeekendDate(), onSelect: onSelect)
+                dateChip("+1 Wk", icon: "arrow.right", tint: DS.textSecondary, date: nextWeekStart(), onSelect: onSelect)
+            }
+
+            HStack(spacing: 6) {
+                if includeNoDate {
+                    dateChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil, onSelect: onSelect)
+                }
+                dateChip("Someday", icon: "archivebox", tint: Color(hex: "8B5CF6"), date: nil, onSelect: { _ in
+                    // Someday = no date but with scheduling state
+                    onSelect(nil)
+                })
+                Spacer()
+            }
         }
-
-        return options
     }
 
-    private func monthLabel(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: date)
+    @ViewBuilder
+    private func dateChip(_ label: String, icon: String, tint: Color, date: Date?, onSelect: @escaping (Date?) -> Void) -> some View {
+        Button {
+            onSelect(date)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(tint.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(0.15), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
-    private func weekdayAbbrev(for date: Date?) -> String? {
-        guard let date else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE"
-        return formatter.string(from: date)
+    // MARK: - Inline Calendar
+
+    private var inlineCalendar: some View {
+        DatePicker(
+            "",
+            selection: $selectedDate,
+            displayedComponents: [.date]
+        )
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .tint(DS.accent)
+        .environment(\.colorScheme, .light)
+        .onChange(of: selectedDate) {
+            onSelectDate(selectedDate)
+        }
     }
 
-    private func shortDate(for date: Date?) -> String? {
-        guard let date else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d MMM"
-        return formatter.string(from: date)
-    }
+    // MARK: - Date Helpers
 
     private func nextWeekendDate() -> Date? {
         let calendar = Calendar.current
@@ -250,10 +178,7 @@ struct CommandCenterReschedulePanel: View {
 
     private func normalizedDate(_ date: Date, for format: String) -> Date {
         let calendar = Calendar.current
-        if format.contains("yyyy") {
-            return date
-        }
-
+        if format.contains("yyyy") { return date }
         var components = calendar.dateComponents([.month, .day], from: date)
         components.year = calendar.component(.year, from: Date())
         let candidate = calendar.date(from: components) ?? date
@@ -272,6 +197,8 @@ struct CommandCenterReschedulePanel: View {
     }
 }
 
+// MARK: - Task Action Popover (tabbed command palette)
+
 struct CommandCenterTaskActionPopover: View {
     let task: TaskViewModel
     let currentHabit: HabitDefinition?
@@ -284,130 +211,53 @@ struct CommandCenterTaskActionPopover: View {
     let onDelete: () -> Void
     let onDismiss: () -> Void
 
-    @State private var showReschedule = false
-    @State private var showHabitEditor = false
-    @State private var showRepeatEditor = false
-    @State private var hoveredAction: String?
+    @State private var activeTab: ActionTab = .schedule
     @State private var recurrenceRule: RecurrenceRule?
-    @State private var recurrencePreset: CommandCenterRepeatPreset = .daily
+    @State private var recurrencePreset: CommandCenterRepeatPreset = .weekly
     @State private var selectedDays: Set<DayOfWeek> = []
     @State private var isLoadingRecurrence = true
+    @State private var manualDateInput = ""
+    @State private var calendarDate = Date()
+
+    private enum ActionTab: String {
+        case schedule, recurrence, habit
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(2)
+        VStack(alignment: .leading, spacing: 0) {
+            // Header: title + metadata
+            header
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
 
-                HStack(spacing: 8) {
-                    if let dueInfo = task.dueInfo {
-                        Label(dueInfo, systemImage: "calendar")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
-                    }
+            // Divider
+            Rectangle().fill(DS.borderSubtle).frame(height: 1)
 
-                    if recurrenceRule != nil || task.isRecurring {
-                        Label(recurrenceRule?.shortDisplayText ?? "Repeats", systemImage: "repeat")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.accent)
-                    }
+            // Tab strip + action buttons
+            tabStrip
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
 
-                    if let currentHabit {
-                        Label(currentHabit.title, systemImage: currentHabit.icon)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(currentHabit.accent)
-                    }
-                }
-            }
+            // Divider
+            Rectangle().fill(DS.borderSubtle).frame(height: 1)
 
-            VStack(spacing: 6) {
-                actionRow(
-                    title: task.isCompleted ? "Mark incomplete" : "Complete task",
-                    icon: task.isCompleted ? "circle" : "checkmark.circle",
-                    tint: task.isCompleted ? DS.textSecondary : DS.green
-                ) {
-                    onToggleCompletion()
-                    onDismiss()
-                }
-
-                actionRow(
-                    title: "Reschedule",
-                    icon: "calendar.badge.clock",
-                    tint: PlannerumColors.overdue,
-                    trailing: showReschedule ? "Hide" : "Pick"
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showReschedule.toggle()
-                        showHabitEditor = false
-                        showRepeatEditor = false
-                    }
-                }
-
-                actionRow(
-                    title: "Habit",
-                    icon: currentHabit?.icon ?? "repeat",
-                    tint: currentHabit?.accent ?? DS.textSecondary,
-                    trailing: currentHabit?.title ?? "None"
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showHabitEditor.toggle()
-                        showReschedule = false
-                        showRepeatEditor = false
-                    }
-                }
-
-                actionRow(
-                    title: recurrenceRule == nil ? "Make recurring" : "Edit recurrence",
-                    icon: "repeat",
-                    tint: DS.accent,
-                    trailing: recurrenceRule?.shortDisplayText ?? "New"
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        showRepeatEditor.toggle()
-                        showReschedule = false
-                    }
-                }
-
-                actionRow(
-                    title: "Delete",
-                    icon: "trash",
-                    tint: DS.red
-                ) {
-                    onDelete()
-                    onDismiss()
-                }
-            }
-
-            if showReschedule {
-                CommandCenterReschedulePanel(title: "Reschedule task") { date in
-                    onReschedule(date)
-                    onDismiss()
-                }
-                .padding(.top, 4)
-            }
-
-            if showHabitEditor {
-                habitEditor
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            if showRepeatEditor {
-                repeatEditor
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            // Tab content — fixed min height prevents popover resize crash on macOS
+            tabContent
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(minHeight: 200, alignment: .top)
         }
-        .padding(14)
-        .frame(width: 340)
-        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(width: 300)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
-        .shadow(color: .black.opacity(0.05), radius: 32, y: 16)
+        .shadow(color: .black.opacity(0.04), radius: 24, y: 12)
         .environment(\.colorScheme, .light)
+        .animation(nil, value: activeTab)
         .task {
             recurrenceRule = await loadRecurrenceRule()
             hydrateRepeatEditor()
@@ -415,247 +265,425 @@ struct CommandCenterTaskActionPopover: View {
         }
     }
 
-    private var habitEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider()
-                .foregroundColor(DS.borderSubtle)
+    // MARK: - Header
 
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Habit")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                Text(task.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
 
                 Spacer()
 
-                if let currentHabit {
-                    Text(currentHabit.title)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(currentHabit.accent)
+                Button {
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 18, height: 18)
+                        .background(DS.surface, in: Circle())
                 }
+                .buttonStyle(.plain)
             }
 
-            VStack(spacing: 4) {
-                habitOption(
-                    title: "No habit",
-                    icon: "slash.circle",
-                    tint: DS.textSecondary,
-                    selected: currentHabit == nil
-                ) {
-                    onApplyHabit(nil)
-                    onDismiss()
+            HStack(spacing: 6) {
+                if let dueInfo = task.dueInfo {
+                    metaBadge(dueInfo, icon: "calendar", color: task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
                 }
-
-                ForEach(availableHabits, id: \.id) { habit in
-                    habitOption(
-                        title: habit.title,
-                        icon: habit.icon,
-                        tint: habit.accent,
-                        selected: currentHabit?.id == habit.id
-                    ) {
-                        onApplyHabit(habit.id)
-                        onDismiss()
-                    }
+                if recurrenceRule != nil || task.isRecurring {
+                    metaBadge(recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent)
+                }
+                if let currentHabit {
+                    metaBadge(currentHabit.title, icon: currentHabit.icon, color: currentHabit.accent)
                 }
             }
         }
     }
 
-    private var repeatEditor: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider()
-                .foregroundColor(DS.borderSubtle)
+    @ViewBuilder
+    private func metaBadge(_ text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(color)
+    }
 
-            HStack {
-                Text("Repeat")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+    // MARK: - Tab Strip
 
-                Spacer()
+    private var tabStrip: some View {
+        HStack(spacing: 2) {
+            // Complete button (standalone action, not a tab)
+            Button {
+                onToggleCompletion()
+                onDismiss()
+            } label: {
+                Image(systemName: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(task.isCompleted ? DS.textSecondary : DS.green)
+                    .frame(width: 28, height: 28)
+                    .background((task.isCompleted ? DS.surface : DS.green.opacity(0.1)), in: RoundedRectangle(cornerRadius: 7))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Complete task")
 
-                if isLoadingRecurrence {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let recurrenceRule {
-                    Text(recurrenceRule.displayText)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
-                        .lineLimit(1)
+            // Schedule tab
+            tabButton("calendar", label: "Schedule", tab: .schedule)
+
+            // Recurrence tab
+            tabButton("repeat", label: "Repeat", tab: .recurrence)
+
+            // Habit tab
+            tabButton("tag", label: "Habit", tab: .habit)
+
+            Spacer()
+
+            // Delete button (standalone action)
+            Button {
+                onDelete()
+                onDismiss()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DS.red.opacity(0.7))
+                    .frame(width: 28, height: 28)
+                    .background(DS.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete task")
+        }
+    }
+
+    @ViewBuilder
+    private func tabButton(_ icon: String, label: String, tab: ActionTab) -> some View {
+        let isActive = activeTab == tab
+
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                activeTab = tab
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .medium))
+                Text(label)
+                    .font(.system(size: 10, weight: isActive ? .semibold : .medium))
+            }
+            .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                isActive ? DS.accentSoft : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: - Tab Content
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch activeTab {
+        case .schedule:
+            scheduleContent
+        case .recurrence:
+            recurrenceContent
+        case .habit:
+            habitContent
+        }
+    }
+
+    // MARK: - Schedule Tab
+
+    private var scheduleContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Quick date chips — 2 rows
+            VStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    quickChip("Today", icon: "sun.max", tint: DS.green, date: Date())
+                    quickChip("Tomorrow", icon: "sunrise", tint: DS.orange, date: Calendar.current.date(byAdding: .day, value: 1, to: Date()))
+                    quickChip("Wknd", icon: "sparkles", tint: DS.accent, date: nextWeekendDate())
+                    quickChip("+1 Wk", icon: "arrow.right", tint: DS.textSecondary, date: nextWeekStart())
+                }
+
+                HStack(spacing: 5) {
+                    quickChip("Someday", icon: "archivebox", tint: Color(hex: "8B5CF6"), date: nil)
+                    quickChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil)
+                    Spacer()
                 }
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
-                ForEach(CommandCenterRepeatPreset.allCases, id: \.self) { preset in
-                    Button {
-                        recurrencePreset = preset
-                        if selectedDays.isEmpty {
-                            selectedDays = defaultDays(for: preset)
-                        }
-                    } label: {
-                        Text(preset.label)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(recurrencePreset == preset ? DS.textOnAccent : DS.textSecondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(recurrencePreset == preset ? DS.accent : DS.surface)
-                            )
-                    }
-                    .buttonStyle(.plain)
+            // Calendar
+            DatePicker("", selection: $calendarDate, displayedComponents: [.date])
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .tint(DS.accent)
+                .environment(\.colorScheme, .light)
+                .onChange(of: calendarDate) {
+                    onReschedule(calendarDate)
+                    onDismiss()
                 }
-            }
 
-            if recurrencePreset.requiresDaySelection {
-                HStack(spacing: 6) {
-                    ForEach(DayOfWeek.allCases, id: \.self) { day in
+            // Manual input
+            TextField("Type a date...", text: $manualDateInput)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(DS.text)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(DS.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(DS.borderSubtle, lineWidth: 1))
+                .onSubmit {
+                    guard let parsed = parseDateInput(manualDateInput) else { return }
+                    onReschedule(parsed)
+                    onDismiss()
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func quickChip(_ label: String, icon: String, tint: Color, date: Date?) -> some View {
+        Button {
+            onReschedule(date)
+            onDismiss()
+        } label: {
+            HStack(spacing: 2) {
+                Image(systemName: icon)
+                    .font(.system(size: 8, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Schedule \(label)")
+    }
+
+    // MARK: - Recurrence Tab
+
+    private var recurrenceContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if isLoadingRecurrence {
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Spacer()
+                }
+            } else {
+                // Preset chips
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 6)], spacing: 6) {
+                    ForEach(CommandCenterRepeatPreset.allCases, id: \.self) { preset in
                         Button {
-                            if selectedDays.contains(day) {
-                                selectedDays.remove(day)
-                            } else {
-                                selectedDays.insert(day)
+                            recurrencePreset = preset
+                            if selectedDays.isEmpty {
+                                selectedDays = defaultDays(for: preset)
                             }
                         } label: {
-                            Text(day.shortName)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(selectedDays.contains(day) ? DS.textOnAccent : DS.textSecondary)
+                            Text(preset.label)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(recurrencePreset == preset ? DS.textOnAccent : DS.textSecondary)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
+                                .padding(.vertical, 6)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(selectedDays.contains(day) ? DS.accent : DS.surface)
+                                    recurrencePreset == preset ? DS.accent : DS.surface,
+                                    in: RoundedRectangle(cornerRadius: 7)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(recurrencePreset == preset ? Color.clear : DS.borderSubtle, lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
                     }
                 }
-            }
 
-            HStack {
-                if recurrenceRule != nil || task.isRecurring {
-                    Button {
-                        onApplyRecurrence(nil)
-                        onDismiss()
-                    } label: {
-                        Text("Stop repeating")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.red)
+                // Day selector (weekly/custom)
+                if recurrencePreset.requiresDaySelection {
+                    HStack(spacing: 4) {
+                        ForEach(DayOfWeek.allCases, id: \.self) { day in
+                            Button {
+                                if selectedDays.contains(day) {
+                                    selectedDays.remove(day)
+                                } else {
+                                    selectedDays.insert(day)
+                                }
+                            } label: {
+                                Text(day.shortName)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(selectedDays.contains(day) ? DS.textOnAccent : DS.textSecondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        selectedDays.contains(day) ? DS.accent : DS.surface,
+                                        in: RoundedRectangle(cornerRadius: 6)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
+                }
+
+                // Action row
+                HStack(spacing: 8) {
+                    if recurrenceRule != nil || task.isRecurring {
+                        Button("Stop repeating") {
+                            onApplyRecurrence(nil)
+                            onDismiss()
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(DS.red)
+                        .buttonStyle(.plain)
+                    }
+
+                    Spacer()
+
+                    Button("Apply") {
+                        onApplyRecurrence(buildRule())
+                        onDismiss()
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(DS.accent, in: Capsule())
                     .buttonStyle(.plain)
                 }
-
-                Spacer()
-
-                Button {
-                    onDismiss()
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    onApplyRecurrence(buildRule())
-                    onDismiss()
-                } label: {
-                    Text("Apply")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.textOnAccent)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(DS.accent, in: Capsule())
-                }
-                .buttonStyle(.plain)
             }
         }
     }
 
-    private func actionRow(
-        title: String,
-        icon: String,
-        tint: Color,
-        trailing: String? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isRowHovered = hoveredAction == title
+    // MARK: - Habit Tab
 
-        return Button(action: action) {
-            HStack(spacing: 0) {
-                // Accent bar — matches BlockContextMenu pattern
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(isRowHovered ? tint : Color.clear)
-                    .frame(width: 2, height: 16)
-                    .padding(.trailing, 8)
+    private var habitContent: some View {
+        VStack(spacing: 4) {
+            habitChip(title: "None", icon: "slash.circle", tint: DS.textSecondary, selected: currentHabit == nil) {
+                onApplyHabit(nil)
+                onDismiss()
+            }
 
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isRowHovered ? tint : tint.opacity(0.7))
-                    .frame(width: 22, height: 22)
-
-                Text(title)
-                    .font(.system(size: 12, weight: isRowHovered ? .semibold : .medium))
-                    .foregroundColor(DS.text)
-                    .padding(.leading, 2)
-
-                Spacer()
-
-                if let trailing {
-                    Text(trailing)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+            ForEach(availableHabits, id: \.id) { habit in
+                habitChip(title: habit.title, icon: habit.icon, tint: habit.accent, selected: currentHabit?.id == habit.id) {
+                    onApplyHabit(habit.id)
+                    onDismiss()
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isRowHovered ? DS.surfaceHover : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.1), value: isRowHovered)
-        .onHover { isHovering in
-            hoveredAction = isHovering ? title : (hoveredAction == title ? nil : hoveredAction)
         }
     }
 
-    private func habitOption(
-        title: String,
-        icon: String,
-        tint: Color,
-        selected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
+    @ViewBuilder
+    private func habitChip(title: String, icon: String, tint: Color, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(tint)
-                    .frame(width: 22, height: 22)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 18)
 
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(tint)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(tint)
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(selected ? DS.accentSoft : Color.clear)
+                selected ? tint.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
+
+    // MARK: - Date Helpers
+
+    private func nextWeekendDate() -> Date? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let saturday = DayOfWeek.saturday.rawValue
+        let delta = weekday <= saturday ? saturday - weekday : (7 - weekday) + saturday
+        return calendar.date(byAdding: .day, value: delta, to: today)
+    }
+
+    private func nextWeekStart() -> Date? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let monday = DayOfWeek.monday.rawValue
+        let delta = ((7 - weekday) + monday) % 7
+        let normalized = delta == 0 ? 7 : delta
+        return calendar.date(byAdding: .day, value: normalized, to: today)
+    }
+
+    private func parseDateInput(_ input: String) -> Date? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let lowercase = trimmed.lowercased()
+        if lowercase == "today" { return Date() }
+        if lowercase == "tomorrow" {
+            return Calendar.current.date(byAdding: .day, value: 1, to: Date())
+        }
+
+        let weekdayMap: [String: DayOfWeek] = [
+            "mon": .monday, "monday": .monday,
+            "tue": .tuesday, "tues": .tuesday, "tuesday": .tuesday,
+            "wed": .wednesday, "wednesday": .wednesday,
+            "thu": .thursday, "thur": .thursday, "thurs": .thursday, "thursday": .thursday,
+            "fri": .friday, "friday": .friday,
+            "sat": .saturday, "saturday": .saturday,
+            "sun": .sunday, "sunday": .sunday,
+        ]
+
+        if let weekday = weekdayMap[lowercase] {
+            let calendar = Calendar.current
+            let today = calendar.startOfDay(for: Date())
+            let current = calendar.component(.weekday, from: today)
+            var delta = weekday.rawValue - current
+            if delta < 0 { delta += 7 }
+            return calendar.date(byAdding: .day, value: delta, to: today)
+        }
+
+        let formats = ["M/d", "M/d/yyyy", "MMM d", "MMMM d", "MMM d yyyy", "MMMM d yyyy"]
+        for format in formats {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmed) {
+                let calendar = Calendar.current
+                if format.contains("yyyy") { return date }
+                var components = calendar.dateComponents([.month, .day], from: date)
+                components.year = calendar.component(.year, from: Date())
+                let candidate = calendar.date(from: components) ?? date
+                return candidate < calendar.startOfDay(for: Date())
+                    ? calendar.date(byAdding: .year, value: 1, to: candidate) ?? candidate
+                    : candidate
+            }
+        }
+
+        return nil
+    }
+
+    // MARK: - Recurrence Logic
 
     private func hydrateRepeatEditor() {
         guard let recurrenceRule else {
@@ -665,18 +693,12 @@ struct CommandCenterTaskActionPopover: View {
         }
 
         switch recurrenceRule.frequency {
-        case .daily:
-            recurrencePreset = .daily
-        case .weekdays:
-            recurrencePreset = .weekdays
-        case .monthly:
-            recurrencePreset = .monthly
-        case .weekly, .biweekly:
-            recurrencePreset = .weekly
-        case .custom:
-            recurrencePreset = .custom
-        case .yearly:
-            recurrencePreset = .monthly
+        case .daily: recurrencePreset = .daily
+        case .weekdays: recurrencePreset = .weekdays
+        case .monthly: recurrencePreset = .monthly
+        case .weekly, .biweekly: recurrencePreset = .weekly
+        case .custom: recurrencePreset = .custom
+        case .yearly: recurrencePreset = .monthly
         }
 
         if let days = recurrenceRule.daysOfWeek {
@@ -701,10 +723,8 @@ struct CommandCenterTaskActionPopover: View {
 
     private func buildRule() -> RecurrenceRule {
         switch recurrencePreset {
-        case .daily:
-            return .daily()
-        case .weekdays:
-            return .weekdays()
+        case .daily: return .daily()
+        case .weekdays: return .weekdays()
         case .weekly:
             let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(selectedDays)
             return .weekly(on: orderedDays.sorted { $0.rawValue < $1.rawValue })
@@ -714,33 +734,19 @@ struct CommandCenterTaskActionPopover: View {
         case .custom:
             let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(selectedDays)
             return RecurrenceRule(
-                frequency: .custom,
-                interval: 1,
+                frequency: .custom, interval: 1,
                 daysOfWeek: orderedDays.sorted { $0.rawValue < $1.rawValue },
-                dayOfMonth: nil,
-                monthOfYear: nil,
+                dayOfMonth: nil, monthOfYear: nil,
                 endCondition: .never
             )
         }
     }
 }
 
-private struct CommandCenterQuickDateOption: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String?
-    let trailing: String?
-    let icon: String
-    let tint: Color
-    let date: Date?
-}
+// MARK: - Repeat Preset Enum
 
 private enum CommandCenterRepeatPreset: CaseIterable {
-    case daily
-    case weekdays
-    case weekly
-    case monthly
-    case custom
+    case daily, weekdays, weekly, monthly, custom
 
     var label: String {
         switch self {
@@ -754,10 +760,8 @@ private enum CommandCenterRepeatPreset: CaseIterable {
 
     var requiresDaySelection: Bool {
         switch self {
-        case .weekly, .custom:
-            return true
-        case .daily, .weekdays, .monthly:
-            return false
+        case .weekly, .custom: return true
+        case .daily, .weekdays, .monthly: return false
         }
     }
 }

@@ -68,6 +68,7 @@ private struct CommandKGalleryCardModifier: ViewModifier {
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(isSelected ? accentColor.opacity(0.05) : Color.clear)
+                    .allowsHitTesting(false)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -75,11 +76,13 @@ private struct CommandKGalleryCardModifier: ViewModifier {
                         isSelected ? accentColor.opacity(0.38) : (isHovered ? DS.borderActive : DS.border),
                         lineWidth: 1
                     )
+                    .allowsHitTesting(false)
             )
             .overlay(alignment: .top) {
                 accentColor
                     .frame(height: 2)
                     .opacity(isHovered ? 1.0 : 0)
+                    .allowsHitTesting(false)
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .shadow(

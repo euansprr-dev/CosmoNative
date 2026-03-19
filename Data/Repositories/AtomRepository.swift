@@ -19,6 +19,11 @@ class AtomRepository: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    // MARK: - Editing Lock Registry
+    // Prevents background processors and sync from overwriting user edits
+    private var editingLocks: [String: Date] = [:]
+    private let editingLockExpiry: TimeInterval = 300 // 5 minutes safety valve
+
     private init() {
         observeAtoms()
     }
@@ -332,21 +337,59 @@ class AtomRepository: ObservableObject {
 
     // MARK: - Update Operations
 
-    /// Update an existing atom
+    /// Update an existing atom with optimistic locking.
+    /// Throws AtomRepositoryError.versionConflict if the atom was modified
+    /// since the caller's copy was fetched.
     @discardableResult
     func update(_ atom: Atom) async throws -> Atom {
         var updatedAtom = atom
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
         updatedAtom.localVersion += 1
 
-        // Capture for Sendable closure
         let atomToUpdate = updatedAtom
-        try await database.asyncWrite { db in
-            try atomToUpdate.save(db)
+        let expectedVersion = atom.localVersion // Version the caller read
+
+        let rowsAffected = try await database.asyncWrite { db -> Int in
+            try db.execute(
+                sql: """
+                    UPDATE atoms SET
+                        type = ?, title = ?, body = ?, structured = ?, metadata = ?, links = ?,
+                        updated_at = ?, is_deleted = ?,
+                        _local_version = ?, _server_version = ?, _sync_version = ?
+                    WHERE uuid = ? AND _local_version = ?
+                    """,
+                arguments: [
+                    atomToUpdate.type.rawValue,
+                    atomToUpdate.title,
+                    atomToUpdate.body,
+                    atomToUpdate.structured,
+                    atomToUpdate.metadata,
+                    atomToUpdate.links,
+                    atomToUpdate.updatedAt,
+                    atomToUpdate.isDeleted,
+                    atomToUpdate.localVersion,
+                    atomToUpdate.serverVersion,
+                    atomToUpdate.syncVersion,
+                    atomToUpdate.uuid,
+                    expectedVersion,
+                ]
+            )
+            return db.changesCount
+        }
+
+        if rowsAffected == 0 {
+            print("⚠️ AtomRepository: Version conflict for \(atom.uuid) (expected v\(expectedVersion))")
+            throw AtomRepositoryError.versionConflict(
+                uuid: atom.uuid,
+                expectedVersion: expectedVersion
+            )
         }
 
         // Track for sync
         await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom)
+
+        // Refresh editing lock if user is actively editing
+        refreshEditingLock(uuid: atom.uuid)
 
         // Sync to NodeGraph
         do {
@@ -379,6 +422,88 @@ class AtomRepository: ObservableObject {
         guard var atom = try await fetch(uuid: uuid) else { return nil }
         updates(&atom)
         return try await update(atom)
+    }
+
+    // MARK: - Field-Level Updates
+
+    /// Update only specific columns of an atom by UUID.
+    /// Background processors MUST use this instead of update() to avoid
+    /// overwriting user edits to unrelated fields.
+    @discardableResult
+    func updateFields(
+        uuid: String,
+        columns: [String: (any DatabaseValueConvertible)?]
+    ) async throws -> Atom {
+        guard !columns.isEmpty else {
+            guard let atom = try await fetch(uuid: uuid) else {
+                throw AtomRepositoryError.notFound(uuid)
+            }
+            return atom
+        }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+
+        // Build SET clause — column names are trusted internal strings
+        var setClauses: [String] = []
+        var arguments: [any DatabaseValueConvertible] = []
+
+        for (column, value) in columns {
+            setClauses.append("\(column) = ?")
+            if let v = value {
+                arguments.append(v)
+            } else {
+                arguments.append("" as String) // NULL fallback
+            }
+        }
+
+        setClauses.append("updated_at = ?")
+        arguments.append(now)
+        setClauses.append("_local_version = _local_version + 1")
+
+        let sql = "UPDATE atoms SET \(setClauses.joined(separator: ", ")) WHERE uuid = ?"
+        arguments.append(uuid)
+
+        try await database.asyncWrite { [arguments, sql] db in
+            try db.execute(sql: sql, arguments: StatementArguments(arguments))
+        }
+
+        // Re-fetch canonical state
+        guard let updated = try await fetch(uuid: uuid) else {
+            throw AtomRepositoryError.notFound(uuid)
+        }
+
+        // Track for sync
+        await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updated)
+
+        return updated
+    }
+
+    // MARK: - Editing Locks
+
+    /// Acquire an editing lock. Call when opening a focus mode view.
+    func acquireEditingLock(uuid: String) {
+        editingLocks[uuid] = Date()
+    }
+
+    /// Refresh the lock timestamp. Call on each user save to prevent expiry.
+    func refreshEditingLock(uuid: String) {
+        guard editingLocks[uuid] != nil else { return }
+        editingLocks[uuid] = Date()
+    }
+
+    /// Release the editing lock. Call when closing a focus mode view.
+    func releaseEditingLock(uuid: String) {
+        editingLocks.removeValue(forKey: uuid)
+    }
+
+    /// Check if an atom is currently being edited by the user.
+    func isBeingEdited(_ uuid: String) -> Bool {
+        guard let lockTime = editingLocks[uuid] else { return false }
+        if Date().timeIntervalSince(lockTime) > editingLockExpiry {
+            editingLocks.removeValue(forKey: uuid)
+            return false
+        }
+        return true
     }
 
     // MARK: - Delete Operations
@@ -1631,5 +1756,26 @@ extension AtomRepository {
             }
         }
         return found
+    }
+}
+
+// MARK: - Errors
+
+enum AtomRepositoryError: LocalizedError {
+    case notFound(String)
+    case versionConflict(uuid: String, expectedVersion: Int64)
+
+    var errorDescription: String? {
+        switch self {
+        case .notFound(let uuid):
+            return "Atom not found: \(uuid)"
+        case .versionConflict(let uuid, let version):
+            return "Version conflict for atom \(uuid): expected v\(version) but it was already modified"
+        }
+    }
+
+    var isVersionConflict: Bool {
+        if case .versionConflict = self { return true }
+        return false
     }
 }

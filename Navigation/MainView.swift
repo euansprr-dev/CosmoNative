@@ -23,6 +23,7 @@ struct MainView: View {
     // Command-K (constellation-based search)
     @State private var showCommandK = false
     @State private var commandKReturnTab: CommandKView.CommandKTab? = nil
+    @State private var commandKBehindFocusMode = false
     @StateObject private var commandKViewModel = CommandKViewModel()
 
     // Block context menu (right-click on block)
@@ -100,11 +101,15 @@ struct MainView: View {
             // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
 
             // Command-K - The Cognition Hub
-            // Revolutionary spatial command center that replaces Finder and sidebars
-            if showCommandK {
+            // Keep alive (but hidden) when user opens focus mode FROM Cmd-K,
+            // so all state (tab, search, filters, scroll, gallery data) is preserved.
+            if showCommandK || commandKBehindFocusMode {
                 CommandKView(initialTab: commandKReturnTab ?? .database)
+                    .opacity(showCommandK ? 1 : 0)
+                    .allowsHitTesting(showCommandK)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(200)
+                    .animation(.spring(response: 0.2), value: showCommandK)
             }
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
@@ -133,13 +138,6 @@ struct MainView: View {
                 .zIndex(275)
             }
 
-            // SessionTimerBar — global floating overlay for deep work sessions
-            if sessionEngine.activeSession != nil {
-                SessionTimerBar(engine: sessionEngine)
-                    .frame(maxWidth: .infinity, alignment: .top)
-                    .padding(.top, 8)
-                    .zIndex(50)
-            }
 
             // Radial Menu (right-click creation) - no overlay, just the menu
             if showRadialMenu {
@@ -234,13 +232,11 @@ struct MainView: View {
             // Creator Database overlay
             if showCreatorDatabase {
                 ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorDatabase = false
-                            }
+                    FloatingOverlayBackdrop {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                            showCreatorDatabase = false
                         }
+                    }
 
                     CreatorListView(
                         onSelectCreator: { creatorAtom in
@@ -257,8 +253,7 @@ struct MainView: View {
                         }
                     )
                     .frame(maxWidth: 960, maxHeight: 700)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.5), radius: 30)
+                    .floatingOverlayPanel()
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(285)
@@ -267,14 +262,12 @@ struct MainView: View {
             // Creator Profile overlay
             if showCreatorProfile, let profileAtom = creatorProfileAtom {
                 ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                showCreatorProfile = false
-                                creatorProfileAtom = nil
-                            }
+                    FloatingOverlayBackdrop {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                            showCreatorProfile = false
+                            creatorProfileAtom = nil
                         }
+                    }
 
                     CreatorProfileView(
                         creatorAtom: profileAtom,
@@ -297,11 +290,17 @@ struct MainView: View {
                         }
                     )
                     .frame(maxWidth: 1000, maxHeight: 750)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.5), radius: 30)
+                    .floatingOverlayPanel()
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(286)
+            }
+
+            // Settings floating overlay
+            if showSettings {
+                settingsOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(287)
             }
 
             // Activation loading overlay (idea → content transition)
@@ -343,13 +342,11 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
-        .sheet(isPresented: $showSettings) {
-            SanctuarySettingsView()
-                .frame(width: 720, height: 540)
-        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = true
+                commandKBehindFocusMode = false
                 appState.isCommandKVisible = true
             }
         }
@@ -362,8 +359,17 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                commandKBehindFocusMode = false
                 appState.isCommandKVisible = false
                 commandKViewModel.clear()
+            }
+        }
+        // Command-K hide handler — keeps view alive but hidden behind focus mode
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.hideCommandK)) { _ in
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKBehindFocusMode = true
+                appState.isCommandKVisible = false
             }
         }
         // Cosmo Window toggle (from menu bar, Telegram, or other sources)
@@ -423,23 +429,31 @@ struct MainView: View {
                 }
             }
             // Dismiss Command-K if it's open
-            if showCommandK {
+            if showCommandK || commandKBehindFocusMode {
                 withAnimation(.spring(response: 0.2)) {
                     showCommandK = false
+                    commandKBehindFocusMode = false
                     commandKViewModel.clear()
                 }
             }
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
-            // When focus mode closes, reopen Command K if it was the source
-            if newValue == nil, commandKReturnTab != nil {
-                // Brief delay so the focus mode dismissal animation completes first
+            // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
+            if newValue == nil, commandKBehindFocusMode {
+                // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
+                withAnimation(.spring(response: 0.2)) {
+                    showCommandK = true
+                    commandKBehindFocusMode = false
+                    appState.isCommandKVisible = true
+                }
+                commandKReturnTab = nil
+            } else if newValue == nil, commandKReturnTab != nil {
+                // Legacy fallback: CMD+K was destroyed but tab was tracked
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     withAnimation(.spring(response: 0.2)) {
-                        // commandKReturnTab is read by CommandKView(initialTab:) at creation
                         showCommandK = true
+                        appState.isCommandKVisible = true
                     }
-                    // Clear after CommandKView is created so it picks up the tab
                     DispatchQueue.main.async {
                         commandKReturnTab = nil
                     }
@@ -486,6 +500,7 @@ struct MainView: View {
 
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                commandKBehindFocusMode = false
                 commandKViewModel.clear()
             }
 
@@ -503,6 +518,7 @@ struct MainView: View {
 
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                commandKBehindFocusMode = false
                 commandKViewModel.clear()
             }
 
@@ -520,6 +536,7 @@ struct MainView: View {
 
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                commandKBehindFocusMode = false
                 commandKViewModel.clear()
             }
 
@@ -540,6 +557,7 @@ struct MainView: View {
 
             withAnimation(.spring(response: 0.2)) {
                 showCommandK = false
+                commandKBehindFocusMode = false
                 commandKViewModel.clear()
             }
 
@@ -629,9 +647,10 @@ struct MainView: View {
             withAnimation(ProMotionSprings.snappy) {
                 paneManager.openPane(.dimension(payload.dimension))
             }
-            if showCommandK {
+            if showCommandK || commandKBehindFocusMode {
                 withAnimation(.spring(response: 0.2)) {
                     showCommandK = false
+                    commandKBehindFocusMode = false
                     commandKViewModel.clear()
                 }
             }
@@ -848,6 +867,7 @@ struct MainView: View {
         // Close any overlays that might be open
         withAnimation(.spring(response: 0.2)) {
             showCommandK = false
+            commandKBehindFocusMode = false
         }
 
         Task { @MainActor in
@@ -944,6 +964,7 @@ struct MainView: View {
                 if showCommandK {
                     withAnimation(.spring(response: 0.2)) {
                         showCommandK = false
+                        commandKBehindFocusMode = false
                         appState.isCommandKVisible = false
                         commandKViewModel.clear()
                     }
@@ -1087,6 +1108,7 @@ struct MainView: View {
                !isFirstResponderTextField() {
                 withAnimation(.spring(response: 0.2)) {
                     showCommandK = true
+                    commandKBehindFocusMode = false
                     appState.isCommandKVisible = true
                 }
                 return nil
@@ -1267,8 +1289,12 @@ struct MainView: View {
                 return event
             }
 
-            // Hit-test against tracked block frames
-            if let hitBlockId = blockFrameTracker.hitTest(at: screenPoint) {
+            // Hit-test against tracked block frames (canvas-local coordinates)
+            let canvasLocalPoint = CGPoint(
+                x: screenPoint.x - sidebarWidth,
+                y: screenPoint.y
+            )
+            if let hitBlockId = blockFrameTracker.hitTest(at: canvasLocalPoint) {
                 // Show block context menu
                 rightClickedBlockId = hitBlockId
                 blockContextMenuPosition = screenPoint
@@ -1354,13 +1380,35 @@ struct MainView: View {
 
     // MARK: - NodeGraph Command-K Atom Opening
 
+    // MARK: - Settings Overlay
+
+    @ViewBuilder
+    private var settingsOverlay: some View {
+        ZStack {
+            FloatingOverlayBackdrop {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                    showSettings = false
+                }
+            }
+
+            SanctuarySettingsView(onClose: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                    showSettings = false
+                }
+            })
+            .frame(width: 720, height: 560)
+            .floatingOverlayPanel()
+        }
+    }
+
     /// Handles opening an atom from Command-K by UUID
     /// Fetches the atom type and routes to the appropriate view
     private func handleOpenAtomFromCommandK(atomUUID: String) {
-        // Close Command-K first
+        // Hide Command-K behind focus mode (keep alive for state preservation)
         withAnimation(.spring(response: 0.2)) {
             showCommandK = false
-            commandKViewModel.clear()
+            commandKBehindFocusMode = true
+            appState.isCommandKVisible = false
         }
 
         // Fetch atom and open in appropriate mode
@@ -1376,7 +1424,7 @@ struct MainView: View {
                         NotificationCenter.default.post(
                             name: .enterFocusMode,
                             object: nil,
-                            userInfo: ["type": entityType, "id": atom.id ?? 0]
+                            userInfo: ["type": entityType, "id": atom.id ?? 0, "commandKTab": "library"]
                         )
                     }
                 }

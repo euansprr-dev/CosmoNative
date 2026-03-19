@@ -7,7 +7,8 @@ import SwiftUI
 struct DashboardTaskList: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
-    @State var expandedTaskId: String?
+    var onSelectTask: ((TaskViewModel) -> Void)?
+    // expandedTaskId removed — task detail is now right-panel only
     @State private var selectedTaskUUIDs: Set<String> = []
     @State private var completionStates: [String: CommandCenterTaskCompletionState] = [:]
     @State private var showOverdueRescheduleMenu = false
@@ -18,18 +19,27 @@ struct DashboardTaskList: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 switch viewModel.viewMode {
                 case .today:
                     todayView
                 case .upcoming:
                     upcomingView
-                case .completed:
+                case .logbook:
                     completedView
+                case .anytime:
+                    anytimeView
+                case .someday:
+                    somedayView
+                case .project:
+                    projectView
+                case .area:
+                    EmptyView()
                 }
             }
         }
+        .scrollIndicators(.hidden)
     }
 
     // MARK: - Today View
@@ -121,6 +131,111 @@ struct DashboardTaskList: View {
         return formatter.string(from: date)
     }
 
+    // MARK: - Anytime View
+
+    @ViewBuilder
+    private var anytimeView: some View {
+        if viewModel.anytimeTasks.isEmpty {
+            emptyState(message: "No anytime tasks", icon: "tray.full")
+        } else {
+            sectionHeader(title: "Anytime", color: DS.textSecondary, trailing: "\(viewModel.anytimeTasks.count)")
+            ForEach(viewModel.anytimeTasks) { task in
+                taskRow(task)
+            }
+        }
+
+        SmartTaskCaptureRow(viewModel: viewModel)
+    }
+
+    // MARK: - Someday View
+
+    @ViewBuilder
+    private var somedayView: some View {
+        if viewModel.somedayTasks.isEmpty {
+            emptyState(message: "No someday tasks — park ideas here for later", icon: "archivebox")
+        } else {
+            sectionHeader(title: "Someday", color: DS.textSecondary, trailing: "\(viewModel.somedayTasks.count)")
+            ForEach(viewModel.somedayTasks) { task in
+                taskRow(task)
+            }
+        }
+
+        SmartTaskCaptureRow(viewModel: viewModel)
+    }
+
+    // MARK: - Project View
+
+    @ViewBuilder
+    private var projectView: some View {
+        if viewModel.projectTasks.isEmpty && viewModel.projectHeadings.isEmpty {
+            emptyState(message: "No tasks in this project yet", icon: "folder")
+        } else {
+            // Tasks grouped by heading
+            let tasksWithNoHeading = viewModel.projectTasks.filter { $0.headingUUID == nil }
+            let sortedHeadings = viewModel.projectHeadings.sorted { $0.sortOrder < $1.sortOrder }
+
+            ForEach(sortedHeadings) { heading in
+                let headingTasks = viewModel.projectTasks.filter { $0.headingUUID == heading.id }
+                projectHeadingSection(heading: heading, tasks: headingTasks)
+            }
+
+            if !tasksWithNoHeading.isEmpty || sortedHeadings.isEmpty {
+                if !sortedHeadings.isEmpty {
+                    sectionHeader(title: "No Heading", color: DS.textMuted, trailing: "\(tasksWithNoHeading.count)")
+                }
+                ForEach(tasksWithNoHeading) { task in
+                    taskRow(task)
+                }
+            }
+
+            SmartTaskCaptureRow(
+                viewModel: viewModel,
+                contextProjectUUID: viewModel.selectedProjectUUID,
+                placeholderText: "Add task to project..."
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func projectHeadingSection(heading: ProjectHeading, tasks: [TaskViewModel]) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: heading.isCollapsed ? "chevron.right" : "chevron.down")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 14)
+
+            Text(heading.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.accent)
+
+            Spacer()
+
+            if heading.isCollapsed {
+                Text("\(tasks.count)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .contentShape(Rectangle())
+
+        if !heading.isCollapsed {
+            ForEach(tasks) { task in
+                taskRow(task)
+            }
+
+            // Add task row for this heading
+            SmartTaskCaptureRow(
+                viewModel: viewModel,
+                contextProjectUUID: viewModel.selectedProjectUUID,
+                contextHeadingUUID: heading.id,
+                placeholderText: "Add task to \(heading.title)..."
+            )
+            .padding(.horizontal, 4)
+        }
+    }
+
     // MARK: - Section Component
 
     @ViewBuilder
@@ -147,10 +262,17 @@ struct DashboardTaskList: View {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(task.priority.color)
                             .frame(width: 4, height: 20)
-                        Text(task.title)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(DS.text)
-                            .lineLimit(1)
+                        TaskTitleWithMentions(
+                            title: task.title,
+                            mentions: task.titleMentions,
+                            font: .system(size: 13, weight: .medium)
+                        ) { mention in
+                            NotificationCenter.default.post(
+                                name: .init("com.cosmo.navigateToAtom"),
+                                object: nil,
+                                userInfo: ["uuid": mention.entityUUID, "intent": "general"]
+                            )
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -195,14 +317,7 @@ struct DashboardTaskList: View {
                     }
                 }
 
-            if expandedTaskId == task.uuid && completionStates[task.uuid] == nil {
-                TaskDetailInlineEditor(
-                    viewModel: viewModel,
-                    task: task,
-                    onDismiss: { expandedTaskId = nil }
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            // Inline editor removed — task detail is in right panel only
         }
 
         if showAddRow {
@@ -354,9 +469,8 @@ struct DashboardTaskList: View {
                             }
                         } else {
                             selectedTaskUUIDs.removeAll()
-                            withAnimation(ProMotionSprings.snappy) {
-                                expandedTaskId = expandedTaskId == task.uuid ? nil : task.uuid
-                            }
+                            // Show task detail in right panel
+                            onSelectTask?(task)
                         }
                     }
 
@@ -582,7 +696,7 @@ struct DashboardTaskList: View {
         } label: {
             Image(systemName: isActive ? "pause.fill" : "play.fill")
                 .font(.system(size: 10))
-                .foregroundColor(isActive ? DS.accent : DS.textMuted)
+                .foregroundStyle(isActive ? DS.accent : DS.textMuted)
                 .frame(width: 24, height: 24)
                 .background(
                     Circle()
@@ -703,7 +817,6 @@ struct DashboardTaskList: View {
             return
         }
 
-        expandedTaskId = nil
         let timings = CommandCenterCompletionTimings(reduceMotion: reduceMotion)
         completionStates[task.uuid] = .initial
 

@@ -256,6 +256,7 @@ struct ContentFocusModeView: View {
         .animation(ProMotionSprings.snappy, value: showAICollaborator)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             viewModel.loadState()
             localDraftContent = viewModel.state.draftContent
             draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(viewModel.state.draftContent)
@@ -298,6 +299,12 @@ struct ContentFocusModeView: View {
             )
         }
         .onDisappear {
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+            // If the rich document is stale (debounced serialization hasn't flushed),
+            // rebuild it from the authoritative plain text to avoid saving stale content
+            if draftDocument.plainText != localDraftContent && !localDraftContent.isEmpty {
+                draftDocument = RichDocument.migrateLegacy(localDraftContent)
+            }
             // Sync local draft to viewModel state before closing
             viewModel.state.draftContent = localDraftContent
             viewModel.state.richDraftDocument = draftDocument

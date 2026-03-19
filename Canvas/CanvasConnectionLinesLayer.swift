@@ -9,8 +9,8 @@ import SwiftUI
 /// Queries the graph for edges where both source and target are visible, then
 /// draws animated bezier connections. Supports tap-to-select and delete.
 ///
-/// NOTE: This layer renders in **screen coordinates** outside the scaled ZStack.
-/// This prevents clipping at non-100% zoom levels (same approach as CanvasDrawingsLayer).
+/// NOTE: This layer renders OUTSIDE the scaled ZStack to prevent clipping at non-100% zoom.
+/// Paths are computed in canvas space then transformed to screen space via CGAffineTransform.
 @MainActor
 struct CanvasConnectionLinesLayer: View {
 
@@ -32,8 +32,10 @@ struct CanvasConnectionLinesLayer: View {
 
     // PERF: Cached derived data — recomputed only on data changes, not every frame
     @State private var cachedVisibleEdges: [GraphEdge] = []
-    @State private var cachedEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
-    @State private var cachedPaths: [String: Path] = [:]
+    /// Endpoints in canvas space (used for hit testing after transform)
+    @State private var cachedCanvasEndpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
+    /// Paths in canvas space (transformed to screen space at render time)
+    @State private var cachedCanvasPaths: [String: Path] = [:]
 
     // PERF: Throttle endpoint recomputation during drag to ~30fps with trailing edge
     @State private var dragEndpointThrottleTask: Task<Void, Never>?
@@ -65,22 +67,48 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
+    /// Affine transform from inner-ZStack space → screen space.
+    /// Matches the `.scaleEffect(effectiveScale, anchor: .center)` on the blocks container.
+    /// Points in the inner ZStack are `block.position + contentOffset + dragOffset`.
+    /// The scaleEffect scales around `screenCenter = viewportSize / 2`.
+    ///
+    /// NOTE: Does NOT use `canvasToScreenAffineTransform()` which has a bug
+    /// (wrong operation order produces incorrect positions at non-100% zoom).
+    private var screenTransform: CGAffineTransform {
+        let s = transform.effectiveScale
+        let cx = transform.screenCenter.x
+        let cy = transform.screenCenter.y
+        // Scale around (cx, cy): x' = s*x + cx*(1-s), y' = s*y + cy*(1-s)
+        return CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: cx * (1 - s), ty: cy * (1 - s))
+    }
+
     // MARK: - Body
 
     var body: some View {
+        let xform = screenTransform
+        // Pre-compute screen-space paths and endpoints for rendering + hit testing
+        let screenPaths = cachedCanvasPaths.mapValues { $0.applying(xform) }
+        let screenEndpoints = cachedCanvasEndpoints.mapValues { ep in
+            (
+                start: ep.start.applying(xform),
+                end: ep.end.applying(xform)
+            )
+        }
+
         ZStack {
             // Visual layer (no hit testing — decorative animated lines)
             CanvasConnectionVisualRenderer(
                 edges: cachedVisibleEdges,
-                cachedPaths: cachedPaths,
-                animationPhase: animationPhase
+                cachedPaths: screenPaths,
+                animationPhase: animationPhase,
+                effectiveScale: transform.effectiveScale
             )
             .allowsHitTesting(false)
 
             // Hit-test layer — invisible wide paths that respond to taps
-            // PERF: Uses same cachedEndpoints as visual layer
+            // PERF: Uses same endpoints as visual layer
             ForEach(cachedVisibleEdges, id: \.deduplicationKey) { edge in
-                if let endpoints = cachedEndpoints[edge.deduplicationKey] {
+                if let endpoints = screenEndpoints[edge.deduplicationKey] {
                     connectionHitArea(edge: edge, from: endpoints.start, to: endpoints.end)
                 }
             }
@@ -103,7 +131,7 @@ struct CanvasConnectionLinesLayer: View {
             // Delete button for selected connection
             if let selectedKey = selectedEdgeKey,
                let edge = cachedVisibleEdges.first(where: { $0.deduplicationKey == selectedKey }),
-               let endpoints = cachedEndpoints[edge.deduplicationKey] {
+               let endpoints = screenEndpoints[edge.deduplicationKey] {
                 connectionDeleteButton(edge: edge, from: endpoints.start, to: endpoints.end)
             }
         }
@@ -180,7 +208,7 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    // MARK: - Cached Computation
+    // MARK: - Cached Computation (all in canvas space)
 
     /// Recompute both visible edges and their endpoints (on data changes)
     private func recomputeVisibleEdgesAndEndpoints() {
@@ -201,17 +229,17 @@ struct CanvasConnectionLinesLayer: View {
 
         cachedVisibleEdges = visibleResult
 
-        // Compute endpoints for all visible edges
+        // Compute endpoints in canvas space for all visible edges
         var endpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
         var paths: [String: Path] = [:]
         for edge in visibleResult {
-            if let ep = computeEndpoints(for: edge, blocksByUUID: blocksByUUID) {
+            if let ep = computeCanvasEndpoints(for: edge, blocksByUUID: blocksByUUID) {
                 endpoints[edge.deduplicationKey] = ep
-                paths[edge.deduplicationKey] = connectionPath(from: ep.start, to: ep.end)
+                paths[edge.deduplicationKey] = canvasPath(from: ep.start, to: ep.end)
             }
         }
-        cachedEndpoints = endpoints
-        cachedPaths = paths
+        cachedCanvasEndpoints = endpoints
+        cachedCanvasPaths = paths
         CanvasPerformanceInstrumentation.signposter.endInterval("connection-recompute", signpost)
     }
 
@@ -222,13 +250,13 @@ struct CanvasConnectionLinesLayer: View {
         var endpoints: [String: (start: CGPoint, end: CGPoint)] = [:]
         var paths: [String: Path] = [:]
         for edge in cachedVisibleEdges {
-            if let ep = computeEndpoints(for: edge, blocksByUUID: blocksByUUID) {
+            if let ep = computeCanvasEndpoints(for: edge, blocksByUUID: blocksByUUID) {
                 endpoints[edge.deduplicationKey] = ep
-                paths[edge.deduplicationKey] = connectionPath(from: ep.start, to: ep.end)
+                paths[edge.deduplicationKey] = canvasPath(from: ep.start, to: ep.end)
             }
         }
-        cachedEndpoints = endpoints
-        cachedPaths = paths
+        cachedCanvasEndpoints = endpoints
+        cachedCanvasPaths = paths
         CanvasPerformanceInstrumentation.signposter.endInterval("connection-endpoints", signpost)
     }
 
@@ -254,35 +282,26 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    /// Compute endpoints for a single edge in **screen coordinates**
-    private func computeEndpoints(for edge: GraphEdge, blocksByUUID: [String: CanvasBlock]) -> (start: CGPoint, end: CGPoint)? {
+    /// Compute endpoints for a single edge in **canvas space** (pre-scale coordinates).
+    /// These match the block positions inside the scaled ZStack.
+    private func computeCanvasEndpoints(for edge: GraphEdge, blocksByUUID: [String: CanvasBlock]) -> (start: CGPoint, end: CGPoint)? {
         guard let fromBlock = blocksByUUID[edge.sourceUUID],
               let toBlock = blocksByUUID[edge.targetUUID] else { return nil }
 
-        // Compute block centers in screen space
-        let fromScreen = blockScreenPosition(fromBlock)
-        let toScreen = blockScreenPosition(toBlock)
-        let distance = hypot(toScreen.x - fromScreen.x, toScreen.y - fromScreen.y)
+        let fromPos = blockCanvasPosition(fromBlock)
+        let toPos = blockCanvasPosition(toBlock)
+        let distance = hypot(toPos.x - fromPos.x, toPos.y - fromPos.y)
 
-        // Use scaled min/max lengths for screen space comparison
-        let scale = transform.effectiveScale
-        guard distance >= Constants.minLineLength * scale && distance <= Constants.maxLineLength * scale else { return nil }
+        guard distance >= Constants.minLineLength && distance <= Constants.maxLineLength else { return nil }
 
-        // Scale block sizes to screen space
         let fromActualSize = BlockRenderedSizeCache.shared.renderedSize(for: fromBlock)
         let toActualSize = BlockRenderedSizeCache.shared.renderedSize(for: toBlock)
-        let fromRendered = CGSize(
-            width: fromActualSize.width * fromBlock.scale * scale,
-            height: fromActualSize.height * fromBlock.scale * scale
-        )
-        let toRendered = CGSize(
-            width: toActualSize.width * toBlock.scale * scale,
-            height: toActualSize.height * toBlock.scale * scale
-        )
+        let fromRendered = CGSize(width: fromActualSize.width * fromBlock.scale, height: fromActualSize.height * fromBlock.scale)
+        let toRendered = CGSize(width: toActualSize.width * toBlock.scale, height: toActualSize.height * toBlock.scale)
 
         return edgeEndpoints(
-            from: fromScreen, fromSize: fromRendered,
-            to: toScreen, toSize: toRendered
+            from: fromPos, fromSize: fromRendered,
+            to: toPos, toSize: toRendered
         )
     }
 
@@ -402,20 +421,19 @@ struct CanvasConnectionLinesLayer: View {
         }
     }
 
-    // MARK: - Position & Endpoint Helpers
+    // MARK: - Position & Endpoint Helpers (Canvas Space)
 
-    /// Block position in **screen coordinates** — applies viewport transform
-    /// including pan offset, zoom scale, and live drag offset
-    private func blockScreenPosition(_ block: CanvasBlock) -> CGPoint {
+    /// Block position in canvas coordinate space (matching the positions inside the scaled ZStack),
+    /// including live drag offset so lines follow blocks during drag
+    private func blockCanvasPosition(_ block: CanvasBlock) -> CGPoint {
         let dragOffset = activeBlockDrag.translation(for: block.id)
-        let canvasPos = CGPoint(
-            x: block.position.x + dragOffset.width,
-            y: block.position.y + dragOffset.height
+        return CGPoint(
+            x: block.position.x + transform.contentOffset.width + dragOffset.width,
+            y: block.position.y + transform.contentOffset.height + dragOffset.height
         )
-        return transform.canvasToScreen(canvasPos)
     }
 
-    private func connectionPath(from: CGPoint, to: CGPoint) -> Path {
+    private func canvasPath(from: CGPoint, to: CGPoint) -> Path {
         let control = bezierControl(from: from, to: to)
         return Path { path in
             path.move(to: from)
@@ -438,14 +456,13 @@ struct CanvasConnectionLinesLayer: View {
         let toHalfW = toSize.width / 2
         let toHalfH = toSize.height / 2
 
-        let scale = transform.effectiveScale
-        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap * scale
+        let startOffset = edgePadding(halfWidth: fromHalfW, halfHeight: fromHalfH, angle: angle) + Constants.edgePaddingGap
         let start = CGPoint(
             x: from.x + cos(angle) * startOffset,
             y: from.y + sin(angle) * startOffset
         )
 
-        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap * scale
+        let endOffset = edgePadding(halfWidth: toHalfW, halfHeight: toHalfH, angle: angle + .pi) + Constants.edgePaddingGap
         let end = CGPoint(
             x: to.x + cos(angle + .pi) * endOffset,
             y: to.y + sin(angle + .pi) * endOffset
@@ -488,18 +505,26 @@ struct CanvasConnectionLinesLayer: View {
     }
 }
 
+// MARK: - Visual Renderer
+
 /// Renders connection lines using SwiftUI Path shapes in screen coordinates.
-/// Path shapes overflow their parent bounds, avoiding clipping at non-100% zoom.
+/// Paths are pre-transformed from canvas space via CGAffineTransform.
 private struct CanvasConnectionVisualRenderer: View {
     let edges: [GraphEdge]
     let cachedPaths: [String: Path]
     let animationPhase: Double
+    let effectiveScale: CGFloat
 
     var body: some View {
         ZStack {
             ForEach(edges, id: \.deduplicationKey) { edge in
                 if let path = cachedPaths[edge.deduplicationKey] {
-                    ConnectionLineShape(edge: edge, path: path, animationPhase: animationPhase)
+                    ConnectionLineShape(
+                        edge: edge,
+                        path: path,
+                        animationPhase: animationPhase,
+                        effectiveScale: effectiveScale
+                    )
                 }
             }
         }
@@ -512,12 +537,14 @@ private struct ConnectionLineShape: View {
     let edge: GraphEdge
     let path: Path
     let animationPhase: Double
+    let effectiveScale: CGFloat
 
     var body: some View {
         let weight = edge.combinedWeight
         let baseWidth = 1.0 + CGFloat(weight)
         let modulation = 0.1 * CGFloat(sin(animationPhase * 0.308))
-        let lineWidth = baseWidth + modulation
+        // Scale line width by effectiveScale so it matches the scaled block visuals
+        let lineWidth = (baseWidth + modulation) * effectiveScale
         let baseOpacity = 0.15 + weight * 0.20
         let pulseProgress = CGFloat((animationPhase * 0.192).truncatingRemainder(dividingBy: 1.0))
         let stop1 = max(0, min(pulseProgress, 0.79))

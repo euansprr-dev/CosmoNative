@@ -741,7 +741,21 @@ extension ContentFocusModeState {
             metadataString = nil
         }
 
-        let richDraftDocument = richDraftDocument ?? RichDocument.migrateLegacy(draftContent)
+        // If the rich document is stale (plain text updated but debounced serialization
+        // in CosmoDocumentEditor hasn't flushed), rebuild from the authoritative plain text.
+        let richDraftDocument: RichDocument
+        if let existing = self.richDraftDocument,
+           existing.plainText == draftContent {
+            // Rich document is in sync with plain text — use it (preserves formatting)
+            richDraftDocument = existing
+        } else if !draftContent.isEmpty {
+            // Plain text is newer — rebuild rich document from it
+            richDraftDocument = RichDocument.migrateLegacy(draftContent)
+        } else if let existing = self.richDraftDocument {
+            richDraftDocument = existing
+        } else {
+            richDraftDocument = .empty
+        }
         let fields = RichDocumentPersistence.writeAtomDocuments(
             existingMetadata: metadataString,
             draftDocument: richDraftDocument

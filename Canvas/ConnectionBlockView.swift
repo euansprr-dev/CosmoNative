@@ -16,6 +16,7 @@ struct ConnectionBlockView: View {
     @State private var observationCancellable: AnyCancellable?
     @State private var editableTitle: String = ""
     @State private var titleDocument: RichDocument = .empty
+    @State private var isEditingTitle = false
     @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     // Purple accent for connections
@@ -47,6 +48,9 @@ struct ConnectionBlockView: View {
         }
         .onDisappear {
             observationCancellable?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            isEditingTitle = false
         }
         .onChange(of: block.entityId) { _, newId in
             if newId > 0 {
@@ -111,23 +115,36 @@ struct ConnectionBlockView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 8)
 
-            CosmoDocumentEditor(
-                document: $titleDocument,
-                fontSize: 14,
-                compact: true,
-                placeholder: "Untitled Connection",
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                singleLine: true,
-                baseFontWeight: .medium,
-                onDocumentChange: { document, _ in
-                    editableTitle = RichDocumentPersistence.titlePlainText(from: document)
-                    commitTitleEdit(document: document)
-                }
-            )
-            .frame(height: 32)
+            if isEditingTitle {
+                CosmoDocumentEditor(
+                    document: $titleDocument,
+                    fontSize: 14,
+                    compact: true,
+                    placeholder: "Untitled Connection",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    singleLine: true,
+                    baseFontWeight: .medium,
+                    onDocumentChange: { document, _ in
+                        editableTitle = RichDocumentPersistence.titlePlainText(from: document)
+                        commitTitleEdit(document: document)
+                    }
+                )
+                .frame(height: 32)
+            } else {
+                Text(editableTitle.isEmpty ? "Untitled Connection" : editableTitle)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .frame(height: 32, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isEditingTitle = true
+                    }
+            }
 
             Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
                 .font(.system(size: 11))

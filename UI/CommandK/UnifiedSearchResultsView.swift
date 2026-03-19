@@ -309,7 +309,7 @@ private struct SearchResultLibraryCard: View {
             object: nil,
             userInfo: ["type": entityType, "id": item.entityId]
         )
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
 
     private func openAsPane() {
@@ -398,7 +398,7 @@ private struct SearchResultSwipeCard: View {
             object: nil,
             userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
         )
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
 
     private func openAsPane() {

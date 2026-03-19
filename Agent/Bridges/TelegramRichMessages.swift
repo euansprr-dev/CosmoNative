@@ -285,8 +285,10 @@ class TelegramRichMessages {
         let engineSwipes = trace.writingEngineSwipes
         let allSwipes = Array(Set(directSwipes + engineSwipes)).filter { !$0.isEmpty && !$0.hasPrefix("0 ") }
         if !allSwipes.isEmpty {
+            let count = trace.writingEngineSwipeCount
             let swipeList = allSwipes.prefix(4).joined(separator: ", ")
-            sections.append("  \u{1F4C4} Swipes: \(swipeList)")
+            let countLabel = count > 0 ? " (\(count) loaded)" : ""
+            sections.append("  \u{1F4C4} Swipes\(countLabel): \(swipeList)")
         }
 
         // Beat patterns
@@ -336,7 +338,7 @@ class TelegramRichMessages {
         guard !sections.isEmpty else { return nil }
 
         var lines: [String] = []
-        lines.append("\u{1F441} Context Used (\(trace.lookupCount) lookup\(trace.lookupCount == 1 ? "" : "s"))")
+        lines.append("\u{1F441} Context Used (\(trace.lookupCount) tool call\(trace.lookupCount == 1 ? "" : "s"))")
         lines.append(contentsOf: sections)
 
         // Cap at ~800 chars

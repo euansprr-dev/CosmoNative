@@ -106,6 +106,7 @@ struct IdeaFocusModeView: View {
             .padding(.top, 56)
         }
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             // Register context provider for global Cosmo window
             let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
@@ -119,6 +120,7 @@ struct IdeaFocusModeView: View {
             }
         }
         .onDisappear {
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             viewModel.saveOnClose()
         }
         .onKeyPress(.escape) {
@@ -133,10 +135,18 @@ struct IdeaFocusModeView: View {
             onClose()
             return .handled
         }
-        .sheet(isPresented: $showProfileEditor) {
-            ContentProfileEditor(existingAtom: nil) { newProfile in
-                Task { await viewModel.assignClient(newProfile) }
-                Task { await viewModel.loadClientProfiles() }
+        .overlay {
+            if showProfileEditor {
+                ZStack {
+                    FloatingOverlayBackdrop { showProfileEditor = false }
+                    ContentProfileEditor(existingAtom: nil, onClose: { showProfileEditor = false }) { newProfile in
+                        Task { await viewModel.assignClient(newProfile) }
+                        Task { await viewModel.loadClientProfiles() }
+                    }
+                    .frame(maxWidth: 600, maxHeight: 720)
+                    .floatingOverlayPanel()
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }
@@ -1953,27 +1963,25 @@ private struct IdeaHookRow: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Text("\(index + 1).")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textMuted)
                 .frame(width: 20, alignment: .trailing)
+                .padding(.top, isEditing ? 4 : 0)
 
             if isEditing {
-                TextField("", text: $editText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.text)
-                    .focused($isFocused)
-                    .onSubmit { commitEdit() }
-                    .onChange(of: isFocused) { _, focused in
-                        if !focused { commitEdit() }
-                    }
+                MultilineHookEditor(
+                    text: $editText,
+                    isFocused: $isFocused,
+                    fontSize: 14,
+                    onCommit: { commitEdit() }
+                )
             } else {
                 Text(hook)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(DS.text)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         editText = hook
                         isEditing = true

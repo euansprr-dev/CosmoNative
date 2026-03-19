@@ -37,7 +37,8 @@ class SyncEngine: ObservableObject {
     // MARK: - Configuration
     private let syncInterval: TimeInterval = 30 // seconds
     private let maxRetries = 3
-    private let fenceExpiryMs: Int64 = 5000 // 5 seconds
+    private let fenceExpiryMs: Int64 = 30_000 // 30 seconds (was 5s — too short for processing)
+    private let extendedFenceExpiryMs: Int64 = 120_000 // 2 minutes for long operations
 
     // MARK: - Sync Tables
     private let syncTables = [
@@ -245,6 +246,12 @@ class SyncEngine: ObservableObject {
             return
         }
 
+        // Check if user is actively editing this atom
+        if AtomRepository.shared.isBeingEdited(uuid) {
+            print("🛡️ Editing lock active for \(uuid), skipping remote change")
+            return
+        }
+
         // Check for local pending changes
         let hasPending = try? await database.asyncRead { db in
             try Row.fetchOne(
@@ -268,6 +275,17 @@ class SyncEngine: ObservableObject {
         let expiresAt = Date().timeIntervalSince1970 * 1000 + Double(fenceExpiryMs)
 
         try await database.asyncWrite { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_fence (uuid, expires_at) VALUES (?, ?)",
+                arguments: [uuid, Int64(expiresAt)]
+            )
+        }
+    }
+
+    /// Set an extended sync fence for long-running operations (e.g., transcription + analysis).
+    func setExtendedFence(uuid: String) async {
+        let expiresAt = Date().timeIntervalSince1970 * 1000 + Double(extendedFenceExpiryMs)
+        try? await database.asyncWrite { db in
             try db.execute(
                 sql: "INSERT OR REPLACE INTO sync_fence (uuid, expires_at) VALUES (?, ?)",
                 arguments: [uuid, Int64(expiresAt)]

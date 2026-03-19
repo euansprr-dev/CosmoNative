@@ -1099,7 +1099,7 @@ public final class CommandKViewModel: ObservableObject {
                     object: nil,
                     userInfo: ["atomUUID": atomUUID]
                 )
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
             } else if let bookId = result.readwiseBookId {
                 selectedReadwiseBookId = bookId
             }
@@ -1120,8 +1120,8 @@ public final class CommandKViewModel: ObservableObject {
             userInfo: ["atomUUID": uuid]
         )
 
-        // Close Command-K
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        // Hide Command-K (keep alive behind focus mode)
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
     }
 
     /// Navigate selection up

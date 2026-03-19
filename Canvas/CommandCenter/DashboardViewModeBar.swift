@@ -7,13 +7,26 @@ import SwiftUI
 enum DashboardViewMode: String, CaseIterable {
     case today
     case upcoming
-    case completed
+    case anytime
+    case someday
+    case logbook
+    case project       // Viewing a specific project
+    case area          // Viewing all tasks in an area
+
+    /// Smart list modes shown in sidebar navigation
+    static var smartLists: [DashboardViewMode] {
+        [.today, .upcoming, .anytime, .someday, .logbook]
+    }
 
     var label: String {
         switch self {
         case .today: return "Today"
         case .upcoming: return "Upcoming"
-        case .completed: return "Completed"
+        case .anytime: return "Anytime"
+        case .someday: return "Someday"
+        case .logbook: return "Logbook"
+        case .project: return "Project"
+        case .area: return "Area"
         }
     }
 
@@ -21,7 +34,11 @@ enum DashboardViewMode: String, CaseIterable {
         switch self {
         case .today: return "sun.max"
         case .upcoming: return "calendar"
-        case .completed: return "checkmark.circle"
+        case .anytime: return "tray.full"
+        case .someday: return "archivebox"
+        case .logbook: return "book.closed"
+        case .project: return "folder.fill"
+        case .area: return "square.stack.fill"
         }
     }
 }
@@ -31,6 +48,8 @@ struct DashboardViewModeBar: View {
     @Binding var selectedMode: DashboardViewMode
     var todayCount: Int
     var upcomingCount: Int
+    var anytimeCount: Int
+    var somedayCount: Int
     var completedCount: Int
     var completedArrivalToken: Int
 
@@ -39,7 +58,7 @@ struct DashboardViewModeBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(DashboardViewMode.allCases, id: \.self) { mode in
+            ForEach(DashboardViewMode.smartLists, id: \.self) { mode in
                 tabButton(mode)
             }
             Spacer()
@@ -97,7 +116,7 @@ struct DashboardViewModeBar: View {
     }
 
     private func badge(for mode: DashboardViewMode, count: Int, isSelected: Bool) -> some View {
-        let isCompletedBadge = mode == .completed
+        let isCompletedBadge = mode == .logbook
         let isPulsing = isCompletedBadge && pulseCompletedBadge
 
         return Text("\(count)")
@@ -121,7 +140,10 @@ struct DashboardViewModeBar: View {
         switch mode {
         case .today: return todayCount
         case .upcoming: return upcomingCount
-        case .completed: return completedCount
+        case .anytime: return anytimeCount
+        case .someday: return somedayCount
+        case .logbook: return completedCount
+        case .project, .area: return 0
         }
     }
 }

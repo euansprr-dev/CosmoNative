@@ -26,7 +26,7 @@ struct TaskBlockView: View {
 
     private var checklistProgress: Double {
         guard !checklistItems.isEmpty else { return 0 }
-        let completed = checklistItems.filter { $0.completed }.count
+        let completed = checklistItems.filter { $0.isCompleted }.count
         return Double(completed) / Double(checklistItems.count)
     }
 
@@ -225,13 +225,7 @@ struct TaskBlockView: View {
     }
 }
 
-// MARK: - Checklist Item Model
-
-struct ChecklistItem: Codable, Identifiable {
-    let id: String
-    var title: String
-    var completed: Bool
-}
+// ChecklistItem is now defined in Atom.swift with `isCompleted` and `sortOrder` fields
 
 // MARK: - Task Status Badge
 
@@ -334,14 +328,14 @@ struct ChecklistPreview: View {
             let visibleItems = isExpanded ? items : Array(items.prefix(3))
             ForEach(visibleItems) { item in
                 HStack(spacing: 8) {
-                    Image(systemName: item.completed ? "checkmark.square.fill" : "square")
+                    Image(systemName: item.isCompleted ? "checkmark.square.fill" : "square")
                         .font(.system(size: 12))
-                        .foregroundColor(item.completed ? CosmoColors.emerald : CosmoColors.textTertiary)
+                        .foregroundColor(item.isCompleted ? CosmoColors.emerald : CosmoColors.textTertiary)
 
                     Text(item.title)
                         .font(CosmoTypography.caption)
-                        .foregroundColor(item.completed ? CosmoColors.textTertiary : CosmoColors.textSecondary)
-                        .strikethrough(item.completed)
+                        .foregroundColor(item.isCompleted ? CosmoColors.textTertiary : CosmoColors.textSecondary)
+                        .strikethrough(item.isCompleted)
                         .lineLimit(1)
                 }
             }

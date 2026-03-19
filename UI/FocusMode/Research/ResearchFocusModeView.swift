@@ -141,6 +141,7 @@ struct ResearchFocusModeView: View {
             }
         )
         .onAppear {
+            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             loadState()
             listenForAtomPicker()
             setupRightClickMonitor()
@@ -157,6 +158,7 @@ struct ResearchFocusModeView: View {
             }
         }
         .onDisappear {
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             saveState()
             floatingBlocksManager.saveImmediately()
             removeRightClickMonitor()

@@ -730,8 +730,7 @@ class CanvasClusterEngine: ObservableObject {
         guard let target = resolvedDropTargetCluster(
             for: point,
             excludingClusterId: sourceClusterId,
-            proximity: proximity,
-            eligibleModes: [.canvas]
+            proximity: proximity
         ) else {
             return nil
         }

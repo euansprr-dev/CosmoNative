@@ -12,7 +12,7 @@ enum CreatorSortMode: String, CaseIterable {
     var displayName: String {
         switch self {
         case .name: return "Name"
-        case .swipeCount: return "Swipe Count"
+        case .swipeCount: return "Post Count"
         case .hookScore: return "Avg Hook Score"
         }
     }
@@ -34,151 +34,168 @@ struct CreatorListView: View {
     @State private var nicheFilter: String?
     @State private var hasAppeared = false
     @State private var showingImport = false
-
-    // Derived unique values for filter chips
-    private var allPlatforms: [String] {
-        let values = creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.platform }
-        return Array(Set(values)).sorted()
-    }
-
-    private var allNiches: [String] {
-        let values = creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.niche }
-        return Array(Set(values)).sorted()
-    }
-
-    private let gold = DS.entitySwipe
+    @State private var cachedFilteredCreators: [Atom] = []
+    @State private var allPlatforms: [String] = []
+    @State private var allNiches: [String] = []
 
     var body: some View {
-        ZStack {
-            DS.bg.ignoresSafeArea()
+        VStack(spacing: 0) {
+            headerBar
+            Divider().background(DS.borderSubtle)
+            filterRow
+            Divider().background(DS.borderSubtle)
 
-            VStack(spacing: 0) {
-                headerBar
-                Divider().background(DS.borderSubtle)
-                filterRow
-                Divider().background(DS.borderSubtle)
-
-                if isLoading {
-                    Spacer()
-                    ProgressView().tint(DS.textSecondary)
-                    Spacer()
-                } else if filteredCreators.isEmpty {
-                    emptyState
-                } else {
-                    creatorGrid
-                }
+            if isLoading {
+                Spacer()
+                ProgressView().tint(DS.textSecondary)
+                Spacer()
+            } else if cachedFilteredCreators.isEmpty {
+                emptyState
+            } else {
+                creatorGrid
             }
         }
+        .overlay {
+            if showingImport {
+                ZStack {
+                    FloatingOverlayBackdrop {
+                        withAnimation(ProMotionSprings.snappy) { showingImport = false }
+                    }
+                    CreatorImportSheet(onClose: {
+                        withAnimation(ProMotionSprings.snappy) { showingImport = false }
+                    })
+                    .frame(maxWidth: 800, maxHeight: .infinity)
+                    .floatingOverlayPanel()
+                    .padding(24)
+                }
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+        }
+        .animation(ProMotionSprings.snappy, value: showingImport)
         .onAppear {
             loadCreators()
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
         }
+        .onChange(of: creators) { _, _ in recomputeDerivedState() }
+        .onChange(of: searchText) { recomputeFilteredCreators() }
+        .onChange(of: sortMode) { recomputeFilteredCreators() }
+        .onChange(of: platformFilter) { recomputeFilteredCreators() }
+        .onChange(of: nicheFilter) { recomputeFilteredCreators() }
     }
 
     // MARK: - Header
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            Button {
-                onClose()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.surfaceHover, in: Capsule())
-            }
-            .buttonStyle(.plain)
-
-            Image(systemName: "person.crop.rectangle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(gold)
-
-            Text("Creators")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundColor(DS.text)
-
-            Text("\(creators.count)")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(gold.opacity(0.8))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(gold.opacity(0.15), in: Capsule())
-
+            headerBackButton
+            headerTitle
             Spacer()
-
-            // Search field
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
-                TextField("Search creators...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.text)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(width: 240)
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .strokeBorder(DS.borderSubtle, lineWidth: 1)
-            )
-
-            // Import new creator button
-            Button { showingImport = true } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 11))
-                    Text("Import")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(gold, in: Capsule())
-            }
-            .buttonStyle(.plain)
-
-            // Compare button
-            Button {
-                onCompare(filteredCreators)
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 11))
-                    Text("Compare")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(gold)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(gold.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(gold.opacity(0.3), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
+            headerSearchField
+            headerImportButton
+            headerCompareButton
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .sheet(isPresented: $showingImport) {
-            CreatorImportSheet()
+    }
+
+    private var headerBackButton: some View {
+        Button {
+            onClose()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Back")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .commandKToolbarChip()
         }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var headerTitle: some View {
+        Image(systemName: "person.crop.rectangle.fill")
+            .font(.system(size: 14))
+            .foregroundStyle(DS.entitySwipe)
+
+        Text("Creators")
+            .font(.system(size: 18, weight: .bold))
+            .foregroundStyle(DS.text)
+
+        Text("\(creators.count)")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(DS.entitySwipe.opacity(0.8))
+            .commandKToolbarChip(
+                isActive: true,
+                activeFill: DS.entitySwipe.opacity(0.15),
+                activeBorder: DS.entitySwipe.opacity(0.3)
+            )
+    }
+
+    private var headerSearchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(DS.textMuted)
+            TextField("Search creators...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(DS.text)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(width: 240, height: 48)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    private var headerImportButton: some View {
+        Button { showingImport = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11))
+                Text("Import")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(DS.entitySwipe, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var headerCompareButton: some View {
+        Button {
+            onCompare(creators)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 11))
+                Text("Compare")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(DS.surfaceElevated, in: Capsule())
+            .overlay(Capsule().strokeBorder(DS.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Filter Row
@@ -186,14 +203,12 @@ struct CreatorListView: View {
     private var filterRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                // Sort menu
                 sortMenuView
 
                 Rectangle()
                     .fill(DS.border)
                     .frame(width: 1, height: 24)
 
-                // Platform filters
                 filterChip(title: "All Platforms", isSelected: platformFilter == nil) {
                     platformFilter = nil
                 }
@@ -212,14 +227,19 @@ struct CreatorListView: View {
                         .fill(DS.border)
                         .frame(width: 1, height: 24)
 
-                    // Niche filters
                     nicheMenuView
                 }
             }
             .padding(.horizontal, 20)
+            .padding(.vertical, 6)
         }
         .frame(height: 52)
-        .background(DS.bg)
+        .background(DS.surfaceElevated)
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                .stroke(DS.borderSubtle, lineWidth: 0.5)
+                .padding(.horizontal, 12)
+        )
     }
 
     private var sortMenuView: some View {
@@ -245,17 +265,8 @@ struct CreatorListView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
-        .foregroundColor(DS.textSecondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(DS.surfaceHover)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .strokeBorder(DS.border, lineWidth: 1)
-                )
-        )
+        .foregroundStyle(DS.textSecondary)
+        .commandKToolbarChip()
     }
 
     private var nicheMenuView: some View {
@@ -283,53 +294,49 @@ struct CreatorListView: View {
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
-        .foregroundColor(nicheFilter != nil ? DS.text : DS.textSecondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(nicheFilter != nil ? gold.opacity(0.15) : DS.surfaceHover)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .strokeBorder(
-                            nicheFilter != nil ? gold.opacity(0.5) : DS.border,
-                            lineWidth: 1
-                        )
-                )
+        .foregroundStyle(nicheFilter != nil ? DS.text : DS.textSecondary)
+        .commandKToolbarChip(
+            isActive: nicheFilter != nil,
+            activeFill: DS.entitySwipe.opacity(0.15),
+            activeBorder: DS.entitySwipe.opacity(0.5)
         )
     }
 
     private func filterChip(title: String, icon: String? = nil, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                if let icon = icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 10))
-                }
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(isSelected ? DS.text : DS.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .fill(isSelected ? gold.opacity(0.15) : DS.surfaceHover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .strokeBorder(
-                                isSelected ? gold.opacity(0.5) : DS.border,
-                                lineWidth: 1
-                            )
-                    )
-            )
+            filterChipLabel(title: title, icon: icon, isSelected: isSelected)
         }
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private func filterChipLabel(title: String, icon: String?, isSelected: Bool) -> some View {
+        HStack(spacing: 4) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+            }
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+        }
+        .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
+        .commandKToolbarChip(
+            isActive: isSelected,
+            activeFill: DS.entitySwipe.opacity(0.15),
+            activeBorder: DS.entitySwipe.opacity(0.5)
+        )
+    }
+
     // MARK: - Filtered + Sorted Creators
 
-    private var filteredCreators: [Atom] {
+    /// Recompute both filter chips and filtered list when creators change
+    private func recomputeDerivedState() {
+        allPlatforms = Array(Set(creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.platform })).sorted()
+        allNiches = Array(Set(creators.compactMap { $0.metadataValue(as: CreatorMetadata.self)?.niche })).sorted()
+        recomputeFilteredCreators()
+    }
+
+    private func recomputeFilteredCreators() {
         var items = creators
 
         // Search filter
@@ -355,23 +362,19 @@ struct CreatorListView: View {
             }
         }
 
-        // Sort
+        // Sort — pre-extract metadata to avoid N*log(N) JSON deserialization
         switch sortMode {
         case .name:
             items.sort { ($0.title ?? "").localizedCaseInsensitiveCompare($1.title ?? "") == .orderedAscending }
         case .swipeCount:
-            items.sort {
-                ($0.metadataValue(as: CreatorMetadata.self)?.swipeCount ?? 0)
-                > ($1.metadataValue(as: CreatorMetadata.self)?.swipeCount ?? 0)
-            }
+            let metaCache = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, $0.metadataValue(as: CreatorMetadata.self)) })
+            items.sort { (metaCache[$0.uuid]??.swipeCount ?? 0) > (metaCache[$1.uuid]??.swipeCount ?? 0) }
         case .hookScore:
-            items.sort {
-                ($0.metadataValue(as: CreatorMetadata.self)?.averageHookScore ?? 0)
-                > ($1.metadataValue(as: CreatorMetadata.self)?.averageHookScore ?? 0)
-            }
+            let metaCache = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, $0.metadataValue(as: CreatorMetadata.self)) })
+            items.sort { (metaCache[$0.uuid]??.averageHookScore ?? 0) > (metaCache[$1.uuid]??.averageHookScore ?? 0) }
         }
 
-        return items
+        cachedFilteredCreators = items
     }
 
     // MARK: - Creator Grid
@@ -382,10 +385,10 @@ struct CreatorListView: View {
                 columns: [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 16)],
                 spacing: 16
             ) {
-                ForEach(Array(filteredCreators.enumerated()), id: \.element.uuid) { index, atom in
+                ForEach(Array(cachedFilteredCreators.enumerated()), id: \.element.uuid) { index, atom in
                     CreatorCard(
                         atom: atom,
-                        appearDelay: Double(index) * 0.04,
+                        appearDelay: Double(min(index, 12)) * 0.04,
                         hasAppeared: hasAppeared,
                         onTap: { onSelectCreator(atom) }
                     )
@@ -398,17 +401,17 @@ struct CreatorListView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Spacer()
-            Image(systemName: "person.crop.rectangle.fill")
-                .font(.system(size: 48))
-                .foregroundColor(gold.opacity(0.3))
-            Text(searchText.isEmpty ? "No creators yet" : "No matching creators")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
-            Text("Creators are auto-detected when you save swipe files")
-                .font(.system(size: 14))
-                .foregroundColor(DS.textMuted)
+            Image(systemName: "person.3")
+                .font(.system(size: 36))
+                .foregroundStyle(DS.textMuted)
+            Text("No creators yet")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DS.text)
+            Text("Import your first creator to start tracking")
+                .font(.system(size: 13))
+                .foregroundStyle(DS.textSecondary)
             Spacer()
         }
     }
@@ -420,6 +423,7 @@ struct CreatorListView: View {
             isLoading = true
             let fetched = try? await AtomRepository.shared.fetchCreators()
             creators = fetched ?? []
+            recomputeDerivedState()
             isLoading = false
         }
     }
@@ -462,87 +466,25 @@ private struct CreatorCard: View {
 
     @State private var isHovered = false
 
-    private let gold = DS.entitySwipe
-    private let cardWidth: CGFloat = 260
-
     private var meta: CreatorMetadata? {
         atom.metadataValue(as: CreatorMetadata.self)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Avatar + name row
-            HStack(spacing: 12) {
-                avatarCircle
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(atom.title ?? "Unknown")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
-                        .lineLimit(1)
-                    if let handle = meta?.handle {
-                        Text(handle)
-                            .font(.system(size: 12))
-                            .foregroundColor(DS.textSecondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer()
-                if meta?.isActive == true {
-                    competitorBadge
-                }
-            }
-
-            // Platform + niche row
-            HStack(spacing: 8) {
-                if let platform = meta?.platform {
-                    platformBadge(platform)
-                }
-                if let niche = meta?.niche, !niche.isEmpty {
-                    Text(niche)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-            }
-
+            avatarNameRow
+            platformNicheRow
             Divider().background(DS.borderSubtle)
-
-            // Stats row
-            HStack(spacing: 12) {
-                statItem(value: "\(meta?.swipeCount ?? 0)", label: "Swipes")
-                statItem(
-                    value: meta?.averageHookScore.map { String(format: "%.1f", $0) } ?? "--",
-                    label: "Avg Score",
-                    valueColor: hookScoreColor(meta?.averageHookScore)
-                )
-                if let followers = meta?.followerCount, followers > 0 {
-                    statItem(value: formatFollowers(followers), label: "Followers")
-                }
-                Spacer()
-            }
-
-            // Top narratives
+            statsRow
             if let narratives = meta?.topNarratives, !narratives.isEmpty {
                 narrativeBadges(narratives)
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .fill(DS.surfaceElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .strokeBorder(
-                    isHovered ? gold.opacity(0.3) : DS.border,
-                    lineWidth: 1
-                )
-        )
-        .shadow(
-            color: isHovered ? gold.opacity(0.12) : .clear,
-            radius: isHovered ? 10 : 0,
-            y: isHovered ? 3 : 0
+        .commandKGalleryCardChrome(
+            isHovered: isHovered,
+            isSelected: false,
+            accentColor: DS.entitySwipe
         )
         .scaleEffect(isHovered ? 1.02 : 1.0)
         .opacity(hasAppeared ? 1.0 : 0.0)
@@ -555,14 +497,66 @@ private struct CreatorCard: View {
 
     // MARK: - Subviews
 
+    private var avatarNameRow: some View {
+        HStack(spacing: 12) {
+            avatarCircle
+            VStack(alignment: .leading, spacing: 2) {
+                Text(atom.title ?? "Unknown")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                if let handle = meta?.handle {
+                    Text(handle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            if meta?.isActive == true {
+                competitorBadge
+            }
+        }
+    }
+
+    private var platformNicheRow: some View {
+        HStack(spacing: 8) {
+            if let platform = meta?.platform {
+                platformBadge(platform)
+            }
+            if let niche = meta?.niche, !niche.isEmpty {
+                Text(niche)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+    }
+
+    private var statsRow: some View {
+        HStack(spacing: 12) {
+            statItem(value: "\(meta?.totalPostsImported ?? meta?.swipeCount ?? 0)", label: "Posts")
+            statItem(
+                value: meta?.averageHookScore.map { String(format: "%.1f", $0) } ?? "--",
+                label: "Avg Score",
+                valueColor: hookScoreColor(meta?.averageHookScore)
+            )
+            if let followers = meta?.followerCount, followers > 0 {
+                statItem(value: formatFollowers(followers), label: "Followers")
+            }
+            Spacer()
+        }
+    }
+
     private var avatarCircle: some View {
         ZStack {
             Circle()
-                .fill(gold.opacity(0.15))
+                .fill(DS.entitySwipe.opacity(0.15))
                 .frame(width: 40, height: 40)
             Text(initialsFor(atom.title))
                 .font(.system(size: 15, weight: .bold))
-                .foregroundColor(gold)
+                .foregroundStyle(DS.entitySwipe)
         }
     }
 
@@ -573,10 +567,10 @@ private struct CreatorCard: View {
             Text("Tracked")
                 .font(.system(size: 9, weight: .semibold))
         }
-        .foregroundColor(gold)
+        .foregroundStyle(DS.entitySwipe)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(gold.opacity(0.12), in: Capsule())
+        .background(DS.entitySwipe.opacity(0.12), in: Capsule())
     }
 
     private func platformBadge(_ platform: String) -> some View {
@@ -586,7 +580,7 @@ private struct CreatorCard: View {
             Text(platformNameFor(platform))
                 .font(.system(size: 10, weight: .medium))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(DS.surfaceHover, in: Capsule())
@@ -596,10 +590,10 @@ private struct CreatorCard: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(.system(size: 14, weight: .bold).monospacedDigit())
-                .foregroundColor(valueColor)
+                .foregroundStyle(valueColor)
             Text(label)
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -610,7 +604,7 @@ private struct CreatorCard: View {
                 if let style = NarrativeStyle(rawValue: raw) {
                     Text(style.displayName)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(style.color)
+                        .foregroundStyle(style.color)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(style.color.opacity(0.15), in: Capsule())

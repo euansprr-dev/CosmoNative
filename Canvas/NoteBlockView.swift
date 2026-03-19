@@ -16,6 +16,12 @@ struct NoteBlockView: View {
     @State private var noteText: String = ""
     @State private var noteWordCount: Int = 0
     @State private var isExpanded = false
+    @State private var isEditingTitle = false
+    @State private var isEditingBody = false
+
+    // Mutable entity tracking — updated when a backing atom is created
+    @State private var trackedEntityId: Int64 = 0
+    @State private var trackedEntityUuid: String = ""
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
@@ -43,6 +49,8 @@ struct NoteBlockView: View {
             noteContent
         }
         .onAppear {
+            trackedEntityId = block.entityId
+            trackedEntityUuid = block.entityUuid
             loadNote()
             startObservingAtom()
         }
@@ -54,16 +62,40 @@ struct NoteBlockView: View {
         // Listen for direct state change notifications from focus mode
         .onReceive(NotificationCenter.default.publisher(for: .noteFocusStateDidChange)) { notification in
             if let uuid = notification.userInfo?["atomUUID"] as? String,
-               uuid == block.entityUuid {
+               uuid == trackedEntityUuid {
                 if let title = notification.userInfo?["title"] as? String {
                     noteTitleText = title
-                    noteTitleDocument = RichDocument.migrateLegacy(title)
+                    if let json = notification.userInfo?["titleDocumentJSON"] as? String,
+                       let data = json.data(using: .utf8),
+                       let doc = try? JSONDecoder().decode(RichDocument.self, from: data) {
+                        noteTitleDocument = doc
+                    } else {
+                        noteTitleDocument = RichDocument.migrateLegacy(title)
+                    }
                 }
                 if let body = notification.userInfo?["body"] as? String {
                     noteText = body
-                    noteBodyDocument = RichDocument.migrateLegacy(body)
+                    if let json = notification.userInfo?["bodyDocumentJSON"] as? String,
+                       let data = json.data(using: .utf8),
+                       let doc = try? JSONDecoder().decode(RichDocument.self, from: data) {
+                        noteBodyDocument = doc
+                    } else {
+                        noteBodyDocument = RichDocument.migrateLegacy(body)
+                    }
                 }
             }
+        }
+        // Listen for entity linkage updates (when backing atom is created)
+        .onReceive(NotificationCenter.default.publisher(for: .updateBlockEntity)) { notification in
+            guard let blockId = notification.userInfo?["blockId"] as? String,
+                  blockId == block.id,
+                  let entityId = notification.userInfo?["entityId"] as? Int64,
+                  let entityUuid = notification.userInfo?["entityUuid"] as? String else { return }
+            trackedEntityId = entityId
+            trackedEntityUuid = entityUuid
+            // Restart GRDB observation with the new UUID
+            observationCancellable?.cancel()
+            startObservingAtom()
         }
     }
 
@@ -93,41 +125,68 @@ struct NoteBlockView: View {
                 .padding(.bottom, -8)
 
             // Title field
-            CosmoDocumentEditor(
-                document: $noteTitleDocument,
-                fontSize: 24,
-                compact: true,
-                placeholder: "Heading",
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                singleLine: true,
-                baseFontWeight: .semibold,
-                onDocumentChange: { document, _ in
-                    noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
-                    if !isSyncingFromDB { scheduleAutoSave() }
-                }
-            )
-            .frame(height: 48)
+            if isEditingTitle {
+                CosmoDocumentEditor(
+                    document: $noteTitleDocument,
+                    fontSize: 24,
+                    compact: true,
+                    placeholder: "Heading",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    singleLine: true,
+                    baseFontWeight: .semibold,
+                    onDocumentChange: { document, _ in
+                        noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
+                        if !isSyncingFromDB { scheduleAutoSave() }
+                    }
+                )
+                .frame(height: 48)
+            } else {
+                Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(noteTitleText.isEmpty ? DS.textMuted : DS.text)
+                    .lineLimit(2)
+                    .frame(height: 48, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { isEditingTitle = true }
+            }
 
-            // Body text editor
-            CosmoDocumentEditor(
-                document: $noteBodyDocument,
-                fontSize: 15,
-                compact: true,
-                placeholder: "Press / for commands...",
-                allowSlashCommands: true,
-                allowMentions: true,
-                allowSelectionMenu: true,
-                allowImages: true,
-                onDocumentChange: { _, plainText in
-                    noteText = plainText
-                    noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-                    if !isSyncingFromDB { scheduleAutoSave() }
+            // Body text
+            if isEditingBody {
+                CosmoDocumentEditor(
+                    document: $noteBodyDocument,
+                    fontSize: 15,
+                    compact: true,
+                    placeholder: "Press / for commands...",
+                    allowSlashCommands: true,
+                    allowMentions: true,
+                    allowSelectionMenu: true,
+                    allowImages: true,
+                    onDocumentChange: { _, plainText in
+                        noteText = plainText
+                        noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+                        if !isSyncingFromDB { scheduleAutoSave() }
+                    }
+                )
+                .frame(maxHeight: .infinity)
+            } else {
+                Group {
+                    if noteText.isEmpty {
+                        Text("Press / for commands...")
+                            .font(.system(size: 15))
+                            .foregroundStyle(DS.textMuted)
+                            .italic()
+                    } else {
+                        CosmoDocumentRenderer(document: noteBodyDocument, fontSize: 15, lineLimit: 8)
+                    }
                 }
-            )
-            .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .onTapGesture { isEditingBody = true }
+            }
 
             // Footer: word count + timestamp
             HStack(spacing: 6) {
@@ -149,6 +208,8 @@ struct NoteBlockView: View {
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            isEditingTitle = false
+            isEditingBody = false
         }
     }
 
@@ -187,10 +248,10 @@ struct NoteBlockView: View {
         }
 
         // If linked to an atom, load freshest data from database
-        if block.entityId > 0 {
+        if trackedEntityId > 0 {
             Task {
                 do {
-                    if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
+                    if let atom = try await AtomRepository.shared.fetch(id: trackedEntityId) {
                         await MainActor.run {
                             noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
                                 field: .title,
@@ -216,7 +277,7 @@ struct NoteBlockView: View {
     // MARK: - GRDB Observation
 
     private func startObservingAtom() {
-        let uuid = block.entityUuid
+        let uuid = trackedEntityUuid
         // Only observe if we have a real UUID (not empty)
         guard !uuid.isEmpty else { return }
 
@@ -302,7 +363,7 @@ struct NoteBlockView: View {
         )
 
         // Also update the atom in the database (for blocks linked to entities)
-        let uuid = block.entityUuid
+        let uuid = trackedEntityUuid
         if !uuid.isEmpty {
             Task {
                 do {
@@ -345,7 +406,7 @@ struct NoteBlockView: View {
     /// Synchronous save — blocks until DB write completes.
     /// Used on close to guarantee data is persisted before the block/app exits.
     private func saveNoteSync() {
-        let uuid = block.entityUuid
+        let uuid = trackedEntityUuid
         guard !uuid.isEmpty else { return }
 
         do {
@@ -386,14 +447,14 @@ struct NoteBlockView: View {
     // MARK: - Focus Mode
 
     private func openFocusMode() {
-        if block.entityId > 0 {
+        if trackedEntityId > 0 {
             // Has backing atom, open directly
             NotificationCenter.default.post(
                 name: .enterFocusMode,
                 object: nil,
                 userInfo: [
                     "type": EntityType.note,
-                    "id": block.entityId
+                    "id": trackedEntityId
                 ]
             )
         } else {
@@ -429,6 +490,16 @@ struct NoteBlockView: View {
                         )
                     }
                     await MainActor.run {
+                        // Update in-memory block in SpatialEngine + this view
+                        NotificationCenter.default.post(
+                            name: .updateBlockEntity,
+                            object: nil,
+                            userInfo: [
+                                "blockId": block.id,
+                                "entityId": atomId,
+                                "entityUuid": newAtom.uuid
+                            ]
+                        )
                         NotificationCenter.default.post(
                             name: .enterFocusMode,
                             object: nil,
@@ -469,6 +540,7 @@ extension Notification.Name {
     static let contentFocusStateSaved = Notification.Name("contentFocusStateSaved")
     static let contentPhaseChanged = Notification.Name("contentPhaseChanged")
     static let noteFocusStateDidChange = Notification.Name("noteFocusStateDidChange")
+    static let updateBlockEntity = Notification.Name("updateBlockEntity")
 }
 
 // MARK: - Preview

@@ -20,9 +20,18 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case numberedList
     case checklist
     case image
+
+    var headingLevelInt: Int? {
+        switch self {
+        case .heading1: return 1
+        case .heading2: return 2
+        case .heading3: return 3
+        default: return nil
+        }
+    }
 }
 
-struct RichMention: Codable, Equatable, Hashable, Sendable {
+public struct RichMention: Codable, Equatable, Hashable, Sendable {
     var entityUUID: String
     var entityID: Int64?
     var entityType: EntityType
@@ -245,6 +254,7 @@ enum RichDocumentAttributeKeys {
     static let entityID = NSAttributedString.Key("CosmoEntityId")
     static let entityUUID = NSAttributedString.Key("CosmoEntityUUID")
     static let imagePath = NSAttributedString.Key("CosmoImagePath")
+    static let headingLevel = NSAttributedString.Key("CosmoHeadingLevel")
 }
 
 enum RichDocumentSerializer {
@@ -371,6 +381,14 @@ enum RichDocumentSerializer {
             return RichBlock(kind: .divider)
         }
 
+        // Detect headings by custom attribute (preferred over text prefix)
+        if line.length > 0,
+           let level = line.attribute(RichDocumentAttributeKeys.headingLevel, at: 0, effectiveRange: nil) as? Int {
+            let kind: RichBlockKind = level == 1 ? .heading1 : level == 2 ? .heading2 : .heading3
+            return RichBlock(kind: kind, inlines: inlineNodes(from: line))
+        }
+
+        // Fallback: detect by text prefix (backward compat for legacy documents)
         let (kind, contentStart, checked) = blockDescriptor(for: text)
         let contentRange = NSRange(location: min(contentStart, line.length), length: max(0, line.length - min(contentStart, line.length)))
         let content = line.attributedSubstring(from: contentRange)
@@ -519,12 +537,8 @@ enum RichDocumentSerializer {
         switch block.kind {
         case .paragraph, .image:
             return ""
-        case .heading1:
-            return "# "
-        case .heading2:
-            return "## "
-        case .heading3:
-            return "### "
+        case .heading1, .heading2, .heading3:
+            return ""  // Headings use attribute-based detection, no visible prefix
         case .quote:
             return "│ "
         case .divider:
@@ -602,6 +616,16 @@ enum RichDocumentSerializer {
 
         if block.kind == .quote {
             attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.9)
+        }
+
+        // Headings: embed level attribute + paragraph spacing for round-trip detection
+        if let headingLevel = block.kind.headingLevelInt {
+            attributes[RichDocumentAttributeKeys.headingLevel] = headingLevel
+            let headingParagraph = NSMutableParagraphStyle()
+            headingParagraph.lineSpacing = 4
+            headingParagraph.paragraphSpacing = 12
+            headingParagraph.paragraphSpacingBefore = 16
+            attributes[.paragraphStyle] = headingParagraph
         }
 
         return attributes

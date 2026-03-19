@@ -532,7 +532,12 @@ struct ResearchBlockView: View {
                 }
             }
 
-            if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
+            // Try by ID first, fall back to UUID (handles paste where ID may be stale)
+            var loaded: Atom? = try? await AtomRepository.shared.fetch(id: block.entityId)
+            if loaded == nil, !block.entityUuid.isEmpty {
+                loaded = try? await AtomRepository.shared.fetch(uuid: block.entityUuid)
+            }
+            if let loaded {
                 guard !Task.isCancelled else { return }
 
                 // PERF: Parse structured JSON once, cache all derived metadata

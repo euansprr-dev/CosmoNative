@@ -21,15 +21,16 @@ struct LibraryTab: View {
     @State private var showResearchURLInput = false
     @State private var researchURLText = ""
     @State private var showImageImporter = false
+    @State private var cachedFilteredItems: [LibraryItem] = []
+
     // MARK: - Filtered Items (Search-Library Bridge)
 
-    private var filteredItems: [LibraryItem] {
+    private func recomputeFilteredItems() {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         var items: [LibraryItem]
         if trimmed.isEmpty {
             items = libraryViewModel.displayItems
         } else {
-            // Local text filtering — reliable for all queries
             items = libraryViewModel.searchableItems.filter { Self.matchesSearch($0, query: trimmed) }
         }
         if let typeFilter {
@@ -38,7 +39,7 @@ struct LibraryTab: View {
         if clientFilter != nil {
             items = items.filter { clientLinkedUUIDs.contains($0.uuid) }
         }
-        return items
+        cachedFilteredItems = items
     }
 
     // MARK: - Body
@@ -62,7 +63,7 @@ struct LibraryTab: View {
                     recentlyDeletedView
                 } else if libraryViewModel.isLoading {
                     loadingView
-                } else if filteredItems.isEmpty {
+                } else if cachedFilteredItems.isEmpty {
                     emptyState
                         .contentShape(Rectangle())
                         .contextMenu { backgroundContextMenu }
@@ -76,7 +77,7 @@ struct LibraryTab: View {
                         switch viewMode {
                         case .grid:
                             LibraryGridView(
-                                items: filteredItems,
+                                items: cachedFilteredItems,
                                 onItemTap: { handleItemTap($0) },
                                 onItemDoubleTap: { handleItemDoubleTap($0) },
                                 onItemDelete: { libraryViewModel.softDeleteItem(uuid: $0.uuid) },
@@ -109,6 +110,7 @@ struct LibraryTab: View {
         .animation(ProMotionSprings.snappy, value: viewModel.isMultiSelectActive)
         .task {
             await libraryViewModel.loadLibrary()
+            recomputeFilteredItems()
             // Load client profiles for filter
             if let profiles = try? await AtomRepository.shared.fetchAll(type: .clientProfile) {
                 clientProfiles = profiles
@@ -116,7 +118,12 @@ struct LibraryTab: View {
         }
         .onChange(of: sortMode) { newSort in
             libraryViewModel.applySortMode(newSort)
+            recomputeFilteredItems()
         }
+        .onChange(of: searchQuery) { recomputeFilteredItems() }
+        .onChange(of: typeFilter) { recomputeFilteredItems() }
+        .onChange(of: clientLinkedUUIDs) { recomputeFilteredItems() }
+        .onChange(of: libraryViewModel.displayItems.count) { recomputeFilteredItems() }
         .onChange(of: clientFilter) { _, newClient in
             Task {
                 if let clientUUID = newClient {
@@ -199,7 +206,7 @@ struct LibraryTab: View {
 
     private var libraryStatsLabel: some View {
         HStack(spacing: 6) {
-            Text("\(filteredItems.count)")
+            Text("\(cachedFilteredItems.count)")
                 .font(.system(size: 14, weight: .bold).monospacedDigit())
                 .foregroundColor(DS.text)
             Text("items")
@@ -583,7 +590,7 @@ struct LibraryTab: View {
     private var libraryListView: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(filteredItems) { item in
+                ForEach(cachedFilteredItems) { item in
                     libraryListRow(item)
                 }
             }

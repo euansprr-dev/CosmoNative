@@ -154,6 +154,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.textViewReference = textView
         context.coordinator.installScrollDismissObserver(for: scrollView)
+        context.coordinator.installFrameChangeObserver(for: scrollView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
         context.coordinator.notifyContentHeightChange(for: textView)
 
@@ -297,8 +298,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         weak var textViewReference: CosmoTextView?
 
         private weak var scrollContentView: NSClipView?
+        private weak var observedScrollView: NSScrollView?
         private var mentionStartIndex: Int?
         private var isInHeadingMode = false
+
+        private enum ActiveBlockMode {
+            case none
+            case quote
+            case bulletList
+            case numberedList
+            case checklist
+        }
+        private var activeBlockMode: ActiveBlockMode = .none
         private var hasAppliedHighlights = false
         /// Guards against updateNSView round-trip when change originated from user typing
         var isUpdatingFromTextView = false
@@ -358,6 +369,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if let scrollContentView {
                 NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollContentView)
             }
+            if let observedScrollView {
+                NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: observedScrollView)
+            }
             NotificationCenter.default.removeObserver(self)
         }
 
@@ -370,6 +384,23 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 name: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView
             )
+        }
+
+        func installFrameChangeObserver(for scrollView: NSScrollView) {
+            scrollView.postsFrameChangedNotifications = true
+            observedScrollView = scrollView
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleFrameChange(_:)),
+                name: NSView.frameDidChangeNotification,
+                object: scrollView
+            )
+        }
+
+        @objc private func handleFrameChange(_ notification: Notification) {
+            guard let textView = textViewReference else { return }
+            // Text reflows when width changes (e.g. pane open/close) — re-measure height
+            notifyContentHeightChange(for: textView)
         }
 
         func applyPolishHighlights(to textView: NSTextView) {
@@ -453,6 +484,21 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             parent.cursorPosition = selectedRange.location
 
+            // Auto-detect block mode based on current line prefix (must run for ALL cursor positions)
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            if lineText.hasPrefix("│ ") {
+                activeBlockMode = .quote
+            } else if lineText.hasPrefix("• ") {
+                activeBlockMode = .bulletList
+            } else if lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ") {
+                activeBlockMode = .checklist
+            } else if lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                activeBlockMode = .numberedList
+            } else {
+                activeBlockMode = .none
+            }
+
             // No selection — dispatch empty immediately (cheap)
             guard selectedRange.length > 0 else {
                 selectionChangeWorkItem?.cancel()
@@ -530,17 +576,63 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return true
             }
 
+            // Shift+Enter — always continue current block
+            if commandSelector == #selector(NSResponder.insertLineBreak(_:)) {
+                if activeBlockMode != .none, let prefix = continuationPrefix(for: textView) {
+                    textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                    syncBindings(from: textView)
+                    return true
+                }
+            }
+
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 if parent.singleLine {
                     dismissMenus()
                     return true
                 }
 
-                if isInHeadingMode {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self, let textView = self.textViewReference else { return }
-                        self.resetToNormalTypingAttributes(textView)
+                // Block continuation: quotes, bullets, numbered lists, checklists
+                if activeBlockMode != .none {
+                    if isEmptyBlockLine(in: textView) {
+                        // Empty block line → exit block mode, remove prefix
+                        let lineRange = currentLineRange(in: textView)
+                        let prefixLen = blockPrefixLength(in: textView)
+                        if prefixLen > 0 {
+                            textView.textStorage?.replaceCharacters(
+                                in: NSRange(location: lineRange.location, length: prefixLen),
+                                with: ""
+                            )
+                        }
+                        activeBlockMode = .none
+                        resetToNormalTypingAttributes(textView)
+                        syncBindings(from: textView)
+                        return true
+                    } else if let prefix = continuationPrefix(for: textView) {
+                        // Non-empty block line → continue with prefix
+                        textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                        syncBindings(from: textView)
+                        return true
                     }
+                }
+
+                // Heading mode: Enter resets to normal (Bug 5 fix — synchronous)
+                if isInHeadingMode {
+                    textView.insertText("\n", replacementRange: textView.selectedRange())
+                    resetToNormalTypingAttributes(textView)
+
+                    // Reset attributes on text that moved to the new line (Enter mid-heading)
+                    let newLineRange = currentLineRange(in: textView)
+                    if newLineRange.length > 0 {
+                        textView.textStorage?.addAttributes([
+                            .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                            .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                            .paragraphStyle: defaultParagraphStyle()
+                        ], range: newLineRange)
+                        textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: newLineRange)
+                    }
+
+                    syncBindings(from: textView)
+                    return true
                 }
             }
 
@@ -549,6 +641,57 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             return false
+        }
+
+        // MARK: - Block Continuation Helpers
+
+        private func continuationPrefix(for textView: NSTextView) -> String? {
+            switch activeBlockMode {
+            case .none: return nil
+            case .quote: return "│ "
+            case .bulletList: return "• "
+            case .checklist: return "☐ "
+            case .numberedList:
+                let lineRange = currentLineRange(in: textView)
+                let lineText = (textView.string as NSString).substring(with: lineRange)
+                if let match = lineText.range(of: #"^(\d+)\."#, options: .regularExpression) {
+                    let numStr = String(lineText[match])
+                        .replacingOccurrences(of: ".", with: "")
+                    if let num = Int(numStr) {
+                        return "\(num + 1). "
+                    }
+                }
+                return "1. "
+            }
+        }
+
+        private func isEmptyBlockLine(in textView: NSTextView) -> Bool {
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            let trimmed = lineText.trimmingCharacters(in: .newlines)
+            switch activeBlockMode {
+            case .none: return false
+            case .quote: return trimmed == "│" || trimmed == "│ "
+            case .bulletList: return trimmed == "•" || trimmed == "• "
+            case .checklist: return trimmed == "☐" || trimmed == "☐ " || trimmed == "☑" || trimmed == "☑ "
+            case .numberedList: return trimmed.range(of: #"^\d+\.\s*$"#, options: .regularExpression) != nil
+            }
+        }
+
+        private func blockPrefixLength(in textView: NSTextView) -> Int {
+            let lineRange = currentLineRange(in: textView)
+            let lineText = (textView.string as NSString).substring(with: lineRange)
+            switch activeBlockMode {
+            case .none: return 0
+            case .quote: return lineText.hasPrefix("│ ") ? 2 : 1
+            case .bulletList: return lineText.hasPrefix("• ") ? 2 : 1
+            case .checklist: return (lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ")) ? 2 : 1
+            case .numberedList:
+                if let match = lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                    return lineText.distance(from: lineText.startIndex, to: match.upperBound)
+                }
+                return 0
+            }
         }
 
         // MARK: - Menu State
@@ -678,6 +821,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         @objc private func handleInsertTextInEditor(_ notification: Notification) {
             guard let textView = activeTextView,
+                  textView.window?.firstResponder === textView,
                   let text = notification.userInfo?["text"] as? String else { return }
 
             let positionRaw = notification.userInfo?["position"] as? String ?? EditorCommandBus.InsertPosition.cursor.rawValue
@@ -686,6 +830,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         @objc private func handleSetTypingAttributes(_ notification: Notification) {
             guard let textView = activeTextView,
+                  textView.window?.firstResponder === textView,
                   let font = notification.userInfo?["font"] as? NSFont,
                   let color = notification.userInfo?["color"] as? NSColor else {
                 return
@@ -714,7 +859,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         @objc private func handlePerformSlashCommand(_ notification: Notification) {
-            guard let textView = activeTextView,
+            guard parent.allowSlashCommands,
+                  let textView = activeTextView,
+                  textView.window?.firstResponder === textView,
                   let command = notification.userInfo?["command"] as? SlashCommand,
                   let storage = textView.textStorage else {
                 return
@@ -754,11 +901,20 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             syncBindings(from: textView)
+
+            // Force layout update after format changes to prevent view clipping (Bug 2)
+            if let textContainer = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+            textView.sizeToFit()
+            notifyContentHeightChange(for: textView)
+
             dismissMenus()
         }
 
         @objc private func handleToggleFormatting(_ notification: Notification) {
             guard let textView = activeTextView,
+                  textView.window?.firstResponder === textView,
                   let type = notification.userInfo?["type"] as? FormattingType else {
                 return
             }
@@ -862,97 +1018,147 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         private func applyHeading(level: Int, textView: NSTextView) {
-            let prefix: String
             let font: NSFont
 
             switch level {
             case 1:
-                prefix = "# "
                 font = NSFont.systemFont(ofSize: max(28, parent.fontSize + 12), weight: .bold)
             case 2:
-                prefix = "## "
                 font = NSFont.systemFont(ofSize: max(22, parent.fontSize + 8), weight: .semibold)
             default:
-                prefix = "### "
                 font = NSFont.systemFont(ofSize: max(18, parent.fontSize + 4), weight: .semibold)
             }
 
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
-            let existingPrefixes = ["### ", "## ", "# "]
-            let existingPrefix = existingPrefixes.first(where: { lineText.hasPrefix($0) })
 
-            if let existingPrefix {
+            // Strip legacy visible prefixes if present (backward compat)
+            let existingPrefixes = ["### ", "## ", "# "]
+            if let existingPrefix = existingPrefixes.first(where: { lineText.hasPrefix($0) }) {
                 textView.textStorage?.replaceCharacters(
                     in: NSRange(location: lineRange.location, length: existingPrefix.count),
-                    with: existingPrefix == prefix ? "" : prefix
+                    with: ""
                 )
-
-                if existingPrefix == prefix {
-                    isInHeadingMode = false
-                    resetToNormalTypingAttributes(textView)
-                    syncBindings(from: textView)
-                    return
-                }
-            } else {
-                textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: prefix)
             }
 
+            // Check if line already has this heading level — toggle off
+            let checkRange = currentLineRange(in: textView)
+            if checkRange.length > 0,
+               let currentLevel = textView.textStorage?.attribute(
+                   RichDocumentAttributeKeys.headingLevel,
+                   at: checkRange.location,
+                   effectiveRange: nil
+               ) as? Int,
+               currentLevel == level {
+                // Remove heading — reset to normal
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: checkRange)
+                textView.textStorage?.addAttributes([
+                    .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .paragraphStyle: defaultParagraphStyle()
+                ], range: checkRange)
+                isInHeadingMode = false
+                resetToNormalTypingAttributes(textView)
+                syncBindings(from: textView)
+                return
+            }
+
+            // Apply heading attributes (no prefix insertion)
             let updatedLineRange = currentLineRange(in: textView)
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
             paragraphStyle.paragraphSpacingBefore = 16
 
-            textView.textStorage?.addAttributes([
-                .font: font,
-                .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
-                .paragraphStyle: paragraphStyle
-            ], range: updatedLineRange)
+            if updatedLineRange.length > 0 {
+                textView.textStorage?.addAttributes([
+                    .font: font,
+                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .paragraphStyle: paragraphStyle,
+                    RichDocumentAttributeKeys.headingLevel: level
+                ], range: updatedLineRange)
+            }
 
             textView.typingAttributes = [
                 .font: font,
                 .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
-                .paragraphStyle: paragraphStyle
+                .paragraphStyle: paragraphStyle,
+                RichDocumentAttributeKeys.headingLevel: level
             ]
             isInHeadingMode = true
+
+            // Force layout update to prevent clipping (Bug 2)
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.sizeToFit()
         }
 
         private func toggleBlockPrefix(_ prefix: String, kind: RichBlockKind, in textView: NSTextView) {
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
+            var newMode: ActiveBlockMode = .none
             if lineText.hasPrefix(prefix) {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: prefix.count), with: "")
+                newMode = .none
             } else {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: prefix)
+                if kind == .quote { newMode = .quote }
+                else if kind == .bulletList { newMode = .bulletList }
             }
 
             if kind != .quote {
                 resetToNormalTypingAttributes(textView)
             }
+            // Set block mode AFTER reset so it isn't overwritten
+            activeBlockMode = newMode
+
+            // Force layout update to prevent clipping (Bug 2)
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.sizeToFit()
         }
 
         private func toggleNumberedList(in textView: NSTextView) {
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
+            var newMode: ActiveBlockMode = .none
             if let match = lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                 let count = lineText.distance(from: lineText.startIndex, to: match.upperBound)
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: count), with: "")
+                newMode = .none
             } else {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "1. ")
+                newMode = .numberedList
             }
             resetToNormalTypingAttributes(textView)
+            activeBlockMode = newMode
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.sizeToFit()
         }
 
         private func toggleChecklist(in textView: NSTextView) {
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
+            var newMode: ActiveBlockMode = .none
             if lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ") {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 2), with: "")
+                newMode = .none
             } else {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "☐ ")
+                newMode = .checklist
             }
             resetToNormalTypingAttributes(textView)
+            activeBlockMode = newMode
+
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.sizeToFit()
         }
 
         private func currentLineRange(in textView: NSTextView) -> NSRange {
@@ -961,6 +1167,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func resetToNormalTypingAttributes(_ textView: NSTextView) {
             isInHeadingMode = false
+            activeBlockMode = .none
             textView.typingAttributes = [
                 .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
                 .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),

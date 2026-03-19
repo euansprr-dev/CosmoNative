@@ -1326,27 +1326,25 @@ private struct SidebarHookRow: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Text("\(index + 1).")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(DS.textMuted)
                 .frame(width: 16, alignment: .trailing)
+                .padding(.top, isEditing ? 4 : 0)
 
             if isEditing {
-                TextField("", text: $editText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
-                    .focused($isFocused)
-                    .onSubmit { commitEdit() }
-                    .onChange(of: isFocused) { _, focused in
-                        if !focused { commitEdit() }
-                    }
+                MultilineHookEditor(
+                    text: $editText,
+                    isFocused: $isFocused,
+                    fontSize: 12,
+                    onCommit: { commitEdit() }
+                )
             } else {
                 Text(hook)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.text)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         editText = hook
                         isEditing = true

@@ -115,6 +115,7 @@ struct SlashCommandMenu: View {
             .padding(.vertical, 4)
         }
         .frame(maxHeight: 300)
+        .scrollBounceBehavior(.basedOnSize)
         .background(bgColor)
         .onChange(of: selectedIndex) { _, _ in
             CosmicHaptics.shared.play(.threshold)

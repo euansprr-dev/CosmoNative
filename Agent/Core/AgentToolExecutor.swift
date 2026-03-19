@@ -99,11 +99,10 @@ class AgentToolExecutor {
                             atom.metadata = str
                         }
                     }
-                    // Only evict the cached engine when the client actually CHANGED
-                    // (not when going from nil → set, which is a first-time assignment)
-                    if currentClientUUID != nil {
-                        engineCache.removeValue(forKey: contentUUID)
-                    }
+                    // Evict cached engine on ANY client mismatch — including nil → set.
+                    // A nil-client engine was initialized without client voice, swipe
+                    // weighting, or learned rules — it must be recreated.
+                    engineCache.removeValue(forKey: contentUUID)
                     print("🔄 [AgentToolExecutor] Fixed client mismatch: was \(currentClientUUID ?? "nil") → \(clientAtom.uuid) (\(clientAtom.title ?? clientName))")
                 }
             }
@@ -2245,6 +2244,9 @@ class AgentToolExecutor {
                     atom.metadata = str
                 }
             }
+            // Evict cached engine — it was initialized with old/default format
+            // and selected swipes for a different format family
+            engineCache.removeValue(forKey: contentUUID)
         }
 
         guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {

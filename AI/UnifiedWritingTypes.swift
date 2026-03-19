@@ -92,13 +92,16 @@ struct CompressedSwipe: Identifiable {
     /// Full body excerpt for client example posts (their body text IS the correct topic)
     var fullBodyExcerpt: String = ""
 
-    /// Structural breakdown for PRIMARY swipes — section functions, density, arc (NO topical text)
+    /// Full untruncated body text — the actual content of the swipe
+    var fullBody: String = ""
+
+    /// Structural breakdown for PRIMARY swipes — section functions, density, arc
     var structuralBreakdown: String = ""
 
-    /// Format as injection text (~200 tokens for non-primary, ~600 tokens for PRIMARY)
+    /// Format as injection text with FULL BODY — no truncation
     func formatted() -> String {
         let beats = beatSequence.joined(separator: " > ")
-        let primaryTag = isPrimary ? " [PRIMARY BLUEPRINT — EMULATE THIS]" : ""
+        let primaryTag = isPrimary ? "\n[PRIMARY BLUEPRINT — EMULATE THIS]" : ""
 
         // Client top-performing post — different formatting with engagement data
         if isClientExample {
@@ -107,45 +110,30 @@ struct CompressedSwipe: Identifiable {
             [CLIENT TOP POST]: "\(title)"\(engagementLabel)
             Format: \(format)
             """
-            if !fullBodyExcerpt.isEmpty {
+            if !fullBody.isEmpty {
+                result += "\n\n--- FULL BODY ---\n\(fullBody)"
+            } else if !fullBodyExcerpt.isEmpty {
                 result += "\n\(fullBodyExcerpt)"
             }
             return result
         }
 
-        if isPrimary {
-            // Expanded format for PRIMARY swipes: include full hook, all transitions, and body excerpt
-            let allTransitions = keyTransitions.joined(separator: "\n  ")
-            var result = """
-            SWIPE EXAMPLE\(primaryTag): "\(title)"
-            Hook (\(hookType), score \(String(format: "%.1f", hookScore))/10): "\(hookText)"
-            Beat Pattern: \(beats)
-            Section-by-Section Transitions:
-              \(allTransitions)
-            CTA: "\(ctaText)"
-            Framework: \(framework) | Format: \(format)
+        var result = """
+        Title: "\(title)"
+        Hook Type: \(hookType) (score: \(String(format: "%.1f", hookScore))/10)
+        Beat Pattern: \(beats)
+        Framework: \(framework) | Format: \(format)\(primaryTag)
+        """
 
-            EMULATION NOTES: Your outline MUST mirror this swipe's beat pattern and hook type. \
-            The hook must use the same syntactic structure and tension mechanism. \
-            The section sequence must follow the same function order.
-            """
-            if !structuralBreakdown.isEmpty {
-                result += "\n\nStructural Blueprint (extract structure only — topic may differ from client):\n\(structuralBreakdown)"
-            }
-            return result
-        } else {
-            let transitions = keyTransitions.prefix(3).joined(separator: "\n  ")
-            let truncatedHook = hookText.count > 200 ? String(hookText.prefix(200)) + "..." : hookText
-            return """
-            SWIPE EXAMPLE: "\(title)"
-            Hook (\(hookType), score \(String(format: "%.1f", hookScore))/10): "\(truncatedHook)"
-            Structure: \(beats)
-            Key Transitions:
-              \(transitions)
-            CTA: "\(ctaText)"
-            Framework: \(framework) | Format: \(format)
-            """
+        if !fullBody.isEmpty {
+            result += "\n\n--- FULL BODY ---\n\(fullBody)"
         }
+
+        if isPrimary && !structuralBreakdown.isEmpty {
+            result += "\n\n--- STRUCTURAL BLUEPRINT ---\n\(structuralBreakdown)"
+        }
+
+        return result
     }
 }
 

@@ -14,6 +14,7 @@ struct SwipeGalleryTab: View {
     let searchQuery: String
 
     @State private var hasAppeared = false
+    @State private var cachedAvgHookScore: Double?
 
     private let gold = DS.entitySwipe
 
@@ -31,9 +32,10 @@ struct SwipeGalleryTab: View {
                     emptyState
                 } else {
                     GeometryReader { geometry in
-                        let columnCount = max(2, Int(geometry.size.width / (236 + CommandKMetrics.cardSpacing)))
+                        let width = geometry.size.width
+                        let columnCount = max(2, Int(width / (236 + CommandKMetrics.cardSpacing)))
                         let totalSpacing = CGFloat(columnCount - 1) * CommandKMetrics.cardSpacing + (CommandKMetrics.contentPadding * 2)
-                        let cardWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
+                        let cardWidth = (width - totalSpacing) / CGFloat(columnCount)
 
                         let isSearching = !searchQuery.isEmpty
                         let effectiveMode: SwipeViewMode = isSearching ? .flat : viewModel.swipeViewMode
@@ -67,10 +69,14 @@ struct SwipeGalleryTab: View {
             if viewModel.swipeGalleryItems.isEmpty {
                 Task { await viewModel.loadSwipeGallery() }
             }
+            recomputeAvgHookScore()
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
             // Register context provider for global Cosmo window
             let provider = SwipeGalleryContextProvider(viewModel: viewModel, filteredCountRef: { [self] in viewModel.cachedFilteredSwipes.count }, searchQuery: searchQuery)
             CosmoWindowViewModel.shared.updateContext(provider: provider)
+        }
+        .onChange(of: viewModel.swipeGalleryItems.count) {
+            recomputeAvgHookScore()
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("swipeDeleted"))) { notification in
             if let uuid = notification.userInfo?["uuid"] as? String {
@@ -387,7 +393,7 @@ struct SwipeGalleryTab: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
-            if let avg = averageHookScore {
+            if let avg = cachedAvgHookScore {
                 Text(String(format: "%.1f", avg))
                     .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundColor(averageScoreColor)
@@ -405,14 +411,13 @@ struct SwipeGalleryTab: View {
         }
     }
 
-    private var averageHookScore: Double? {
+    private func recomputeAvgHookScore() {
         let scores = viewModel.swipeGalleryItems.compactMap(\.hookScore)
-        guard !scores.isEmpty else { return nil }
-        return scores.reduce(0, +) / Double(scores.count)
+        cachedAvgHookScore = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
     }
 
     private var averageScoreColor: Color {
-        guard let score = averageHookScore else { return Color(hex: "#64748B") }
+        guard let score = cachedAvgHookScore else { return Color(hex: "#64748B") }
         if score >= 8.0 { return Color(hex: "#10B981") }
         if score >= 5.0 { return Color(hex: "#3B82F6") }
         return Color(hex: "#64748B")
@@ -855,7 +860,7 @@ private struct SwipeThumbnailMini: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
-                AsyncImage(url: url) { phase in
+                CachedAsyncImage(url: url, stableKey: item.instagramId) { phase in
                     switch phase {
                     case .success(let image):
                         image
@@ -865,8 +870,6 @@ private struct SwipeThumbnailMini: View {
                         miniPlaceholder
                             .onAppear { generateLocalThumbnail() }
                     case .empty:
-                        miniPlaceholder
-                    @unknown default:
                         miniPlaceholder
                     }
                 }
@@ -960,7 +963,7 @@ private struct SwipeGalleryCard: View {
                     userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
                 )
                 NotificationCenter.default.post(
-                    name: CosmoNotification.NodeGraph.closeCommandK,
+                    name: CosmoNotification.NodeGraph.hideCommandK,
                     object: nil
                 )
             }
@@ -1005,7 +1008,7 @@ private struct SwipeGalleryCard: View {
                     userInfo: ["type": EntityType.research, "id": item.entityId, "commandKTab": "swipeGallery"]
                 )
                 NotificationCenter.default.post(
-                    name: CosmoNotification.NodeGraph.closeCommandK,
+                    name: CosmoNotification.NodeGraph.hideCommandK,
                     object: nil
                 )
             } label: {
@@ -1078,416 +1081,7 @@ private struct SwipeGalleryCard: View {
     }
 }
 
-struct SwipeGalleryCardView: View {
-    let item: SwipeGalleryItem
-    let cardWidth: CGFloat
-    var isSelected: Bool = false
-    var isPressed: Bool = false
-
-    @State private var isHovered = false
-    @State private var localThumbnail: NSImage?
-
-    /// Whether this item has any displayable thumbnail (remote URL or local video fallback)
-    private var hasThumbnail: Bool {
-        item.thumbnailUrl != nil || localThumbnail != nil || item.instagramId != nil
-    }
-
-    /// Height of the info section below the preview (title + subtitle + badge + padding)
-    private let infoSectionHeight: CGFloat = 96
-
-    private var previewHeight: CGFloat {
-        if hasThumbnail {
-            switch item.platform {
-            case "youtube":
-                return cardWidth * 9 / 16
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
-                return min(cardWidth * 16 / 9, 420)
-            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
-                return cardWidth * 5 / 4
-            default:
-                return cardWidth * 9 / 16
-            }
-        }
-        return 92
-    }
-
-    private var totalCardHeight: CGFloat {
-        previewHeight + infoSectionHeight
-    }
-
-    static func estimatedHeight(for item: SwipeGalleryItem, cardWidth: CGFloat) -> CGFloat {
-        let infoHeight: CGFloat = 96
-        let hasThumbnail = item.thumbnailUrl != nil || item.instagramId != nil
-        let previewHeight: CGFloat
-        if hasThumbnail {
-            switch item.platform {
-            case "youtube":
-                previewHeight = cardWidth * 9 / 16
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel":
-                previewHeight = min(cardWidth * 16 / 9, 420)
-            case "instagramCarousel", "instagram_carousel", "instagramPost", "instagram_post", "instagram":
-                previewHeight = cardWidth * 5 / 4
-            default:
-                previewHeight = cardWidth * 9 / 16
-            }
-        } else {
-            previewHeight = 80
-        }
-        return previewHeight + infoHeight
-    }
-
-    private var platformAccentColor: Color {
-        switch item.platform {
-        case "youtube", "youtubeShort", "youtube_short":
-            return Color(hex: "#FF4444")
-        case "instagram", "instagramReel", "instagramPost", "instagramCarousel",
-             "instagram_reel", "instagram_post", "instagram_carousel":
-            return Color(hex: "#C13584")
-        case "xPost", "twitter", "x_post":
-            return Color(hex: "#1DA1F2")
-        case "threads":
-            return Color(hex: "#AAAAAA")
-        case "website":
-            return Color(hex: "#8FC7A2")
-        default:
-            return Color(hex: "#8FC7A2")
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            previewArea
-                .frame(height: previewHeight)
-                .clipped()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(item.hookText ?? item.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(2)
-
-                subtitleLabel
-                bottomRowLabel
-            }
-            .padding(14)
-        }
-        .frame(height: totalCardHeight)
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: CommandKMetrics.cardCornerRadius, style: .continuous))
-        .commandKGalleryCardChrome(
-            isHovered: isHovered,
-            isSelected: isSelected,
-            accentColor: DS.entitySwipe
-        )
-        .cardSelectionOverlay(isSelected: isSelected, accentColor: DS.entitySwipe)
-        .scaleEffect(isPressed ? 0.985 : 1.0)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
-        .animation(ProMotionSprings.press, value: isPressed)
-        .onHover { hovering in isHovered = hovering }
-        .onAppear {
-            if item.thumbnailUrl == nil && item.instagramId != nil {
-                generateLocalThumbnail()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var previewArea: some View {
-        ZStack {
-            platformAccentColor.opacity(0.08)
-
-            previewContent
-
-            VStack {
-                HStack(alignment: .top) {
-                    HStack(spacing: 4) {
-                        Image(systemName: item.platformIcon)
-                            .font(.system(size: 9))
-                        Text(item.platformName)
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(DS.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(DS.surfaceElevated))
-                    .overlay(
-                        Capsule()
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    )
-
-                    Spacer()
-
-                    if let score = item.hookScore {
-                        Text(String(format: "%.1f", score))
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundColor(DS.textOnAccent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(item.scoreColor.opacity(0.85)))
-                    }
-                }
-
-                Spacer()
-
-                if let duration = item.duration, duration > 0 {
-                    HStack {
-                        Spacer()
-                        Text(formatDuration(duration))
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
-                            .foregroundColor(DS.text)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(DS.surfaceElevated))
-                            .overlay(
-                                Capsule()
-                                    .stroke(DS.borderSubtle, lineWidth: 1)
-                            )
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    @ViewBuilder
-    private var previewContent: some View {
-        if let localThumb = localThumbnail {
-            Image(nsImage: localThumb)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .frame(height: previewHeight)
-                .clipped()
-        } else if let thumbnailUrl = item.thumbnailUrl, let url = URL(string: thumbnailUrl) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: previewHeight)
-                        .clipped()
-                case .failure:
-                    fallbackPreview
-                        .onAppear { generateLocalThumbnail() }
-                case .empty:
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .tint(DS.textMuted)
-                @unknown default:
-                    fallbackPreview
-                        .onAppear { generateLocalThumbnail() }
-                }
-            }
-        } else {
-            fallbackPreview
-                .onAppear { generateLocalThumbnail() }
-        }
-    }
-
-    @ViewBuilder
-    private var fallbackPreview: some View {
-        VStack(spacing: 8) {
-            if let hookText = item.hookText, !hookText.isEmpty {
-                Text(hookText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                Spacer(minLength: 0)
-            } else {
-                Spacer(minLength: 0)
-                Image(systemName: item.platformIcon)
-                    .font(.system(size: 30))
-                    .foregroundColor(platformAccentColor.opacity(0.5))
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var subtitleLabel: some View {
-        let parts = [item.author, item.platformName].compactMap { $0 }.filter { !$0.isEmpty }
-
-        if !parts.isEmpty {
-            Text(parts.joined(separator: " · "))
-                .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
-                .lineLimit(1)
-        }
-    }
-
-    @ViewBuilder
-    private var bottomRowLabel: some View {
-        HStack {
-            if let hookType = item.hookType {
-                hookTypeBadgeLabel(hookType)
-            } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text("Pending")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundColor(Color(hex: "#64748B"))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color(hex: "#64748B").opacity(0.12))
-                .clipShape(Capsule())
-            }
-
-            Spacer()
-
-            Text(relativeDate)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.textMuted)
-        }
-    }
-
-    @ViewBuilder
-    private func hookTypeBadgeLabel(_ hookType: SwipeHookType) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: hookType.iconName)
-                .font(.system(size: 10))
-            Text(hookType.displayName)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(hookType.color)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(hookType.color.opacity(0.12))
-        .clipShape(Capsule())
-    }
-
-    // MARK: - Helpers
-
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let isoFormatterBasic = ISO8601DateFormatter()
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
-    private var relativeDate: String {
-        guard let date = Self.isoFormatter.date(from: item.createdAt)
-                ?? Self.isoFormatterBasic.date(from: item.createdAt) else {
-            return item.createdAt
-        }
-        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func formatDuration(_ seconds: Int) -> String {
-        let mins = seconds / 60
-        let secs = seconds % 60
-        return String(format: "%d:%02d", mins, secs)
-    }
-
-    // MARK: - Local Thumbnail Generation
-
-    /// Try to generate a thumbnail from the local Instagram video cache
-    private func generateLocalThumbnail() {
-        guard localThumbnail == nil,
-              let shortcode = item.instagramId, !shortcode.isEmpty else { return }
-
-        Task.detached(priority: .utility) {
-            if let image = await Self.thumbnailFromCache(shortcode: shortcode) {
-                await MainActor.run { localThumbnail = image }
-                return
-            }
-            // No cached thumb and no video — try re-extracting from Instagram
-            // (fetches fresh CDN URLs and caches the first carousel/thumbnail image)
-            if let image = await Self.extractAndCacheThumbnail(shortcode: shortcode) {
-                await MainActor.run { localThumbnail = image }
-            }
-        }
-    }
-
-    /// Check disk cache, then try generating from cached video
-    fileprivate static func thumbnailFromCache(shortcode: String) async -> NSImage? {
-        let thumbCache = thumbnailCacheDir()
-        let thumbPath = thumbCache.appendingPathComponent("thumb-\(shortcode).jpg")
-        if FileManager.default.fileExists(atPath: thumbPath.path),
-           let cached = NSImage(contentsOf: thumbPath) {
-            return cached
-        }
-
-        // Try generating from cached video file
-        guard let videoURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) else {
-            return nil
-        }
-
-        let asset = AVURLAsset(url: videoURL)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 600, height: 600)
-
-        do {
-            let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
-            let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-
-            if let tiffData = image.tiffRepresentation,
-               let bitmap = NSBitmapImageRep(data: tiffData),
-               let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                try? FileManager.default.createDirectory(at: thumbCache, withIntermediateDirectories: true)
-                try? jpegData.write(to: thumbPath)
-            }
-
-            return image
-        } catch {
-            return nil
-        }
-    }
-
-    /// Re-extract media from Instagram to get fresh URLs, download first image, cache it
-    fileprivate static func extractAndCacheThumbnail(shortcode: String) async -> NSImage? {
-        let igURL = URL(string: "https://www.instagram.com/p/\(shortcode)/")!
-
-        do {
-            let mediaData = try await InstagramMediaCache.shared.getMedia(for: igURL)
-
-            // Try carousel first image, then thumbnail
-            let imageURL: URL?
-            if let items = mediaData.carouselItems, !items.isEmpty,
-               let first = items.first(where: { $0.mediaType == .image }) ?? items.first {
-                imageURL = first.mediaURL
-            } else {
-                imageURL = mediaData.thumbnailURL
-            }
-
-            guard let downloadURL = imageURL else { return nil }
-            let (data, _) = try await URLSession.shared.data(from: downloadURL)
-            guard let nsImage = NSImage(data: data) else { return nil }
-
-            // Cache to disk
-            let thumbCache = thumbnailCacheDir()
-            let thumbPath = thumbCache.appendingPathComponent("thumb-\(shortcode).jpg")
-            if let tiffData = nsImage.tiffRepresentation,
-               let bitmap = NSBitmapImageRep(data: tiffData),
-               let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                try? FileManager.default.createDirectory(at: thumbCache, withIntermediateDirectories: true)
-                try? jpegData.write(to: thumbPath)
-            }
-
-            return nsImage
-        } catch {
-            return nil
-        }
-    }
-
-    fileprivate static func thumbnailCacheDir() -> URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
-    }
-}
+// SwipeGalleryCardView has been extracted to SwipeGalleryCardView.swift
 
 // MARK: - Cosmo Context Provider
 

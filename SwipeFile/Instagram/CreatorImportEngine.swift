@@ -29,6 +29,14 @@ enum CreatorImportState: Equatable {
     }
 }
 
+// MARK: - Saved Filter
+
+enum SavedFilter: String, CaseIterable, Sendable {
+    case all = "All"
+    case unsaved = "Unsaved"
+    case saved = "Saved"
+}
+
 // MARK: - Creator Import Engine
 
 @MainActor
@@ -44,11 +52,32 @@ final class CreatorImportEngine {
     var selectedPostIds: Set<String> = []
     var sortOption: ImportSortOption = .bestPerformers
     var autoTranscribe: Bool = true
+    var isCachedCatalog: Bool = false
+    var catalogAge: String?
+    var typeFilter: InstagramContentType? = nil
+    var savedFilter: SavedFilter = .all
+
+    /// UUID of the creator atom (set after profile fetch or cache load)
+    private(set) var creatorUUID: String?
 
     // MARK: - Computed
 
     var sortedPosts: [ImportedPost] {
-        sortOption.sort(importedPosts)
+        var filtered = importedPosts
+
+        if let typeFilter {
+            filtered = filtered.filter { $0.contentType == typeFilter }
+        }
+
+        switch savedFilter {
+        case .all: break
+        case .unsaved:
+            filtered = filtered.filter { !existingShortcodes.contains($0.shortcode) }
+        case .saved:
+            filtered = filtered.filter { existingShortcodes.contains($0.shortcode) }
+        }
+
+        return sortOption.sort(filtered)
     }
 
     var selectedPosts: [ImportedPost] {
@@ -158,6 +187,9 @@ final class CreatorImportEngine {
             let shortcodes = posts.map(\.shortcode)
             self.existingShortcodes = try await repository.findExistingShortcodes(shortcodes)
 
+            // Persist catalog to disk
+            await persistCatalog(posts: posts)
+
             importState = .idle
         } catch let error as ImportError {
             importState = .error(error.localizedDescription)
@@ -177,6 +209,7 @@ final class CreatorImportEngine {
         let creatorAtom: Atom
         do {
             creatorAtom = try await resolveOrCreateCreator()
+            self.creatorUUID = creatorAtom.uuid
         } catch {
             importState = .error("Failed to resolve creator: \(error.localizedDescription)")
             return 0
@@ -184,6 +217,7 @@ final class CreatorImportEngine {
 
         var savedCount = 0
         var savedAtomUUIDs: [String] = []
+        var transcribableUUIDs: [String] = []
 
         for post in postsToSave {
             do {
@@ -192,13 +226,18 @@ final class CreatorImportEngine {
                 savedCount += 1
                 importState = .saving(saved: savedCount, total: postsToSave.count)
 
-                // Trigger auto-transcription for video content
-                if autoTranscribe && post.contentType.isVideo {
-                    SwipeProcessingService.shared.processSwipeInBackground(uuid: atom.uuid)
+                // Collect UUIDs for batch transcription (video + carousel)
+                if autoTranscribe && (post.contentType.isVideo || post.contentType == .carousel) {
+                    transcribableUUIDs.append(atom.uuid)
                 }
             } catch {
                 print("[CreatorImport] Failed to save post \(post.shortcode): \(error)")
             }
+        }
+
+        // Fire batch transcription after all saves complete (parallel, max 3 concurrent)
+        if !transcribableUUIDs.isEmpty {
+            SwipeProcessingService.shared.processBatch(uuids: transcribableUUIDs)
         }
 
         // Update creator stats
@@ -257,6 +296,105 @@ final class CreatorImportEngine {
         creatorProfile = nil
         existingShortcodes = []
         selectedPostIds = []
+        isCachedCatalog = false
+        catalogAge = nil
+        creatorUUID = nil
+        typeFilter = nil
+        savedFilter = .all
+    }
+
+    // MARK: - Catalog Persistence
+
+    /// Load a previously cached catalog from disk for an existing creator
+    func loadCachedCatalog(creatorUUID: String) async {
+        self.creatorUUID = creatorUUID
+
+        guard let posts = CatalogStore.load(creatorUUID: creatorUUID) else {
+            return
+        }
+
+        self.importedPosts = posts
+        self.isCachedCatalog = true
+
+        // Rebuild profile from creator atom metadata
+        do {
+            let creators = try await repository.fetchCreators(platform: "instagram")
+            if let creatorAtom = creators.first(where: { $0.uuid == creatorUUID }),
+               let meta = creatorAtom.metadataValue(as: CreatorMetadata.self) {
+                creatorProfile = ImportedCreatorProfile(
+                    username: meta.handle?.replacingOccurrences(of: "@", with: "") ?? "",
+                    fullName: creatorAtom.title,
+                    biography: meta.bio,
+                    followerCount: meta.followerCount ?? 0,
+                    followingCount: meta.followingCount ?? 0,
+                    postsCount: meta.postsCount ?? 0,
+                    profilePicUrl: meta.thumbnailUrl,
+                    isPrivate: false,
+                    isVerified: false
+                )
+
+                // Compute catalog age
+                if let fetchedAt = meta.catalogFetchedAt,
+                   let date = ISO8601DateFormatter().date(from: fetchedAt) {
+                    catalogAge = formatCatalogAge(from: date)
+                }
+            }
+        } catch {
+            print("[CreatorImport] Failed to load creator metadata: \(error)")
+        }
+
+        // Rebuild existing shortcodes
+        let shortcodes = posts.map(\.shortcode)
+        self.existingShortcodes = (try? await repository.findExistingShortcodes(shortcodes)) ?? []
+    }
+
+    /// Persist the current catalog to disk and update creator metadata
+    private func persistCatalog(posts: [ImportedPost]) async {
+        // Resolve creator UUID if not already set
+        if creatorUUID == nil {
+            do {
+                let creatorAtom = try await resolveOrCreateCreator()
+                creatorUUID = creatorAtom.uuid
+            } catch {
+                print("[CreatorImport] Failed to resolve creator for catalog persistence: \(error)")
+                return
+            }
+        }
+
+        guard let uuid = creatorUUID else { return }
+
+        // Save catalog to disk
+        do {
+            try CatalogStore.save(posts: posts, forCreator: uuid)
+        } catch {
+            print("[CreatorImport] Failed to save catalog to disk: \(error)")
+            return
+        }
+
+        // Update creator metadata with catalog info
+        do {
+            _ = try await repository.update(uuid: uuid) { atom in
+                guard var meta = atom.metadataValue(as: CreatorMetadata.self) else { return }
+                meta.catalogPostCount = posts.count
+                meta.catalogFetchedAt = ISO8601DateFormatter().string(from: Date())
+                if let encoded = try? JSONEncoder().encode(meta),
+                   let jsonStr = String(data: encoded, encoding: .utf8) {
+                    atom.metadata = jsonStr
+                }
+            }
+        } catch {
+            print("[CreatorImport] Failed to update creator catalog metadata: \(error)")
+        }
+    }
+
+    private func formatCatalogAge(from date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        let hours = Int(interval / 3600)
+        if hours < 1 { return "Fetched just now" }
+        if hours < 24 { return "Fetched \(hours)h ago" }
+        let days = hours / 24
+        if days == 1 { return "Fetched yesterday" }
+        return "Fetched \(days) days ago"
     }
 
     // MARK: - Private: Save Post

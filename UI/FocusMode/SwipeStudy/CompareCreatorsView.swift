@@ -28,22 +28,18 @@ struct CompareCreatorsView: View {
     }
 
     var body: some View {
-        ZStack {
-            DS.bg.ignoresSafeArea()
+        VStack(spacing: 0) {
+            topBar
+            Divider().background(DS.borderActive)
 
-            VStack(spacing: 0) {
-                topBar
-                Divider().background(DS.borderActive)
-
-                if selectedCreators.count < 2 {
-                    selectionPrompt
-                } else {
-                    comparisonContent
-                }
+            if selectedCreators.count < 2 {
+                selectionPrompt
+            } else {
+                comparisonContent
             }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 8)
         }
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 8)
         .onAppear {
             if !initialSelection.isEmpty {
                 selectedCreators = Array(initialSelection.prefix(maxCompare))
@@ -69,7 +65,7 @@ struct CompareCreatorsView: View {
                     Text("Back")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(DS.border, in: Capsule())
@@ -78,11 +74,11 @@ struct CompareCreatorsView: View {
 
             Image(systemName: "arrow.left.arrow.right")
                 .font(.system(size: 14))
-                .foregroundColor(gold)
+                .foregroundStyle(gold)
 
             Text("Compare Creators")
                 .font(.system(size: 18, weight: .bold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
@@ -97,7 +93,7 @@ struct CompareCreatorsView: View {
                         Text("Add Creator")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(gold.opacity(0.12), in: Capsule())
@@ -117,11 +113,11 @@ struct CompareCreatorsView: View {
             Spacer()
             Image(systemName: "arrow.left.arrow.right")
                 .font(.system(size: 48))
-                .foregroundColor(gold.opacity(0.3))
+                .foregroundStyle(gold.opacity(0.3))
 
             Text("Select 2-3 creators to compare")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             // Quick-select chips from available creators
             ScrollView(.horizontal, showsIndicators: false) {
@@ -150,26 +146,23 @@ struct CompareCreatorsView: View {
                         .frame(width: 28, height: 28)
                     Text(initialsFor(atom.title))
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(gold)
+                        .foregroundStyle(gold)
                 }
                 Text(atom.title ?? "Unknown")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(gold)
+                        .foregroundStyle(gold)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? gold.opacity(0.2) : DS.border)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(isSelected ? gold.opacity(0.5) : DS.borderActive, lineWidth: 1)
-                    )
+            .commandKToolbarChip(
+                isActive: isSelected,
+                activeFill: gold.opacity(0.2),
+                activeBorder: gold.opacity(0.5)
             )
         }
         .buttonStyle(.plain)
@@ -235,16 +228,16 @@ struct CompareCreatorsView: View {
                             .frame(width: 48, height: 48)
                         Text(initialsFor(atom.title))
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(gold)
+                            .foregroundStyle(gold)
                     }
                     Text(atom.title ?? "Unknown")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
                     if let handle = meta?.handle {
                         Text(handle)
                             .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     // Remove button
                     Button {
@@ -252,7 +245,7 @@ struct CompareCreatorsView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -260,11 +253,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(16)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     // MARK: - Dimension Row (numeric)
@@ -278,10 +267,10 @@ struct CompareCreatorsView: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 11))
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .frame(width: 120, alignment: .leading)
 
@@ -291,7 +280,7 @@ struct CompareCreatorsView: View {
                 VStack(spacing: 6) {
                     Text(val.map { String(format: "%.1f", $0) } ?? "--")
                         .font(.system(size: 16, weight: .bold).monospacedDigit())
-                        .foregroundColor(isWinner ? gold : .white)
+                        .foregroundStyle(isWinner ? gold : DS.text)
 
                     // Visual bar
                     if let val = val, let maxVal = maxVal, maxVal > 0 {
@@ -306,11 +295,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(14)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     private func barView(proportion: Double, isWinner: Bool) -> some View {
@@ -330,7 +315,7 @@ struct CompareCreatorsView: View {
             Text("Best")
                 .font(.system(size: 9, weight: .bold))
         }
-        .foregroundColor(gold)
+        .foregroundStyle(gold)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(gold.opacity(0.15), in: Capsule())
@@ -343,11 +328,11 @@ struct CompareCreatorsView: View {
             HStack(spacing: 6) {
                 Image(systemName: "text.book.closed.fill")
                     .font(.system(size: 11))
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                 Text("NARRATIVE STYLES")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.0)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -368,17 +353,17 @@ struct CompareCreatorsView: View {
                                     .frame(width: 6, height: 6)
                                 Text(style.displayName)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(DS.text)
+                                    .foregroundStyle(DS.text)
                                 Spacer()
                                 Text("\(count)")
                                     .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                    .foregroundColor(DS.textSecondary)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                         }
                         if narrativeCounts.isEmpty {
                             Text("No data")
                                 .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -386,11 +371,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(14)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     // MARK: - Framework Comparison
@@ -400,11 +381,11 @@ struct CompareCreatorsView: View {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.3.group")
                     .font(.system(size: 11))
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                 Text("FRAMEWORKS")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.0)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -422,20 +403,20 @@ struct CompareCreatorsView: View {
                             HStack(spacing: 4) {
                                 Text(fw.abbreviation)
                                     .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(fw.color)
+                                    .foregroundStyle(fw.color)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
                                     .background(fw.color.opacity(0.15), in: Capsule())
                                 Spacer()
                                 Text("\(count)")
                                     .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                    .foregroundColor(DS.textSecondary)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                         }
                         if fwCounts.isEmpty {
                             Text("No data")
                                 .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -443,11 +424,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(14)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     // MARK: - Emotion Comparison
@@ -457,11 +434,11 @@ struct CompareCreatorsView: View {
             HStack(spacing: 6) {
                 Image(systemName: "heart.fill")
                     .font(.system(size: 11))
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                 Text("EMOTIONAL PATTERNS")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.0)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -479,20 +456,20 @@ struct CompareCreatorsView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: emotion.iconName)
                                     .font(.system(size: 9))
-                                    .foregroundColor(emotion.color)
+                                    .foregroundStyle(emotion.color)
                                 Text(emotion.displayName)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(DS.text)
+                                    .foregroundStyle(DS.text)
                                 Spacer()
                                 Text("\(count)")
                                     .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                    .foregroundColor(DS.textSecondary)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                         }
                         if emotionCounts.isEmpty {
                             Text("No data")
                                 .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -500,11 +477,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(14)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     // MARK: - Persuasion Comparison
@@ -514,11 +487,11 @@ struct CompareCreatorsView: View {
             HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
                     .font(.system(size: 11))
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
                 Text("PERSUASION TECHNIQUES")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(1.0)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -537,21 +510,21 @@ struct CompareCreatorsView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: pType.iconName)
                                     .font(.system(size: 9))
-                                    .foregroundColor(pType.color)
+                                    .foregroundStyle(pType.color)
                                 Text(pType.displayName)
                                     .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(DS.text)
+                                    .foregroundStyle(DS.text)
                                     .lineLimit(1)
                                 Spacer()
                                 Text("\(count)")
                                     .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                    .foregroundColor(DS.textSecondary)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                         }
                         if typeCounts.isEmpty {
                             Text("No data")
                                 .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -559,11 +532,7 @@ struct CompareCreatorsView: View {
             }
         }
         .padding(14)
-        .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(DS.border, lineWidth: 1)
-        )
+        .commandKSectionChrome()
     }
 
     // MARK: - Creator Picker Sheet
@@ -573,11 +542,11 @@ struct CompareCreatorsView: View {
             HStack {
                 Text("Select Creator")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Button("Done") { showPicker = false }
                     .buttonStyle(.plain)
-                    .foregroundColor(gold)
+                    .foregroundStyle(gold)
             }
 
             ScrollView {
@@ -592,7 +561,6 @@ struct CompareCreatorsView: View {
         }
         .padding(20)
         .frame(width: 400)
-        .background(DS.bg)
     }
 
     @ViewBuilder
@@ -608,17 +576,17 @@ struct CompareCreatorsView: View {
                         .frame(width: 32, height: 32)
                     Text(initialsFor(atom.title))
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(gold)
+                        .foregroundStyle(gold)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(atom.title ?? "Unknown")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                     if let handle = meta?.handle {
                         Text(handle)
                             .font(.system(size: 11))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
 
@@ -627,21 +595,21 @@ struct CompareCreatorsView: View {
                 if let count = meta?.swipeCount, count > 0 {
                     Text("\(count) swipes")
                         .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(gold)
+                        .foregroundStyle(gold)
                 } else if selectedCreators.count >= maxCompare {
                     Image(systemName: "circle")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 } else {
                     Image(systemName: "circle")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .padding(10)

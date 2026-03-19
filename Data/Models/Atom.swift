@@ -105,6 +105,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Agent Learning
     case agentLearning = "agent_learning"               // Agent outcome tracking & taste profile data
 
+    // MARK: - Areas (Things 3-inspired hierarchy)
+    case area                                           // Permanent life category container for projects
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -112,7 +115,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image:
+             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image, .area:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
             return .leveling
@@ -252,6 +255,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "Agent Learning"
         // Image
         case .image: return "Image"
+        // Areas
+        case .area: return "Area"
         }
     }
 
@@ -338,6 +343,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "Agent Learning"
         // Image
         case .image: return "Images"
+        // Areas
+        case .area: return "Areas"
         }
     }
 
@@ -424,6 +431,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "brain"
         // Image
         case .image: return "photo.fill"
+        // Areas
+        case .area: return "square.stack.fill"
         }
     }
 }
@@ -1251,17 +1260,13 @@ extension Atom {
     // MARK: - Structured Data
 
     /// Get structured data as decoded type
+    /// Get structured data as decoded type (silently returns nil on type mismatch)
     func structuredData<T: Decodable>(as type: T.Type) -> T? {
         guard let structured = structured,
               let data = structured.data(using: .utf8) else {
             return nil
         }
-        do {
-            return try JSONDecoder().decode(type, from: data)
-        } catch {
-            print("Atom[\(uuid.prefix(8))]: Failed to decode structured as \(T.self): \(error.localizedDescription)")
-            return nil
-        }
+        return try? JSONDecoder().decode(type, from: data)
     }
 
     /// Create a copy with encoded structured data
@@ -1273,18 +1278,13 @@ extension Atom {
 
     // MARK: - Metadata
 
-    /// Get metadata as decoded type
+    /// Get metadata as decoded type (silently returns nil on type mismatch)
     func metadataValue<T: Decodable>(as type: T.Type) -> T? {
         guard let metadata = metadata,
               let data = metadata.data(using: .utf8) else {
             return nil
         }
-        do {
-            return try JSONDecoder().decode(type, from: data)
-        } catch {
-            print("Atom[\(uuid.prefix(8))]: Failed to decode metadata as \(T.self): \(error.localizedDescription)")
-            return nil
-        }
+        return try? JSONDecoder().decode(type, from: data)
     }
 
     /// Create a copy with encoded metadata
@@ -1826,6 +1826,10 @@ struct CreatorMetadata: Codable, Sendable {
     var bio: String?                  // Creator bio from profile
     var postsCount: Int?              // Total public posts count
     var followingCount: Int?          // Following count
+
+    // Catalog persistence
+    var catalogPostCount: Int?        // Number of posts in cached catalog file
+    var catalogFetchedAt: String?     // ISO8601 timestamp of last Apify catalog fetch
 }
 
 /// Metadata for user-defined taxonomy values (.taxonomyValue type)
@@ -2146,6 +2150,96 @@ struct TaskMetadata: Codable, Sendable {
 
     /// Manual sort order for drag-to-reorder in today view (lower = higher)
     var manualSortOrder: Int?
+
+    // MARK: - Things 3 Scheduling Model
+
+    /// "When" date — when the user plans to work on this (distinct from deadline/dueDate)
+    var whenDate: String?
+
+    /// Time of day preference: "morning", "evening", or nil
+    var timeOfDay: String?
+
+    /// Scheduling bucket: "anytime", "someday", or nil (nil = has a whenDate, so it's scheduled)
+    var schedulingState: String?
+
+    // MARK: - Project Hierarchy
+
+    /// UUID of the heading this task belongs to within a project
+    var headingUUID: String?
+
+    /// Sort position within a heading/section
+    var sectionSortOrder: Int?
+
+    // MARK: - Linked Atoms (max 3)
+
+    /// JSON array of TaskLinkedAtom — replaces single linkedIdeaUUID/linkedContentUUID/linkedAtomUUID
+    var linkedAtoms: String?
+
+    /// JSON array of RichMention — @ mentions embedded in the task title
+    var titleMentions: String?
+}
+
+// MARK: - Task Linked Atom
+
+/// An atom linked to a task for contextual work sessions (max 3 per task)
+public struct TaskLinkedAtom: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public var atomUUID: String
+    public var atomType: String       // AtomType raw value
+    public var titleSnapshot: String  // Title at link time (display without DB query)
+    public var isPrimary: Bool        // Primary = opens as main view on play
+
+    public init(id: String = UUID().uuidString, atomUUID: String, atomType: String, titleSnapshot: String, isPrimary: Bool = false) {
+        self.id = id
+        self.atomUUID = atomUUID
+        self.atomType = atomType
+        self.titleSnapshot = titleSnapshot
+        self.isPrimary = isPrimary
+    }
+}
+
+// MARK: - Checklist Item (Things 3-style subtasks)
+
+/// A lightweight checklist item within a task, stored as JSON in TaskMetadata.checklist
+public struct ChecklistItem: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public var title: String
+    public var isCompleted: Bool
+    public var sortOrder: Int
+
+    public init(id: String = UUID().uuidString, title: String, isCompleted: Bool = false, sortOrder: Int = 0) {
+        self.id = id
+        self.title = title
+        self.isCompleted = isCompleted
+        self.sortOrder = sortOrder
+    }
+}
+
+// MARK: - Project Heading (Things 3-style section dividers)
+
+/// A lightweight section heading within a project, stored as JSON in ProjectMetadata.headings
+struct ProjectHeading: Codable, Identifiable, Equatable, Sendable {
+    let id: String
+    var title: String
+    var sortOrder: Int
+    var isCollapsed: Bool
+
+    init(id: String = UUID().uuidString, title: String, sortOrder: Int = 0, isCollapsed: Bool = false) {
+        self.id = id
+        self.title = title
+        self.sortOrder = sortOrder
+        self.isCollapsed = isCollapsed
+    }
+}
+
+// MARK: - Area Metadata (Things 3-style life categories)
+
+/// Metadata for area atoms — permanent containers that group projects
+struct AreaMetadata: Codable, Sendable {
+    var icon: String?
+    var color: String?
+    var sortOrder: Int?
+    var isCollapsed: Bool?
 }
 
 // MARK: - Synthesis Metadata (WP5 Lasso Synthesis)
@@ -2221,6 +2315,32 @@ struct ProjectMetadata: Codable, Sendable {
     var priority: String?
     var tags: [String]?
     var rootThinkspaceUuid: String?  // UUID of auto-created root ThinkSpace
+
+    // MARK: - Things 3 Project Features
+
+    /// Parent area UUID (life category container)
+    var areaUUID: String?
+
+    /// Rich description / purpose notes for the project
+    var projectNotes: String?
+
+    /// When to start working on the project (ISO8601)
+    var whenDate: String?
+
+    /// Hard deadline for the entire project (ISO8601)
+    var deadline: String?
+
+    /// Whether the project is completed
+    var isCompleted: Bool?
+
+    /// ISO8601 completion timestamp
+    var completedAt: String?
+
+    /// JSON array of ProjectHeading — section dividers within the project
+    var headings: String?
+
+    /// JSON array of task UUIDs in display order
+    var taskSortOrder: String?
 }
 
 /// Metadata for content atoms

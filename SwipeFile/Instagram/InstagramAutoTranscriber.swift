@@ -93,8 +93,7 @@ private enum SpeechPipelineSource: Sendable {
 
 // MARK: - Instagram Auto Transcriber
 
-@MainActor
-final class InstagramAutoTranscriber {
+final class InstagramAutoTranscriber: Sendable {
     static let shared = InstagramAutoTranscriber()
 
     private let framesPerSecond: Double = 4.0
@@ -412,7 +411,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Call Gemini Vision API for a batch of frames
-    private nonisolated func callGeminiVision(
+    private func callGeminiVision(
         frameImages: [Data],
         timestamps: [TimeInterval],
         batchIndex: Int,
@@ -510,7 +509,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Parse Gemini's JSON response into TranscriptSlides
-    private nonisolated func parseGeminiSlides(
+    private func parseGeminiSlides(
         from response: String,
         timestamps: [TimeInterval],
         batchIndex: Int
@@ -570,7 +569,7 @@ final class InstagramAutoTranscriber {
 
     /// Join visual line breaks within slide body text.
     /// Keeps the year/date header on its own line but joins all body lines into one sentence.
-    private nonisolated func joinVisualLineBreaks(_ text: String) -> String {
+    private func joinVisualLineBreaks(_ text: String) -> String {
         let lines = text.components(separatedBy: "\n").map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty }
@@ -593,7 +592,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Fallback: parse a raw JSON array of slide objects
-    private nonisolated func parseGeminiSlidesArray(
+    private func parseGeminiSlidesArray(
         from response: String,
         timestamps: [TimeInterval]
     ) -> [TranscriptSlide] {
@@ -625,7 +624,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Merge slides from multiple Gemini batches, deduplicating at boundaries
-    nonisolated func mergeGeminiBatchResults(batches: [[TranscriptSlide]]) -> [TranscriptSlide] {
+    func mergeGeminiBatchResults(batches: [[TranscriptSlide]]) -> [TranscriptSlide] {
         guard !batches.isEmpty else { return [] }
 
         var merged: [TranscriptSlide] = []
@@ -1041,7 +1040,10 @@ final class InstagramAutoTranscriber {
             return nil
         }
 
-        var didConsumeInput = false
+        // AVAudioConverterInputBlock executes synchronously within convert() —
+        // safe to capture mutable state and non-Sendable buffer.
+        nonisolated(unsafe) var didConsumeInput = false
+        nonisolated(unsafe) let capturedInput = inputBuffer
         var conversionError: NSError?
         let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
             if didConsumeInput {
@@ -1050,7 +1052,7 @@ final class InstagramAutoTranscriber {
             }
             didConsumeInput = true
             outStatus.pointee = .haveData
-            return inputBuffer
+            return capturedInput
         }
 
         let status = converter.convert(to: outputBuffer, error: &conversionError, withInputFrom: inputBlock)
@@ -1542,7 +1544,7 @@ final class InstagramAutoTranscriber {
         return updated
     }
 
-    nonisolated func shouldMergeGeminiBoundarySlides(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
+    func shouldMergeGeminiBoundarySlides(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
         let lhsFingerprint = normalizedTextFingerprint(lhs.text)
         let rhsFingerprint = normalizedTextFingerprint(rhs.text)
         guard !lhsFingerprint.isEmpty, !rhsFingerprint.isEmpty else { return false }
@@ -1558,7 +1560,7 @@ final class InstagramAutoTranscriber {
         return overlap >= 0.92 && geminiSlidesOverlapInTime(lhs, rhs)
     }
 
-    private nonisolated func geminiSlidesOverlapInTime(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
+    private func geminiSlidesOverlapInTime(_ lhs: TranscriptSlide, _ rhs: TranscriptSlide) -> Bool {
         guard let lhsStart = lhs.timestamp,
               let lhsEnd = lhs.endTimestamp ?? lhs.timestamp,
               let rhsStart = rhs.timestamp else {
@@ -1598,6 +1600,14 @@ final class InstagramAutoTranscriber {
             Keep those line breaks. Only join lines that are clearly a single sentence fragmented by OCR. \
             However, if multiple lines are clearly part of the same flowing paragraph (full sentences that \
             continue from one line to the next), join them into one paragraph.
+            7. NEVER remove text that could be part of the creator's core message. When in doubt about \
+            whether text is background/watermark vs. core content, KEEP IT. Only remove text you are \
+            highly confident is a watermark, account handle overlay, or UI element.
+            8. PRESERVE all numbers, numbered lists, statistics, currency amounts, and dates exactly as they appear.
+            9. FORMAT for readability: If a slide has a heading or title line (e.g. "#1- Topic", "Step 3:", \
+            a short bold statement), add a blank line after it before the body text. If arrow-separated lists \
+            appear (→ item → item → item), reformat them with each item on its own line starting with →. \
+            Keep bullet points (•, -, *) and numbered items each on their own line.
             """
         } else {
             lineBreakRule = """
@@ -1625,7 +1635,7 @@ final class InstagramAutoTranscriber {
         original raw text for that slide.
         5. KEEP the creator's original wording — do not rephrase or add new content.
         \(lineBreakRule)
-        7. Each slide should contain the COMPLETE text from that slide — do not \
+        10. Each slide should contain the COMPLETE text from that slide — do not \
         truncate or summarize.
 
         Return ONLY valid JSON in this format:
@@ -1729,12 +1739,30 @@ final class InstagramAutoTranscriber {
             return updated
         }
         sanitized = correctLikelyYearOutliers(in: sanitized)
+        sanitized = deduplicateConsecutiveSlides(sanitized)
 
         for index in sanitized.indices {
             sanitized[index].slideNumber = index + 1
         }
 
         return sanitized
+    }
+
+    /// Remove consecutive slides whose text is near-identical (Jaccard ≥ 0.92).
+    /// Reels can produce duplicate slides when the same overlay reappears at different timestamps.
+    private func deduplicateConsecutiveSlides(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
+        guard slides.count > 1 else { return slides }
+        var result: [TranscriptSlide] = [slides[0]]
+        for i in 1..<slides.count {
+            let prevNorm = normalizedLineKey(result[result.count - 1].text)
+            let currNorm = normalizedLineKey(slides[i].text)
+            let prevWords = Set(prevNorm.split(separator: " ").map(String.init))
+            let currWords = Set(currNorm.split(separator: " ").map(String.init))
+            if jaccardSimilarity(prevWords, currWords) < 0.92 {
+                result.append(slides[i])
+            }
+        }
+        return result
     }
 
     private func sanitizeSlideText(_ text: String) -> String {
@@ -1748,7 +1776,12 @@ final class InstagramAutoTranscriber {
 
         var mergedLines: [String] = []
         for line in rawLines {
-            guard !isLikelyArtifactLine(line) else { continue }
+            guard !isLikelyArtifactLine(line) else {
+                #if DEBUG
+                print("InstagramAutoTranscriber: Dropped artifact line: \"\(line)\"")
+                #endif
+                continue
+            }
             if let last = mergedLines.last, shouldJoinLine(previous: last, next: line) {
                 mergedLines.removeLast()
                 let joiner = last.hasSuffix("-") ? "" : " "
@@ -1766,6 +1799,18 @@ final class InstagramAutoTranscriber {
 
     private func shouldJoinLine(previous: String, next: String) -> Bool {
         if previous.hasSuffix("-") { return true }
+        // Don't join numbered list items (e.g. "50. Mississippi ($186,618)")
+        let numberedPattern = #"^\d+[\.\)]"#
+        if previous.range(of: numberedPattern, options: .regularExpression) != nil ||
+            next.range(of: numberedPattern, options: .regularExpression) != nil {
+            return false
+        }
+        // Don't join arrow or bullet list items
+        let bulletPattern = #"^[→▸►•·\-\*]\s"#
+        if next.range(of: bulletPattern, options: .regularExpression) != nil ||
+            previous.range(of: bulletPattern, options: .regularExpression) != nil {
+            return false
+        }
         if next.count <= 3 { return true }
         if next.first?.isLowercase == true && !endsSentence(previous) { return true }
         if previous.count <= 14 && next.count <= 14 { return true }
@@ -1781,13 +1826,25 @@ final class InstagramAutoTranscriber {
         let compact = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if compact.count <= 1 { return true }
 
-        let symbols = compact.unicodeScalars.filter { !CharacterSet.alphanumerics.contains($0) && !$0.properties.isWhitespace }
-        if symbols.count >= 3 { return true }
+        // Common punctuation in real content — don't count as suspicious symbols
+        let contentPunctuation = CharacterSet(charactersIn: ".,;:!?()[]$%&@#/'-\"—–…✓✗•·")
+        let symbols = compact.unicodeScalars.filter {
+            !CharacterSet.alphanumerics.contains($0) &&
+                !$0.properties.isWhitespace &&
+                !contentPunctuation.contains($0)
+        }
+        // Only flag as artifact if suspicious symbols dominate the line
+        let ratio = Double(symbols.count) / Double(compact.count)
+        if symbols.count >= 3 && ratio > 0.3 { return true }
 
         let words = compact.split(separator: " ").map(String.init)
         if words.count == 1 {
             let word = words[0]
-            if word.count <= 3 { return true }
+            if word.count <= 3 {
+                let hasDigit = word.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
+                let hasVowel = word.lowercased().unicodeScalars.contains { "aeiouy".unicodeScalars.contains($0) }
+                if !hasDigit && !hasVowel { return true }
+            }
             let letters = word.unicodeScalars.filter { CharacterSet.letters.contains($0) }
             let vowels = letters.filter { "aeiouAEIOU".unicodeScalars.contains($0) }
             if letters.count >= 5 && vowels.count == 0 { return true }
@@ -1796,7 +1853,7 @@ final class InstagramAutoTranscriber {
         return false
     }
 
-    private nonisolated func normalizedTextFingerprint(_ text: String) -> String {
+    private func normalizedTextFingerprint(_ text: String) -> String {
         normalizedLineKey(text)
     }
 
@@ -1977,14 +2034,21 @@ final class InstagramAutoTranscriber {
         var normalizedSeen: [String] = []
 
         for line in lines {
-            guard let cleaned = cleanOCRLine(line) else { continue }
+            let cleaned = line
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\u{2019}", with: "'")
+            guard !cleaned.isEmpty else { continue }
             let normalized = normalizedLineKey(cleaned)
             guard !normalized.isEmpty else { continue }
 
             let isDuplicate = normalizedSeen.contains { existing in
-                existing == normalized ||
-                    existing.contains(normalized) ||
-                    normalized.contains(existing)
+                if existing == normalized { return true }
+                // Use word-level Jaccard similarity instead of substring matching
+                let existingWords = Set(existing.split(separator: " ").map(String.init))
+                let normalizedWords = Set(normalized.split(separator: " ").map(String.init))
+                return jaccardSimilarity(existingWords, normalizedWords) >= 0.85
             }
 
             if !isDuplicate {
@@ -1996,7 +2060,7 @@ final class InstagramAutoTranscriber {
         return unique
     }
 
-    private nonisolated func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
+    private func jaccardSimilarity(_ lhs: Set<String>, _ rhs: Set<String>) -> Double {
         let intersection = lhs.intersection(rhs).count
         let union = lhs.union(rhs).count
         return union > 0 ? Double(intersection) / Double(union) : 0
@@ -2140,7 +2204,7 @@ final class InstagramAutoTranscriber {
     }
 
     /// Call Gemini Vision for a single carousel image
-    private nonisolated func callGeminiVisionForSingleImage(
+    private func callGeminiVisionForSingleImage(
         jpegData: Data,
         slideIndex: Int,
         apiKey: String
@@ -2213,14 +2277,14 @@ final class InstagramAutoTranscriber {
 
     // MARK: - OCR Helpers
 
-    nonisolated private func cleanOCRLine(_ raw: String) -> String? {
+    private func cleanOCRLine(_ raw: String) -> String? {
         let compact = raw
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "’", with: "'")
 
-        guard compact.count >= 3 else { return nil }
+        guard compact.count >= 2 else { return nil }
 
         let scalarCount = compact.unicodeScalars.count
         guard scalarCount > 0 else { return nil }
@@ -2233,7 +2297,7 @@ final class InstagramAutoTranscriber {
         return compact
     }
 
-    nonisolated private func normalizedLineKey(_ text: String) -> String {
+    private func normalizedLineKey(_ text: String) -> String {
         text
             .lowercased()
             .replacingOccurrences(of: "’", with: "'")

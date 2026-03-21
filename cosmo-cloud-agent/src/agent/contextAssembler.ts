@@ -53,7 +53,7 @@ async function buildCachedPrompt(intent: AgentIntent): Promise<string> {
   const sections: string[] = [];
 
   // Identity prompt
-  const isLightweight = ['capture', 'correct', 'meta'].includes(intent);
+  const isLightweight = ['capture', 'correct', 'meta', 'plan'].includes(intent);
   if (isLightweight) {
     sections.push(LIGHTWEIGHT_IDENTITY);
   } else {
@@ -90,23 +90,29 @@ async function buildDynamicPrompt(intent: AgentIntent, chatId: string): Promise<
   const intentContext = await buildIntentContext(intent);
   if (intentContext) sections.push(intentContext);
 
-  // Standing instructions
-  const standingInstructions = await buildStandingInstructions();
-  if (standingInstructions) sections.push(standingInstructions);
+  // Standing instructions (skip for lightweight intents — tasks don't need them)
+  if (!['capture', 'correct', 'plan'].includes(intent)) {
+    const standingInstructions = await buildStandingInstructions();
+    if (standingInstructions) sections.push(standingInstructions);
+  }
 
-  // Saved analyses (for writing/strategy intents)
+  // Saved analyses (for writing/strategy intents only)
   if (['draft', 'strategy', 'analyze', 'brainstorm'].includes(intent)) {
     const analyses = await buildSavedAnalyses();
     if (analyses) sections.push(analyses);
   }
 
-  // Learned preferences
-  const prefs = await buildPreferences();
-  if (prefs) sections.push(prefs);
+  // Learned preferences (skip for lightweight intents)
+  if (!['capture', 'correct', 'plan'].includes(intent)) {
+    const prefs = await buildPreferences();
+    if (prefs) sections.push(prefs);
+  }
 
-  // Learned skills (lessons)
-  const skills = await buildSkills(intent);
-  if (skills) sections.push(skills);
+  // Learned skills/lessons (skip for lightweight intents)
+  if (!['capture', 'correct', 'plan'].includes(intent)) {
+    const skills = await buildSkills(intent);
+    if (skills) sections.push(skills);
+  }
 
   // Conversation history
   const convHistory = await buildConversationHistory(chatId);

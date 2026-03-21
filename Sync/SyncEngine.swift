@@ -41,9 +41,11 @@ class SyncEngine: ObservableObject {
     private let extendedFenceExpiryMs: Int64 = 120_000
 
     // MARK: - Sync Tables (unified)
-    // Phase 0: Switch from 9 legacy tables to unified atoms + supporting tables
+    // Push: atoms + canvas_blocks go UP to Supabase
+    // Pull: ONLY atoms come DOWN (canvas_blocks are Mac-only, never modified by cloud)
     // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
-    private let syncTables = ["atoms", "canvas_blocks"]
+    private let pushTables = ["atoms", "canvas_blocks"]
+    private let pullTables = ["atoms"]  // Only pull cloud-originated changes
 
     private init() {
         supabaseClient = SupabaseClient.shared
@@ -84,6 +86,9 @@ class SyncEngine: ObservableObject {
 
     private func performBackgroundSync() async {
         guard isOnline, syncState != .syncing else { return }
+
+        // Don't sync if not authenticated — RLS will block everything
+        guard let client = supabaseClient, client.isAuthenticated else { return }
 
         syncState = .syncing
 
@@ -233,7 +238,7 @@ class SyncEngine: ObservableObject {
     private func pullRemoteChanges() async {
         guard isOnline, let client = supabaseClient else { return }
 
-        for table in syncTables {
+        for table in pullTables {
             do {
                 let lastSync = await getLastPullTime(for: table)
                 let remoteChanges = try await client.fetchChanges(
@@ -256,10 +261,11 @@ class SyncEngine: ObservableObject {
     private func applyRemoteChange(table: String, data: [String: Any]) async {
         guard let uuid = data["uuid"] as? String else { return }
 
-        // Skip changes from our own device
-        if let source = data["_source"] as? String, source == "mac" {
-            // Could be our own write coming back — check version
-            // For now, skip if we have a sync fence
+        // LOCAL-FIRST: NEVER apply our own writes back.
+        // Only apply changes from cloud agent (_source = "cloud") or iOS app (_source = "ios").
+        let source = data["_source"] as? String ?? "mac"
+        if source == "mac" {
+            return
         }
 
         // Check sync fence

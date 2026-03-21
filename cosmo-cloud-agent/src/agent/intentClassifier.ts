@@ -57,7 +57,7 @@ export function classifyIntent(text: string): AgentIntent {
   }
 
   // Plan/Schedule/Tasks — MUST be before execute/correct (catches "complete task", "delete task")
-  if (/schedule|plan my|calendar|time block|add a block|show.*(today|upcoming|someday|anytime|logbook|project|tasks)|what.?s (overdue|due|on my plate|next)|my tasks|task list|recurring|complete task|check off|done with|mark.*done|finish(ed)? task|how many tasks|move task|reschedule|postpone|set.*(priority|recurrence|repeat)|change priority|create.*project|new project|what projects|assign.*project|put.*project|logbook|completed tasks|what did i (do|finish|complete)|make.*recurring|set.*repeat|uncheck|undo complete|deadline|due date|morning tasks|evening tasks|how.?s my day|clear.*schedule|next task|delete task|remove task/i.test(lower)) {
+  if (/schedule|plan my|calendar|time block|add a block|show.*(today|upcoming|someday|anytime|logbook|project|tasks)|what.*(task|overdue|due|on my plate|next|today.*task|task.*today)|my tasks|task list|tasks? (today|tomorrow|this week)|today.?s tasks|recurring|complete task|check off|done with|mark.*done|finish(ed)? task|how many tasks|move task|reschedule|postpone|set.*(priority|recurrence|repeat)|change priority|create.*project|new project|what projects|assign.*project|put.*project|logbook|completed tasks|what did i (do|finish|complete)|make.*recurring|set.*repeat|uncheck|undo complete|deadline|due date|morning tasks|evening tasks|how.?s my day|clear.*schedule|next task|delete task|remove task/i.test(lower)) {
     return 'plan';
   }
 

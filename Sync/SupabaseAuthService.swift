@@ -216,6 +216,9 @@ final class SupabaseAuthService: NSObject {
             return
         }
 
+        // Refresh auth token before migration (prevents JWT expired errors)
+        await refreshSessionIfNeeded()
+
         // Pause Realtime during migration to prevent echo loop
         RealtimeSyncService.shared.isPaused = true
         migrationState = .inProgress("Starting migration...", 0, 100)
@@ -242,11 +245,22 @@ final class SupabaseAuthService: NSObject {
         guard isSignedIn else { return }
 
         do {
+            // Try to refresh the session (SDK handles refresh token exchange)
             let session = try await supabase.auth.session
-            APIKeys.saveSupabaseAuth(token: session.accessToken, userId: session.user.id.uuidString)
-            SupabaseClient.shared?.setAuthToken(session.accessToken)
+            let token = session.accessToken
+            let uid = session.user.id.uuidString
+
+            APIKeys.saveSupabaseAuth(token: token, userId: uid)
+            SupabaseClient.shared?.setAuthToken(token)
+            SupabaseClient.shared?.setUserId(uid)
+            print("🔄 Auth token refreshed")
         } catch {
-            print("⚠️ Token refresh failed: \(error)")
+            print("⚠️ Token refresh failed: \(error) — clearing stale session")
+            // Session is truly expired — force sign out so user can re-authenticate
+            APIKeys.clearSupabaseAuth()
+            SupabaseClient.shared?.setAuthToken(nil)
+            SupabaseClient.shared?.setUserId(nil)
+            authState = .signedOut
         }
     }
 

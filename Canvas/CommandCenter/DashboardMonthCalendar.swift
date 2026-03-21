@@ -71,10 +71,10 @@ struct DashboardMonthCalendar: View {
 
     private var weekdayLabels: some View {
         HStack(spacing: 0) {
-            ForEach(weekdays, id: \.self) { day in
+            ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
                 Text(day)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: cellSize, height: 16)
             }
         }

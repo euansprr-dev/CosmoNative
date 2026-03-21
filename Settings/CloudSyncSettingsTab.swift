@@ -423,15 +423,15 @@ struct CloudSyncSettingsTab: View {
     private var cloudAgentSection: some View {
         if authService.isSignedIn {
             VStack(alignment: .leading, spacing: 16) {
-                sectionHeader(title: "TELEGRAM AGENT", icon: "paperplane.fill", color: Color(red: 0.0, green: 0.54, blue: 0.85))
+                sectionHeader(title: "TELEGRAM AGENT", icon: "paperplane.fill", color: Color(red: 0.18, green: 0.54, blue: 0.85))
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 16) {
-                        Image(systemName: "cloud.fill")
-                            .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(DS.textMuted)
-                            .frame(width: 36, height: 36)
-                            .background(DS.surface)
+                        Image(systemName: "paperplane.circle.fill")
+                            .font(.system(size: 28, weight: .regular))
+                            .foregroundStyle(Color(red: 0.18, green: 0.54, blue: 0.85))
+                            .frame(width: 44, height: 44)
+                            .background(Color(red: 0.18, green: 0.54, blue: 0.85).opacity(0.12))
                             .clipShape(.rect(cornerRadius: DS.radiusSmall))
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -439,32 +439,72 @@ struct CloudSyncSettingsTab: View {
                                 .font(DS.title3)
                                 .foregroundStyle(DS.text)
 
-                            Text("Works when your Mac is closed")
+                            Text("@cosmo_os_bot")
                                 .font(DS.callout)
                                 .foregroundStyle(DS.textMuted)
                         }
 
                         Spacer()
 
-                        Text("Coming Soon")
-                            .font(DS.buttonText)
-                            .foregroundStyle(DS.textMuted)
-                            .padding(.horizontal, DS.space16)
-                            .padding(.vertical, DS.space4)
-                            .background(
-                                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                    .fill(DS.surface)
-                            )
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(DS.green)
+                                .frame(width: 6, height: 6)
+                            Text("Active")
+                                .font(DS.footnote)
+                                .foregroundStyle(DS.green)
+                        }
+                        .padding(.horizontal, DS.space8)
+                        .padding(.vertical, DS.space4)
+                        .background(
+                            Capsule()
+                                .fill(DS.green.opacity(0.1))
+                        )
                     }
 
-                    Text("Once cloud sync is active, the Telegram agent will work independently of your Mac. Deploy the cloud agent server to enable this.")
-                        .font(DS.footnote)
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.top, DS.space4)
+                    // Capabilities
+                    VStack(alignment: .leading, spacing: 6) {
+                        cloudAgentCapability(icon: "checkmark.circle.fill", text: "Works when Mac is closed", color: DS.green)
+                        cloudAgentCapability(icon: "checkmark.circle.fill", text: "82 tools (ideas, swipes, content, tasks, projects)", color: DS.green)
+                        cloudAgentCapability(icon: "checkmark.circle.fill", text: "Full writing engine (outline, draft, revise, score)", color: DS.green)
+                        cloudAgentCapability(icon: "checkmark.circle.fill", text: "NLP task creation & smart lists", color: DS.green)
+                        cloudAgentCapability(icon: "checkmark.circle.fill", text: "Standing instructions (auto-execute on schedule)", color: DS.green)
+                    }
+
+                    // Info
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(DS.footnote)
+                            .foregroundStyle(DS.textMuted)
+
+                        Text("Messages to @cosmo_os_bot are handled by the cloud agent. Changes sync to your Mac via Realtime.")
+                            .font(DS.footnote)
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    .padding(.top, DS.space4)
                 }
                 .padding(DS.space16)
-                .background(glassCard)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.radiusMedium)
+                        .fill(DS.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                                .stroke(Color(red: 0.18, green: 0.54, blue: 0.85).opacity(0.2), lineWidth: 1)
+                        )
+                )
             }
+        }
+    }
+
+    @ViewBuilder
+    private func cloudAgentCapability(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(color)
+            Text(text)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 

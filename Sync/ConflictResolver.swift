@@ -196,6 +196,11 @@ class ConflictResolver {
         insertData.removeValue(forKey: "_version")
         insertData.removeValue(forKey: "fts")
 
+        // Fill NOT NULL defaults for canvas_blocks (Postgres allows null, GRDB doesn't)
+        if table == "canvas_blocks" {
+            sanitizeCanvasBlockDefaults(&insertData)
+        }
+
         let columns = insertData.keys.filter { key in
             !key.starts(with: "_") || ["_local_version", "_server_version", "_sync_version", "_local_pending"].contains(key)
         }
@@ -228,6 +233,11 @@ class ConflictResolver {
         updateData.removeValue(forKey: "_version")
         updateData.removeValue(forKey: "fts")
 
+        // Fill NOT NULL defaults for canvas_blocks
+        if table == "canvas_blocks" {
+            sanitizeCanvasBlockDefaults(&updateData)
+        }
+
         let updateColumns = updateData.keys.filter { $0 != "id" && $0 != "uuid" }
         let setClause = updateColumns.map { "\($0) = ?" }.joined(separator: ", ")
         let values = updateColumns.compactMap { updateData[$0] }
@@ -251,6 +261,31 @@ class ConflictResolver {
     // MARK: - Apply Merged Data
     private func applyMergedData(table: String, uuid: String, data: [String: Any]) async {
         await applyRemoteUpdate(table: table, uuid: uuid, data: data)
+    }
+
+    // MARK: - Canvas Block NOT NULL Defaults
+    /// GRDB canvas_blocks has NOT NULL constraints on document_type, document_id, entity_id, entity_type.
+    /// Postgres allows null for these (migration didn't enforce them). Fill defaults to prevent SQLite errors.
+    private func sanitizeCanvasBlockDefaults(_ data: inout [String: Any]) {
+        if data["document_type"] == nil || data["document_type"] is NSNull {
+            data["document_type"] = "thinkspace"
+        }
+        if data["document_id"] == nil || data["document_id"] is NSNull {
+            data["document_id"] = 0
+        }
+        if data["entity_id"] == nil || data["entity_id"] is NSNull {
+            data["entity_id"] = 0
+        }
+        if data["entity_type"] == nil || data["entity_type"] is NSNull {
+            data["entity_type"] = data["type"] as? String ?? "note"
+        }
+        // position fields
+        if data["position_x"] == nil || data["position_x"] is NSNull {
+            data["position_x"] = 0
+        }
+        if data["position_y"] == nil || data["position_y"] is NSNull {
+            data["position_y"] = 0
+        }
     }
 
     // MARK: - Helper: Row to Dictionary

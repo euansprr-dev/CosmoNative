@@ -1862,37 +1862,31 @@ struct CanvasView: View {
         let content = userInfo["content"] as? String ?? ""
         let title = userInfo["title"] as? String
 
-        // Find the block
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-            return
-        }
-
-        let block = spatialEngine.blocks[blockIndex]
-
-        // For note, stickyNote, and content blocks, save content to metadata and persist
-        // These use metadata-based storage (not atoms table)
-        if block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content {
-            spatialEngine.blocks[blockIndex].metadata["content"] = content
-            if let title = title {
-                spatialEngine.blocks[blockIndex].metadata["title"] = title
-                let defaultTitle = block.entityType == .note ? "Note" : "Content"
-                spatialEngine.blocks[blockIndex].title = title.isEmpty ? defaultTitle : title
+        // Defer state mutation to next run loop to avoid "Modifying state during view update"
+        Task { @MainActor in
+            guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
+                return
             }
-            Task {
+
+            let block = spatialEngine.blocks[blockIndex]
+
+            if block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content {
+                spatialEngine.blocks[blockIndex].metadata["content"] = content
+                if let title = title {
+                    spatialEngine.blocks[blockIndex].metadata["title"] = title
+                    let defaultTitle = block.entityType == .note ? "Note" : "Content"
+                    spatialEngine.blocks[blockIndex].title = title.isEmpty ? defaultTitle : title
+                }
                 await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
                 let blockTypeName = block.entityType == .note ? "note" : "content"
                 print("📝 Saved \(blockTypeName) to ThinkSpace")
+                return
             }
-            return
-        }
 
-        // For other entity types, create or update database entry
-        if block.entityId == -1 && !content.isEmpty {
-            Task {
+            // For other entity types, create or update database entry
+            if block.entityId == -1 && !content.isEmpty {
                 await createDatabaseEntryForBlock(block: block, content: content)
-            }
-        } else if block.entityId != -1 {
-            Task {
+            } else if block.entityId != -1 {
                 await updateDatabaseEntry(block: block, content: content)
             }
         }
@@ -1906,22 +1900,19 @@ struct CanvasView: View {
             return
         }
 
-        // Find the block and update its metadata
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-            return
-        }
+        Task { @MainActor in
+            guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
+                return
+            }
 
-        // Merge new metadata with existing
-        for (key, value) in metadata {
-            spatialEngine.blocks[blockIndex].metadata[key] = value
-        }
+            for (key, value) in metadata {
+                spatialEngine.blocks[blockIndex].metadata[key] = value
+            }
 
-        // Persist to database
-        Task {
             await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
         }
     }
-    
+
     // MARK: - Block Entity Linkage Update Handler
     private func handleUpdateBlockEntity(notification: Notification) {
         guard let userInfo = notification.userInfo,
@@ -1931,12 +1922,14 @@ struct CanvasView: View {
             return
         }
 
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-            return
-        }
+        Task { @MainActor in
+            guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
+                return
+            }
 
-        spatialEngine.blocks[blockIndex].entityId = entityId
-        spatialEngine.blocks[blockIndex].entityUuid = entityUuid
+            spatialEngine.blocks[blockIndex].entityId = entityId
+            spatialEngine.blocks[blockIndex].entityUuid = entityUuid
+        }
     }
 
     // MARK: - Block Size Update Handler

@@ -1,10 +1,15 @@
 // CosmoOS/Sync/RealtimeSyncService.swift
-// Phase 1: Supabase Realtime listener for instant cloud→local sync
-// Replaces 30s polling for remote changes. Polling remains as 5-minute fallback.
+// Supabase Realtime listener — ONLY applies changes from non-Mac sources.
+//
+// LOCAL-FIRST PRINCIPLE:
+// - Mac writes are authoritative. They push to Supabase but NEVER echo back.
+// - Only changes with _source != "mac" are applied (cloud TG agent, iOS app, etc.)
+// - Canvas blocks are Mac-only — no Realtime subscription needed.
 
 import Foundation
 import Supabase
 import Realtime
+import GRDB
 
 @MainActor
 @Observable
@@ -14,11 +19,10 @@ final class RealtimeSyncService {
     private(set) var isConnected = false
     private(set) var lastEventTime: Date?
 
-    /// Pause Realtime processing (e.g. during data migration to avoid echo loop)
+    /// Pause Realtime processing (e.g. during data migration)
     var isPaused = false
 
     private var atomsChannel: RealtimeChannelV2?
-    private var canvasChannel: RealtimeChannelV2?
     private var listenTask: Task<Void, Never>?
 
     private let conflictResolver = ConflictResolver()
@@ -30,7 +34,7 @@ final class RealtimeSyncService {
 
     private init() {}
 
-    // MARK: - Start Listening
+    // MARK: - Start/Stop
 
     func startListening() {
         guard !isConnected else { return }
@@ -49,13 +53,9 @@ final class RealtimeSyncService {
             if let channel = atomsChannel {
                 await supabase.realtimeV2.removeChannel(channel)
             }
-            if let channel = canvasChannel {
-                await supabase.realtimeV2.removeChannel(channel)
-            }
         }
 
         atomsChannel = nil
-        canvasChannel = nil
         isConnected = false
         print("🔌 Realtime sync disconnected")
     }
@@ -63,11 +63,9 @@ final class RealtimeSyncService {
     // MARK: - Subscribe
 
     private func subscribeToChanges() async {
+        // Only subscribe to atoms — canvas_blocks are Mac-only, never modified by cloud
         let atoms = supabase.channel("atoms_sync")
         self.atomsChannel = atoms
-
-        let canvas = supabase.channel("canvas_sync")
-        self.canvasChannel = canvas
 
         let atomChanges = atoms.postgresChange(
             AnyAction.self,
@@ -75,29 +73,15 @@ final class RealtimeSyncService {
             table: "atoms"
         )
 
-        let canvasChanges = canvas.postgresChange(
-            AnyAction.self,
-            schema: "public",
-            table: "canvas_blocks"
-        )
-
         await atoms.subscribe()
-        await canvas.subscribe()
 
         isConnected = true
-        print("✅ Realtime sync connected — listening for atoms + canvas_blocks changes")
+        print("✅ Realtime sync connected — listening for cloud-originated atom changes only")
 
         Task { [weak self] in
             for await action in atomChanges {
                 guard let self, !self.isPaused else { continue }
                 await self.handleAtomChange(action)
-            }
-        }
-
-        Task { [weak self] in
-            for await action in canvasChanges {
-                guard let self, !self.isPaused else { continue }
-                await self.handleCanvasChange(action)
             }
         }
     }
@@ -109,24 +93,27 @@ final class RealtimeSyncService {
         case .insert(let insert):
             let data = convertRecord(insert.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
-            guard shouldApplyRemoteChange(data: data) else { return }
+            guard isFromCloud(data) else { return }
+            guard !isLocallyPending(uuid: uuid) else { return }
             let localData = convertJSONFieldsFromPostgres(data)
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
-            print("📡 Realtime: atom inserted — \(uuid)")
+            print("📡 Realtime: cloud atom inserted — \(uuid)")
 
         case .update(let update):
             let data = convertRecord(update.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
-            guard shouldApplyRemoteChange(data: data) else { return }
+            guard isFromCloud(data) else { return }
+            guard !isLocallyPending(uuid: uuid) else { return }
             let localData = convertJSONFieldsFromPostgres(data)
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
-            print("📡 Realtime: atom updated — \(uuid)")
+            print("📡 Realtime: cloud atom updated — \(uuid)")
 
         case .delete(let delete):
             let oldData = convertRecord(delete.oldRecord)
             guard let uuid = oldData["uuid"] as? String, !uuid.isEmpty else { return }
+            guard isFromCloud(oldData) else { return }
             try? await database.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
@@ -134,62 +121,50 @@ final class RealtimeSyncService {
                 )
             }
             lastEventTime = Date()
-            print("📡 Realtime: atom deleted — \(uuid)")
+            print("📡 Realtime: cloud atom deleted — \(uuid)")
         }
     }
 
-    private func handleCanvasChange(_ action: AnyAction) async {
-        switch action {
-        case .insert(let insert):
-            let data = convertRecord(insert.record)
-            guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
-            guard shouldApplyRemoteChange(data: data) else { return }
-            await conflictResolver.applyRemoteChange(table: "canvas_blocks", uuid: uuid, data: data)
-            lastEventTime = Date()
+    // MARK: - Filters
 
-        case .update(let update):
-            let data = convertRecord(update.record)
-            guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
-            guard shouldApplyRemoteChange(data: data) else { return }
-            await conflictResolver.applyRemoteChange(table: "canvas_blocks", uuid: uuid, data: data)
-            lastEventTime = Date()
-
-        case .delete(let delete):
-            let oldData = convertRecord(delete.oldRecord)
-            guard let uuid = oldData["uuid"] as? String, !uuid.isEmpty else { return }
-            try? await database.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE canvas_blocks SET is_deleted = 1 WHERE uuid = ?",
-                    arguments: [uuid]
-                )
-            }
-            lastEventTime = Date()
-        }
+    /// ONLY apply changes that did NOT originate from this Mac.
+    /// Cloud agent sets _source = "cloud", iOS app will set _source = "ios".
+    /// Mac sets _source = "mac" — those are OUR writes echoing back. Always skip.
+    private func isFromCloud(_ data: [String: Any]) -> Bool {
+        let source = data["_source"] as? String
+        // If no _source field (e.g., canvas_blocks), assume it's a Mac write → skip
+        guard let source else { return false }
+        // Only apply if source is NOT "mac"
+        return source != "mac"
     }
 
-    // MARK: - Helpers
-
-    /// Skip changes that originated from this Mac (avoid echo)
-    private func shouldApplyRemoteChange(data: [String: Any]) -> Bool {
-        let source = data["_source"] as? String ?? "unknown"
-        if source == "mac" {
-            return false
+    /// Skip changes for atoms that have pending local modifications.
+    /// The local version is authoritative until it's pushed and confirmed.
+    private func isLocallyPending(uuid: String) -> Bool {
+        // Check sync fence
+        // Check _local_pending flag
+        let hasPending = try? CosmoDatabase.shared.dbQueue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT _local_pending FROM atoms WHERE uuid = ? AND _local_pending = 1",
+                arguments: [uuid]
+            )
         }
-        return true
+        return hasPending != nil
     }
 
-    /// Convert [String: AnyJSON] to [String: Any] using AnyJSON's built-in .value
+    // MARK: - Converters
+
     private func convertRecord(_ record: [String: AnyJSON]) -> [String: Any] {
         var dict: [String: Any] = [:]
         for (key, value) in record {
             let native = value.value
-            if native is NSNull { continue } // Skip nulls
+            if native is NSNull { continue }
             dict[key] = native
         }
         return dict
     }
 
-    /// Convert JSONB objects from Postgres back to TEXT strings for GRDB storage
     private func convertJSONFieldsFromPostgres(_ data: [String: Any]) -> [String: Any] {
         var converted = data
         for key in ["structured", "metadata", "links"] {

@@ -49,6 +49,12 @@ struct CosmoApp: App {
                 .onAppear {
                     initializeApp()
                 }
+                .onOpenURL { url in
+                    // Handle Supabase OAuth callback (cosmoos://auth/callback?...)
+                    // The official Supabase SDK handles this automatically
+                    // via its internal session listener
+                    print("📲 OAuth callback received: \(url.scheme ?? "")://\(url.host ?? "")")
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -59,6 +65,16 @@ struct CosmoApp: App {
     private func initializeApp() {
         // Migrate Supabase credentials from hardcoded to Keychain (one-time)
         APIKeys.seedSupabaseIfNeeded()
+
+        // Check for existing Supabase Auth session and start Realtime sync
+        Task {
+            await SupabaseAuthService.shared.checkExistingSession()
+            if SupabaseAuthService.shared.isSignedIn {
+                RealtimeSyncService.shared.startListening()
+                // Sync prompt templates to cloud for the TG agent
+                PromptTemplateStore.shared.syncAllTemplatesToCloud()
+            }
+        }
 
         // Observe app termination to flush pending saves before exit
         NotificationCenter.default.addObserver(

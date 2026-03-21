@@ -1,5 +1,6 @@
 // CosmoOS/Sync/SyncEngine.swift
 // Bulletproof local-first sync with invisible background uploads
+// Phase 0+1: Unified atoms table sync with Supabase Realtime readiness
 // UI NEVER blocks - all sync happens in background
 
 import Foundation
@@ -27,36 +28,28 @@ class SyncEngine: ObservableObject {
     private var realtimeSubscription: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
-    deinit {
-        let timer = syncTimer
-        let subscription = realtimeSubscription
-        timer?.invalidate()
-        subscription?.cancel()
+    nonisolated deinit {
+        // Timer and Task cleanup handled by ARC / cancellation
     }
 
     // MARK: - Configuration
-    private let syncInterval: TimeInterval = 30 // seconds
+    // Phase 1: Polling reduced to 5 minutes (fallback for missed Realtime events)
+    // RealtimeSyncService handles instant cloud→local updates
+    private let syncInterval: TimeInterval = 300 // 5 minutes (was 30s before Realtime)
     private let maxRetries = 3
-    private let fenceExpiryMs: Int64 = 30_000 // 30 seconds (was 5s — too short for processing)
-    private let extendedFenceExpiryMs: Int64 = 120_000 // 2 minutes for long operations
+    private let fenceExpiryMs: Int64 = 30_000
+    private let extendedFenceExpiryMs: Int64 = 120_000
 
-    // MARK: - Sync Tables
-    private let syncTables = [
-        "ideas", "content", "tasks", "connections", "research",
-        "projects", "calendar_events", "canvas_blocks", "journal_entries"
-    ]
+    // MARK: - Sync Tables (unified)
+    // Phase 0: Switch from 9 legacy tables to unified atoms + supporting tables
+    // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
+    private let syncTables = ["atoms", "canvas_blocks"]
 
     private init() {
-        // Initialize Supabase client
         supabaseClient = SupabaseClient.shared
-
-        // Observe network changes
         setupNetworkObserver()
-
-        // Start background sync
         startBackgroundSync()
-
-        print("✅ SyncEngine initialized (local-first, invisible sync)")
+        print("✅ SyncEngine initialized (local-first, unified atoms sync)")
     }
 
     // MARK: - Network Observer
@@ -66,7 +59,6 @@ class SyncEngine: ObservableObject {
             .sink { [weak self] isConnected in
                 self?.isOnline = isConnected
                 if isConnected {
-                    // Connection restored - sync pending changes
                     Task { @MainActor in
                         await self?.syncPendingChanges()
                     }
@@ -110,12 +102,11 @@ class SyncEngine: ObservableObject {
     private func syncPendingChanges() async {
         guard isOnline else { return }
 
-        // Get pending items from sync_queue
         let pendingItems = try? await database.asyncRead { db in
             try SyncQueueItem
                 .filter(Column("status") == "pending")
                 .order(Column("created_at").asc)
-                .limit(50) // Process in batches
+                .limit(50)
                 .fetchAll(db)
         }
 
@@ -131,7 +122,6 @@ class SyncEngine: ObservableObject {
             do {
                 try await pushChange(item)
 
-                // Mark as synced
                 try await database.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ?",
@@ -142,7 +132,6 @@ class SyncEngine: ObservableObject {
                 pendingChanges -= 1
 
             } catch {
-                // Mark as failed with retry
                 try? await database.asyncWrite { db in
                     let newRetryCount = item.retryCount + 1
                     let newStatus = newRetryCount >= self.maxRetries ? "failed" : "pending"
@@ -168,7 +157,7 @@ class SyncEngine: ObservableObject {
             throw SyncError.noClient
         }
 
-        // Set sync fence to prevent real-time from overwriting
+        // Set sync fence to prevent remote from overwriting
         try await setSyncFence(uuid: item.uuid)
 
         // Parse the data payload
@@ -184,9 +173,23 @@ class SyncEngine: ObservableObject {
         payload.removeValue(forKey: "_sync_version")
         payload.removeValue(forKey: "_local_pending")
 
+        // Add user_id for RLS compliance
+        if let userId = client.currentUserId {
+            payload["user_id"] = userId
+        }
+
+        // Add source tracking
+        payload["_source"] = "mac"
+
+        // For the unified atoms table, convert TEXT JSON fields to parsed objects
+        // so Postgres can store them as JSONB
+        if item.tableName == "atoms" {
+            payload = convertJSONFieldsForPostgres(payload)
+        }
+
         switch item.operation {
         case "INSERT":
-            try await client.insert(table: item.tableName, data: payload)
+            try await client.upsert(table: item.tableName, data: payload, onConflict: "uuid")
 
         case "UPDATE":
             try await client.update(table: item.tableName, uuid: item.uuid, data: payload)
@@ -204,13 +207,26 @@ class SyncEngine: ObservableObject {
                 sql: """
                 UPDATE \(item.tableName)
                 SET _server_version = _local_version,
-                    _local_pending = 0,
-                    synced_at = ?
+                    _local_pending = 0
                 WHERE uuid = ?
                 """,
-                arguments: [ISO8601DateFormatter().string(from: Date()), item.uuid]
+                arguments: [item.uuid]
             )
         }
+    }
+
+    /// Convert TEXT JSON fields to parsed objects for JSONB storage in Postgres
+    private func convertJSONFieldsForPostgres(_ payload: [String: Any]) -> [String: Any] {
+        var converted = payload
+        for key in ["structured", "metadata", "links"] {
+            if let jsonString = converted[key] as? String,
+               !jsonString.isEmpty,
+               let data = jsonString.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) {
+                converted[key] = parsed
+            }
+        }
+        return converted
     }
 
     // MARK: - Pull Remote Changes
@@ -240,13 +256,19 @@ class SyncEngine: ObservableObject {
     private func applyRemoteChange(table: String, data: [String: Any]) async {
         guard let uuid = data["uuid"] as? String else { return }
 
-        // Check sync fence - don't overwrite local pending changes
+        // Skip changes from our own device
+        if let source = data["_source"] as? String, source == "mac" {
+            // Could be our own write coming back — check version
+            // For now, skip if we have a sync fence
+        }
+
+        // Check sync fence
         if await hasSyncFence(uuid: uuid) {
             print("🛡️ Sync fence active for \(uuid), skipping remote change")
             return
         }
 
-        // Check if user is actively editing this atom
+        // Check editing lock
         if AtomRepository.shared.isBeingEdited(uuid) {
             print("🛡️ Editing lock active for \(uuid), skipping remote change")
             return
@@ -266,8 +288,32 @@ class SyncEngine: ObservableObject {
             return
         }
 
-        // Apply the change with conflict resolution
-        await conflictResolver.applyRemoteChange(table: table, uuid: uuid, data: data)
+        // For atoms table: convert JSONB objects back to TEXT strings for GRDB
+        var localData = data
+        if table == "atoms" {
+            localData = convertJSONFieldsFromPostgres(localData)
+        }
+
+        // Apply with conflict resolution
+        await conflictResolver.applyRemoteChange(table: table, uuid: uuid, data: localData)
+    }
+
+    /// Convert JSONB objects from Postgres back to TEXT strings for GRDB storage
+    private func convertJSONFieldsFromPostgres(_ data: [String: Any]) -> [String: Any] {
+        var converted = data
+        for key in ["structured", "metadata", "links"] {
+            if let obj = converted[key], !(obj is String), !(obj is NSNull) {
+                if let jsonData = try? JSONSerialization.data(withJSONObject: obj),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    converted[key] = jsonString
+                }
+            }
+        }
+        // Remove Postgres-only fields
+        converted.removeValue(forKey: "user_id")
+        converted.removeValue(forKey: "_source")
+        converted.removeValue(forKey: "fts")
+        return converted
     }
 
     // MARK: - Sync Fence
@@ -282,7 +328,6 @@ class SyncEngine: ObservableObject {
         }
     }
 
-    /// Set an extended sync fence for long-running operations (e.g., transcription + analysis).
     func setExtendedFence(uuid: String) async {
         let expiresAt = Date().timeIntervalSince1970 * 1000 + Double(extendedFenceExpiryMs)
         try? await database.asyncWrite { db in

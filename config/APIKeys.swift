@@ -27,6 +27,9 @@ struct APIKeys {
         case telegramBotToken = "telegram_bot_token"
         case whisperAPIKey = "whisper_api_key"
         case apify = "apify_api_key"
+        case supabaseServiceRole = "supabase_service_role_key"
+        case supabaseAuthToken = "supabase_auth_token"
+        case supabaseUserId = "supabase_user_id"
     }
 
     // MARK: - In-Memory Cache (thread-safe via lock)
@@ -126,6 +129,37 @@ struct APIKeys {
 
     // MARK: - Supabase (Keychain-backed)
 
+    /// Service role key for server-side operations (used by cloud agent, stored for reference)
+    static var supabaseServiceRoleKey: String? {
+        cachedValue(.supabaseServiceRole, envKey: "SUPABASE_SERVICE_ROLE_KEY")
+    }
+
+    /// Auth token from Supabase Auth (Sign in with Apple JWT)
+    static var supabaseAuthToken: String? {
+        cachedValue(.supabaseAuthToken)
+    }
+
+    /// Supabase user UUID from auth session
+    static var supabaseUserId: String? {
+        cachedValue(.supabaseUserId)
+    }
+
+    /// Save auth session credentials after Sign in with Apple
+    static func saveSupabaseAuth(token: String, userId: String) {
+        save(token, identifier: "supabase_auth_token")
+        save(userId, identifier: "supabase_user_id")
+    }
+
+    /// Clear auth session on sign out
+    static func clearSupabaseAuth() {
+        delete(identifier: "supabase_auth_token")
+        delete(identifier: "supabase_user_id")
+    }
+
+    static var hasSupabaseAuth: Bool {
+        supabaseAuthToken?.isEmpty == false && supabaseUserId?.isEmpty == false
+    }
+
     static var supabaseUrl: String? {
         cachedValue(.supabaseUrl, envKey: "SUPABASE_URL")
     }
@@ -134,25 +168,42 @@ struct APIKeys {
         cachedValue(.supabaseKey, envKey: "SUPABASE_ANON_KEY")
     }
 
-    /// One-time migration: seed Supabase credentials into Keychain if not already present.
-    /// Call once at app startup to ensure existing installs retain connectivity.
+    // MARK: - Supabase Project Configuration
+    // Project: https://cskxozkzpzxyefqmgsgg.supabase.co
+    // Publishable (anon) key for client-side auth + REST
+    // Secret (service role) key for cloud agent only — NEVER ship in client
+
+    private static let supabaseProjectUrl = "https://cskxozkzpzxyefqmgsgg.supabase.co"
+    private static let supabasePublishableKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNza3hvemt6cHp4eWVmcW1nc2dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjU4MzMsImV4cCI6MjA4OTY0MTgzM30.-79YrwJjjY8nus9Ej9tiyCG8Rsrrqxb0QP3lb-t9ivE"
+
+    /// One-time migration: seed Supabase credentials into Keychain.
+    /// Also migrates from the old project URL if present.
     static func seedSupabaseIfNeeded() {
         let existingUrl = readFromKeychain(.supabaseUrl)
-        let existingKey = readFromKeychain(.supabaseKey)
 
-        if existingUrl == nil {
-            writeToKeychain("https://zjgymvqgrtreeanwkrzp.supabase.co", identifier: .supabaseUrl)
+        // Always update to the current project URL + key
+        // (handles migration from old project to new project)
+        let needsUpdate = existingUrl != supabaseProjectUrl
+
+        if existingUrl == nil || needsUpdate {
+            writeToKeychain(supabaseProjectUrl, identifier: .supabaseUrl)
             cacheLock.lock()
-            _cache[.supabaseUrl] = "https://zjgymvqgrtreeanwkrzp.supabase.co"
+            _cache[.supabaseUrl] = supabaseProjectUrl
             cacheLock.unlock()
         }
 
-        if existingKey == nil {
-            let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqZ3ltdnFncnRyZWVhbndrcnpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3MTI3ODksImV4cCI6MjA4MDI4ODc4OX0.nkoIiaBC8WDK9sE3Shvip4mKcTK7EwW0ZbR8IHO4w48"
-            writeToKeychain(anonKey, identifier: .supabaseKey)
+        let existingKey = readFromKeychain(.supabaseKey)
+        if existingKey == nil || needsUpdate {
+            writeToKeychain(supabasePublishableKey, identifier: .supabaseKey)
             cacheLock.lock()
-            _cache[.supabaseKey] = anonKey
+            _cache[.supabaseKey] = supabasePublishableKey
             cacheLock.unlock()
+        }
+
+        // Clear stale auth if project changed (tokens from old project won't work)
+        if needsUpdate && existingUrl != nil {
+            clearSupabaseAuth()
+            print("🔄 Supabase project migrated — cleared stale auth tokens")
         }
     }
 
@@ -230,6 +281,9 @@ struct APIKeys {
         case "apify": return .apify
         case "supabase_url": return .supabaseUrl
         case "supabase_anon_key": return .supabaseKey
+        case "supabase_service_role_key": return .supabaseServiceRole
+        case "supabase_auth_token": return .supabaseAuthToken
+        case "supabase_user_id": return .supabaseUserId
         default: return nil
         }
     }

@@ -117,6 +117,7 @@ class PromptTemplateStore: ObservableObject {
     func saveMethodology() {
         UserDefaults.standard.set(methodology, forKey: methodologyKey)
         isDirty = false
+        syncTemplateToCloud(key: "methodology", content: methodology)
     }
 
     func resetToDefault() {
@@ -136,6 +137,7 @@ class PromptTemplateStore: ObservableObject {
     func saveUnifiedSystemPrompt() {
         UserDefaults.standard.set(unifiedSystemPrompt, forKey: unifiedSystemPromptKey)
         isUnifiedDirty = false
+        syncTemplateToCloud(key: "unified_system_prompt", content: unifiedSystemPrompt)
     }
 
     func resetUnifiedToDefault() {
@@ -167,6 +169,7 @@ class PromptTemplateStore: ObservableObject {
     func savePlatformConstraints() {
         UserDefaults.standard.set(platformConstraints, forKey: platformConstraintsKey)
         isPlatformConstraintsDirty = false
+        syncTemplateToCloud(key: "platform_constraints", content: platformConstraints)
     }
 
     func resetPlatformConstraintsToDefault() {
@@ -967,4 +970,35 @@ class PromptTemplateStore: ObservableObject {
     You help creators develop, refine, and polish their content across every phase \
     of the pipeline — from brainstorming to final draft.
     """
+
+    // MARK: - Cloud Sync (Supabase prompt_templates table)
+
+    /// Push a single template to Supabase prompt_templates table (fire-and-forget).
+    /// The cloud TG agent reads these to assemble its system prompt.
+    private func syncTemplateToCloud(key: String, content: String) {
+        Task { @MainActor in
+            guard let client = SupabaseClient.shared, client.isAuthenticated,
+                  let userId = client.currentUserId else { return }
+
+            let payload: [String: Any] = [
+                "user_id": userId,
+                "key": key,
+                "content": content,
+                "version": 1,
+            ]
+
+            do {
+                try await client.upsert(table: "prompt_templates", data: payload, onConflict: "user_id,key")
+            } catch {
+                print("⚠️ Failed to sync template '\(key)' to cloud: \(error)")
+            }
+        }
+    }
+
+    /// Sync all current templates to Supabase. Called on app launch after auth.
+    func syncAllTemplatesToCloud() {
+        syncTemplateToCloud(key: "methodology", content: methodology)
+        syncTemplateToCloud(key: "unified_system_prompt", content: unifiedSystemPrompt)
+        syncTemplateToCloud(key: "platform_constraints", content: platformConstraints)
+    }
 }

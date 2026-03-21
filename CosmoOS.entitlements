@@ -30,6 +30,12 @@
     <key>com.apple.security.temporary-exception.apple-events</key>
     <true/>
 
+    <!-- Sign in with Apple for Supabase Auth -->
+    <key>com.apple.developer.applesignin</key>
+    <array>
+        <string>Default</string>
+    </array>
+
     <!-- Allow increased memory for ML model hosting in XPC daemon -->
     <key>com.apple.developer.kernel.increased-memory-limit</key>
     <true/>

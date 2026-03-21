@@ -1,5 +1,6 @@
 // CosmoOS/Sync/ChangeTracker.swift
 // Tracks local changes and queues them for invisible sync
+// Phase 1: Added immediate push (fire-and-forget) alongside queue for instant cloud sync
 // UI NEVER blocks - changes are tracked asynchronously
 
 import Foundation
@@ -26,7 +27,7 @@ class ChangeTracker: ObservableObject {
         // Mark as pending locally
         await markAsPending(table: table, uuid: uuid)
 
-        // Add to sync queue
+        // Add to sync queue (offline buffer)
         await queueChange(
             uuid: uuid,
             table: table,
@@ -34,6 +35,9 @@ class ChangeTracker: ObservableObject {
             operation: "INSERT",
             entity: entity
         )
+
+        // Fire-and-forget immediate push to Supabase
+        await immediatePush(table: table, uuid: uuid, entity: entity, operation: "INSERT")
     }
 
     // MARK: - Track Update
@@ -50,7 +54,7 @@ class ChangeTracker: ObservableObject {
         // Mark as pending
         await markAsPending(table: table, uuid: uuid)
 
-        // Add to sync queue
+        // Add to sync queue (offline buffer)
         await queueChange(
             uuid: uuid,
             table: table,
@@ -58,6 +62,9 @@ class ChangeTracker: ObservableObject {
             operation: "UPDATE",
             entity: entity
         )
+
+        // Fire-and-forget immediate push to Supabase
+        await immediatePush(table: table, uuid: uuid, entity: entity, operation: "UPDATE")
     }
 
     // MARK: - Track Delete
@@ -74,6 +81,92 @@ class ChangeTracker: ObservableObject {
             operation: "DELETE",
             entity: nil as EmptyEntity?
         )
+
+        // Fire-and-forget immediate delete
+        Task.detached { @MainActor in
+            guard let client = SupabaseClient.shared, client.isAuthenticated else { return }
+            do {
+                try await client.softDelete(table: table, uuid: uuid)
+                // Mark synced in queue
+                try? await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
+                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                    )
+                }
+            } catch {
+                // Stays in sync_queue for batch retry
+            }
+        }
+    }
+
+    // MARK: - Immediate Push (Fire-and-Forget)
+
+    /// Push a change to Supabase immediately without blocking.
+    /// If it fails (offline, auth issue), the sync_queue entry remains for batch retry.
+    private func immediatePush<T: Encodable>(
+        table: String,
+        uuid: String,
+        entity: T,
+        operation: String
+    ) async {
+        Task.detached { @MainActor in
+            guard let client = SupabaseClient.shared, client.isAuthenticated else { return }
+            guard let userId = client.currentUserId else { return }
+
+            // Serialize entity
+            guard let data = try? JSONEncoder().encode(entity),
+                  var payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return
+            }
+
+            // Remove local-only fields
+            payload.removeValue(forKey: "_local_version")
+            payload.removeValue(forKey: "_server_version")
+            payload.removeValue(forKey: "_sync_version")
+            payload.removeValue(forKey: "_local_pending")
+
+            // Add cloud fields
+            payload["user_id"] = userId
+            payload["_source"] = "mac"
+
+            // Convert JSON TEXT fields to objects for JSONB
+            if table == "atoms" {
+                for key in ["structured", "metadata", "links"] {
+                    if let jsonString = payload[key] as? String,
+                       !jsonString.isEmpty,
+                       let jsonData = jsonString.data(using: .utf8),
+                       let parsed = try? JSONSerialization.jsonObject(with: jsonData) {
+                        payload[key] = parsed
+                    }
+                }
+            }
+
+            do {
+                switch operation {
+                case "INSERT":
+                    try await client.upsert(table: table, data: payload, onConflict: "uuid")
+                case "UPDATE":
+                    try await client.update(table: table, uuid: uuid, data: payload)
+                default:
+                    break
+                }
+
+                // Mark synced in queue + update server version
+                try? await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
+                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                    )
+                    try db.execute(
+                        sql: "UPDATE \(table) SET _server_version = _local_version, _local_pending = 0 WHERE uuid = ?",
+                        arguments: [uuid]
+                    )
+                }
+            } catch {
+                // Silent failure — sync_queue entry remains for batch retry by SyncEngine
+            }
+        }
     }
 
     // MARK: - Queue Change
@@ -84,7 +177,6 @@ class ChangeTracker: ObservableObject {
         operation: String,
         entity: T?
     ) async {
-        // Serialize entity to JSON
         var dataJson: String? = nil
         if let entity = entity {
             if let data = try? JSONEncoder().encode(entity),
@@ -93,13 +185,11 @@ class ChangeTracker: ObservableObject {
             }
         }
 
-        // Get current local version
         let localVersion = await getCurrentLocalVersion(table: table, uuid: uuid)
         let dataJsonCopy = dataJson
 
         do {
             try await database.asyncWrite { db in
-                // Check if there's already a pending change for this uuid
                 let existing = try Row.fetchOne(
                     db,
                     sql: "SELECT id FROM sync_queue WHERE uuid = ? AND status = 'pending'",
@@ -107,7 +197,6 @@ class ChangeTracker: ObservableObject {
                 )
 
                 if let existingId = existing?["id"] as? Int64 {
-                    // Update existing queue entry
                     try db.execute(
                         sql: """
                         UPDATE sync_queue
@@ -123,7 +212,6 @@ class ChangeTracker: ObservableObject {
                         ]
                     )
                 } else {
-                    // Insert new queue entry
                     try db.execute(
                         sql: """
                         INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
@@ -133,9 +221,6 @@ class ChangeTracker: ObservableObject {
                     )
                 }
             }
-
-            print("📝 Queued \(operation) for \(table):\(uuid)")
-
         } catch {
             print("❌ Failed to queue change: \(error)")
         }
@@ -181,10 +266,8 @@ protocol Syncable: Encodable {
     func getUUID() -> String?
 }
 
-// Extension to provide default UUID access
 extension Syncable {
     func getUUID() -> String? {
-        // Models have uuid as optional String property
         return (self as? HasUUID)?.uuid
     }
 }
@@ -193,7 +276,6 @@ protocol HasUUID {
     var uuid: String { get }
 }
 
-// Extension to provide optional uuid for backwards compatibility
 extension HasUUID {
     var uuidOptional: String? { uuid }
 }

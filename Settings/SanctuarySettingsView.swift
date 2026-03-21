@@ -30,6 +30,7 @@ enum ConnectionStatus: String {
 
 enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
+    case cloudSync = "Cloud Sync"
     case connections = "Connections"
     case profiles = "Profiles"
     case voice = "Voice"
@@ -41,6 +42,7 @@ enum SettingsTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .appearance: return "paintbrush.fill"
+        case .cloudSync: return "icloud.fill"
         case .connections: return "link"
         case .profiles: return "person.2.fill"
         case .voice: return "waveform"
@@ -184,6 +186,8 @@ struct SanctuarySettingsView: View {
                 switch selectedTab {
                 case .appearance:
                     ThemePickerView()
+                case .cloudSync:
+                    CloudSyncSettingsTab()
                 case .connections:
                     connectionsTab
                 case .profiles:

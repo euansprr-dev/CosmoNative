@@ -16,6 +16,10 @@
 		03B3FC91C88534CEC2093E08 /* 0000100_adapters.safetensors in Resources */ = {isa = PBXBuildFile; fileRef = CB4D02FBD68C1FA72BF1DE32 /* 0000100_adapters.safetensors */; };
 		03DAECA68436B79DC5D58B4D /* InboxRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC6711FD916E4E571C0F8ACF /* InboxRepository.swift */; };
 		03DC3B1197CD2056A9D969FC /* ChangeTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47D2505029A431A7CCCEE03 /* ChangeTracker.swift */; };
+		36CE87ACC289714D5B08BCA4 /* DataMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A0AFD9E34BFC97BB6326E2 /* DataMigrationService.swift */; };
+		1ABDCF89C426FDD12959C098 /* SupabaseAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8348D6EF2E4C6CE08CFDF9E /* SupabaseAuthService.swift */; };
+		E4DBACBA0C1E8442525AFA4F /* RealtimeSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62B6277370287619ADBDE64 /* RealtimeSyncService.swift */; };
+		CD2405DF5E552F887C0F0A35 /* CloudSyncSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */; };
 		0417B60B9903924A694BEAEF /* ThinkspaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D996BE37FFB4DB66FE27D2B /* ThinkspaceManager.swift */; };
 		04C8F8973F6F9DA315E0AB3F /* CelebrationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F37B0C21D9D09170605F201 /* CelebrationEngine.swift */; };
 		058417F833BA0BC4E1F58591 /* HubSearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E70521F56322ABF320B0A8 /* HubSearchBar.swift */; };
@@ -281,7 +285,7 @@
 		A0EAFA56D481845FDC5E16C2 /* LevelSystemService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0989380D17344D1651F469A3 /* LevelSystemService.swift */; };
 		A16E02E4BEDA8394E97492B9 /* XPSummaryOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A560491F69BED5875D5944A7 /* XPSummaryOverlay.swift */; };
 		A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */; };
-		A1B2C3D4E5F60718293A4B5C /* CommandCenterDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F071829304152 /* CommandCenterDashboard.swift */; };
+		961BD22FD52268F7A848282B /* CommandCenterDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F071829304152 /* CommandCenterDashboard.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* IdeaInsight.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3A4B5C6D7E8F9A0B1C2 /* IdeaInsight.swift */; };
 		A25204AF6CCF95C4DE0FA5BF /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = FCA106FC5666B5B7BAEAC68D /* WhisperKit */; };
 		A279F76803C3BBD9F520A24B /* ReadwiseLibraryTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 937BA1B849A1DB1A13D6ECC0 /* ReadwiseLibraryTab.swift */; };
@@ -439,6 +443,7 @@
 		D25D06413128F5E677287B90 /* RadialMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B505CE1608CD3CB2A06E0D5 /* RadialMenuView.swift */; };
 		D2A8F63C4E1B57D9B3C40E95 /* FilmGrainOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F7E82A3B9D45F6A0E12D73 /* FilmGrainOverlay.swift */; };
 		D45BDF72D51BE07A37BEFBF8 /* CosmoDocumentEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10EBFC996AE1565A6435128 /* CosmoDocumentEditor.swift */; };
+		D45BDF72D51BE07A37BEF001 /* SharedTitleSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10EBFC996AE1565A6430001 /* SharedTitleSystem.swift */; };
 		D4E5F60718293041526A7B8C /* DashboardTaskList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5E6F07182930415263748A /* DashboardTaskList.swift */; };
 		D5336E9899F0B09BC379A794 /* CosmoUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6062159562A0FDEE9B48FD6D /* CosmoUndoManager.swift */; };
 		D5869C02E2D37EBA4E041837 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF6C489D8C60057A5F544D7B /* MainView.swift */; };
@@ -856,6 +861,7 @@
 		9F8A29D4CFF2E65F42CAAC9C /* ReflectionMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionMetadata.swift; sourceTree = "<group>"; };
 		9FEB0A7EFDB57771F405E966 /* TaskDetailPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailPanel.swift; sourceTree = "<group>"; };
 		A10EBFC996AE1565A6435128 /* CosmoDocumentEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoDocumentEditor.swift; sourceTree = "<group>"; };
+		A10EBFC996AE1565A6430001 /* SharedTitleSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTitleSystem.swift; sourceTree = "<group>"; };
 		A2D5BA75760933D6A587CBB3 /* ConstellationLayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationLayoutEngine.swift; sourceTree = "<group>"; };
 		A38A1A006568D4B0CD0A2A83 /* InstagramExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramExtractor.swift; sourceTree = "<group>"; };
 		A3B16E7F4D9C2A58E0F73B61 /* CommandKPremiumChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKPremiumChrome.swift; sourceTree = "<group>"; };
@@ -990,6 +996,10 @@
 		D3E4F5A6B7C8D9E0F1A2B3C4 /* IdeasTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeasTab.swift; sourceTree = "<group>"; };
 		D401717D164436BD5E993B2E /* WeeklySummaryGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklySummaryGenerator.swift; sourceTree = "<group>"; };
 		D47D2505029A431A7CCCEE03 /* ChangeTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeTracker.swift; sourceTree = "<group>"; };
+		F0A0AFD9E34BFC97BB6326E2 /* DataMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataMigrationService.swift; sourceTree = "<group>"; };
+		E8348D6EF2E4C6CE08CFDF9E /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
+		B62B6277370287619ADBDE64 /* RealtimeSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSyncService.swift; sourceTree = "<group>"; };
+		A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncSettingsTab.swift; sourceTree = "<group>"; };
 		D4ABDE7BDE08C944A998C417 /* ResizeBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeBlockAction.swift; sourceTree = "<group>"; };
 		D4C2F9E4B380B479874300E8 /* ResearchFocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchFocusModeView.swift; sourceTree = "<group>"; };
 		D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityStreamView.swift; sourceTree = "<group>"; };
@@ -1188,7 +1198,10 @@
 			children = (
 				D47D2505029A431A7CCCEE03 /* ChangeTracker.swift */,
 				E90CAD0FCB40D5957D4FD4FB /* ConflictResolver.swift */,
+				F0A0AFD9E34BFC97BB6326E2 /* DataMigrationService.swift */,
 				F02AC1167F3869612EDB3A14 /* NetworkMonitor.swift */,
+				B62B6277370287619ADBDE64 /* RealtimeSyncService.swift */,
+				E8348D6EF2E4C6CE08CFDF9E /* SupabaseAuthService.swift */,
 				5D27B0748EF6B964647C599E /* StatePersistence.swift */,
 				60F31C795B4917561C273C20 /* SupabaseClient.swift */,
 				EDEF42B4D86FA70998859B35 /* SyncEngine.swift */,
@@ -1284,6 +1297,7 @@
 				FA76E66E143A58F68BF86E67 /* RichDocumentPersistence.swift */,
 				90B88168CFC6ECEE30BC09D0 /* RichTextEditor.swift */,
 				914E85F1FE480601B71B1F2B /* SelectionFormattingMenu.swift */,
+				A10EBFC996AE1565A6430001 /* SharedTitleSystem.swift */,
 				71D3ABE91D7F91BF10018200 /* PolishHighlightColors.swift */,
 				540B4902D06A656DE6C8F498 /* SlashCommandMenu.swift */,
 				822FA55EE6312CAE3957FEAE /* TextKitCoordinator.swift */,
@@ -1645,6 +1659,7 @@
 				C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */,
 				EE540F151E53E884BD71664F /* SettingsMenuButton.swift */,
 				508034948877066137948206 /* SanctuarySettingsView.swift */,
+				A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */,
 				7F2E9B4A3C8D51062E7A9F13 /* ProfileManagementTab.swift */,
 				EDDECD501280E97686692692 /* ThemePickerView.swift */,
 			);
@@ -2473,6 +2488,7 @@
 				242C6D30C0F0ED483FEFB7C4 /* RichDocument.swift in Sources */,
 				BFF0DAD7BE37FBE49DF00E26 /* RichDocumentPersistence.swift in Sources */,
 				D45BDF72D51BE07A37BEFBF8 /* CosmoDocumentEditor.swift in Sources */,
+				D45BDF72D51BE07A37BEF001 /* SharedTitleSystem.swift in Sources */,
 				7A50AD38ACA39C98A9F1CD13 /* CosmoDocumentRenderer.swift in Sources */,
 				499EC5B47B47F4DCFACB5EB0 /* MentionSearchProvider.swift in Sources */,
 				8F4A02B6C3D9E5F701B2C4D6 /* InsightExtractionEngine.swift in Sources */,
@@ -2535,6 +2551,10 @@
 				F3180EE4972465695008B242 /* CrystallizationIndicator.swift in Sources */,
 				04C8F8973F6F9DA315E0AB3F /* CelebrationEngine.swift in Sources */,
 				03DC3B1197CD2056A9D969FC /* ChangeTracker.swift in Sources */,
+				36CE87ACC289714D5B08BCA4 /* DataMigrationService.swift in Sources */,
+				1ABDCF89C426FDD12959C098 /* SupabaseAuthService.swift in Sources */,
+				E4DBACBA0C1E8442525AFA4F /* RealtimeSyncService.swift in Sources */,
+				CD2405DF5E552F887C0F0A35 /* CloudSyncSettingsTab.swift in Sources */,
 				4C7B19C1151BCC3384648548 /* ClaudeAPIClient.swift in Sources */,
 				95B1D9236161386152289BA0 /* CognitiveMetadata.swift in Sources */,
 				7CADA7963ABFE8C31BF152D3 /* CommandHubCaptureController.swift in Sources */,
@@ -2723,7 +2743,7 @@
 				3E7A91B2D4C5F60E8A1B3C5D /* CanvasCluster.swift in Sources */,
 				CBE6AEC79DC9C726746D46FF /* CommandCenterZone.swift in Sources */,
 				B3F1A72E9D4C8B01E5672FA3 /* ZoneContentView.swift in Sources */,
-				A1B2C3D4E5F60718293A4B5C /* CommandCenterDashboard.swift in Sources */,
+				961BD22FD52268F7A848282B /* CommandCenterDashboard.swift in Sources */,
 				B2C3D4E5F6071829304A5B6C /* CommandCenterDashboardViewModel.swift in Sources */,
 				C3D4E5F607182930415A6B7C /* DashboardMonthCalendar.swift in Sources */,
 				D4E5F60718293041526A7B8C /* DashboardTaskList.swift in Sources */,

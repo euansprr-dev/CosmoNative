@@ -32,5 +32,18 @@
     <string>CosmoOS uses accessibility for global keyboard shortcuts (Option+Z for voice)</string>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+
+    <!-- URL Scheme for Supabase OAuth callback -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>cosmoos</string>
+            </array>
+            <key>CFBundleURLName</key>
+            <string>com.cosmo.CosmoOS.oauth</string>
+        </dict>
+    </array>
 </dict>
 </plist>

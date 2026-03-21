@@ -350,8 +350,6 @@ final class CosmoWindowViewModel: ObservableObject {
             actions: provider.availableActions
         )
 
-        appendContextChangeIfNeeded(from: oldType, to: newType)
-
         previousContextType = newType
 
         // Post notification for any observers
@@ -371,7 +369,6 @@ final class CosmoWindowViewModel: ObservableObject {
     /// Lightweight context update from MainView (no full CosmoContextProvider needed).
     /// Used when the window opens or the user navigates between top-level views.
     func updateContextManually(type: CosmoContextType) {
-        let oldType = activeContext.type
         activeContext = CosmoActiveContext(
             type: type,
             summary: type.displayName,
@@ -379,7 +376,6 @@ final class CosmoWindowViewModel: ObservableObject {
             actions: []
         )
 
-        appendContextChangeIfNeeded(from: oldType, to: type)
         previousContextType = type
     }
 
@@ -542,11 +538,14 @@ final class CosmoWindowViewModel: ObservableObject {
                 preview = "Empty conversation"
             }
 
+            // Use the most recent message timestamp if available, otherwise fall back to createdAt
+            let lastMessageDate = conv.messages.last?.timestamp ?? conv.createdAt
+
             return ChatHistoryEntry(
                 id: conv.id,
                 preview: preview,
                 messageCount: conv.messages.count,
-                lastActivity: conv.createdAt,
+                lastActivity: lastMessageDate,
                 isActive: conv.id == conversationId
             )
         }
@@ -885,8 +884,9 @@ final class CosmoWindowViewModel: ObservableObject {
 
     /// Persists the current conversation via ConversationMemoryService.
     private func persistConversation() async {
-        // Convert CosmoWindowMessages to AgentMessages for storage
-        var conversation = AgentConversation(id: conversationId, source: .inApp)
+        // Preserve original createdAt from existing conversation to avoid timestamp reset
+        let existingConv = await conversationMemory.loadConversation(id: conversationId)
+        var conversation = AgentConversation(id: conversationId, source: .inApp, createdAt: existingConv?.createdAt ?? Date())
 
         for msg in messages {
             switch msg.type {
@@ -961,7 +961,9 @@ final class CosmoWindowViewModel: ObservableObject {
             return nil
         }
 
-        return decoded.map { message in
+        return decoded.compactMap { message in
+            // Strip stale context change dividers from persisted history
+            if case .contextChange = message.type { return nil }
             var normalized = message
             normalized.isStreaming = false
             normalized.toolActivityGroups = nil

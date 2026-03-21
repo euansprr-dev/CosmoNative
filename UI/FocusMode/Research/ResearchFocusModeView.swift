@@ -123,8 +123,8 @@ struct ResearchFocusModeView: View {
             if isPaneContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.glassCardFill, in: Circle())
                 }
@@ -440,11 +440,11 @@ struct ResearchFocusModeView: View {
                 Button(action: onClose) {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.glassCardFill, in: Capsule())
@@ -454,19 +454,19 @@ struct ResearchFocusModeView: View {
 
             // Title
             Text(atom.title ?? "Research")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.text)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             // Type badge
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text("Research")
-                    .font(.system(size: 10, weight: .medium))
-                    .tracking(OnyxTypography.labelTracking)
+                    .font(DS.caption2)
+                    .tracking(0.5)
             }
-            .foregroundColor(DS.entityResearch)
+            .foregroundStyle(DS.entityResearch)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(DS.entityResearch.opacity(0.12), in: Capsule())
@@ -481,7 +481,7 @@ struct ResearchFocusModeView: View {
                     }
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .font(.system(size: 13))
+                        .font(DS.callout)
                         .foregroundStyle(sidebarVisible ? DS.entityResearch : DS.textSecondary)
                         .padding(8)
                         .background(
@@ -495,21 +495,21 @@ struct ResearchFocusModeView: View {
             // Annotation count
             HStack(spacing: 4) {
                 Image(systemName: "note.text")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("\(viewModel.state.allAnnotations.count)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
-            .foregroundColor(DS.textSecondary)
+            .foregroundStyle(DS.textSecondary)
 
             // Floating block count
             if !floatingBlocksManager.blocks.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "square.on.square")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                     Text("\(floatingBlocksManager.blocks.count)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
             }
 
         }
@@ -1295,26 +1295,26 @@ struct ResearchAgentInputSheet: View {
             // Header
             HStack {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 20))
-                    .foregroundColor(Color(hex: "#06B6D4"))
+                    .font(DS.title1)
+                    .foregroundStyle(DS.info)
 
                 Text("Research Agent")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.title2)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
             }
 
             Text("Ask a question and the Research Agent will search the web and synthesize findings.")
-                .font(.system(size: 13))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Query input
             TextField("What would you like to research?", text: $query, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
-                .foregroundColor(DS.text)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
                 .padding(12)
                 .dsGlassInput(isFocused: isFocused, cornerRadius: 8)
                 .focused($isFocused)
@@ -1326,7 +1326,7 @@ struct ResearchAgentInputSheet: View {
                     onCancel()
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
                 Spacer()
 
@@ -1342,7 +1342,7 @@ struct ResearchAgentInputSheet: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(DS.accent, in: RoundedRectangle(cornerRadius: 8))
-                    .foregroundColor(DS.textOnAccent)
+                    .foregroundStyle(DS.textOnAccent)
                 }
                 .buttonStyle(.plain)
                 .disabled(query.isEmpty)
@@ -1375,19 +1375,19 @@ struct ResearchAgentPanelView: View {
     @State private var isHovered = false
     @State private var isExpanded = false
 
-    private let agentColor = Color(hex: "#06B6D4") // Cyan
+    private let agentColor = DS.info // Cyan
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 12))
-                    .foregroundColor(agentColor)
+                    .font(DS.subheadline)
+                    .foregroundStyle(agentColor)
 
                 Text("RESEARCH AGENT")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(agentColor)
+                    .font(DS.caption2)
+                    .foregroundStyle(agentColor)
                     .tracking(0.8)
 
                 Spacer()
@@ -1398,16 +1398,16 @@ struct ResearchAgentPanelView: View {
                 // Dismiss button
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
 
             // Query
             Text(result.query)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
                 .lineLimit(2)
 
             Divider()
@@ -1452,34 +1452,34 @@ struct ResearchAgentPanelView: View {
                     .scaleEffect(0.6)
                     .tint(agentColor)
                 Text("Searching...")
-                    .font(.system(size: 10))
-                    .foregroundColor(agentColor)
+                    .font(DS.caption2)
+                    .foregroundStyle(agentColor)
             }
 
         case .complete:
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "#22C55E"))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.green)
                 Text("Complete")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "#22C55E"))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.green)
             }
 
         case .failed:
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.red)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
                 Text("Failed")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.red)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
             }
 
         case .pending:
             Text("Pending")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -1491,8 +1491,8 @@ struct ResearchAgentPanelView: View {
                 .tint(agentColor)
 
             Text("Searching sources...")
-                .font(.system(size: 12))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -1502,19 +1502,19 @@ struct ResearchAgentPanelView: View {
         VStack(alignment: .leading, spacing: 10) {
             // Summary
             Text(result.summary)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.text)
                 .lineLimit(isExpanded ? nil : 4)
 
             // Citations count
             if !result.citations.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text("\(result.citations.count) sources")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
             }
 
             // Actions
@@ -1525,8 +1525,8 @@ struct ResearchAgentPanelView: View {
                     }
                 } label: {
                     Text(isExpanded ? "Show less" : "View full")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(agentColor)
+                        .font(DS.caption2)
+                        .foregroundStyle(agentColor)
                 }
                 .buttonStyle(.plain)
 
@@ -1535,11 +1535,11 @@ struct ResearchAgentPanelView: View {
                 Button(action: onConvertToAtom) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down.doc")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                         Text("Save as Atom")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(DS.caption2)
                     }
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(DS.accent.opacity(0.1), in: Capsule())
@@ -1552,12 +1552,12 @@ struct ResearchAgentPanelView: View {
     private var failedContent: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 24))
-                .foregroundColor(DS.red.opacity(0.7))
+                .font(DS.title1)
+                .foregroundStyle(DS.red.opacity(0.7))
 
             Text("Research failed. Please try again.")
-                .font(.system(size: 12))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 12) {
@@ -1565,15 +1565,15 @@ struct ResearchAgentPanelView: View {
                     // Would open edit sheet
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
 
                 Button("Retry") {
                     // Would retry query
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(agentColor)
+                .font(DS.caption)
+                .foregroundStyle(agentColor)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1582,8 +1582,8 @@ struct ResearchAgentPanelView: View {
 
     private var pendingContent: some View {
         Text("Waiting to start...")
-            .font(.system(size: 12))
-            .foregroundColor(DS.textSecondary)
+            .font(DS.subheadline)
+            .foregroundStyle(DS.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
     }
@@ -1592,7 +1592,7 @@ struct ResearchAgentPanelView: View {
 
     private var borderColor: Color {
         switch result.status {
-        case .complete: return Color(hex: "#22C55E").opacity(0.5) // Green
+        case .complete: return DS.green.opacity(0.5) // Green
         case .failed: return DS.red.opacity(0.5)
         case .running: return agentColor.opacity(0.3)
         case .pending: return DS.borderActive

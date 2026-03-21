@@ -309,7 +309,7 @@ struct ConnectionEditorView: View {
                 Button(action: { Task { await store.forceSave(connectionId) } }) {
                     Text("Save")
                         .font(CosmoTypography.labelSmall)
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(CosmoMentionColors.connection, in: Capsule())

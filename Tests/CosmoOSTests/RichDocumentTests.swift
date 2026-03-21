@@ -103,4 +103,17 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(roundTripped.blocks.first?.inlines.last?.mention, mention)
         XCTAssertEqual(roundTripped.blocks.last?.checked, true)
     }
+
+    func testTitleNormalizationStripsHeadingFormatting() {
+        let headingTitle = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [.text("Burger King", marks: [.bold])])
+        ])
+
+        let normalized = RichDocumentPersistence.normalizedTitleDocument(headingTitle)
+
+        XCTAssertEqual(RichDocumentPersistence.titlePlainText(from: headingTitle), "Burger King")
+        XCTAssertEqual(normalized.blocks.count, 1)
+        XCTAssertEqual(normalized.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(normalized.plainText, "Burger King")
+    }
 }

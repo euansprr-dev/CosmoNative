@@ -17,7 +17,6 @@ struct DocumentBlocksLayer: View {
     var canvasOffset: CGSize = .zero
 
     @StateObject private var spatialEngine: SpatialEngine
-    @StateObject private var expansionManager = BlockExpansionManager()
     @EnvironmentObject var database: CosmoDatabase
 
     // Drag state
@@ -92,7 +91,6 @@ struct DocumentBlocksLayer: View {
                 handleToggleBlockPin(notification: notification)
             }
         }
-        .environmentObject(expansionManager)
     }
 
     // MARK: - Block Views
@@ -106,7 +104,10 @@ struct DocumentBlocksLayer: View {
             case .note:
                 NoteBlockView(block: block)
             case .calendar:
-                CalendarWindowView(block: block)
+                Text("Calendar")
+                    .font(DS.body)
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .research:
                 ResearchBlockView(block: block)
             case .connection:
@@ -129,7 +130,7 @@ struct DocumentBlocksLayer: View {
             }
         }
         .position(blockPosition(block))
-        .zIndex(Double(block.zIndex) + expansionManager.zIndex(for: block.id))
+        .zIndex(Double(block.zIndex))
         .gesture(dragGesture(for: block))
         .onTapGesture(count: 1) {
             selectBlock(block.id)

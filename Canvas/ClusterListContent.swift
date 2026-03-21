@@ -332,7 +332,7 @@ struct ClusterListRow: View {
             .overlay(
                 Image(systemName: block.entityType.icon)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             )
     }
 

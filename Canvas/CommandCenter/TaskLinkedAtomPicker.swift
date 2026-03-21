@@ -23,10 +23,10 @@ struct TaskLinkedAtomPicker: View {
             HStack {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                     Text("Connected")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.caption)
                         .foregroundStyle(DS.textSecondary)
                 }
 
@@ -44,9 +44,9 @@ struct TaskLinkedAtomPicker: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "plus")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(DS.caption2)
                             Text("Link")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(DS.caption2)
                         }
                         .foregroundStyle(DS.accent)
                         .padding(.horizontal, 8)
@@ -56,7 +56,7 @@ struct TaskLinkedAtomPicker: View {
                     .buttonStyle(.plain)
                 } else {
                     Text("Max 3")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
             }
@@ -85,13 +85,13 @@ struct TaskLinkedAtomPicker: View {
         HStack(spacing: 8) {
             // Entity icon
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
                 .foregroundStyle(color)
                 .frame(width: 16)
 
             // Title
             Text(linked.titleSnapshot)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
 
@@ -99,7 +99,7 @@ struct TaskLinkedAtomPicker: View {
 
             // Type badge
             Text(entityType?.rawValue.capitalized ?? "Atom")
-                .font(.system(size: 9, weight: .medium))
+                .font(DS.caption2)
                 .foregroundStyle(color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -110,8 +110,8 @@ struct TaskLinkedAtomPicker: View {
                 setPrimary(linked.id)
             } label: {
                 Image(systemName: linked.isPrimary ? "star.fill" : "star")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(linked.isPrimary ? Color(hex: "F59E0B") : DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(linked.isPrimary ? DS.orange : DS.textMuted)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(linked.isPrimary ? "Primary link" : "Set as primary")
@@ -121,7 +121,7 @@ struct TaskLinkedAtomPicker: View {
                 removeLinkedAtom(linked.id)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -130,7 +130,7 @@ struct TaskLinkedAtomPicker: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
-            linked.isPrimary ? Color(hex: "F59E0B").opacity(0.06) : Color.clear,
+            linked.isPrimary ? DS.orange.opacity(0.06) : Color.clear,
             in: RoundedRectangle(cornerRadius: 6)
         )
     }
@@ -142,12 +142,12 @@ struct TaskLinkedAtomPicker: View {
             // Search input
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
 
                 TextField("Search atoms, thinkspaces...", text: $searchQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.text)
                     .focused($isSearchFocused)
                     .onChange(of: searchQuery) {
@@ -185,19 +185,19 @@ struct TaskLinkedAtomPicker: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: result.entityType.icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(color)
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(result.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                         .foregroundStyle(alreadyLinked ? DS.textMuted : DS.text)
                         .lineLimit(1)
 
                     if let subtitle = result.subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: 9))
+                            .font(DS.caption2)
                             .foregroundStyle(DS.textMuted)
                             .lineLimit(1)
                     }
@@ -206,7 +206,7 @@ struct TaskLinkedAtomPicker: View {
                 Spacer()
 
                 Text(result.typeLabel)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(color)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -214,7 +214,7 @@ struct TaskLinkedAtomPicker: View {
 
                 if alreadyLinked {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.green)
                 }
             }

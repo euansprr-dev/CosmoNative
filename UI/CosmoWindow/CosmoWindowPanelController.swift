@@ -37,13 +37,13 @@ final class CosmoWindowPanelController: NSWindowController {
         let savedFrame = CosmoWindowPanelController.loadSavedFrame()
         let initialFrame = savedFrame ?? CosmoWindowPanelController.defaultFrame()
 
-        // No .titled — removes traffic lights and window chrome border
+        // .titled — required for edge-drag resize cursors on macOS
         // .resizable — allows edge-drag resizing
         // .nonactivatingPanel — clicking doesn't activate the app
-        // .fullSizeContentView — content fills entire window frame
+        // .fullSizeContentView — content fills entire window frame (hides titlebar)
         panel = CosmoKeyablePanel(
             contentRect: initialFrame,
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .resizable],
+            styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView, .resizable, .closable],
             backing: .buffered,
             defer: false
         )
@@ -59,12 +59,17 @@ final class CosmoWindowPanelController: NSWindowController {
         panel.isMovableByWindowBackground = true
         panel.acceptsMouseMovedEvents = true
 
-        // Appearance — fully transparent window, SwiftUI handles all visuals
+        // Appearance — transparent window, system shadow for smooth rendering
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+
+        // Hide traffic light buttons (close/minimize/zoom)
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
 
         // Size constraints
         panel.minSize = NSSize(
@@ -90,10 +95,34 @@ final class CosmoWindowPanelController: NSWindowController {
         let contentView = NSHostingView(
             rootView: CosmoWindowView(isVisible: isVisible)
                 .environment(\.cosmoWindowIsFloating, true)
+                .preferredColorScheme(ThemeManager.shared.currentTheme.isDark ? .dark : .light)
         )
         contentView.wantsLayer = true
         contentView.layer?.masksToBounds = false
         panel.contentView = contentView
+
+        // Match panel appearance to active theme
+        panel.appearance = NSAppearance(named: ThemeManager.shared.currentTheme.isDark ? .darkAqua : .aqua)
+
+        // Listen for theme changes to update panel appearance
+        NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Theme.changed,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let isDark = ThemeManager.shared.currentTheme.isDark
+            self.panel.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+            // Rebuild hosting view with updated color scheme
+            let updatedView = NSHostingView(
+                rootView: CosmoWindowView(isVisible: isVisible)
+                    .environment(\.cosmoWindowIsFloating, true)
+                    .preferredColorScheme(isDark ? .dark : .light)
+            )
+            updatedView.wantsLayer = true
+            updatedView.layer?.masksToBounds = false
+            self.panel.contentView = updatedView
+        }
 
         // Start hidden
         panel.orderOut(nil)
@@ -209,6 +238,8 @@ final class CosmoWindowPanelController: NSWindowController {
         let y = defaults.double(forKey: "cosmoWindowPosY")
         let w = defaults.double(forKey: "cosmoWindowWidth")
         let h = defaults.double(forKey: "cosmoWindowHeight")
+        // If saved dimensions exceed current max, discard stale frame and use defaults
+        guard w <= CosmoWindowMetrics.maxWidth && h <= CosmoWindowMetrics.maxHeight else { return nil }
         let clampedWidth = min(max(w, CosmoWindowMetrics.minWidth), CosmoWindowMetrics.maxWidth)
         let clampedHeight = min(max(h, CosmoWindowMetrics.minHeight), CosmoWindowMetrics.maxHeight)
         let frame = NSRect(x: x, y: y, width: clampedWidth, height: clampedHeight)

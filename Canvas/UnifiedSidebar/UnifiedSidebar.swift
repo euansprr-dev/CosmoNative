@@ -10,20 +10,6 @@ enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
     case thinkspace(id: String)
-    case dimension(LevelDimension)
-}
-
-extension SidebarDestination {
-    var dimension: LevelDimension? {
-        if case .dimension(let dimension) = self {
-            return dimension
-        }
-        return nil
-    }
-
-    var isDimension: Bool {
-        dimension != nil
-    }
 }
 
 // MARK: - Sidebar Metrics
@@ -51,10 +37,11 @@ enum UnifiedSidebarMetrics {
     static let commandPillHeight: CGFloat = 34
     static let standardRowHeight: CGFloat = 40
     static let thinkspaceRowHeight: CGFloat = 36
-    static let dimensionRowHeight: CGFloat = 32
     static let railHitTarget: CGFloat = 32
     static let iconSize: CGFloat = 16
     static let resizeHandleWidth: CGFloat = 8
+    static let floatingMargin: CGFloat = 8
+    static let floatingCornerRadius: CGFloat = 14
 
     static func clampedExpandedWidth(_ width: CGFloat) -> CGFloat {
         min(max(width, minExpandedWidth), maxExpandedWidth)
@@ -62,11 +49,6 @@ enum UnifiedSidebarMetrics {
 }
 
 // MARK: - Sidebar Feature Flags
-
-private enum UnifiedSidebarFeatures {
-    /// Dimensions navigation is paused for a later release.
-    static let showsDimensionsSection = false
-}
 
 // MARK: - Shared Sidebar Chrome
 
@@ -103,8 +85,8 @@ struct UnifiedSidebarSection<Content: View>: View {
 
             if showsDivider {
                 Rectangle()
-                    .fill(DS.borderSubtle)
-                    .frame(height: 1)
+                    .fill(DS.glassBorder)
+                    .frame(height: 0.5)
                     .padding(.leading, isCollapsed ? 14 : 6)
                     .padding(.trailing, 6)
             }
@@ -162,6 +144,7 @@ struct UnifiedSidebar: View {
     @ObservedObject var thinkspaceManager: ThinkspaceManager
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @AppStorage("sidebarCollapsed") private var isCollapsed: Bool = false
     @State private var expandedWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
@@ -192,6 +175,22 @@ struct UnifiedSidebar: View {
         String(userFirstName.prefix(1)).uppercased()
     }
 
+    @ViewBuilder
+    private var sidebarBackground: some View {
+        let radius = UnifiedSidebarMetrics.floatingCornerRadius
+        if reduceTransparency {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(DS.surface)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(DS.surface.opacity(DS.palette.isDark ? 0.65 : 0.50))
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             sidebarHeader
@@ -207,22 +206,13 @@ struct UnifiedSidebar: View {
 
                     UnifiedSidebarSection(
                         isCollapsed: isCollapsed,
-                        showsDivider: UnifiedSidebarFeatures.showsDimensionsSection
+                        showsDivider: false
                     ) {
                         SidebarThinkspaceSection(
                             manager: thinkspaceManager,
                             currentDestination: $currentDestination,
                             isCollapsed: isCollapsed
                         )
-                    }
-
-                    if UnifiedSidebarFeatures.showsDimensionsSection {
-                        UnifiedSidebarSection(isCollapsed: isCollapsed) {
-                            SidebarDimensionSection(
-                                currentDestination: $currentDestination,
-                                isCollapsed: isCollapsed
-                            )
-                        }
                     }
                 }
                 .padding(.horizontal, outerPadding)
@@ -233,18 +223,24 @@ struct UnifiedSidebar: View {
             sidebarFooter
         }
         .frame(width: sidebarWidth)
-        .background(DS.surface)
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(DS.border)
-                .frame(width: 1)
-        }
+        .background(sidebarBackground)
+        .clipShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous)
+                .stroke(DS.glassBorder, lineWidth: 0.5)
+        )
+        .shadow(
+            color: .black.opacity(DS.palette.isDark ? 0.35 : 0.06),
+            radius: isCollapsed ? 8 : 16,
+            y: isCollapsed ? 2 : 4
+        )
         .overlay(alignment: .trailing) {
             if !isCollapsed {
                 resizeHandle
+                    .padding(.trailing, 2)
             }
         }
-        .clipped()
+        .padding(UnifiedSidebarMetrics.floatingMargin)
         .animation(motionAnimation, value: isCollapsed)
         .animation(motionAnimation, value: expandedWidth)
         .onAppear {
@@ -311,7 +307,7 @@ struct UnifiedSidebar: View {
                                 .foregroundStyle(DS.textMuted)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 4)
-                                .background(DS.surface, in: Capsule())
+                                .background(DS.glassSectionFill, in: Capsule())
                         }
                         .padding(.horizontal, 12)
                         .frame(height: UnifiedSidebarMetrics.commandPillHeight)
@@ -358,8 +354,8 @@ struct UnifiedSidebar: View {
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
             Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(height: 1)
+                .fill(DS.glassBorder)
+                .frame(height: 0.5)
                 .padding(.horizontal, outerPadding)
 
             HStack(spacing: 10) {
@@ -432,7 +428,7 @@ struct UnifiedSidebar: View {
             .contentShape(Rectangle())
             .overlay(alignment: .center) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(isResizeHandleHovered ? DS.borderActive : DS.borderSubtle)
+                    .fill(isResizeHandleHovered ? DS.borderActive : DS.glassBorder)
                     .frame(width: 2, height: 52)
                     .opacity(isResizeHandleHovered || resizeStartWidth != nil ? 1 : 0.5)
                     .padding(.trailing, 2)

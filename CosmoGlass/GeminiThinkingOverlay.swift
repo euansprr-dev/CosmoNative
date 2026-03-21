@@ -180,7 +180,7 @@ fileprivate enum OverlayEdge {
         Color.black.opacity(0.9)
 
         Text("Content here")
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
 
         GeminiThinkingOverlay()
     }

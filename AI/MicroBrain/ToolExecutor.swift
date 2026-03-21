@@ -563,22 +563,15 @@ public actor ToolExecutor {
     // MARK: - Sanctuary Satellite Navigation
 
     private func executePlannerumNavigation() async throws -> ExecutionResult {
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: .sanctuaryPlannerumRequested,
-                object: nil,
-                userInfo: nil
-            )
-        }
-
-        logger.info("Plannerum opened")
+        // Legacy Plannerum navigation removed
+        logger.info("Plannerum navigation is no longer available")
         return .plannerumOpened
     }
 
     private func executeThinkspaceNavigation() async throws -> ExecutionResult {
         await MainActor.run {
             NotificationCenter.default.post(
-                name: .sanctuaryThinkspaceRequested,
+                name: Notification.Name("com.cosmo.navigation.thinkspace"),
                 object: nil,
                 userInfo: nil
             )

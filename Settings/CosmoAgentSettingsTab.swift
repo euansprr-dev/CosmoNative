@@ -100,7 +100,7 @@ struct CosmoAgentSettingsTab: View {
                     HStack {
                         Text("Provider")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(SanctuaryColors.Text.primary)
+                            .foregroundStyle(DS.text)
 
                         Spacer()
 
@@ -142,21 +142,21 @@ struct CosmoAgentSettingsTab: View {
                         HStack {
                             Text("Base URL")
                                 .font(.system(size: 13))
-                                .foregroundColor(SanctuaryColors.Text.secondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .frame(width: 60, alignment: .leading)
 
                             TextField("http://localhost:11434", text: $agentBaseURL)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 13, design: .monospaced))
-                                .foregroundColor(SanctuaryColors.Text.primary)
+                                .foregroundStyle(DS.text)
                                 .onChange(of: agentBaseURL) { newValue in
                                     APIKeys.save(newValue, identifier: "agent_llm_base_url")
                                 }
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+                        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
                     }
 
                     // Test Connection
@@ -166,8 +166,8 @@ struct CosmoAgentSettingsTab: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -177,21 +177,21 @@ struct CosmoAgentSettingsTab: View {
             SecureField(selectedProvider == .openRouter ? "OpenRouter API Key" : "API Key", text: $agentAPIKey)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .foregroundStyle(DS.text)
 
             if !agentAPIKey.isEmpty && !agentAPIKey.allSatisfy({ $0 == "\u{2022}" }) {
                 Button(action: saveAPIKey) {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(CosmoColors.cosmoAI)
+                        .foregroundStyle(CosmoColors.cosmoAI)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -200,7 +200,7 @@ struct CosmoAgentSettingsTab: View {
             HStack {
                 Text("Model")
                     .font(.system(size: 13))
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 60, alignment: .leading)
 
                 Picker("", selection: $selectedOpenRouterModel) {
@@ -216,20 +216,20 @@ struct CosmoAgentSettingsTab: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
 
             // Custom model override field
             HStack {
                 Text("or type")
                     .font(.system(size: 11))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 60, alignment: .leading)
 
                 TextField("custom-model-id", text: $agentModel)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .foregroundStyle(DS.textSecondary)
                     .onChange(of: agentModel) { newValue in
                         agentService.setModel(newValue)
                     }
@@ -244,21 +244,21 @@ struct CosmoAgentSettingsTab: View {
         HStack {
             Text("Model")
                 .font(.system(size: 13))
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .foregroundStyle(DS.textSecondary)
                 .frame(width: 60, alignment: .leading)
 
             TextField("Model name", text: $agentModel)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .foregroundStyle(DS.text)
                 .onChange(of: agentModel) { newValue in
                     agentService.setModel(newValue)
                 }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -280,7 +280,7 @@ struct CosmoAgentSettingsTab: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(CosmoColors.cosmoAI.opacity(0.2)))
-                .foregroundColor(CosmoColors.cosmoAI)
+                .foregroundStyle(CosmoColors.cosmoAI)
             }
             .buttonStyle(.plain)
             .disabled(isTestingConnection)
@@ -288,10 +288,10 @@ struct CosmoAgentSettingsTab: View {
             if let result = connectionResult {
                 HStack(spacing: 4) {
                     Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(result.success ? .green : .red)
+                        .foregroundStyle(result.success ? .green : .red)
                     Text(result.message)
                         .font(.system(size: 12))
-                        .foregroundColor(result.success ? .green : .red)
+                        .foregroundStyle(result.success ? .green : .red)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -317,21 +317,21 @@ struct CosmoAgentSettingsTab: View {
                         SecureField("Bot Token", text: $telegramToken)
                             .textFieldStyle(.plain)
                             .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(SanctuaryColors.Text.primary)
+                            .foregroundStyle(DS.text)
 
                         if !telegramToken.isEmpty && !telegramToken.allSatisfy({ $0 == "\u{2022}" }) {
                             Button(action: saveTelegramToken) {
                                 Image(systemName: "arrow.right.circle.fill")
                                     .font(.system(size: 16))
-                                    .foregroundColor(CosmoColors.cosmoAI)
+                                    .foregroundStyle(CosmoColors.cosmoAI)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
 
                     // Start/Stop + Test + Status
                     telegramControlRow
@@ -344,7 +344,7 @@ struct CosmoAgentSettingsTab: View {
                             Text("How to create a Telegram bot")
                                 .font(.system(size: 11))
                         }
-                        .foregroundColor(CosmoColors.cosmoAI)
+                        .foregroundStyle(CosmoColors.cosmoAI)
                     }
                     .buttonStyle(.plain)
 
@@ -357,7 +357,7 @@ struct CosmoAgentSettingsTab: View {
                             Text("5. Click 'Start Polling' to connect")
                         }
                         .font(.system(size: 11))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundStyle(DS.textSecondary)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 8).fill(CosmoColors.lavender.opacity(0.1)))
@@ -367,8 +367,8 @@ struct CosmoAgentSettingsTab: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -394,7 +394,7 @@ struct CosmoAgentSettingsTab: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(
                         telegramBridge.isConnected ? CosmoColors.coral.opacity(0.2) : CosmoColors.cosmoAI.opacity(0.2)
                     ))
-                    .foregroundColor(telegramBridge.isConnected ? CosmoColors.coral : CosmoColors.cosmoAI)
+                    .foregroundStyle(telegramBridge.isConnected ? CosmoColors.coral : CosmoColors.cosmoAI)
                 }
                 .buttonStyle(.plain)
 
@@ -413,8 +413,8 @@ struct CosmoAgentSettingsTab: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                    .foregroundStyle(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .disabled(isTestingTelegram)
@@ -426,17 +426,17 @@ struct CosmoAgentSettingsTab: View {
 
                     Text(telegramStatusText)
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
 
             if let result = telegramTestResult {
                 HStack(spacing: 4) {
                     Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(result.success ? .green : .red)
+                        .foregroundStyle(result.success ? .green : .red)
                     Text(result.message)
                         .font(.system(size: 12))
-                        .foregroundColor(result.success ? .green : .red)
+                        .foregroundStyle(result.success ? .green : .red)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -455,19 +455,19 @@ struct CosmoAgentSettingsTab: View {
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Voice Transcription")
-                .font(SanctuaryTypography.titleSmall)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
 
             Text("OpenAI Whisper for voice messages in Telegram")
                 .font(.system(size: 13))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .foregroundStyle(DS.textMuted)
 
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     SecureField("Whisper API Key (optional)", text: $whisperKey)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
 
                     if !whisperKey.isEmpty && !whisperKey.allSatisfy({ $0 == "\u{2022}" }) {
                         Button(action: {
@@ -475,30 +475,30 @@ struct CosmoAgentSettingsTab: View {
                         }) {
                             Image(systemName: "arrow.right.circle.fill")
                                 .font(.system(size: 16))
-                                .foregroundColor(CosmoColors.cosmoAI)
+                                .foregroundStyle(CosmoColors.cosmoAI)
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
 
                 if APIKeys.hasWhisper {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundColor(.green)
+                            .foregroundStyle(.green)
                         Text("Whisper API key saved")
                             .font(.system(size: 12))
-                            .foregroundColor(SanctuaryColors.Text.secondary)
+                            .foregroundStyle(DS.textSecondary)
                     }
                 }
             }
             .padding(16)
-            .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         }
     }
 
@@ -506,12 +506,12 @@ struct CosmoAgentSettingsTab: View {
     private var proactiveSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Proactive Intelligence")
-                .font(SanctuaryTypography.titleSmall)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
 
             Text("Automated briefs and alerts via Telegram")
                 .font(.system(size: 13))
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .foregroundStyle(DS.textMuted)
 
             VStack(spacing: 12) {
                 // Morning brief
@@ -524,7 +524,7 @@ struct CosmoAgentSettingsTab: View {
                 Toggle(isOn: $scheduler.streakAlertsEnabled) {
                     Text("Streak Protection Alerts")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
                 }
                 .toggleStyle(.switch)
 
@@ -533,10 +533,10 @@ struct CosmoAgentSettingsTab: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Respect Quiet Hours")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(SanctuaryColors.Text.primary)
+                            .foregroundStyle(DS.text)
                         Text("Defer messages during deep work sessions")
                             .font(.system(size: 11))
-                            .foregroundColor(SanctuaryColors.Text.tertiary)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
                 .toggleStyle(.switch)
@@ -545,8 +545,8 @@ struct CosmoAgentSettingsTab: View {
                 heartbeatRow
             }
             .padding(16)
-            .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         }
     }
 
@@ -557,10 +557,10 @@ struct CosmoAgentSettingsTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Heartbeat Check-In")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
                     Text("Periodic pulse of noteworthy activity")
                         .font(.system(size: 11))
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .toggleStyle(.switch)
@@ -586,7 +586,7 @@ struct CosmoAgentSettingsTab: View {
             Toggle(isOn: $scheduler.morningBriefEnabled) {
                 Text("Morning Brief")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .foregroundStyle(DS.text)
             }
             .toggleStyle(.switch)
 
@@ -596,7 +596,7 @@ struct CosmoAgentSettingsTab: View {
                 HStack(spacing: 4) {
                     Text("\(String(format: "%02d", scheduler.morningBriefHour)):\(String(format: "%02d", scheduler.morningBriefMinute))")
                         .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
 
                     Stepper("", value: $scheduler.morningBriefHour, in: 0...23)
                         .labelsHidden()
@@ -612,7 +612,7 @@ struct CosmoAgentSettingsTab: View {
             Toggle(isOn: $scheduler.weeklyReviewEnabled) {
                 Text("Weekly Review")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .foregroundStyle(DS.text)
             }
             .toggleStyle(.switch)
 
@@ -633,7 +633,7 @@ struct CosmoAgentSettingsTab: View {
 
                 Text("\(String(format: "%02d", scheduler.weeklyReviewHour)):00")
                     .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .foregroundStyle(DS.text)
             }
         }
     }
@@ -653,12 +653,12 @@ struct CosmoAgentSettingsTab: View {
                 VStack(spacing: 12) {
                     Text("This prompt defines Cosmo's personality and behavior. Edits persist across sessions.")
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .foregroundStyle(DS.textMuted)
 
                     SystemPromptTextEditor(text: $customSystemPrompt)
                         .frame(height: 320)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+                        .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
                         .onChange(of: customSystemPrompt) { newValue in
                             isSystemPromptDirty = newValue != AgentContextAssembler.defaultIdentityPrompt
                         }
@@ -667,7 +667,7 @@ struct CosmoAgentSettingsTab: View {
                     let tokenEstimate = max(1, customSystemPrompt.count / 4)
                     Text("\(tokenEstimate) estimated tokens")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .foregroundStyle(DS.textMuted)
 
                     HStack(spacing: 12) {
                         Button(action: {
@@ -683,7 +683,7 @@ struct CosmoAgentSettingsTab: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .background(RoundedRectangle(cornerRadius: 8).fill(CosmoColors.cosmoAI.opacity(0.2)))
-                            .foregroundColor(CosmoColors.cosmoAI)
+                            .foregroundStyle(CosmoColors.cosmoAI)
                         }
                         .buttonStyle(.plain)
 
@@ -700,8 +700,8 @@ struct CosmoAgentSettingsTab: View {
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(SanctuaryColors.Glass.secondary))
-                            .foregroundColor(SanctuaryColors.Text.secondary)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
+                            .foregroundStyle(DS.textSecondary)
                         }
                         .buttonStyle(.plain)
 
@@ -712,8 +712,8 @@ struct CosmoAgentSettingsTab: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -723,19 +723,19 @@ struct CosmoAgentSettingsTab: View {
         HStack(spacing: 10) {
             Image(systemName: "brain.head.profile")
                 .font(.system(size: 14))
-                .foregroundColor(CosmoColors.cosmoAI)
+                .foregroundStyle(CosmoColors.cosmoAI)
                 .frame(width: 20)
 
             Text("Skills & writing modules are managed in the Skills & Prompts tab.")
                 .font(.system(size: 13))
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .foregroundStyle(DS.textSecondary)
 
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Collapsible Header Helper
@@ -756,12 +756,12 @@ struct CosmoAgentSettingsTab: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 14))
-                    .foregroundColor(CosmoColors.cosmoAI)
+                    .foregroundStyle(CosmoColors.cosmoAI)
                     .frame(width: 20)
 
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .foregroundStyle(DS.text)
 
                 if let color = statusColor {
                     Circle()
@@ -773,11 +773,11 @@ struct CosmoAgentSettingsTab: View {
 
                 Text(subtitle)
                     .font(.system(size: 12))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .foregroundStyle(DS.textMuted)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .foregroundStyle(DS.textMuted)
                     .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
             }
             .padding(.horizontal, 16)
@@ -791,27 +791,27 @@ struct CosmoAgentSettingsTab: View {
     private var whatsappSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("WhatsApp")
-                .font(SanctuaryTypography.titleSmall)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
 
             HStack(spacing: 12) {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.system(size: 24))
-                    .foregroundColor(CosmoColors.lavender)
+                    .foregroundStyle(CosmoColors.lavender)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Coming Soon")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
                     Text("WhatsApp requires a relay server for webhook callbacks. This will be available in v2.")
                         .font(.system(size: 12))
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(SanctuaryColors.Glass.primary))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
         }
     }
 

@@ -1,110 +1,115 @@
 // CosmoOS/Core/DesignSystem.swift
-// Unified Design System — Greenhouse Light Mode
+// Unified Design System — Multi-Theme Support
 // Every screen MUST use these tokens. No inline color/font definitions.
-// March 2026 — Full light-mode rebrand
+// March 2026 — Themeable architecture
 
 import SwiftUI
 
-// MARK: - Design System (Greenhouse Tokens)
+// MARK: - Design System (Dynamic Tokens)
 
 /// Single source of truth for all visual tokens in CosmoOS.
-/// Greenhouse: warm parchment surfaces, forest green accent, quiet depth via shadows.
+/// Color tokens are dynamic — they read from the active ThemePalette.
+/// Typography, spacing, radii, and animations are constant across themes.
 enum DS {
 
+    /// The active palette — swapped by ThemeManager on theme change.
+    /// All color properties below are computed from this.
+    nonisolated(unsafe) static var palette: ThemePalette = GreenhousePalette()
+
     // ═══════════════════════════════════════════════════════════════
-    // SURFACES — Warm parchment base, white elevation
+    // SURFACES — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
 
-    /// Page background — warm parchment
-    static let bg = Color(hex: "F8F7F4")
+    /// Page background
+    static var bg: Color { palette.bg }
 
     /// Sidebar, panels, secondary surfaces
-    static let surface = Color(hex: "F5F4F0")
+    static var surface: Color { palette.surface }
 
-    /// Cards, editor areas, modals — clean white
-    static let surfaceElevated = Color(hex: "FFFFFF")
+    /// Cards, editor areas, modals
+    static var surfaceElevated: Color { palette.surfaceElevated }
 
-    /// Thinkspace canvas cards, library cards — clean white
-    static let surfaceCard = Color(hex: "FFFFFF")
+    /// Thinkspace canvas cards, library cards
+    static var surfaceCard: Color { palette.surfaceCard }
 
-    /// Canvas background — slightly warmer than bg
-    static let canvas = Color(hex: "F2F1ED")
+    /// Canvas background
+    static var canvas: Color { palette.canvas }
 
     /// Hover state tint for interactive surfaces
-    static let surfaceHover = Color(hex: "F0EFEB")
+    static var surfaceHover: Color { palette.surfaceHover }
 
     // ═══════════════════════════════════════════════════════════════
-    // TEXT — Dark on light, WCAG AA compliant
+    // TEXT — Dynamic per theme, always WCAG AA compliant
     // ═══════════════════════════════════════════════════════════════
 
-    /// Primary text, headings, editor content — near-black
-    static let text = Color(hex: "1A1A1F")
+    /// Primary text, headings, editor content
+    static var text: Color { palette.text }
 
     /// Descriptions, subtitles, helper text
-    static let textSecondary = Color(hex: "6B6B78")
+    static var textSecondary: Color { palette.textSecondary }
 
-    /// Placeholders, disabled, metadata timestamps (WCAG AA 4.5:1 on white)
-    static let textMuted = Color(hex: "767685")
+    /// Placeholders, disabled, metadata timestamps
+    static var textMuted: Color { palette.textMuted }
 
-    /// Text on accent-colored backgrounds (green buttons, accent pills)
-    static let textOnAccent = Color.white
+    /// Text on accent-colored backgrounds
+    static var textOnAccent: Color { palette.textOnAccent }
 
     // ═══════════════════════════════════════════════════════════════
-    // ACCENT — Forest green, organic and alive
+    // ACCENT — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
 
-    /// Primary accent — forest green
-    static let accent = Color(hex: "2D6A4F")
+    /// Primary accent color
+    static var accent: Color { palette.accent }
 
-    /// Accent hover/pressed state — darker green
-    static let accentHover = Color(hex: "245943")
+    /// Accent hover/pressed state
+    static var accentHover: Color { palette.accentHover }
 
     /// Subtle accent glow for shadows
-    static let accentGlow = Color(hex: "2D6A4F").opacity(0.10)
+    static var accentGlow: Color { palette.accentGlow }
 
     /// Soft accent background for pills, tags, tinted areas
-    static let accentSoft = Color(hex: "E8F5EC")
+    static var accentSoft: Color { palette.accentSoft }
 
     // ═══════════════════════════════════════════════════════════════
-    // STATUS — Clear, accessible status colors
+    // STATUS — Dynamic per theme (adapted for light/dark contrast)
     // ═══════════════════════════════════════════════════════════════
 
     /// Success, completed states
-    static let green = Color(hex: "38B764")
+    static var green: Color { palette.green }
 
     /// Glow behind green elements
-    static let greenGlow = Color(hex: "38B764").opacity(0.12)
+    static var greenGlow: Color { palette.greenGlow }
 
     /// Warning, in-progress states
-    static let orange = Color(hex: "D97706")
+    static var orange: Color { palette.orange }
 
     /// Errors, high priority
-    static let red = Color(hex: "DC3545")
+    static var red: Color { palette.red }
 
     /// Info, links
-    static let info = Color(hex: "3B82F6")
+    static var info: Color { palette.info }
 
     /// Soft status backgrounds
-    static let greenSoft = Color(hex: "DCFCE7")
-    static let orangeSoft = Color(hex: "FEF3C7")
-    static let redSoft = Color(hex: "FEE2E2")
-    static let infoSoft = Color(hex: "DBEAFE")
+    static var greenSoft: Color { palette.greenSoft }
+    static var orangeSoft: Color { palette.orangeSoft }
+    static var redSoft: Color { palette.redSoft }
+    static var infoSoft: Color { palette.infoSoft }
 
     // ═══════════════════════════════════════════════════════════════
-    // BORDERS — Neutral gray, not warm or cold
+    // BORDERS — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
 
     /// Standard borders everywhere
-    static let border = Color(hex: "DCDCE0")
+    static var border: Color { palette.border }
 
     /// Section dividers, faint separations
-    static let borderSubtle = Color(hex: "E8E8EC")
+    static var borderSubtle: Color { palette.borderSubtle }
 
     /// Focus states, active inputs
-    static let borderActive = Color(hex: "C8C8CC")
+    static var borderActive: Color { palette.borderActive }
 
     /// Focus ring for keyboard navigation
-    static let focusRing = Color(hex: "2D6A4F").opacity(0.40)
+    static var focusRing: Color { palette.focusRing }
 
     // ═══════════════════════════════════════════════════════════════
     // ENTITY COLORS — Bespoke muted palette for light backgrounds
@@ -166,65 +171,100 @@ enum DS {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // GLASS — For elements on .regularMaterial overlays
-    // Light mode: higher opacity values for visibility
+    // GLASS — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════
 
     /// Inner card fill on material panels
-    static let glassCardFill = Color.white.opacity(0.70)
+    static var glassCardFill: Color { palette.glassCardFill }
 
     /// Input field fill on material panels
-    static let glassInputFill = Color.white.opacity(0.80)
+    static var glassInputFill: Color { palette.glassInputFill }
 
     /// Focused input field fill on material panels
-    static let glassInputFillFocused = Color.white.opacity(0.90)
+    static var glassInputFillFocused: Color { palette.glassInputFillFocused }
 
     /// Section container fill on material panels
-    static let glassSectionFill = Color.white.opacity(0.50)
+    static var glassSectionFill: Color { palette.glassSectionFill }
 
     /// Border for elements on material
-    static let glassBorder = Color.black.opacity(0.08)
+    static var glassBorder: Color { palette.glassBorder }
 
     /// Focused border on material
-    static let glassBorderFocused = Color(hex: "2D6A4F").opacity(0.40)
+    static var glassBorderFocused: Color { palette.glassBorderFocused }
 
     // ═══════════════════════════════════════════════════════════════
     // TYPOGRAPHY — System font (SF Pro) everywhere
+    // Complete type scale: display → caption2
     // ═══════════════════════════════════════════════════════════════
 
-    /// Page title — 28–32px, weight 600, text color, -0.01em tracking
+    /// Display — 32pt bold, splash/onboarding hero text
+    static let display = Font.system(size: 32, weight: .bold)
+
+    /// Page title — 28pt semibold, screen titles
     static let pageTitle = Font.system(size: 28, weight: .semibold)
+
+    /// Title 1 — 22pt semibold, modal/panel titles
+    static let title1 = Font.system(size: 22, weight: .semibold)
+
+    /// Title 2 — 18pt semibold, section headers
+    static let title2 = Font.system(size: 18, weight: .semibold)
+
+    /// Title 3 — 15pt medium, card titles, list group headers
+    static let title3 = Font.system(size: 15, weight: .medium)
+
+    /// Headline — 15pt semibold, emphasized body, bold labels
+    static let headline = Font.system(size: 15, weight: .semibold)
+
+    /// Body — 15pt regular, default content, editor text (line-height 1.55)
+    static let body = Font.system(size: 15, weight: .regular)
+
+    /// Callout — 13pt regular, secondary content, descriptions
+    static let callout = Font.system(size: 13, weight: .regular)
+
+    /// Subheadline — 12pt regular, metadata, timestamps
+    static let subheadline = Font.system(size: 12, weight: .regular)
+
+    /// Footnote — 11pt regular, tertiary info, hints
+    static let footnote = Font.system(size: 11, weight: .regular)
+
+    /// Caption — 11pt medium, badges, small labels
+    static let caption = Font.system(size: 11, weight: .medium)
+
+    /// Caption 2 — 10pt regular, smallest readable text
+    static let caption2 = Font.system(size: 10, weight: .regular)
+
+    // Legacy aliases (map to new scale for backward compat)
 
     /// Section label (UPPERCASE) — 11px, weight 600, textMuted, 0.08em tracking
     static let sectionLabel = Font.system(size: 11, weight: .semibold)
 
-    /// Section description — 13px, weight 400, textSecondary
-    static let sectionDesc = Font.system(size: 13, weight: .regular)
+    /// Section description — alias for callout
+    static let sectionDesc = callout
 
-    /// Body / editor text — 15px, weight 400, text color, line-height 1.55
-    static let body = Font.system(size: 15, weight: .regular)
+    /// Card title — alias for title3
+    static let cardTitle = title3
 
-    /// Card title — 15–16px, weight 500, text color
-    static let cardTitle = Font.system(size: 15, weight: .medium)
+    /// Card metadata — alias for subheadline
+    static let cardMeta = subheadline
 
-    /// Card metadata — 12px, weight 400, textSecondary
-    static let cardMeta = Font.system(size: 12, weight: .regular)
-
-    /// Button text — 12–13px, weight 500, accent or white, 0.01em tracking
+    /// Button text — 12pt medium, buttons and controls
     static let buttonText = Font.system(size: 12, weight: .medium)
 
-    /// Timestamp / counts — 11px, weight 400, textMuted
-    static let timestamp = Font.system(size: 11, weight: .regular)
+    /// Timestamp — alias for footnote
+    static let timestamp = footnote
 
-    /// Nav bar title — 14px, weight 500, text color
+    /// Nav bar title — 14pt medium
     static let navTitle = Font.system(size: 14, weight: .medium)
 
-    /// Nav bar badge — 10px, weight 500, textSecondary, 0.02em tracking
+    /// Nav bar badge — alias for caption2
     static let navBadge = Font.system(size: 10, weight: .medium)
 
     // ═══════════════════════════════════════════════════════════════
-    // RADII — Only 3 values exist
+    // RADII — 5 values covering all use cases
     // ═══════════════════════════════════════════════════════════════
+
+    /// Badges, tiny inline elements
+    static let radiusXSmall: CGFloat = 4
 
     /// Buttons, inputs
     static let radiusSmall: CGFloat = 8
@@ -235,18 +275,143 @@ enum DS {
     /// Modals, overlays
     static let radiusLarge: CGFloat = 16
 
+    /// Capsule / pill shape
+    static let radiusFull: CGFloat = 9999
+
     // ═══════════════════════════════════════════════════════════════
-    // SPACING — Consistent throughout
+    // SPACING — 4px grid, consistent throughout
+    // Every padding/margin/gap MUST use one of these values.
     // ═══════════════════════════════════════════════════════════════
 
-    /// Spacing between sections
+    /// 2pt — hairline gaps, inline icon spacing
+    static let space2: CGFloat = 2
+
+    /// 4pt — tight padding, compact elements
+    static let space4: CGFloat = 4
+
+    /// 6pt — tight-compact, between related elements
+    static let space6: CGFloat = 6
+
+    /// 8pt — compact spacing, small card padding
+    static let space8: CGFloat = 8
+
+    /// 10pt — between label and content
+    static let space10: CGFloat = 10
+
+    /// 12pt — default inner padding
+    static let space12: CGFloat = 12
+
+    /// 16pt — standard section spacing
+    static let space16: CGFloat = 16
+
+    /// 18pt — card inner padding (legacy alias)
+    static let space18: CGFloat = 18
+
+    /// 20pt — comfortable padding
+    static let space20: CGFloat = 20
+
+    /// 24pt — group spacing
+    static let space24: CGFloat = 24
+
+    /// 32pt — major section breaks
+    static let space32: CGFloat = 32
+
+    /// 36pt — between major sections (legacy alias)
+    static let space36: CGFloat = 36
+
+    /// 40pt — page margins
+    static let space40: CGFloat = 40
+
+    /// 48pt — page-level spacing, large gaps
+    static let space48: CGFloat = 48
+
+    // Legacy aliases
     static let sectionSpacing: CGFloat = 36
-
-    /// Padding inside cards
     static let cardPadding: CGFloat = 18
-
-    /// Page margins
     static let pageMargin: CGFloat = 40
+
+    // ═══════════════════════════════════════════════════════════════
+    // OPACITY — Semantic opacity values
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Disabled elements
+    static let opacityDisabled: Double = 0.4
+
+    /// Secondary/supporting elements
+    static let opacitySecondary: Double = 0.6
+
+    /// Pressed state overlay
+    static let opacityPressed: Double = 0.15
+
+    /// Subtle tint (entity soft backgrounds, hover fills)
+    static let opacitySubtle: Double = 0.12
+
+    /// Hover state overlay
+    static let opacityHover: Double = 0.08
+
+    /// Faint hint (borders, separators)
+    static let opacityFaint: Double = 0.04
+}
+
+// MARK: - Button Styles
+
+/// Primary action button with hover/press feedback
+struct DSPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(DS.buttonText)
+            .foregroundStyle(DS.textOnAccent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(configuration.isPressed ? DS.accentHover : DS.accent)
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.spring(duration: 0.2, bounce: 0.0), value: configuration.isPressed)
+    }
+}
+
+/// Ghost button with border and hover/press feedback
+struct DSGhostButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(DS.buttonText)
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(isHovered ? DS.surfaceHover : Color.clear)
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.spring(duration: 0.2, bounce: 0.0), value: configuration.isPressed)
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// Soft accent button with hover/press feedback
+struct DSAccentSoftButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(DS.buttonText)
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(isHovered ? DS.accentSoft.opacity(0.8) : DS.accentSoft)
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.spring(duration: 0.2, bounce: 0.0), value: configuration.isPressed)
+            .onHover { isHovered = $0 }
+    }
 }
 
 // MARK: - Reusable View Modifiers
@@ -257,7 +422,7 @@ extension View {
     func dsSectionLabel() -> some View {
         self
             .font(DS.sectionLabel)
-            .foregroundColor(DS.textMuted)
+            .foregroundStyle(DS.textMuted)
             .tracking(0.88) // 0.08em at 11px
             .textCase(.uppercase)
     }
@@ -297,22 +462,22 @@ extension View {
     func dsPrimaryButton() -> some View {
         self
             .font(DS.buttonText)
-            .foregroundColor(DS.textOnAccent)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(DS.accent)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
     }
 
     /// Ghost button — transparent bg, 1px border, textSecondary
     func dsGhostButton() -> some View {
         self
             .font(DS.buttonText)
-            .foregroundColor(DS.textSecondary)
+            .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .stroke(DS.border, lineWidth: 1)
@@ -323,11 +488,11 @@ extension View {
     func dsAccentSoftButton() -> some View {
         self
             .font(DS.buttonText)
-            .foregroundColor(DS.accent)
+            .foregroundStyle(DS.accent)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(DS.accentSoft)
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .stroke(DS.accent.opacity(0.2), lineWidth: 1)
@@ -353,23 +518,26 @@ extension View {
 
     /// Resting shadow — cards at rest, subtle depth
     func dsRestingShadow() -> some View {
-        self
-            .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
-            .shadow(color: .black.opacity(0.02), radius: 2, x: 0, y: 1)
+        let isDark = DS.palette.isDark
+        return self
+            .shadow(color: .black.opacity(isDark ? 0.3 : 0.04), radius: isDark ? 4 : 8, x: 0, y: isDark ? 1 : 2)
+            .shadow(color: .black.opacity(isDark ? 0.2 : 0.02), radius: isDark ? 1 : 2, x: 0, y: isDark ? 0 : 1)
     }
 
     /// Hover shadow — lifted state, more presence
     func dsHoverShadow() -> some View {
-        self
-            .shadow(color: .black.opacity(0.06), radius: 16, x: 0, y: 4)
-            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+        let isDark = DS.palette.isDark
+        return self
+            .shadow(color: .black.opacity(isDark ? 0.4 : 0.06), radius: isDark ? 8 : 16, x: 0, y: isDark ? 2 : 4)
+            .shadow(color: .black.opacity(isDark ? 0.25 : 0.03), radius: isDark ? 2 : 4, x: 0, y: isDark ? 1 : 2)
     }
 
     /// Floating shadow — modals, popovers, dropdowns
     func dsFloatingShadow() -> some View {
-        self
-            .shadow(color: .black.opacity(0.08), radius: 24, x: 0, y: 8)
-            .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
+        let isDark = DS.palette.isDark
+        return self
+            .shadow(color: .black.opacity(isDark ? 0.5 : 0.08), radius: isDark ? 16 : 24, x: 0, y: isDark ? 4 : 8)
+            .shadow(color: .black.opacity(isDark ? 0.3 : 0.04), radius: isDark ? 4 : 6, x: 0, y: isDark ? 2 : 3)
     }
 
     // ═══════════════════════════════════════════════════════════════

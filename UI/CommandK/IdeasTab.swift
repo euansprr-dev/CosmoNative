@@ -704,7 +704,7 @@ private struct IdeaBoardView: View {
                 Button { submitNewIdea(section: section) } label: {
                     Text("Add idea")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
                         .background(section.color, in: RoundedRectangle(cornerRadius: 6))

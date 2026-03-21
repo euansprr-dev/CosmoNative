@@ -578,8 +578,8 @@ enum RichDocumentSerializer {
         baseFontWeight: NSFont.Weight
     ) -> [NSAttributedString.Key: Any] {
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = singleLine ? 0 : 4
-        paragraphStyle.paragraphSpacing = singleLine ? 0 : 8
+        paragraphStyle.lineSpacing = singleLine ? 0 : 6
+        paragraphStyle.paragraphSpacing = singleLine ? 0 : 12
         return [
             .font: NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight),
             .foregroundColor: darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
@@ -624,7 +624,12 @@ enum RichDocumentSerializer {
             let headingParagraph = NSMutableParagraphStyle()
             headingParagraph.lineSpacing = 4
             headingParagraph.paragraphSpacing = 12
-            headingParagraph.paragraphSpacingBefore = 16
+            // Proportional top margin — larger headings get more breathing room
+            switch headingLevel {
+            case 1: headingParagraph.paragraphSpacingBefore = 32
+            case 2: headingParagraph.paragraphSpacingBefore = 24
+            default: headingParagraph.paragraphSpacingBefore = 16
+            }
             attributes[.paragraphStyle] = headingParagraph
         }
 
@@ -634,11 +639,11 @@ enum RichDocumentSerializer {
     private static func blockFont(for block: RichBlock, fontSize: CGFloat, baseFontWeight: NSFont.Weight) -> NSFont {
         switch block.kind {
         case .heading1:
-            return NSFont.systemFont(ofSize: max(28, fontSize + 12), weight: .bold)
+            return NSFont.systemFont(ofSize: max(32, fontSize + 16), weight: .bold)
         case .heading2:
-            return NSFont.systemFont(ofSize: max(22, fontSize + 8), weight: .semibold)
+            return NSFont.systemFont(ofSize: max(24, fontSize + 8), weight: .semibold)
         case .heading3:
-            return NSFont.systemFont(ofSize: max(18, fontSize + 4), weight: .semibold)
+            return NSFont.systemFont(ofSize: max(20, fontSize + 4), weight: .medium)
         default:
             return NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
         }

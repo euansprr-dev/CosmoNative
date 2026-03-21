@@ -256,7 +256,7 @@ class AgentToolRegistry {
         ]
     }
 
-    private var plannerumTools: [LLMToolDefinition] {
+    private var scheduleTools: [LLMToolDefinition] {
         [
             LLMToolDefinition(
                 name: "get_calendar_blocks",
@@ -352,7 +352,7 @@ class AgentToolRegistry {
         [
             LLMToolDefinition(
                 name: "get_dimension_xp",
-                description: "Get XP totals and levels for Sanctuary dimensions (cognitive, creative, physiological, behavioral, knowledge, reflection).",
+                description: "Get XP totals and levels for dimensions (cognitive, creative, physiological, behavioral, knowledge, reflection).",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -368,31 +368,6 @@ class AgentToolRegistry {
                     "type": "object",
                     "properties": [:] as [String: Any],
                     "required": [] as [String]
-                ]
-            ),
-        ]
-    }
-
-    private var questTools: [LLMToolDefinition] {
-        [
-            LLMToolDefinition(
-                name: "get_quest_status",
-                description: "Get the status of all daily quests including progress, completion, and streaks.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [:] as [String: Any],
-                    "required": [] as [String]
-                ]
-            ),
-            LLMToolDefinition(
-                name: "complete_quest",
-                description: "Manually complete a quest that allows manual completion (e.g. Heart Health).",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "questId": ["type": "string", "description": "The quest ID to complete (e.g. 'heartHealth')"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["questId"]
                 ]
             ),
         ]
@@ -1055,19 +1030,19 @@ class AgentToolRegistry {
         let uxTools = interactiveUXTools(for: source)
         switch intent {
         case .capture:
-            return ideaTools + swipeTools + captureTools + plannerumTools + clientTools + clientProfileTools + clientMemoryTools + lessonTools + moduleManagementTools
+            return ideaTools + swipeTools + captureTools + scheduleTools + clientTools + clientProfileTools + clientMemoryTools + lessonTools + moduleManagementTools
         case .brainstorm:
             return ideaTools + swipeTools + captureTools + clientTools + clientProfileTools + intelligenceTools + writingTools + clientMemoryTools + preferenceTools + scoringTools + lessonTools + moduleManagementTools + webSearchTools
         case .plan:
-            return plannerumTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools
+            return scheduleTools + contentTools + strategyTools + clientProfileTools + lessonTools + moduleManagementTools
         case .query:
             return allTools
         case .correct:
-            return ideaTools + contentTools + plannerumTools + clientTools + clientProfileTools + moduleManagementTools
+            return ideaTools + contentTools + scheduleTools + clientTools + clientProfileTools + moduleManagementTools
         case .execute:
-            return contentTools + plannerumTools + questTools + writingTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools
+            return contentTools + scheduleTools + writingTools + clientProfileTools + uxTools + lessonTools + moduleManagementTools
         case .debrief, .reflect:
-            return analyticsTools + questTools + lessonTools + moduleManagementTools
+            return analyticsTools + lessonTools + moduleManagementTools
         case .meta:
             return preferenceTools + standingInstructionTools + clientMemoryTools + lessonTools + uxTools + moduleManagementTools
         case .strategy:
@@ -1082,6 +1057,6 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = ideaTools + swipeTools + captureTools + contentTools + plannerumTools + analyticsTools + questTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools
+        allTools = ideaTools + swipeTools + captureTools + contentTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools
     }
 }

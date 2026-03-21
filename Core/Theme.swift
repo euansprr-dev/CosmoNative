@@ -7,140 +7,98 @@ import SwiftUI
 import AppKit
 import GRDB
 
-// MARK: - CosmoColors (Primary Palette)
-// The soul of CosmoOS — warm, calm, breathable
+// MARK: - CosmoColors (Theme-Aware Palette)
+// Surface, text, accent, and status colors now forward to DS (dynamic per theme).
+// Entity colors and specialty colors remain static (identity, not chrome).
 struct CosmoColors {
     // ═══════════════════════════════════════════════════════════════
-    // BASE LAYER - The soul of the OS
+    // BASE LAYER — Forwarded to DS (dynamic per theme)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Warm Parchment (#F8F7F4)
-    /// Think: sunlight hitting a blank page at 8 a.m.
-    /// Warm, clean, breathable. The perfect neutral for thinking.
-    static let softWhite = Color(hex: "F8F7F4")
-
-    /// Canvas background — slightly warmer
-    static let canvasBackground = Color(hex: "F2F1ED")
-    static let background = softWhite
-    static let cardBackground = Color.white
+    static var softWhite: Color { DS.bg }
+    static var canvasBackground: Color { DS.canvas }
+    static var background: Color { DS.bg }
+    static var cardBackground: Color { DS.surfaceElevated }
 
     // ═══════════════════════════════════════════════════════════════
-    // DEPTH LAYER - Structural shadows
+    // DEPTH LAYER — Structural (static, works in all themes)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Mist Grey (#E3E4E8) - Barely-there shadows
     static let mistGrey = Color(hex: "E3E4E8")
-    static let slate = Color(hex: "64748B") // Slate 500
-
-    /// Glass Grey (#D7D9DE) - Translucent depth
-    /// Everything feels like it's floating just a little
+    static let slate = Color(hex: "64748B")
     static let glassGrey = Color(hex: "D7D9DE")
 
     // ═══════════════════════════════════════════════════════════════
-    // ENERGY ACCENTS - The "thinking glow"
-    // Use extremely sparingly - cognitive signals, not decorations
+    // ENERGY ACCENTS — Accent forwarded, specialty static
     // ═══════════════════════════════════════════════════════════════
 
-    /// Pastel Sky Blue (#A8CCE8) - "Clarity"
-    /// Use for: selected states, hovering, active ideas
     static let skyBlue = Color(hex: "A8CCE8")
-
-    /// Forest Green (#2D6A4F) - "Growth"
-    /// Primary accent color — organic, alive
-    static let lavender = Color(hex: "2D6A4F")
-
-    /// Soft Coral (#F4AFA0) - "Attention Focus"
-    /// Use for: recording indicators, voice-active states, capture mode
+    static var lavender: Color { DS.accent }
     static let coral = Color(hex: "F4AFA0")
 
     // ═══════════════════════════════════════════════════════════════
-    // STATUS COLORS
+    // STATUS COLORS — Forwarded to DS (dynamic per theme)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Success Green (#38B764)
-    static let emerald = Color(hex: "38B764")
-    static let mint = emerald
-    static let amber = Color(hex: "D97706")
-
-    /// Warning Red (#DC3545)
-    static let softRed = Color(hex: "DC3545")
+    static var emerald: Color { DS.green }
+    static var mint: Color { DS.green }
+    static var amber: Color { DS.orange }
+    static var softRed: Color { DS.red }
 
     // ═══════════════════════════════════════════════════════════════
-    // TEXT COLORS
+    // TEXT COLORS — Forwarded to DS (dynamic per theme)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Primary text - near-black
-    static let textPrimary = Color(hex: "1A1A1F")
-
-    /// Secondary text - medium gray
-    static let textSecondary = Color(hex: "6B6B78")
-
-    /// Tertiary text - hints and placeholders
-    static let textTertiary = Color(hex: "767685")
+    static var textPrimary: Color { DS.text }
+    static var textSecondary: Color { DS.textSecondary }
+    static var textTertiary: Color { DS.textMuted }
 
     // ═══════════════════════════════════════════════════════════════
-    // ENTITY COLORS (Bespoke muted palette for light backgrounds)
+    // ENTITY COLORS — Static (identity, not chrome)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Idea - Muted indigo
     static let idea = Color(hex: "6B6EA8")
-
-    /// Content - Slate blue
     static let content = Color(hex: "5B84B0")
-
-    /// Task - Dusty rose
     static let task = Color(hex: "B06B6B")
-
-    /// Research - Forest teal
     static let research = Color(hex: "4A8B72")
-
-    /// Note - Warm umber
     static let note = Color(hex: "9B8A6E")
-
-    /// Cosmo AI - Forest green (matches accent)
     static let cosmoAI = Color(hex: "2D6A4F")
 
     // ═══════════════════════════════════════════════════════════════
-    // THINKSPACE LIGHT MODE - Warm greenhouse canvas
-    // Matching Sanctuary aesthetic for immersive thinking
+    // THINKSPACE — Forwarded to DS (dynamic per theme)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Canvas background — warm parchment
-    static let thinkspaceVoid = Color(hex: "F2F1ED")
+    static var thinkspaceVoid: Color { DS.canvas }
+    static var thinkspaceSecondary: Color { DS.surface }
+    static var thinkspaceTertiary: Color { DS.surfaceElevated }
+    static var thinkspaceGrid: Color { DS.borderSubtle }
+    static var thinkspacePurple: Color { DS.accent }
 
-    /// Secondary surface — slightly lifted
-    static let thinkspaceSecondary = Color(hex: "F5F4F0")
-
-    /// Tertiary — block backgrounds, cards
-    static let thinkspaceTertiary = Color.white
-
-    /// Grid color — subtle warm gray dots
-    static let thinkspaceGrid = Color(hex: "D8D7D3")
-
-    /// Green accent for shadows
-    static let thinkspacePurple = Color(hex: "2D6A4F")
-
-    /// Block accent colors (light mode versions — bespoke palette)
-    static let blockNote = Color(hex: "9B8A6E")      // Warm umber
-    static let blockContent = Color(hex: "5B84B0")    // Slate blue
-    static let blockResearch = Color(hex: "4A8B72")   // Forest teal
-    static let blockConnection = Color(hex: "8B6BAB") // Soft purple
+    /// Block accent colors — static (entity identity)
+    static let blockNote = Color(hex: "9B8A6E")
+    static let blockContent = Color(hex: "5B84B0")
+    static let blockResearch = Color(hex: "4A8B72")
+    static let blockConnection = Color(hex: "8B6BAB")
 
     // ═══════════════════════════════════════════════════════════════
-    // GRADIENTS - Soft, airy transitions
+    // GRADIENTS — Use dynamic accent
     // ═══════════════════════════════════════════════════════════════
 
-    static let aiGradient = LinearGradient(
-        colors: [Color(hex: "2D6A4F"), Color(hex: "4A8B72")],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static var aiGradient: LinearGradient {
+        LinearGradient(
+            colors: [DS.accent, DS.accent.opacity(0.7)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
-    static let warmGradient = LinearGradient(
-        colors: [coral, Color(hex: "F5D0C8")],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static var warmGradient: LinearGradient {
+        LinearGradient(
+            colors: [coral, Color(hex: "F5D0C8")],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 }
 
 // MARK: - Premium Typography (Cognitive Optimized)

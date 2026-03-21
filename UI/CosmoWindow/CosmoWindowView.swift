@@ -29,6 +29,7 @@ struct CosmoWindowView: View {
                 }
 
                 panelShell
+                    .dsFloatingShadow()
                     .frame(width: CosmoWindowMetrics.defaultWidth)
                     .padding(.vertical, 18)
 
@@ -48,17 +49,42 @@ struct CosmoWindowView: View {
                 contextSummarySection
             }
 
-            messageStage
+            ZStack(alignment: .bottom) {
+                messageStage
+
+                if viewModel.showMentionOverlay {
+                    CosmoMentionOverlay(
+                        isVisible: $viewModel.showMentionOverlay,
+                        searchText: $viewModel.mentionSearchText,
+                        onSelect: { atom in
+                            viewModel.addMention(atom)
+                            if let atIndex = inputText.lastIndex(of: "@") {
+                                inputText = String(inputText[inputText.startIndex..<atIndex])
+                                if !inputText.isEmpty && !inputText.hasSuffix(" ") {
+                                    inputText += " "
+                                }
+                            } else {
+                                inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        },
+                        onDismiss: {
+                            dismissMentionOverlay(trimMentionQuery: true)
+                        }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 4)
+                }
+            }
+
             composerSection
         }
         .background(DS.surface)
         .clipShape(RoundedRectangle(cornerRadius: CosmoWindowMetrics.panelCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: CosmoWindowMetrics.panelCornerRadius, style: .continuous)
-                .stroke(DS.border, lineWidth: 1)
+                .stroke(DS.border.opacity(0.5), lineWidth: 0.5)
         )
         .compositingGroup()
-        .dsFloatingShadow()
     }
 
     private var headerBar: some View {
@@ -122,13 +148,9 @@ struct CosmoWindowView: View {
     }
 
     private var contextSummarySection: some View {
-        CosmoContextSummaryCard(
-            context: viewModel.activeContext,
-            suggestions: promptSuggestions,
-            onSelectSuggestion: queuePrompt
-        )
-        .padding(.horizontal, CosmoWindowMetrics.contentPadding)
-        .padding(.bottom, 14)
+        CosmoContextBar(context: viewModel.activeContext)
+            .padding(.horizontal, CosmoWindowMetrics.contentPadding)
+            .padding(.bottom, 6)
     }
 
     private var messageStage: some View {
@@ -210,28 +232,6 @@ struct CosmoWindowView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .cosmoWindowSectionChrome(cornerRadius: 14, shadow: false)
-            }
-
-            if viewModel.showMentionOverlay {
-                CosmoMentionOverlay(
-                    isVisible: $viewModel.showMentionOverlay,
-                    searchText: $viewModel.mentionSearchText,
-                    onSelect: { atom in
-                        viewModel.addMention(atom)
-                        if let atIndex = inputText.lastIndex(of: "@") {
-                            inputText = String(inputText[inputText.startIndex..<atIndex])
-                            if !inputText.isEmpty && !inputText.hasSuffix(" ") {
-                                inputText += " "
-                            }
-                        } else {
-                            inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
-                    },
-                    onDismiss: {
-                        dismissMentionOverlay(trimMentionQuery: true)
-                    }
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             VStack(spacing: 10) {
@@ -696,12 +696,12 @@ struct CosmoWindowView: View {
 }
 
 enum CosmoWindowMetrics {
-    static let defaultWidth: CGFloat = 468
-    static let defaultHeight: CGFloat = 680
-    static let minWidth: CGFloat = 420
-    static let minHeight: CGFloat = 540
+    static let defaultWidth: CGFloat = 440
+    static let defaultHeight: CGFloat = 520
+    static let minWidth: CGFloat = 380
+    static let minHeight: CGFloat = 400
     static let maxWidth: CGFloat = 620
-    static let maxHeight: CGFloat = 900
+    static let maxHeight: CGFloat = 700
 
     static let panelCornerRadius: CGFloat = 20
     static let headerHeight: CGFloat = 56
@@ -879,92 +879,54 @@ private struct CosmoThinkingCard: View {
     }
 }
 
-private struct CosmoContextSummaryCard: View {
+/// Compact inline context bar — shows the active focus mode context
+/// without eating vertical space. No nested card chrome.
+private struct CosmoContextBar: View {
     let context: CosmoActiveContext
-    let suggestions: [String]
-    let onSelectSuggestion: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(DS.accentSoft)
-                        .frame(width: 36, height: 36)
+        HStack(spacing: 10) {
+            Image(systemName: context.type.icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 26, height: 26)
+                .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                    Image(systemName: context.type.icon)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(DS.accent)
-                }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(context.type.displayName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(context.type.displayName)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.text)
-
-                    Text(summaryText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-
-                if let count = context.data.visibleItemCount {
-                    Text("\(count) visible")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.textSecondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .cosmoWindowChip()
+                if let title = context.data.currentAtomTitle, !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
                 }
             }
 
-            contextFacts
+            Spacer(minLength: 0)
 
-            if !suggestions.isEmpty {
-                FlowSuggestionsView(items: Array(suggestions.prefix(3)), onSelect: onSelectSuggestion)
+            if let count = context.data.visibleItemCount {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .cosmoWindowChip()
             }
         }
-        .padding(14)
-        .cosmoWindowSectionChrome(cornerRadius: 16)
-    }
-
-    @ViewBuilder
-    private var contextFacts: some View {
-        let facts = contextFactChips
-        if !facts.isEmpty {
-            FlexibleFactRow(items: facts)
-        }
-    }
-
-    private var contextFactChips: [String] {
-        var facts: [String] = []
-
-        if let title = context.data.currentAtomTitle, !title.isEmpty {
-            facts.append(title)
-        }
-        if let filters = context.data.activeFilters, !filters.isEmpty {
-            facts.append(contentsOf: filters.prefix(2))
-        }
-        if context.data.selectedText != nil {
-            facts.append("Selection active")
-        }
-        for (key, value) in context.data.viewSpecificData.sorted(by: { $0.key < $1.key }).prefix(2) {
-            facts.append("\(key): \(value)")
-        }
-
-        return facts
-    }
-
-    private var summaryText: String {
-        if let current = context.data.currentAtomTitle, !current.isEmpty {
-            return "Focused on \(current)"
-        }
-        if !context.summary.isEmpty {
-            return context.summary
-        }
-        return "Cosmo can use your current workspace as live context."
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DS.surfaceElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 }
 

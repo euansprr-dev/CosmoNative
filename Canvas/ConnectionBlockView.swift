@@ -12,13 +12,10 @@ struct ConnectionBlockView: View {
 
     @State private var sections: [ConnectionSection] = []
     @State private var atom: Atom?
-    @State private var isExpanded = false
     @State private var observationCancellable: AnyCancellable?
     @State private var editableTitle: String = ""
     @State private var titleDocument: RichDocument = .empty
     @State private var isEditingTitle = false
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
     // Purple accent for connections
     private let accentColor = DS.entityConnection
 
@@ -36,7 +33,6 @@ struct ConnectionBlockView: View {
             accentColor: accentColor,
             icon: "link.circle.fill",
             title: atom?.title ?? block.title,
-            isExpanded: $isExpanded,
             autoHeight: true,
             onFocusMode: openFocusMode
         ) {
@@ -135,7 +131,7 @@ struct ConnectionBlockView: View {
                 .frame(height: 32)
             } else {
                 Text(editableTitle.isEmpty ? "Untitled Connection" : editableTitle)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
                     .frame(height: 32, alignment: .leading)
@@ -147,8 +143,8 @@ struct ConnectionBlockView: View {
             }
 
             Text("\(totalItemCount) items \u{00B7} \(populatedSectionCount)/8 sections")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -158,17 +154,17 @@ struct ConnectionBlockView: View {
         HStack(spacing: 4) {
             Image(systemName: "link")
                 .font(.system(size: 9))
-                .foregroundColor(accentColor.opacity(0.5))
+                .foregroundStyle(accentColor.opacity(0.5))
             Text("\(totalItemCount) items")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(accentColor.opacity(0.6))
+                .font(DS.caption2)
+                .foregroundStyle(accentColor.opacity(0.6))
 
             Spacer()
 
             if let created = block.metadata["created"] ?? block.metadata["updated"] {
                 Text(formatTimestamp(created))
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }
@@ -553,14 +549,14 @@ private struct CompactSectionRow: View {
 
                     // Section name
                     Text(section.type.displayName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.text)
 
                     // Count badge
                     if !section.items.isEmpty {
                         Text("\(section.items.count)")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(section.type.accentColor)
+                            .foregroundStyle(section.type.accentColor)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
@@ -574,7 +570,7 @@ private struct CompactSectionRow: View {
                     // Chevron
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .rotationEffect(.degrees(section.isExpanded ? 90 : 0))
                 }
                 .padding(.horizontal, 8)
@@ -605,7 +601,7 @@ private struct CompactSectionRow: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
                                 .font(.system(size: 8))
-                                .foregroundColor(section.type.accentColor.opacity(0.5))
+                                .foregroundStyle(section.type.accentColor.opacity(0.5))
                                 .frame(width: 12)
 
                             CosmoDocumentEditor(
@@ -628,7 +624,7 @@ private struct CompactSectionRow: View {
                             } label: {
                                 Image(systemName: "xmark")
                                     .font(.system(size: 9, weight: .medium))
-                                    .foregroundColor(DS.textMuted)
+                                    .foregroundStyle(DS.textMuted)
                             }
                             .buttonStyle(.plain)
 
@@ -637,7 +633,7 @@ private struct CompactSectionRow: View {
                             } label: {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(section.type.accentColor)
+                                    .foregroundStyle(section.type.accentColor)
                             }
                             .buttonStyle(.plain)
                             .disabled(newItemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -658,7 +654,7 @@ private struct CompactSectionRow: View {
                                 Text("Add")
                                     .font(.system(size: 11))
                             }
-                            .foregroundColor(section.type.accentColor.opacity(0.5))
+                            .foregroundStyle(section.type.accentColor.opacity(0.5))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                         }
@@ -670,7 +666,7 @@ private struct CompactSectionRow: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: DS.radiusXSmall + 2)
                 .fill(sectionBackground)
         )
     }
@@ -743,7 +739,7 @@ private struct CompactItemRow: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 
@@ -752,7 +748,7 @@ private struct CompactItemRow: View {
                     } label: {
                         Image(systemName: "checkmark")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(accentColor)
+                            .foregroundStyle(accentColor)
                     }
                     .buttonStyle(.plain)
                     .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -773,7 +769,7 @@ private struct CompactItemRow: View {
                     } label: {
                         Image(systemName: "pencil")
                             .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 
@@ -782,7 +778,7 @@ private struct CompactItemRow: View {
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 9))
-                            .foregroundColor(Color.red.opacity(0.5))
+                            .foregroundStyle(DS.red.opacity(0.5))
                     }
                     .buttonStyle(.plain)
                 }
@@ -844,7 +840,6 @@ struct ConnectionBlockView_Previews: PreviewProvider {
                     title: "Second Brain Architecture"
                 )
             )
-            .environmentObject(BlockExpansionManager())
         }
         .frame(width: 500, height: 500)
     }

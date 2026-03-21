@@ -421,11 +421,11 @@ struct AgentConversation: Codable, Identifiable, Sendable {
         self.topics = []
     }
 
-    init(id: String, source: MessageSource) {
+    init(id: String, source: MessageSource, createdAt: Date = Date()) {
         self.id = id
         self.messages = []
         self.source = source
-        self.createdAt = Date()
+        self.createdAt = createdAt
         self.summary = nil
         self.linkedAtomUUIDs = []
         self.topics = []

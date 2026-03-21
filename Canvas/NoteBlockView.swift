@@ -15,7 +15,7 @@ struct NoteBlockView: View {
     @State private var noteTitleText: String = ""
     @State private var noteText: String = ""
     @State private var noteWordCount: Int = 0
-    @State private var isExpanded = false
+    @State private var titleEditorHeight: CGFloat = 50
     @State private var isEditingTitle = false
     @State private var isEditingBody = false
 
@@ -32,10 +32,20 @@ struct NoteBlockView: View {
     // GRDB observation
     @State private var observationCancellable: AnyCancellable?
 
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
     // Orange accent for notes
     private let accentColor = CosmoColors.blockNote
+    private let titleFontSize: CGFloat = 28
+
+    private var titleMinHeight: CGFloat {
+        max(
+            50,
+            EditorLayoutMetrics.singleLineHeight(
+                fontSize: titleFontSize,
+                compact: true,
+                baseFontWeight: .semibold
+            )
+        )
+    }
 
     var body: some View {
         CosmoBlockWrapper(
@@ -43,7 +53,6 @@ struct NoteBlockView: View {
             accentColor: accentColor,
             icon: "note.text",
             title: displayTitle,
-            isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
             noteContent
@@ -124,84 +133,67 @@ struct NoteBlockView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, -8)
 
-            // Title field
-            if isEditingTitle {
-                CosmoDocumentEditor(
-                    document: $noteTitleDocument,
-                    fontSize: 24,
-                    compact: true,
-                    placeholder: "Heading",
-                    allowSlashCommands: false,
-                    allowMentions: true,
-                    allowSelectionMenu: false,
-                    allowImages: false,
-                    singleLine: true,
-                    baseFontWeight: .semibold,
-                    onDocumentChange: { document, _ in
-                        noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
-                        if !isSyncingFromDB { scheduleAutoSave() }
-                    }
-                )
-                .frame(height: 48)
-            } else {
-                Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(noteTitleText.isEmpty ? DS.textMuted : DS.text)
-                    .lineLimit(2)
-                    .frame(height: 48, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { isEditingTitle = true }
-            }
-
-            // Body text
-            if isEditingBody {
-                CosmoDocumentEditor(
-                    document: $noteBodyDocument,
-                    fontSize: 15,
-                    compact: true,
-                    placeholder: "Press / for commands...",
-                    allowSlashCommands: true,
-                    allowMentions: true,
-                    allowSelectionMenu: true,
-                    allowImages: true,
-                    onDocumentChange: { _, plainText in
-                        noteText = plainText
-                        noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-                        if !isSyncingFromDB { scheduleAutoSave() }
-                    }
-                )
-                .frame(maxHeight: .infinity)
-            } else {
-                Group {
-                    if noteText.isEmpty {
-                        Text("Press / for commands...")
-                            .font(.system(size: 15))
-                            .foregroundStyle(DS.textMuted)
-                            .italic()
-                    } else {
-                        CosmoDocumentRenderer(document: noteBodyDocument, fontSize: 15, lineLimit: 8)
-                    }
+            // Title — always-on editor, toggle isEditable (no view swap = no shift)
+            CosmoDocumentEditor(
+                document: $noteTitleDocument,
+                fontSize: titleFontSize,
+                compact: true,
+                placeholder: "Heading",
+                allowSlashCommands: false,
+                allowMentions: isEditingTitle,
+                allowSelectionMenu: false,
+                allowImages: false,
+                singleLine: true,
+                baseFontWeight: .semibold,
+                isEditable: isEditingTitle,
+                onContentHeightChange: { newHeight in
+                    titleEditorHeight = max(titleMinHeight, newHeight)
+                },
+                onDocumentChange: { document, _ in
+                    noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
+                    if !isSyncingFromDB { scheduleAutoSave() }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .contentShape(Rectangle())
-                .onTapGesture { isEditingBody = true }
-            }
+            )
+            .frame(height: max(titleMinHeight, titleEditorHeight))
+            .contentShape(Rectangle())
+            .onTapGesture { isEditingTitle = true }
+
+            // Body — always-on editor with in-block scrolling via NSScrollView
+            CosmoDocumentEditor(
+                document: $noteBodyDocument,
+                fontSize: 15,
+                compact: true,
+                placeholder: "Press / for commands...",
+                allowSlashCommands: isEditingBody,
+                allowMentions: isEditingBody,
+                allowSelectionMenu: isEditingBody,
+                allowImages: isEditingBody,
+                isEditable: isEditingBody,
+                scrollsInternally: true,
+                onDocumentChange: { _, plainText in
+                    noteText = plainText
+                    noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+                    if !isSyncingFromDB { scheduleAutoSave() }
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture { isEditingBody = true }
 
             // Footer: word count + timestamp
             HStack(spacing: 6) {
                 if noteWordCount > 0 {
                     Text("\(noteWordCount)w")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentColor.opacity(0.6))
+                        .font(DS.caption2)
+                        .foregroundStyle(accentColor.opacity(0.6))
                 }
 
                 Spacer()
 
                 if let timestamp = block.metadata["created"] {
                     Text(formatTimestamp(timestamp))
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
         }
@@ -325,7 +317,7 @@ struct NoteBlockView: View {
         autoSaveTask?.cancel()
 
         autoSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled {
                 await MainActor.run {
                     saveNote()
@@ -555,7 +547,6 @@ struct NoteBlockView_Previews: PreviewProvider {
             NoteBlockView(
                 block: CanvasBlock.noteBlock(position: CGPoint(x: 200, y: 200))
             )
-            .environmentObject(BlockExpansionManager())
         }
         .frame(width: 500, height: 400)
     }

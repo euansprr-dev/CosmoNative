@@ -4,6 +4,21 @@
 
 import Foundation
 
+// MARK: - Stub Types (Sanctuary system removed)
+
+/// Minimal stub for enhanced correlation context (Sanctuary removed)
+public struct EnhancedCorrelationContext {
+    let baseContext: CorrelationDataContext
+    let recentJournalEntries: [JournalEntrySummary]
+}
+
+/// Minimal stub for journal entry summary (Sanctuary removed)
+public struct JournalEntrySummary {
+    let date: String
+    let type: String
+    let content: String
+}
+
 // MARK: - Correlation Request Builder
 
 /// Builds structured prompts for Claude API correlation analysis.

@@ -113,7 +113,7 @@ struct DashboardFocusTimer: View {
         let score = viewModel.sessionEngine.focusScore
         if score >= 80 { return DS.green }
         if score >= 50 { return DS.orange }
-        return PlannerumColors.overdue
+        return DS.red
     }
 
     private var sessionControls: some View {
@@ -137,7 +137,7 @@ struct DashboardFocusTimer: View {
                 } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .frame(width: 32, height: 32)
                         .background(DS.accent, in: Circle())
                 }
@@ -152,9 +152,9 @@ struct DashboardFocusTimer: View {
             } label: {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 12))
-                    .foregroundColor(PlannerumColors.overdue)
+                    .foregroundColor(DS.red)
                     .frame(width: 32, height: 32)
-                    .background(PlannerumColors.overdue.opacity(0.1), in: Circle())
+                    .background(DS.red.opacity(0.1), in: Circle())
             }
             .buttonStyle(.plain)
         }

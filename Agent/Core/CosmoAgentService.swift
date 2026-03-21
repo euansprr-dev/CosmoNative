@@ -168,7 +168,7 @@ class CosmoAgentService: ObservableObject {
     private let workflowPlanner = AgentWorkflowPlanner.shared
 
     /// Maximum tool call iterations for simple intents (queries, captures, corrections)
-    private let baseMaxToolIterations = 8
+    private let baseMaxToolIterations = 12
 
     /// Returns the max tool iterations for a given intent. Creative/analytical
     /// intents that chain many tools (profile → swipes → beats → draft → score)
@@ -1298,7 +1298,41 @@ class CosmoAgentService: ObservableObject {
             return .meta
         }
 
-        // Check for capture patterns (most specific after idea prefix)
+        // Draft — checked BEFORE capture because long writing messages may contain
+        // incidental capture keywords (e.g. "save $40K" in deal context).
+        // Writing intent takes precedence when explicit writing verbs are present.
+        let draftKeywords = ["draft", "write a thread", "write a reel", "write about",
+                             "write this", "write for ", "writing this", "writing a ",
+                             "writing for ", "start writing", "want to write",
+                             "reel for ", "thread for ", "carousel for ",
+                             "create this reel", "create a reel",
+                             "create this thread", "create a thread",
+                             "create this carousel", "create a carousel",
+                             "make it punchier", "more punchy", "shorter", "longer",
+                             "condense", "expand", "rephrase", "rewrite",
+                             "generate an outline", "give me an outline", "write the draft",
+                             "generate hooks", "hook variants", "let's write",
+                             "make this a content piece", "let's draft this", "write this up",
+                             "let's make this", "i want to write",
+                             "feedback on slide", "feedback on hook", "feedback on this",
+                             "feedback on section", "feedback on the", "what do you think of this",
+                             "what do you think about this", "thoughts on this hook",
+                             "thoughts on this slide", "does this hook work",
+                             "make it more ", "make this more ", "make this sound",
+                             "make it sound", "too formal", "too casual", "too salesy",
+                             "what structure", "what framework", "what's a good structure",
+                             "what's a good hook", "what's a good opening", "what angle",
+                             "hook ideas", "hook options", "opening ideas",
+                             "punch up", "tighten this", "clean this up",
+                             "check the flow", "does this flow", "how does this read",
+                             "make the hook", "using this as the swipe", "using the swipe", "using that as",
+                             "let's use the blueprint", "use the blueprint", "using the blueprint",
+                             "use a hook like", "using a hook like"]
+        if containsAny(lower, draftKeywords) {
+            return .draft
+        }
+
+        // Check for capture patterns (after draft, so writing intent wins)
         let hasURL = lower.contains("http://") || lower.contains("https://") ||
                      lower.contains("youtu.be/") || lower.contains("youtube.com") ||
                      lower.contains("instagram.com") || lower.contains("x.com") ||
@@ -1324,36 +1358,6 @@ class CosmoAgentService: ObservableObject {
         if containsAny(lower, ["what should i create", "content plan", "weekly plan", "content strategy",
                                 "what to post", "what's next", "content gap", "what should i write"]) {
             return .strategy
-        }
-
-        // Draft — expanded keywords for natural language coverage + creative feedback messages
-        if containsAny(lower, ["draft", "write a thread", "write a reel", "write about",
-                                "write this", "write for ", "writing this", "writing a ",
-                                "writing for ", "start writing", "want to write",
-                                "reel for ", "thread for ", "carousel for ",
-                                "create this reel", "create a reel",
-                                "create this thread", "create a thread",
-                                "create this carousel", "create a carousel",
-                                "make it punchier", "more punchy", "shorter", "longer",
-                                "condense", "expand", "rephrase", "rewrite",
-                                "generate an outline", "give me an outline", "write the draft",
-                                "generate hooks", "hook variants", "let's write",
-                                "make this a content piece", "let's draft this", "write this up",
-                                "let's make this", "i want to write",
-                                // Creative feedback — these routed to .query (Haiku) before
-                                "feedback on slide", "feedback on hook", "feedback on this",
-                                "feedback on section", "feedback on the", "what do you think of this",
-                                "what do you think about this", "thoughts on this hook",
-                                "thoughts on this slide", "does this hook work",
-                                "make it more ", "make this more ", "make this sound",
-                                "make it sound", "too formal", "too casual", "too salesy",
-                                "what structure", "what framework", "what's a good structure",
-                                "what's a good hook", "what's a good opening", "what angle",
-                                "hook ideas", "hook options", "opening ideas",
-                                "punch up", "tighten this", "clean this up",
-                                "check the flow", "does this flow", "how does this read",
-                                "make the hook", "using this as the swipe", "using the swipe", "using that as"]) {
-            return .draft
         }
 
         // Analyze
@@ -1888,6 +1892,30 @@ class CosmoAgentService: ObservableObject {
         }
         if let issues = json["complianceIssues"] as? [String], !issues.isEmpty {
             parts.append("violations: \(issues.joined(separator: "; "))")
+        }
+        // Scorecard results — preserve scores so multi-turn refinement can track improvements
+        if let hookScore = json["hookScore"] as? Double {
+            parts.append("hookScore: \(String(format: "%.1f", hookScore))")
+        }
+        if let copyScore = json["copyScore"] as? Double {
+            parts.append("copyScore: \(String(format: "%.1f", copyScore))")
+        }
+        if let ctaScore = json["ctaScore"] as? Double {
+            parts.append("ctaScore: \(String(format: "%.1f", ctaScore))")
+        }
+        if let voiceMatch = json["voiceMatch"] as? Double {
+            parts.append("voiceMatch: \(String(format: "%.0f", voiceMatch))%")
+        }
+        if let overallConfidence = json["overallConfidence"] as? Int {
+            parts.append("confidence: \(overallConfidence)%")
+        }
+        // Engine notes from writing tools — preserve strategic reasoning
+        if let engineNotes = json["engineNotes"] as? String, !engineNotes.isEmpty {
+            parts.append("notes: \(String(engineNotes.prefix(200)))")
+        }
+        // Content format for draft tools
+        if let format = json["format"] as? String {
+            parts.append("format: \(format)")
         }
         if let message = json["message"] as? String {
             parts.append("message: \(String(message.prefix(120)))")

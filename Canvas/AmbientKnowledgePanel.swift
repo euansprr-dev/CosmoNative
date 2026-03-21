@@ -18,7 +18,7 @@ struct AmbientKnowledgePanel: View {
             panelBody
         }
         .frame(width: panelWidth)
-        .background(OnyxColors.Elevation.floating)
+        .background(DS.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -33,7 +33,7 @@ struct AmbientKnowledgePanel: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 12))
-                .foregroundColor(OnyxColors.Dimension.knowledge)
+                .foregroundColor(DS.accent)
 
             Text("Related Knowledge")
                 .font(.system(size: 12, weight: .semibold))
@@ -44,7 +44,7 @@ struct AmbientKnowledgePanel: View {
             if engine.isLoading {
                 ProgressView()
                     .controlSize(.mini)
-                    .tint(OnyxColors.Dimension.knowledge)
+                    .tint(DS.accent)
             }
 
             Button(action: onClose) {

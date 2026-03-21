@@ -98,6 +98,20 @@ struct CompressedSwipe: Identifiable {
     /// Structural breakdown for PRIMARY swipes — section functions, density, arc
     var structuralBreakdown: String = ""
 
+    // MARK: - Swipe Intelligence (WP1)
+
+    /// Persuasion techniques with intensity, e.g. ["Social Proof (0.8)", "Scarcity (0.6)"]
+    var persuasionTechniques: [String] = []
+
+    /// Emotional arc progression, e.g. ["curiosity", "tension", "relief", "motivation"]
+    var emotionalArc: [String] = []
+
+    /// Engagement rate as percentage (0.0-100.0), from SwipeAnalysis.engagementRate
+    var engagementRate: Double = 0
+
+    /// Why the hook scored well, e.g. "Combines curiosity gap + specific number"
+    var hookScoreReason: String = ""
+
     /// Format as injection text with FULL BODY — no truncation
     func formatted() -> String {
         let beats = beatSequence.joined(separator: " > ")
@@ -124,6 +138,22 @@ struct CompressedSwipe: Identifiable {
         Beat Pattern: \(beats)
         Framework: \(framework) | Format: \(format)\(primaryTag)
         """
+
+        // Swipe intelligence — WHY this swipe works
+        if !hookScoreReason.isEmpty {
+            result += "\nWhy Hook Works: \(hookScoreReason)"
+        }
+        if !engagementSummary.isEmpty || engagementRate > 0 {
+            let rateStr = engagementRate > 0 ? " (\(String(format: "%.1f", engagementRate))% rate)" : ""
+            let summaryStr = engagementSummary.isEmpty ? "" : engagementSummary
+            result += "\nEngagement: \(summaryStr)\(rateStr)"
+        }
+        if !persuasionTechniques.isEmpty {
+            result += "\nPersuasion: \(persuasionTechniques.joined(separator: ", "))"
+        }
+        if !emotionalArc.isEmpty {
+            result += "\nEmotional Arc: \(emotionalArc.joined(separator: " \u{2192} "))"
+        }
 
         if !fullBody.isEmpty {
             result += "\n\n--- FULL BODY ---\n\(fullBody)"
@@ -376,14 +406,11 @@ enum WritingContentFormat: String, CaseIterable {
         return swipeFormatFamily.contains(format)
     }
 
-    /// Checks if a swipe atom matches this writing format, using richContent as fallback
-    /// when swipeAnalysis.swipeContentFormat is nil (not yet AI-classified).
+    /// Checks if a swipe atom matches this writing format, using capture-time media metadata
+    /// as the primary signal. AI classification (`swipeContentFormat`) is checked LAST because
+    /// it often misclassifies reels as "post".
     func matchesSwipeAtom(_ atom: Atom) -> Bool {
-        // 1. Check analyzed format first (most precise)
-        if let format = atom.swipeAnalysis?.swipeContentFormat {
-            return swipeFormatFamily.contains(format)
-        }
-        // 2. Fallback: infer from richContent.instagramType (set at capture time)
+        // 1. Check instagramType (set at capture time from URL pattern — most reliable)
         if let igType = atom.richContent?.instagramType {
             switch igType {
             case "reel": return swipeFormatFamily.contains(.reel)
@@ -392,7 +419,7 @@ enum WritingContentFormat: String, CaseIterable {
             default: break
             }
         }
-        // 3. Fallback: infer from richContent.sourceType
+        // 2. Check sourceType enum (set from URL classifier — also reliable)
         if let sourceType = atom.richContent?.sourceType {
             switch sourceType {
             case .instagramReel, .tiktok: return swipeFormatFamily.contains(.reel)
@@ -403,43 +430,96 @@ enum WritingContentFormat: String, CaseIterable {
             default: break
             }
         }
+        // 3. Check carousel items array (if present → carousel)
+        if let items = atom.richContent?.instagramData?.carouselItems, !items.isEmpty {
+            return swipeFormatFamily.contains(.carousel)
+        }
+        // 3b. InstagramData.contentType — required field when instagramData exists (most reliable)
+        if let contentType = atom.richContent?.instagramData?.contentType {
+            switch contentType {
+            case .reel, .videoPost: return swipeFormatFamily.contains(.reel)
+            case .carousel: return swipeFormatFamily.contains(.carousel)
+            case .image: return swipeFormatFamily.contains(.post)
+            case .story: return swipeFormatFamily.contains(.carousel)
+            }
+        }
+        // 3c. instagramContentType enum on RichContent (ResearchRichContent.InstagramContentType)
+        if let ict = atom.richContent?.instagramContentType {
+            switch ict {
+            case .reel: return swipeFormatFamily.contains(.reel)
+            case .carousel: return swipeFormatFamily.contains(.carousel)
+            case .post: return swipeFormatFamily.contains(.post)
+            case .story: return swipeFormatFamily.contains(.carousel)
+            }
+        }
+        // 4. Parse URL pattern as last resort before AI classification
+        let urlString = atom.richContent?.instagramData?.originalURL.absoluteString
+            ?? atom.researchMetadata?.url
+        if let url = urlString {
+            if url.contains("/reel/") || url.contains("/reels/") || url.contains("share/reel/") {
+                return swipeFormatFamily.contains(.reel)
+            }
+            if url.contains("img_index=") {
+                return swipeFormatFamily.contains(.carousel)
+            }
+        }
+        // 5. LAST: fall back to AI classification (least reliable — often misclassifies reels as "post")
+        if let format = atom.swipeAnalysis?.swipeContentFormat {
+            return swipeFormatFamily.contains(format)
+        }
+        // 5b. Video URL presence → reel (if no carousel items, having extractedMediaURL means video)
+        if atom.richContent?.instagramData?.extractedMediaURL != nil {
+            return swipeFormatFamily.contains(.reel)
+        }
+        // 6. No format metadata at all — EXCLUDE. With steps 1-5b covering
+        // instagramData.contentType, sourceType, URL, AI classification, and video URL,
+        // atoms reaching here have no usable format signal.
         return false
     }
 
     static func detect(from atom: Atom) -> WritingContentFormat {
-        if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String {
-            switch explicitFormat {
-            case "reel": return .instagramReel
-            case "carousel": return .instagramCarousel
-            case "thread": return .twitterThread
-            case "post": return .staticPost
-            default: break
+        // 1. Check explicitFormat in raw dict (agent sets this at tool call time)
+        if let explicitFormat = atom.metadataDict?["explicitFormat"] as? String,
+           let resolved = resolveFormatString(explicitFormat) {
+            return resolved
+        }
+
+        // 2. Check ContentAtomMetadata.contentFormat (canonical, Codable-persisted)
+        if let meta = atom.metadataValue(as: ContentAtomMetadata.self) {
+            if let fmt = meta.contentFormat, let resolved = resolveFormatString(fmt) {
+                return resolved
+            }
+
+            // 3. Platform-only fallback — NO draft content sniffing (draft is often empty at init time)
+            switch meta.platform {
+            case .instagram: return .instagramCarousel   // Safe default (same family as thread)
+            case .twitter: return .twitterThread          // Thread is the primary writing format
+            case .linkedin: return .linkedinPost
+            case .youtube: return .youtubeLongForm
+            case .tiktok: return .tiktokScript
+            default: return .staticPost
             }
         }
 
-        guard let meta = atom.metadataValue(as: ContentAtomMetadata.self) else {
-            return .staticPost
-        }
+        return .staticPost
+    }
 
-        switch meta.platform {
-        case .instagram:
-            let focusState = ContentFocusModeState.from(atom: atom)
-            let draft = focusState?.draftContent ?? ""
-            if draft.contains("\"slides\"") { return .instagramCarousel }
-            if draft.contains("[STORY:") { return .instagramStory }
-            if draft.contains("[VISUAL:") { return .instagramReel }
-            return .instagramReel
-
-        case .twitter:
-            let focusState = ContentFocusModeState.from(atom: atom)
-            let draft = focusState?.draftContent ?? ""
-            if draft.contains("\"tweets\"") { return .twitterThread }
-            return .twitterSingle
-
-        case .linkedin: return .linkedinPost
-        case .youtube: return .youtubeLongForm
-        case .tiktok: return .tiktokScript
-        default: return .staticPost
+    /// Normalize format string variations to a WritingContentFormat.
+    /// Handles all known format strings from agent tools, metadata, and UI.
+    private static func resolveFormatString(_ format: String) -> WritingContentFormat? {
+        switch format.lowercased() {
+        case "reel", "instagramreel", "instagram_reel": return .instagramReel
+        case "carousel", "instagramcarousel", "instagram_carousel": return .instagramCarousel
+        case "thread", "twitterthread", "twitter_thread": return .twitterThread
+        case "post", "staticpost", "static_post": return .staticPost
+        case "story", "instagramstory", "instagram_story": return .instagramStory
+        case "tiktok", "tiktokscript", "tiktok_script": return .tiktokScript
+        case "youtube", "youtubeshort", "youtube_short": return .youtubeShort
+        case "youtubelongform", "youtube_long_form": return .youtubeLongForm
+        case "tweet", "twittersingle", "twitter_single": return .twitterSingle
+        case "linkedin", "linkedinpost", "linkedin_post": return .linkedinPost
+        case "newsletter": return .newsletter
+        default: return nil
         }
     }
 

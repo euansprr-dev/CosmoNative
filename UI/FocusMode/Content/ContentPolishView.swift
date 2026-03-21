@@ -49,7 +49,7 @@ struct ContentPolishView: View {
                             .padding(.bottom, 20)
                         } else {
                             Text("Analyzing...")
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .padding(40)
                         }
                     }
@@ -93,7 +93,7 @@ struct ContentPolishView: View {
                     Text("Back to Draft")
                 }
                 .font(DS.buttonText)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
@@ -128,10 +128,10 @@ struct ContentPolishView: View {
             VStack(spacing: 1) {
                 Text("\(Int(analysis?.fleschKincaidScore ?? 0))")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Text(analysis?.readabilityRating.label ?? "")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(readabilityColor)
+                    .foregroundStyle(readabilityColor)
             }
         }
         .shadow(color: readabilityColor.opacity(0.12), radius: 8)
@@ -161,10 +161,10 @@ struct ContentPolishView: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
             Text(label.uppercased())
                 .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .tracking(0.5)
         }
     }
@@ -188,7 +188,7 @@ struct ContentPolishView: View {
                 .frame(width: 8, height: 8)
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -202,10 +202,10 @@ struct ContentPolishView: View {
             HStack(spacing: 8) {
                 Image(systemName: "shield.checkered")
                     .font(.system(size: 14))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                 Text("Analysis")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -274,16 +274,16 @@ struct ContentPolishView: View {
                 HStack {
                     Text(label)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                     Spacer()
                     Text("\(count)")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(count > 0 ? color : DS.textMuted)
+                        .foregroundStyle(count > 0 ? color : DS.textMuted)
                 }
                 if count > 0 {
                     Text(description)
                         .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
         }
@@ -310,7 +310,7 @@ struct ContentPolishView: View {
                 .controlSize(.small)
             Text(scorecardEngine.evaluationProgress.isEmpty ? "Evaluating..." : scorecardEngine.evaluationProgress)
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -327,7 +327,7 @@ struct ContentPolishView: View {
                 Text("Run Scorecard")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(DS.accent)
+            .foregroundStyle(DS.accent)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(DS.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -356,11 +356,11 @@ struct ContentPolishView: View {
             HStack {
                 Text("Confidence")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 Spacer()
                 Text("\(scorecard.overallConfidence)%")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .padding(.top, 4)
 
@@ -375,7 +375,7 @@ struct ContentPolishView: View {
                     Text("Re-evaluate")
                         .font(.system(size: 9, weight: .medium))
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(DS.border, in: Capsule())
@@ -393,14 +393,14 @@ struct ContentPolishView: View {
             HStack {
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text(String(format: "%.1f", score))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(scoreColor(score))
+                    .foregroundStyle(scoreColor(score))
                 Text("/10")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Score bar
@@ -420,7 +420,7 @@ struct ContentPolishView: View {
             if let suggestion = suggestions.first {
                 Text(suggestion)
                     .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
                     .padding(.top, 2)
             }
@@ -432,11 +432,11 @@ struct ContentPolishView: View {
             HStack {
                 Text("Voice Match")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text(String(format: "%.0f%%", voiceMatch.percentage))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(scoreColor(voiceMatch.percentage / 10.0))
+                    .foregroundStyle(scoreColor(voiceMatch.percentage / 10.0))
             }
 
             GeometryReader { geo in
@@ -454,7 +454,7 @@ struct ContentPolishView: View {
             if let drift = voiceMatch.drifts.first {
                 Text(drift.issue)
                     .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
                     .padding(.top, 2)
             }
@@ -466,11 +466,11 @@ struct ContentPolishView: View {
             HStack {
                 Text("Structure")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text(String(format: "%.0f%%", alignment.alignmentScore))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(scoreColor(alignment.alignmentScore / 10.0))
+                    .foregroundStyle(scoreColor(alignment.alignmentScore / 10.0))
             }
 
             GeometryReader { geo in
@@ -488,7 +488,7 @@ struct ContentPolishView: View {
             if let suggestion = alignment.suggestions.first {
                 Text(suggestion)
                     .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
                     .padding(.top, 2)
             }
@@ -522,7 +522,7 @@ struct ContentPolishView: View {
                 .controlSize(.small)
             Text(redTeamEngine.evaluationProgress.isEmpty ? "Analyzing risks..." : redTeamEngine.evaluationProgress)
                 .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -539,7 +539,7 @@ struct ContentPolishView: View {
                 Text("Run Red Team")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.red)
+            .foregroundStyle(DS.red)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -554,10 +554,10 @@ struct ContentPolishView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
                     Text("No significant risks found")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -583,7 +583,7 @@ struct ContentPolishView: View {
                     Text("Re-evaluate")
                         .font(.system(size: 9, weight: .medium))
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(DS.border, in: Capsule())
@@ -604,7 +604,7 @@ struct ContentPolishView: View {
             Spacer()
             Text("\(result.cards.count) issue\(result.cards.count == 1 ? "" : "s")")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -615,7 +615,7 @@ struct ContentPolishView: View {
                 .frame(width: 6, height: 6)
             Text("\(count) \(severity.displayName)")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(severity.color)
+                .foregroundStyle(severity.color)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -628,18 +628,18 @@ struct ContentPolishView: View {
             HStack(spacing: 6) {
                 Image(systemName: card.riskType.iconName)
                     .font(.system(size: 10))
-                    .foregroundColor(card.severity.color)
+                    .foregroundStyle(card.severity.color)
 
                 Text(card.title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text(card.severity.displayName.uppercased())
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(card.severity.color)
+                    .foregroundStyle(card.severity.color)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(card.severity.color.opacity(0.15), in: Capsule())
@@ -648,14 +648,14 @@ struct ContentPolishView: View {
             if !card.metric.isEmpty {
                 Text(card.metric)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(2)
             }
 
             if !card.recommendation.isEmpty {
                 Text(card.recommendation)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(3)
             }
         }
@@ -673,11 +673,11 @@ struct ContentPolishView: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Text(title)
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -779,7 +779,7 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
             guard range.location + range.length <= nsLength else { continue }
             attributed.addAttribute(
                 .backgroundColor,
-                value: NSColor.systemYellow.withAlphaComponent(0.15),
+                value: PolishHighlightColors.complex,
                 range: range
             )
         }
@@ -789,7 +789,7 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
             guard range.location + range.length <= nsLength else { continue }
             attributed.addAttribute(
                 .backgroundColor,
-                value: NSColor.systemRed.withAlphaComponent(0.15),
+                value: PolishHighlightColors.veryComplex,
                 range: range
             )
         }
@@ -799,7 +799,7 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
             guard range.location + range.length <= nsLength else { continue }
             attributed.addAttribute(
                 .backgroundColor,
-                value: NSColor.systemBlue.withAlphaComponent(0.15),
+                value: PolishHighlightColors.passive,
                 range: range
             )
         }
@@ -809,7 +809,7 @@ struct PolishAnnotatedTextView: NSViewRepresentable {
             guard range.location + range.length <= nsLength else { continue }
             attributed.addAttribute(
                 .backgroundColor,
-                value: NSColor.systemPurple.withAlphaComponent(0.15),
+                value: PolishHighlightColors.adverb,
                 range: range
             )
         }

@@ -21,11 +21,8 @@ struct CosmoAIBlockView: View {
     let block: CanvasBlock
 
     @StateObject private var state = CosmoAIBlockChatState()
-    @State private var isExpanded = false
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
-
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     var body: some View {
         CosmoBlockWrapper(
@@ -33,7 +30,6 @@ struct CosmoAIBlockView: View {
             accentColor: DS.accent,
             icon: "brain",
             title: block.title.isEmpty ? "Cosmo AI" : block.title,
-            isExpanded: $isExpanded,
             onClose: closeBlock
         ) {
             chatContent
@@ -575,7 +571,6 @@ final class CosmoAIBlockChatState: ObservableObject {
         CosmoAIBlockView(
             block: CanvasBlock.cosmoAIBlock(position: CGPoint(x: 200, y: 200))
         )
-        .environmentObject(BlockExpansionManager())
     }
     .frame(width: 420, height: 380)
 }

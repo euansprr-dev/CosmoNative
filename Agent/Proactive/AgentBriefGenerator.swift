@@ -39,10 +39,7 @@ class AgentBriefGenerator {
         // 6. Strategic insight
         let insight = await generateInsight(contentAtoms: contentAtoms)
 
-        // 7. Quest progress
-        let questProgress = await getQuestProgress()
-
-        // 8. Energy note (HealthKit if available)
+        // 7. Energy note (HealthKit if available)
         let energyNote = await getEnergyNote()
 
         return TelegramRichMessages.shared.formatMorningBrief(
@@ -52,7 +49,7 @@ class AgentBriefGenerator {
             followerChange: followerNote,
             todayPlan: todayPlan,
             insight: insight,
-            questProgress: questProgress
+            questProgress: ""
         )
     }
 
@@ -194,29 +191,6 @@ class AgentBriefGenerator {
         return notes.isEmpty ? nil : notes.joined(separator: " | ")
     }
 
-    // MARK: - Quest Progress
-
-    private func getQuestProgress() async -> String {
-        let engine = QuestEngine()
-        await engine.evaluate()
-
-        let completed = engine.quests.filter { $0.isComplete }.count
-        let total = engine.quests.count
-
-        if total == 0 { return "" }
-
-        let inProgress = engine.quests
-            .filter { !$0.isComplete && $0.progress > 0 }
-            .prefix(2)
-            .map { "\($0.title) (\(Int($0.progress * 100))%)" }
-
-        var result = "\(completed)/\(total) complete"
-        if !inProgress.isEmpty {
-            result += ". In progress: " + inProgress.joined(separator: ", ")
-        }
-        return result
-    }
-
     // MARK: - Energy Note
 
     private func getEnergyNote() async -> String? {
@@ -321,12 +295,6 @@ class AgentBriefGenerator {
             pattern: pattern,
             recommendations: recommendations
         )
-    }
-
-    // MARK: - Streak Alert
-
-    func generateStreakAlert(questTitle: String, currentStreak: Int) -> String {
-        "Streak Alert! Your \"\(questTitle)\" streak is at \(currentStreak) days. Don't forget to complete it today!"
     }
 
     // MARK: - Helpers

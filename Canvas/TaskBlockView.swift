@@ -9,12 +9,9 @@ struct TaskBlockView: View {
     let block: CanvasBlock
 
     @State private var task: CosmoTask?
-    @State private var isExpanded = false
     @State private var isHovered = false
     @State private var isLoading = true
     @State private var checklistItems: [ChecklistItem] = []
-
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     private let database = CosmoDatabase.shared
 
@@ -47,7 +44,6 @@ struct TaskBlockView: View {
             accentColor: CosmoMentionColors.task,
             icon: isCompleted ? "checkmark.circle.fill" : "circle",
             title: task?.title ?? block.title,
-            isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
             contentView
@@ -92,7 +88,7 @@ struct TaskBlockView: View {
                     Text(duration)
                         .font(CosmoTypography.caption)
                 }
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundStyle(CosmoColors.textTertiary)
             }
         }
 
@@ -100,8 +96,8 @@ struct TaskBlockView: View {
         if let description = task.description, !description.isEmpty {
             Text(description)
                 .font(CosmoTypography.bodySmall)
-                .foregroundColor(CosmoColors.textSecondary)
-                .lineLimit(isExpanded ? nil : 2)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
@@ -110,7 +106,7 @@ struct TaskBlockView: View {
             ChecklistPreview(
                 items: checklistItems,
                 progress: checklistProgress,
-                isExpanded: isExpanded
+                isExpanded: false
             )
         }
 
@@ -119,28 +115,10 @@ struct TaskBlockView: View {
             DueDateBadge(dateString: dueDate)
         }
 
-        // Expanded content
-        if isExpanded {
-            Divider()
-                .background(CosmoMentionColors.task.opacity(0.3))
-                .padding(.vertical, 4)
-
-            // Time details
-            TaskTimeDetails(task: task)
-
-            // Recurrence info
-            if let recurrence = task.recurrence {
-                RecurrenceBadge(recurrenceJson: recurrence)
-            }
-
-            // Metadata
-            TaskMetadataView(task: task)
-        }
-
         Spacer(minLength: 0)
 
         // Footer
-        TaskFooter(task: task, isExpanded: isExpanded, onToggleComplete: toggleComplete)
+        TaskFooter(task: task, isExpanded: false, onToggleComplete: toggleComplete)
     }
 
     // MARK: - Loading View
@@ -151,7 +129,7 @@ struct TaskBlockView: View {
                 .scaleEffect(0.8)
             Text("Loading task...")
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundStyle(CosmoColors.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -162,10 +140,10 @@ struct TaskBlockView: View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle.badge.xmark")
                 .font(.system(size: 32))
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundStyle(CosmoColors.textTertiary)
             Text("Task not found")
                 .font(CosmoTypography.body)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundStyle(CosmoColors.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -259,7 +237,7 @@ struct TaskStatusBadge: View {
             Text(status.replacingOccurrences(of: "_", with: " ").capitalized)
                 .font(CosmoTypography.caption)
         }
-        .foregroundColor(statusColor)
+        .foregroundStyle(statusColor)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(statusColor.opacity(0.12), in: Capsule())
@@ -298,7 +276,7 @@ struct TaskPriorityBadge: View {
             Text(priority.capitalized)
                 .font(CosmoTypography.caption)
         }
-        .foregroundColor(priorityColor)
+        .foregroundStyle(priorityColor)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(priorityColor.opacity(0.1), in: Capsule())
@@ -321,7 +299,7 @@ struct ChecklistPreview: View {
 
                 Text("\(Int(progress * 100))%")
                     .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundStyle(CosmoColors.textTertiary)
             }
 
             // Items (show more when expanded)
@@ -330,11 +308,11 @@ struct ChecklistPreview: View {
                 HStack(spacing: 8) {
                     Image(systemName: item.isCompleted ? "checkmark.square.fill" : "square")
                         .font(.system(size: 12))
-                        .foregroundColor(item.isCompleted ? CosmoColors.emerald : CosmoColors.textTertiary)
+                        .foregroundStyle(item.isCompleted ? CosmoColors.emerald : CosmoColors.textTertiary)
 
                     Text(item.title)
                         .font(CosmoTypography.caption)
-                        .foregroundColor(item.isCompleted ? CosmoColors.textTertiary : CosmoColors.textSecondary)
+                        .foregroundStyle(item.isCompleted ? CosmoColors.textTertiary : CosmoColors.textSecondary)
                         .strikethrough(item.isCompleted)
                         .lineLimit(1)
                 }
@@ -344,7 +322,7 @@ struct ChecklistPreview: View {
             if !isExpanded && items.count > 3 {
                 Text("+\(items.count - 3) more items")
                     .font(CosmoTypography.caption)
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundStyle(CosmoColors.textTertiary)
             }
         }
         .padding(10)
@@ -384,7 +362,7 @@ struct DueDateBadge: View {
             Text(formattedDate)
                 .font(CosmoTypography.caption)
         }
-        .foregroundColor(dueDateColor)
+        .foregroundStyle(dueDateColor)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(dueDateColor.opacity(0.1), in: Capsule())
@@ -436,7 +414,7 @@ struct RecurrenceBadge: View {
             Text(recurrenceText)
                 .font(CosmoTypography.caption)
         }
-        .foregroundColor(CosmoColors.lavender)
+        .foregroundStyle(CosmoColors.lavender)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(CosmoColors.lavender.opacity(0.1), in: Capsule())
@@ -459,7 +437,7 @@ struct TaskTimeDetails: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Schedule")
                 .font(CosmoTypography.label)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundStyle(CosmoColors.textSecondary)
 
             HStack(spacing: 16) {
                 if let startTime = task.startTime {
@@ -494,11 +472,11 @@ struct TimeDetail: View {
                 Text(label)
                     .font(CosmoTypography.caption)
             }
-            .foregroundColor(CosmoColors.textTertiary)
+            .foregroundStyle(CosmoColors.textTertiary)
 
             Text(formatTime(time))
                 .font(CosmoTypography.bodySmall)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundStyle(CosmoColors.textSecondary)
         }
     }
 
@@ -522,7 +500,7 @@ struct TaskMetadataView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Details")
                 .font(CosmoTypography.label)
-                .foregroundColor(CosmoColors.textSecondary)
+                .foregroundStyle(CosmoColors.textSecondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 MetadataRow(icon: "calendar", label: "Created", value: formatDate(task.createdAt))
@@ -535,7 +513,7 @@ struct TaskMetadataView: View {
                         Text("Unscheduled")
                             .font(CosmoTypography.caption)
                     }
-                    .foregroundColor(CosmoColors.textTertiary)
+                    .foregroundStyle(CosmoColors.textTertiary)
                 }
             }
         }
@@ -572,7 +550,7 @@ struct TaskFooter: View {
             // Last updated
             Text(timeAgo(from: task.updatedAt))
                 .font(CosmoTypography.caption)
-                .foregroundColor(CosmoColors.textTertiary)
+                .foregroundStyle(CosmoColors.textTertiary)
 
             Spacer()
 
@@ -584,7 +562,7 @@ struct TaskFooter: View {
                     Text(isCompleted ? "Reopen" : "Complete")
                         .font(CosmoTypography.caption)
                 }
-                .foregroundColor(isCompleted ? CosmoColors.textSecondary : CosmoColors.emerald)
+                .foregroundStyle(isCompleted ? CosmoColors.textSecondary : CosmoColors.emerald)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
@@ -617,7 +595,6 @@ struct TaskFooter: View {
         TaskBlockView(
             block: CanvasBlock.previewTaskBlock()
         )
-        .environmentObject(BlockExpansionManager())
     }
     .frame(width: 400, height: 250)
 }

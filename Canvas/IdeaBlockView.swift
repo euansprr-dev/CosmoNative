@@ -9,12 +9,9 @@ struct IdeaBlockView: View {
     let block: CanvasBlock
 
     @State private var idea: Idea?
-    @State private var isExpanded = false
     @State private var isHovered = false
     @State private var isLoading = true
     @State private var relatedIdeas: [Idea] = []
-
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
 
     private let database = CosmoDatabase.shared
 
@@ -24,18 +21,12 @@ struct IdeaBlockView: View {
             accentColor: CosmoMentionColors.idea,
             icon: "lightbulb.fill",
             title: idea?.title ?? block.title,
-            isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
             contentView
         }
         .onAppear {
             loadIdea()
-        }
-        .onChange(of: isExpanded) { _, expanded in
-            if expanded {
-                loadRelatedIdeas()
-            }
         }
     }
 
@@ -63,9 +54,8 @@ struct IdeaBlockView: View {
         Text(idea.content)
             .font(CosmoTypography.body)
             .foregroundColor(CosmoColors.textPrimary)
-            .lineLimit(isExpanded ? nil : 4)
+            .lineLimit(4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(BlockAnimations.contentFade, value: isExpanded)
 
         // Tags
         if !idea.tagsList.isEmpty {
@@ -76,27 +66,10 @@ struct IdeaBlockView: View {
         // Priority indicator
         PriorityIndicator(priority: idea.priority)
 
-        // Expanded content
-        if isExpanded {
-            Divider()
-                .background(CosmoMentionColors.idea.opacity(0.3))
-                .padding(.vertical, 4)
-
-            // Metadata
-            IdeaMetadataView(idea: idea)
-
-            // Related ideas
-            if !relatedIdeas.isEmpty {
-                RelatedIdeasSection(ideas: relatedIdeas) { relatedIdea in
-                    openRelatedIdea(relatedIdea)
-                }
-            }
-        }
-
         Spacer(minLength: 0)
 
         // Footer
-        IdeaFooter(idea: idea, isExpanded: isExpanded)
+        IdeaFooter(idea: idea, isExpanded: false)
     }
 
     // MARK: - Loading View
@@ -493,7 +466,6 @@ struct IdeaFooter: View {
         IdeaBlockView(
             block: CanvasBlock.previewIdeaBlock()
         )
-        .environmentObject(BlockExpansionManager())
     }
     .frame(width: 400, height: 300)
 }

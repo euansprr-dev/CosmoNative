@@ -108,7 +108,7 @@ struct BlockContextMenu: View {
                 .fill(DS.surfaceElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.5), lineWidth: 0.5)
+                        .stroke(DS.borderSubtle, lineWidth: 0.5)
                 )
         )
         .overlay(

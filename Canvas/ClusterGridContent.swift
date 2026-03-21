@@ -1,5 +1,5 @@
 // CosmoOS/Canvas/ClusterGridContent.swift
-// Grid mode rendering for clusters — 4-column layout of full block views
+// Grid mode rendering for clusters — 3-column layout of full block views
 // March 2026: Added drag-and-drop between clusters
 
 import SwiftUI
@@ -22,11 +22,9 @@ struct ClusterGridContent: View {
     let isDropTargeted: Bool
     let onOpenFocusMode: (String) -> Void
 
-    @StateObject private var expansionManager = BlockExpansionManager()
-
-    private let columnCount = 4
-    private let gridSpacing: CGFloat = 12
-    private let gridPadding: CGFloat = 12
+    private let columnCount = 3
+    private let gridSpacing: CGFloat = 10
+    private let gridPadding: CGFloat = 10
 
     private var gridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columnCount)
@@ -51,7 +49,6 @@ struct ClusterGridContent: View {
             .padding(gridPadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .environmentObject(expansionManager)
     }
 
     // MARK: - Drop Placeholder
@@ -66,7 +63,7 @@ struct ClusterGridContent: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(clusterColor.opacity(0.06))
             )
-            .aspectRatio(320.0 / 340.0, contentMode: .fit)
+            .aspectRatio(Self.gridAspectRatio, contentMode: .fit)
             .overlay(
                 VStack(spacing: 6) {
                     Image(systemName: "plus.circle")
@@ -83,24 +80,30 @@ struct ClusterGridContent: View {
 
     // MARK: - Block View Dispatch
 
+    /// Uniform aspect ratio used for every cell so the grid looks consistent.
+    private static let gridAspectRatio: CGFloat = 4.0 / 3.5
+
     @ViewBuilder
     private func gridBlockView(for block: CanvasBlock) -> some View {
-        let blockView = blockContent(for: block)
-            .frame(width: block.defaultSize.width, height: block.defaultSize.height)
-
         GeometryReader { geo in
             let cellWidth = geo.size.width
-            let scale = min(cellWidth / block.defaultSize.width, 1.0)
-            let scaledHeight = block.defaultSize.height * scale
+            let cellHeight = geo.size.height
 
-            blockView
-                .scaleEffect(scale, anchor: .topLeading)
-                .frame(width: cellWidth, height: scaledHeight, alignment: .topLeading)
+            // Pass a block copy whose size matches the cell so
+            // CosmoBlockWrapper lays content out at the cell dimensions
+            // instead of pixel-scaling from the original size.
+            let gridBlock: CanvasBlock = {
+                var b = block
+                b.size = CGSize(width: cellWidth, height: cellHeight)
+                b.isSelected = false
+                return b
+            }()
+
+            blockContent(for: gridBlock)
+                .frame(width: cellWidth, height: cellHeight)
+                .clipShape(.rect(cornerRadius: DS.radiusMedium))
         }
-        .aspectRatio(
-            block.defaultSize.width / block.defaultSize.height,
-            contentMode: .fit
-        )
+        .aspectRatio(Self.gridAspectRatio, contentMode: .fit)
     }
 
     @ViewBuilder
@@ -120,6 +123,8 @@ struct ClusterGridContent: View {
             ContentBlockView(block: block)
         case .task:
             TaskBlockView(block: block)
+        case .stickyNote:
+            StickyNoteBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

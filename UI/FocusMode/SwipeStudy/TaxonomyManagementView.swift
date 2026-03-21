@@ -41,10 +41,10 @@ struct TaxonomyManagementView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Taxonomy Management")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
                 Text("Manage classification values for swipe intelligence")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -80,7 +80,7 @@ struct TaxonomyManagementView: View {
             selectedDimension = dimension
         } label: {
             Text(dimension.displayName)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(selectedDimension == dimension ? DS.text : DS.textSecondary)
                 .commandKToolbarChip(
                     isActive: selectedDimension == dimension,
@@ -134,7 +134,7 @@ struct TaxonomyManagementView: View {
             // Value name
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.displayName)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
 
                 if row.isDefault {
@@ -189,7 +189,7 @@ struct TaxonomyManagementView: View {
                     archiveValue(row)
                 } label: {
                     Image(systemName: "archivebox")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
@@ -206,7 +206,7 @@ struct TaxonomyManagementView: View {
             if showAddField {
                 TextField("New value name", text: $newValueText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -240,7 +240,7 @@ struct TaxonomyManagementView: View {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .bold))
                         Text("Add Custom Value")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                     }
                     .foregroundStyle(gold.opacity(0.8))
                     .padding(.horizontal, 14)

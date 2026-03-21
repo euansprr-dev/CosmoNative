@@ -96,7 +96,7 @@ struct ChatHeader: View {
 
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 18))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -224,7 +224,7 @@ struct CosmoAvatar: View {
 
             Image(systemName: "sparkles")
                 .font(.system(size: 14))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .rotationEffect(.degrees(isAnimating ? 5 : -5))
                 .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: isAnimating)
         }

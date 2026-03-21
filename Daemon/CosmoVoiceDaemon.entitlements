@@ -2,16 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Network access for downloading ML models from HuggingFace -->
-    <key>com.apple.security.network.client</key>
-    <true/>
-
-    <!-- File access for caching models -->
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-
-    <!-- Allow increased memory usage for ML models (FunctionGemma, embeddings, WhisperKit) -->
-    <key>com.apple.developer.kernel.increased-memory-limit</key>
-    <true/>
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

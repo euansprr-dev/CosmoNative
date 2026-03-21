@@ -160,11 +160,11 @@ struct IdeaFocusModeView: View {
                 Button(action: onClose) {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.glassCardFill, in: Capsule())
@@ -175,12 +175,12 @@ struct IdeaFocusModeView: View {
             // Type badge
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text("Idea")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .tracking(0.88)
             }
-            .foregroundColor(ideaGold)
+            .foregroundStyle(ideaGold)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(ideaGold.opacity(0.12), in: Capsule())
@@ -189,12 +189,12 @@ struct IdeaFocusModeView: View {
             if viewModel.selectedStatus != .spark {
                 HStack(spacing: 4) {
                     Image(systemName: viewModel.selectedStatus.iconName)
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text(viewModel.selectedStatus.displayName.uppercased())
-                        .font(.system(size: 8, weight: .bold))
+                        .font(DS.caption2)
                         .tracking(0.6)
                 }
-                .foregroundColor(viewModel.selectedStatus.color)
+                .foregroundStyle(viewModel.selectedStatus.color)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(viewModel.selectedStatus.color.opacity(0.15), in: Capsule())
@@ -213,12 +213,12 @@ struct IdeaFocusModeView: View {
                             .tint(.white)
                     } else {
                         Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 12))
+                            .font(DS.subheadline)
                     }
                     Text("Analyze")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.buttonText)
                 }
-                .foregroundColor(DS.textOnAccent)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(accentIndigo, in: Capsule())
@@ -231,8 +231,8 @@ struct IdeaFocusModeView: View {
             if isPaneContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.glassCardFill, in: Circle())
                 }
@@ -246,8 +246,8 @@ struct IdeaFocusModeView: View {
                 }
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.system(size: 13))
-                    .foregroundColor(sidebarVisible ? DS.entityIdea : DS.textSecondary)
+                    .font(DS.callout)
+                    .foregroundStyle(sidebarVisible ? DS.entityIdea : DS.textSecondary)
                     .padding(8)
                     .background(
                         sidebarVisible ? DS.entityIdea.opacity(0.15) : DS.border,
@@ -335,8 +335,8 @@ struct IdeaFocusModeView: View {
     private var titleEditor: some View {
         TextField("Idea title...", text: $viewModel.editableTitle)
             .textFieldStyle(.plain)
-            .font(.system(size: 28, weight: .semibold))
-            .foregroundColor(DS.text)
+            .font(DS.pageTitle)
+            .foregroundStyle(DS.text)
             .focused($isTitleFocused)
             .onChange(of: viewModel.editableTitle) { _ in
                 viewModel.scheduleAutoSave()
@@ -349,8 +349,8 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("HOOKS")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
                     .tracking(1.2)
 
                 Spacer()
@@ -358,13 +358,13 @@ struct IdeaFocusModeView: View {
                 if !viewModel.editableHooks.isEmpty {
                     Text("\(viewModel.editableHooks.count) hooks")
                         .font(CosmoTypography.caption)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
             Text("Opening lines that grab attention")
-                .font(.system(size: 13))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
 
             // Existing hooks
             ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
@@ -387,13 +387,13 @@ struct IdeaFocusModeView: View {
             // Add new hook
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .font(DS.title3)
+                    .foregroundStyle(DS.accent.opacity(0.6))
 
                 TextField("Add a hook...", text: $newIdeaHookText)
                     .textFieldStyle(.plain)
                     .font(CosmoTypography.body)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .onSubmit {
                         let trimmed = newIdeaHookText.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
@@ -415,8 +415,8 @@ struct IdeaFocusModeView: View {
     private var ideaDescriptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("DESCRIPTION")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             ZStack(alignment: .leading) {
@@ -432,9 +432,9 @@ struct IdeaFocusModeView: View {
                 VStack(alignment: .trailing, spacing: 0) {
                     TextEditor(text: $viewModel.editableBody)
                         .scrollContentBackground(.hidden)
-                        .font(.system(size: 15, weight: .regular))
+                        .font(DS.body)
                         .lineSpacing(15 * 0.6)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .frame(minHeight: 200, maxHeight: 400)
                         .padding(.leading, 18)
                         .padding(.trailing, 16)
@@ -447,8 +447,8 @@ struct IdeaFocusModeView: View {
 
                     // Word count bottom-right
                     Text("\(viewModel.editableBody.split(separator: " ").count) words")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
                 }
@@ -457,8 +457,8 @@ struct IdeaFocusModeView: View {
             .overlay(alignment: .topLeading) {
                 if viewModel.editableBody.isEmpty {
                     Text("What's the core idea? Include the hook angle, key points, and why this matters...")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.body)
+                        .foregroundStyle(DS.textMuted)
                         .lineSpacing(15 * 0.6)
                         .padding(.leading, 18)
                         .padding(.top, 16)
@@ -473,8 +473,8 @@ struct IdeaFocusModeView: View {
     private var statusPipeline: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("STATUS")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             statusPillsRow
@@ -505,11 +505,11 @@ struct IdeaFocusModeView: View {
 
         HStack(spacing: 5) {
             Image(systemName: status.iconName)
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(status.displayName)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .font(DS.caption)
         }
-        .foregroundColor(isSelected ? status.color : DS.text)
+        .foregroundStyle(isSelected ? status.color : DS.text)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(bgColor, in: Capsule())
@@ -519,7 +519,7 @@ struct IdeaFocusModeView: View {
             radius: 8, x: 0, y: 0
         )
         .onHover { hovering in
-            withAnimation(OnyxSpring.hover) {
+            withAnimation(ProMotionSprings.hover) {
                 hoveredStatus = hovering ? status : nil
             }
         }
@@ -530,8 +530,8 @@ struct IdeaFocusModeView: View {
     private var formatSelector: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("FORMAT")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             formatGroupRow(label: "Short-Form Video", formats: ContentFormat.shortFormVideo)
@@ -547,8 +547,8 @@ struct IdeaFocusModeView: View {
     private func formatGroupRow(label: String, formats: [ContentFormat]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
 
             FlowLayout(spacing: 6) {
                 ForEach(formats, id: \.self) { format in
@@ -572,11 +572,11 @@ struct IdeaFocusModeView: View {
 
         HStack(spacing: 4) {
             Image(systemName: format.icon)
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(format.displayName)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
         }
-        .foregroundColor(isSelected ? format.color : DS.textSecondary)
+        .foregroundStyle(isSelected ? format.color : DS.textSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
@@ -592,14 +592,14 @@ struct IdeaFocusModeView: View {
            let rationale = viewModel.insight?.formatRationale {
             HStack(spacing: 6) {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 10))
-                    .foregroundColor(accentIndigo)
+                    .font(DS.caption2)
+                    .foregroundStyle(accentIndigo)
                 Text("Recommended: \(ContentFormat(rawValue: recommended)?.displayName ?? recommended)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(accentIndigo)
+                    .font(DS.caption)
+                    .foregroundStyle(accentIndigo)
                 Text("-- \(rationale)")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             }
             .padding(.top, 6)
@@ -611,8 +611,8 @@ struct IdeaFocusModeView: View {
     private var platformSelector: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("PLATFORM")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             HStack(spacing: 12) {
@@ -647,17 +647,17 @@ struct IdeaFocusModeView: View {
                     .frame(width: 40, height: 40)
 
                 Image(systemName: platform.iconName)
-                    .font(.system(size: 16))
-                    .foregroundColor(isSelected ? platform.color : (isHovered ? DS.textSecondary : DS.textMuted))
+                    .font(DS.title3)
+                    .foregroundStyle(isSelected ? platform.color : (isHovered ? DS.textSecondary : DS.textMuted))
             }
 
             Text(platform.displayName)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(isSelected ? platform.color : DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(isSelected ? platform.color : DS.textMuted)
         }
         .frame(width: 48)
         .onHover { hovering in
-            withAnimation(OnyxSpring.hover) {
+            withAnimation(ProMotionSprings.hover) {
                 hoveredPlatform = hovering ? platform : nil
             }
         }
@@ -668,19 +668,19 @@ struct IdeaFocusModeView: View {
     private var clientAssignment: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("CLIENT")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             HStack(spacing: 8) {
                 if let client = viewModel.linkedClient {
                     HStack(spacing: 8) {
                         Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(accentIndigo)
+                            .font(DS.title3)
+                            .foregroundStyle(accentIndigo)
                         Text(client.title ?? "Client")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(DS.text)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
 
                         Spacer()
 
@@ -688,8 +688,8 @@ struct IdeaFocusModeView: View {
                             Task { await viewModel.assignClient(nil) }
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.callout)
+                                .foregroundStyle(DS.textMuted)
                         }
                         .buttonStyle(.plain)
                     }
@@ -718,11 +718,11 @@ struct IdeaFocusModeView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(DS.caption)
                             Text("Assign Client")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(DS.buttonText)
                         }
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
@@ -744,23 +744,23 @@ struct IdeaFocusModeView: View {
     private var tagsEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("TAGS")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.2)
 
             FlowLayout(spacing: 6) {
                 ForEach(viewModel.tags, id: \.self) { tag in
                     HStack(spacing: 5) {
                         Text(tag)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textSecondary)
 
                         Button {
                             viewModel.removeTag(tag)
                         } label: {
                             Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.textMuted)
                         }
                         .buttonStyle(.plain)
                     }
@@ -772,13 +772,13 @@ struct IdeaFocusModeView: View {
                 // Add tag field
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
 
                     TextField("Add tag", text: $newTagText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.text)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.text)
                         .frame(width: 80)
                         .focused($isTagFieldFocused)
                         .onSubmit {
@@ -862,20 +862,20 @@ struct IdeaFocusModeView: View {
             // Header with link button
             HStack(spacing: 6) {
                 Image(systemName: "doc.on.doc.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(accentIndigo)
+                    .font(DS.caption2)
+                    .foregroundStyle(accentIndigo)
 
                 Text("RELATED SWIPES")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(0.8)
 
                 Spacer()
 
                 if !viewModel.linkedSwipes.isEmpty {
                     Text("\(viewModel.linkedSwipes.count)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(accentIndigo)
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(accentIndigo.opacity(0.12), in: Capsule())
@@ -894,8 +894,8 @@ struct IdeaFocusModeView: View {
             if viewModel.linkedSwipes.isEmpty {
                 // Empty state
                 Text("No swipes linked yet. Link swipes to give the AI structural inspiration when you draft this idea.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
@@ -911,11 +911,11 @@ struct IdeaFocusModeView: View {
     private var linkedSwipesLinkButtonLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "plus")
-                .font(.system(size: 10, weight: .bold))
+                .font(DS.caption2)
             Text("Link")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(accentIndigo)
+        .foregroundStyle(accentIndigo)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(accentIndigo.opacity(0.1), in: Capsule())
@@ -935,15 +935,15 @@ struct IdeaFocusModeView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(swipe.title ?? "Untitled Swipe")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
 
                     // Hook text preview (60 chars)
                     if !hookText.isEmpty {
                         Text(String(hookText.prefix(60)))
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textSecondary)
                             .lineLimit(2)
                     }
                 }
@@ -960,8 +960,8 @@ struct IdeaFocusModeView: View {
                     Task { await viewModel.unlinkSwipe(swipe.uuid) }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .padding(5)
                         .background(DS.glassCardFill, in: Circle())
                 }
@@ -975,8 +975,8 @@ struct IdeaFocusModeView: View {
                 }
                 if let platform = swipe.researchMetadata?.contentSource {
                     Text(platform)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(DS.glassCardFill, in: Capsule())
@@ -1022,19 +1022,19 @@ struct IdeaFocusModeView: View {
             .frame(width: 40, height: 40)
             .overlay(
                 Image(systemName: "doc.text")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
             )
     }
 
     @ViewBuilder
     private func linkedSwipeScoreBadge(_ score: Double) -> some View {
-        let color: Color = score >= 7 ? Color(hex: "22C55E") :
-            score >= 5 ? Color(hex: "FBBF24") : Color(hex: "64748B")
+        let color: Color = score >= 7 ? DS.green :
+            score >= 5 ? DS.orange : DS.textSecondary
 
         Text(String(format: "%.1f", score))
-            .font(.system(size: 10, weight: .bold, design: .monospaced))
-            .foregroundColor(color)
+            .font(DS.caption2)
+            .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(color.opacity(0.12), in: Capsule())
@@ -1047,20 +1047,20 @@ struct IdeaFocusModeView: View {
             // Header with link button
             HStack(spacing: 6) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
 
                 Text("RELATED CONNECTIONS")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(0.8)
 
                 Spacer()
 
                 if !viewModel.linkedConnections.isEmpty {
                     Text("\(viewModel.linkedConnections.count)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(accentIndigo)
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(accentIndigo.opacity(0.12), in: Capsule())
@@ -1078,8 +1078,8 @@ struct IdeaFocusModeView: View {
 
             if viewModel.linkedConnections.isEmpty && viewModel.suggestedConnections.isEmpty {
                 Text("No connections linked. Link your unique frameworks to make the content intellectually distinctive.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
@@ -1101,11 +1101,11 @@ struct IdeaFocusModeView: View {
     private var relatedConnectionsLinkButtonLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "plus")
-                .font(.system(size: 10, weight: .bold))
+                .font(DS.caption2)
             Text("Link")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(accentIndigo)
+        .foregroundStyle(accentIndigo)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(accentIndigo.opacity(0.1), in: Capsule())
@@ -1121,16 +1121,16 @@ struct IdeaFocusModeView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(conn.title ?? "Untitled Connection")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
 
                     HStack(spacing: 6) {
                         connectionMaturityBadge(maturity)
 
                         Text("\(filledCount)/8 sections")
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
 
@@ -1140,8 +1140,8 @@ struct IdeaFocusModeView: View {
                     Task { await viewModel.unlinkConnection(conn.uuid) }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .padding(5)
                         .background(DS.glassCardFill, in: Circle())
                 }
@@ -1151,16 +1151,16 @@ struct IdeaFocusModeView: View {
             // Goal text preview
             if let goalText = connectionGoalPreview(conn), !goalText.isEmpty {
                 Text(goalText)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(2)
             }
 
             // Filled section names
             if !filledNames.isEmpty {
                 Text(filledNames.joined(separator: " \u{2022} "))
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             }
         }
@@ -1176,12 +1176,12 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 10))
-                    .foregroundColor(accentIndigo.opacity(0.6))
+                    .font(DS.caption2)
+                    .foregroundStyle(accentIndigo.opacity(0.6))
 
                 Text(conn.title ?? "Untitled")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
 
                 Spacer()
@@ -1190,8 +1190,8 @@ struct IdeaFocusModeView: View {
             }
 
             Text("\(filledCount)/8 sections")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
 
             HStack(spacing: 8) {
                 Button {
@@ -1226,11 +1226,11 @@ struct IdeaFocusModeView: View {
     private var suggestedConnectionLinkLabel: some View {
         HStack(spacing: 3) {
             Image(systemName: "link.badge.plus")
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text("Link")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(accentIndigo)
+        .foregroundStyle(accentIndigo)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
@@ -1239,8 +1239,8 @@ struct IdeaFocusModeView: View {
     @ViewBuilder
     private var suggestedConnectionDismissLabel: some View {
         Text("Dismiss")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(DS.textMuted)
+            .font(DS.caption2)
+            .foregroundStyle(DS.textMuted)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 5))
@@ -1254,9 +1254,9 @@ struct IdeaFocusModeView: View {
                 .fill(color)
                 .frame(width: 5, height: 5)
             Text(level.displayName)
-                .font(.system(size: 10, weight: .bold))
+                .font(DS.caption2)
                 .tracking(0.3)
-                .foregroundColor(color)
+                .foregroundStyle(color)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -1265,10 +1265,10 @@ struct IdeaFocusModeView: View {
 
     private func connectionMaturityColor(_ level: ConnectionMaturityLevel) -> Color {
         switch level {
-        case .seed: return Color(hex: "9CA3AF")
-        case .developing: return Color(hex: "FBBF24")
-        case .mature: return Color(hex: "22C55E")
-        case .proven: return Color(hex: "6366F1")
+        case .seed: return DS.textMuted
+        case .developing: return DS.orange
+        case .mature: return DS.green
+        case .proven: return DS.entityIdea
         }
     }
 
@@ -1318,20 +1318,20 @@ struct IdeaFocusModeView: View {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: "text.quote")
-                    .font(.system(size: 10))
-                    .foregroundColor(accentIndigo)
+                    .font(DS.caption2)
+                    .foregroundStyle(accentIndigo)
 
                 Text("AI-SUGGESTED HOOKS")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(0.8)
 
                 Spacer()
 
                 if !viewModel.generatedHooks.isEmpty {
                     Text("\(viewModel.generatedHooks.count)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(accentIndigo)
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(accentIndigo.opacity(0.12), in: Capsule())
@@ -1351,15 +1351,15 @@ struct IdeaFocusModeView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).tint(accentIndigo)
                     Text("Generating hooks from linked swipes...")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
             } else if viewModel.generatedHooks.isEmpty {
                 Text("Link swipes above, then hooks will be generated from their structural patterns.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 8))
@@ -1374,8 +1374,8 @@ struct IdeaFocusModeView: View {
     @ViewBuilder
     private var aiHooksRefreshButtonLabel: some View {
         Image(systemName: viewModel.isGeneratingHooks ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(accentIndigo.opacity(viewModel.isGeneratingHooks ? 0.4 : 1))
+            .font(DS.caption2)
+            .foregroundStyle(accentIndigo.opacity(viewModel.isGeneratingHooks ? 0.4 : 1))
             .padding(5)
             .background(accentIndigo.opacity(0.08), in: Circle())
     }
@@ -1385,8 +1385,8 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Hook text
             Text(hook.hookText)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundColor(DS.text)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.text)
                 .lineLimit(3)
 
             // Hook type + score row
@@ -1403,8 +1403,8 @@ struct IdeaFocusModeView: View {
             // Source swipe attribution
             if let source = hook.sourceSwipeTitle, !source.isEmpty {
                 Text("Based on pattern from \(source)")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .italic()
             }
 
@@ -1423,16 +1423,16 @@ struct IdeaFocusModeView: View {
 
     @ViewBuilder
     private func generatedHookScoreBadge(_ score: Double) -> some View {
-        let color: Color = score >= 7 ? Color(hex: "22C55E") :
-            score >= 5 ? Color(hex: "3B82F6") : Color(hex: "64748B")
+        let color: Color = score >= 7 ? DS.green :
+            score >= 5 ? DS.info : DS.textSecondary
 
         HStack(spacing: 3) {
             Circle()
                 .fill(color)
                 .frame(width: 6, height: 6)
             Text(String(format: "%.1f", score))
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(color)
+                .font(DS.caption2)
+                .foregroundStyle(color)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -1443,11 +1443,11 @@ struct IdeaFocusModeView: View {
     private var generatedHookUseLabel: some View {
         HStack(spacing: 4) {
             Image(systemName: "text.insert")
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text("Use This")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(accentIndigo)
+        .foregroundStyle(accentIndigo)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(accentIndigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
@@ -1459,19 +1459,19 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 14))
-                    .foregroundColor(accentIndigo)
+                    .font(DS.navTitle)
+                    .foregroundStyle(accentIndigo)
 
                 Text("Intelligence")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 if let lastAnalyzed = viewModel.sessionState.lastAnalyzedAt {
                     Text("Last analyzed: \(formatRelativeDate(lastAnalyzed))")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
@@ -1486,12 +1486,12 @@ struct IdeaFocusModeView: View {
                             .tint(.white)
                     } else {
                         Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 13))
+                            .font(DS.callout)
                     }
                     Text(viewModel.insight == nil ? "Analyze Idea" : "Re-analyze")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DS.callout)
                 }
-                .foregroundColor(DS.textOnAccent)
+                .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(
@@ -1517,19 +1517,19 @@ struct IdeaFocusModeView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(viewModel.analysisStage)
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textSecondary)
                 }
             } else {
                 Text("Analyzing idea against swipe library...")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
                     .multilineTextAlignment(.center)
             }
 
             Text("Finding matching frameworks, hooks, and patterns")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -1542,11 +1542,11 @@ struct IdeaFocusModeView: View {
     private func swipeHookTypePill(_ hookType: SwipeHookType) -> some View {
         HStack(spacing: 3) {
             Image(systemName: hookType.iconName)
-                .font(.system(size: 8))
+                .font(DS.caption2)
             Text(hookType.displayName)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(hookType.color)
+        .foregroundStyle(hookType.color)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background(hookType.color.opacity(0.15), in: Capsule())
@@ -1572,12 +1572,12 @@ struct IdeaFocusModeView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rec.framework.displayName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
 
                     Text(rec.framework.description)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
                 }
 
@@ -1588,45 +1588,45 @@ struct IdeaFocusModeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Confidence")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                     Spacer()
                     Text("\(Int(rec.confidence * 100))%")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(accentIndigo)
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo)
                 }
 
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 1)
                             .fill(DS.borderActive)
-                            .frame(height: OnyxLayout.progressLineHeight)
+                            .frame(height: 2.0)
 
                         RoundedRectangle(cornerRadius: 1)
                             .fill(accentIndigo)
-                            .frame(width: geo.size.width * rec.confidence, height: OnyxLayout.progressLineHeight)
+                            .frame(width: geo.size.width * rec.confidence, height: 2.0)
                     }
                 }
-                .frame(height: OnyxLayout.progressLineHeight)
+                .frame(height: 2.0)
             }
 
             // Rationale
             Text(rec.rationale)
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(3)
 
             // Evidence-based reasoning
             if let reasoning = rec.reasoning {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "lightbulb.min")
-                        .font(.system(size: 10))
-                        .foregroundColor(accentIndigo.opacity(0.6))
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo.opacity(0.6))
                         .padding(.top, 1)
 
                     Text(reasoning)
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(4)
                         .italic()
                 }
@@ -1640,11 +1640,11 @@ struct IdeaFocusModeView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.circle")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                     Text(isSelected ? "Selected" : "Select Framework")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                 }
-                .foregroundColor(isSelected ? DS.green : accentIndigo)
+                .foregroundStyle(isSelected ? DS.green : accentIndigo)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .background(
@@ -1681,13 +1681,13 @@ struct IdeaFocusModeView: View {
             if let hook = bp.suggestedHook {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("HOOK")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(accentIndigo.opacity(0.7))
+                        .font(DS.caption2)
+                        .foregroundStyle(accentIndigo.opacity(0.7))
                         .tracking(0.6)
 
                     Text(hook)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.text)
                         .italic()
                 }
                 .padding(10)
@@ -1704,13 +1704,13 @@ struct IdeaFocusModeView: View {
             if let cta = bp.suggestedCTA {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("CALL TO ACTION")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.green.opacity(0.7))
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.green.opacity(0.7))
                         .tracking(0.6)
 
                     Text(cta)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.text)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1721,11 +1721,11 @@ struct IdeaFocusModeView: View {
             if let wordCount = bp.estimatedWordCount {
                 HStack(spacing: 4) {
                     Image(systemName: "character.cursor.ibeam")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text("~\(wordCount) words estimated")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                 }
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             }
 
         }
@@ -1735,26 +1735,26 @@ struct IdeaFocusModeView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(section.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 if let wordCount = section.targetWordCount {
                     Text("~\(wordCount)w")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
             Text(section.purpose)
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
 
             if let content = section.suggestedContent, !content.isEmpty {
                 Text(content)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 6))
@@ -1778,8 +1778,8 @@ struct IdeaFocusModeView: View {
 
                     if let source = dataSources?[key] {
                         Text(source)
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
                             .padding(.leading, 88)
                     }
                 }
@@ -1794,26 +1794,26 @@ struct IdeaFocusModeView: View {
 
         HStack(spacing: 8) {
             Text(formatName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
                 .frame(width: 80, alignment: .leading)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1)
                         .fill(DS.borderActive)
-                        .frame(height: OnyxLayout.progressLineHeight)
+                        .frame(height: 2.0)
 
                     RoundedRectangle(cornerRadius: 1)
                         .fill(formatColor.opacity(0.8))
-                        .frame(width: geo.size.width * score, height: OnyxLayout.progressLineHeight)
+                        .frame(width: geo.size.width * score, height: 2.0)
                 }
             }
-            .frame(height: OnyxLayout.progressLineHeight)
+            .frame(height: 2.0)
 
             Text("\(Int(score * 100))%")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(formatColor)
+                .font(DS.caption2)
+                .foregroundStyle(formatColor)
                 .frame(width: 32, alignment: .trailing)
         }
     }
@@ -1836,8 +1836,8 @@ struct IdeaFocusModeView: View {
             Image(systemName: "arrow.up.forward")
             Text("Activate This Idea")
         }
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundColor(DS.textOnAccent)
+        .font(DS.navTitle)
+        .foregroundStyle(DS.textOnAccent)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .background(DS.accent, in: RoundedRectangle(cornerRadius: 10))
@@ -1848,16 +1848,16 @@ struct IdeaFocusModeView: View {
     private var emptyIntelligenceState: some View {
         VStack(spacing: 16) {
             Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 32))
-                .foregroundColor(accentIndigo.opacity(0.4))
+                .font(DS.display)
+                .foregroundStyle(accentIndigo.opacity(0.4))
 
             Text("No analysis yet")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.textSecondary)
 
             Text("Click \"Analyze Idea\" to find matching swipes, recommended frameworks, and hook suggestions from your library.")
-                .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .lineLimit(4)
         }
@@ -1871,19 +1871,19 @@ struct IdeaFocusModeView: View {
     private func sectionHeader(title: String, count: Int, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(accentIndigo)
+                .font(DS.caption2)
+                .foregroundStyle(accentIndigo)
 
             Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(0.8)
 
             Spacer()
 
             Text("\(count)")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(accentIndigo)
+                .font(DS.caption2)
+                .foregroundStyle(accentIndigo)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(accentIndigo.opacity(0.12), in: Capsule())
@@ -1965,8 +1965,8 @@ private struct IdeaHookRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\(index + 1).")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 20, alignment: .trailing)
                 .padding(.top, isEditing ? 4 : 0)
 
@@ -1979,8 +1979,8 @@ private struct IdeaHookRow: View {
                 )
             } else {
                 Text(hook)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         editText = hook
@@ -1998,16 +1998,16 @@ private struct IdeaHookRow: View {
                     isFocused = true
                 }) {
                     Image(systemName: "pencil")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
 
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)

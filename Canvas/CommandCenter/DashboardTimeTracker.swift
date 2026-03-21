@@ -77,7 +77,7 @@ struct DashboardTimeTracker: View {
                         }
                     }
 
-                    controlButton(icon: "stop.fill", color: PlannerumColors.overdue, bg: PlannerumColors.overdue.opacity(0.1)) {
+                    controlButton(icon: "stop.fill", color: DS.red, bg: DS.red.opacity(0.1)) {
                         Task { await viewModel.sessionEngine.endSession() }
                     }
                 }
@@ -169,7 +169,7 @@ struct DashboardTimeTracker: View {
         let score = viewModel.sessionEngine.focusScore
         if score >= 80 { return DS.green }
         if score >= 50 { return DS.orange }
-        return PlannerumColors.overdue
+        return DS.red
     }
 
     private var formattedElapsedTime: String {

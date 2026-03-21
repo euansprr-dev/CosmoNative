@@ -37,7 +37,7 @@ struct ProvocationMarkerView: View {
     private var diamondBadge: some View {
         Image(systemName: provocation.type.icon)
             .font(.system(size: 8, weight: .bold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .frame(width: 16, height: 16)
             .background(
                 provocation.type.color
@@ -87,7 +87,7 @@ struct ProvocationMarkerView: View {
         }
         .padding(12)
         .frame(width: 260)
-        .background(OnyxColors.Elevation.floating)
+        .background(DS.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)

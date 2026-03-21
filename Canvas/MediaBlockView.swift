@@ -34,8 +34,6 @@ struct MediaBlockView: View {
     @State private var isSyncingBlockSizeFromModel = false
     @State private var loadTask: Task<Void, Never>?
 
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
     // Resize constraints
     private let minWidth: CGFloat = 160
     private let minHeight: CGFloat = 150
@@ -60,6 +58,11 @@ struct MediaBlockView: View {
         self.block = block
         self.isViewportActive = isViewportActive
         self._blockSize = State(initialValue: block.size)
+        // Skip loading placeholder when block metadata already has thumbnail/URL info
+        // (computed properties like resolvedThumbnailURL fall back to block.metadata)
+        let hasThumbnailHint = block.metadata["thumbnail"] != nil
+            || block.metadata["url"] != nil
+        self._isLoading = State(initialValue: !hasThumbnailHint)
     }
 
     /// Aspect ratio of the media area (width / height), 0 = no lock
@@ -417,7 +420,7 @@ struct MediaBlockView: View {
     private func carouselImageView(items: [CarouselItem]) -> some View {
         ZStack {
             let safeIndex = min(carouselIndex, items.count - 1)
-            AsyncImage(url: items[safeIndex].mediaURL) { phase in
+            CachedAsyncImage(url: items[safeIndex].mediaURL) { phase in
                 switch phase {
                 case .success(let image):
                     image
@@ -432,8 +435,6 @@ struct MediaBlockView: View {
                     Rectangle()
                         .fill(Color.black.opacity(0.3))
                         .overlay(ProgressView().tint(.white))
-                @unknown default:
-                    thumbnailFallback
                 }
             }
 
@@ -481,7 +482,7 @@ struct MediaBlockView: View {
     private func carouselNavArrow(systemName: String) -> some View {
         Image(systemName: systemName)
             .font(.system(size: scaled(10), weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.text)
             .frame(width: scaled(22), height: scaled(22))
             .background(.ultraThinMaterial)
             .clipShape(Circle())
@@ -535,7 +536,7 @@ struct MediaBlockView: View {
             }
         } label: {
             ZStack {
-                AsyncImage(url: url) { phase in
+                CachedAsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
                         image
@@ -550,8 +551,6 @@ struct MediaBlockView: View {
                         Rectangle()
                             .fill(Color.black.opacity(0.3))
                             .overlay(ProgressView().tint(.white))
-                    @unknown default:
-                        thumbnailFallback
                     }
                 }
 
@@ -579,7 +578,7 @@ struct MediaBlockView: View {
 
             Image(systemName: "play.fill")
                 .font(.system(size: playIconSize))
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .offset(x: scaled(1))
         }
     }
@@ -1010,7 +1009,6 @@ struct MediaBlockView_Previews: PreviewProvider {
                 )
             }
         }
-        .environmentObject(BlockExpansionManager())
         .frame(width: 1000, height: 500)
     }
 }

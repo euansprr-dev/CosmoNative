@@ -108,39 +108,25 @@ struct StickyNoteBlockView: View {
     @State private var stickyColor: StickyNoteColor = .yellow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isEditingBody {
-                CosmoDocumentEditor(
-                    document: $noteBodyDocument,
-                    fontSize: 14,
-                    compact: true,
-                    placeholder: "Type here...",
-                    allowSlashCommands: false,
-                    allowMentions: true,
-                    allowSelectionMenu: false,
-                    allowImages: false,
-                    onDocumentChange: { _, plainText in
-                        noteText = plainText
-                        if !isSyncingFromDB { scheduleAutoSave() }
-                    }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-                Group {
-                    if noteText.isEmpty {
-                        Text("Type here...")
-                            .font(.system(size: 14))
-                            .foregroundStyle(DS.textMuted)
-                            .italic()
-                    } else {
-                        CosmoDocumentRenderer(document: noteBodyDocument, fontSize: 14, lineLimit: 10)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .contentShape(Rectangle())
-                .onTapGesture { isEditingBody = true }
+        CosmoDocumentEditor(
+            document: $noteBodyDocument,
+            fontSize: 14,
+            compact: true,
+            placeholder: "Type here...",
+            allowSlashCommands: false,
+            allowMentions: isEditingBody,
+            allowSelectionMenu: false,
+            allowImages: false,
+            isEditable: isEditingBody,
+            scrollsInternally: true,
+            onDocumentChange: { _, plainText in
+                noteText = plainText
+                if !isSyncingFromDB { scheduleAutoSave() }
             }
-        }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .onTapGesture { isEditingBody = true }
         .padding(16)
         .frame(
             width: block.defaultSize.width,
@@ -352,7 +338,7 @@ struct StickyNoteBlockView: View {
         autoSaveTask?.cancel()
 
         autoSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled {
                 await MainActor.run {
                     saveNote()

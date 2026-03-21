@@ -20,7 +20,7 @@ struct AmbientResultCard: View {
         }
         .padding(10)
         .background(
-            isHovered ? OnyxColors.Elevation.elevated : OnyxColors.Elevation.raised,
+            isHovered ? DS.surfaceElevated : DS.surfaceCard,
             in: RoundedRectangle(cornerRadius: 8)
         )
         .overlay(

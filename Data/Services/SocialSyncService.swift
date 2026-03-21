@@ -783,28 +783,6 @@ class SocialSyncService: ObservableObject {
             .sorted { $0.publishedAt > $1.publishedAt }
     }
 
-    /// Platform metrics for the Creative dimension dashboard
-    var platformMetrics: [PlatformMetrics] {
-        let totalReach = max(1, self.totalReach)
-        return lastSyncResults.values.map { result in
-            let contentPlatform: ContentPlatform = {
-                switch result.platform {
-                case .youtube: return .youtube
-                case .instagram: return .instagram
-                case .tiktok: return .tiktok
-                case .x: return .twitter
-                }
-            }()
-            return PlatformMetrics(
-                platform: contentPlatform,
-                followerCount: result.followerCount,
-                engagementRate: result.engagementRate,
-                reachPercentage: Double(result.totalReach) / Double(totalReach) * 100,
-                isConnected: true
-            )
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // MARK: - Persistence
     // ═══════════════════════════════════════════════════════════════

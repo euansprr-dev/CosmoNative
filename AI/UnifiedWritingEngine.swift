@@ -837,6 +837,10 @@ final class UnifiedWritingEngine: ObservableObject {
         var lastNoProgressSignature: String?
         var thinkToolRemoved = false
         var activeTools = tools
+        // WP6: Anti-stall — repetition detection
+        var toolCallHistory: [(name: String, paramHash: Int)] = []
+        // WP6: Anti-stall — violation escalation tracking
+        var previousViolationRules: Set<String> = []
 
         let toolNames = tools.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
         print("🔄 [UnifiedWritingEngine] Starting conversation loop (nonisolated). System blocks: \(systemBlocks.count), tools: \(toolNames)")
@@ -996,6 +1000,48 @@ final class UnifiedWritingEngine: ObservableObject {
             for result in toolResults {
                 let resultMsg = WritingMessage(role: .toolResult, content: result.content, toolResults: [result])
                 pendingMessages.append(resultMsg)
+            }
+
+            // --- WP6: Repetition detection ---
+            for call in response.toolCalls where call.name != "think" {
+                let paramData = (try? JSONSerialization.data(withJSONObject: call.input, options: .sortedKeys)) ?? Data()
+                let paramHash = paramData.hashValue
+                let entry = (name: call.name, paramHash: paramHash)
+                if let prevIdx = toolCallHistory.firstIndex(where: { $0.name == entry.name && $0.paramHash == entry.paramHash }) {
+                    // Duplicate detected — inject nudge into pending messages
+                    let prevResult = toolResults.first { $0.toolCallId == call.id }?.content ?? "(no result)"
+                    let nudge = WritingMessage(
+                        role: .system,
+                        content: "[System] You called \(call.name) with identical parameters as a previous call. Previous result: \(String(prevResult.prefix(300))). Try a different approach or adjust your parameters."
+                    )
+                    pendingMessages.append(nudge)
+                    toolCallHistory.remove(at: prevIdx)
+                    print("⚠️ [UnifiedWritingEngine] Repetition detected: \(call.name) called with identical params")
+                }
+                toolCallHistory.append(entry)
+            }
+
+            // --- WP6: Violation escalation — check for repeated violations across write_draft calls ---
+            for call in response.toolCalls where call.name == "write_draft" {
+                if let result = toolResults.first(where: { $0.toolCallId == call.id }),
+                   result.content.contains("[COMPLIANCE CHECK") {
+                    // Extract current violation rules from the result
+                    let lines = result.content.components(separatedBy: "\n")
+                    let violationLines = lines.filter { line in
+                        line.contains("VIOLATION:") || line.contains("BANNED PHRASE") || line.contains("FATAL PATTERN")
+                    }
+                    let currentRules = Set(violationLines.map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) })
+                    let repeatedRules = currentRules.intersection(previousViolationRules)
+                    if !repeatedRules.isEmpty {
+                        let escalation = WritingMessage(
+                            role: .system,
+                            content: "[System] CRITICAL: You repeated \(repeatedRules.count) violation(s) from your previous draft attempt. These exact phrases must be DELETED — do not try to rephrase around them, remove them entirely:\n\(repeatedRules.joined(separator: "\n"))\n\nWrite the revised draft with these phrases completely removed."
+                        )
+                        pendingMessages.append(escalation)
+                        print("🚨 [UnifiedWritingEngine] Violation escalation: \(repeatedRules.count) repeated violations")
+                    }
+                    previousViolationRules = currentRules
+                }
             }
 
             // --- Anti-loop guard ---
@@ -1347,6 +1393,10 @@ final class UnifiedWritingEngine: ObservableObject {
             6. Use list_client_posts + read_client_post to access the client's own post bodies on demand.
             """)
             lines.append("")
+
+            // Cross-swipe pattern intelligence (WP2)
+            lines.append(buildPatternIntelligence())
+            lines.append("")
         }
 
         // On-demand reference material (loaded via tools, persists across all turns)
@@ -1547,7 +1597,7 @@ final class UnifiedWritingEngine: ObservableObject {
         if phase == .draft || phase == .polish {
             tools.append(buildTool(
                 name: "write_draft",
-                description: "Write or replace the full draft content. For carousel format, output JSON as {\"slides\": [{\"number\": 1, \"text\": \"...\"}]} — do NOT include visualDirection or any other fields. For thread format, output JSON as {\"tweets\": [{\"number\": 1, \"text\": \"...\"}]}. IMPORTANT: When revising, include ALL slides/sections — even unchanged ones. Never reduce the slide count unless explicitly asked.",
+                description: "Write or replace the full draft content. For carousel format, output JSON as {\"slides\": [{\"number\": 1, \"text\": \"...\"}]} — do NOT include visualDirection or any other fields. For thread format, output JSON as {\"tweets\": [{\"number\": 1, \"text\": \"...\"}]}. HARD RULES: Max 300 characters per slide/tweet. 3-4 sentences per slide. Each sentence on its own line (use \\n\\n between sentences). Max 15 slides. IMPORTANT: When revising, include ALL slides/sections — even unchanged ones. Never reduce the slide count unless explicitly asked.",
                 properties: [
                     "content": ["type": "string", "description": "The full draft content"],
                     "format": [
@@ -1632,6 +1682,16 @@ final class UnifiedWritingEngine: ObservableObject {
                 "query": ["type": "string", "description": "What to search for in connections and research"]
             ],
             required: ["query"]
+        ))
+
+        // analyze_swipe_patterns — always available
+        tools.append(buildTool(
+            name: "analyze_swipe_patterns",
+            description: "Analyze patterns across all loaded swipe examples. Returns aggregated intelligence: hook performance by type, persuasion technique frequency, emotional arc consensus, and engagement correlations. Use this to make data-driven creative decisions before writing.",
+            properties: [
+                "focus": ["type": "string", "description": "Analysis focus: 'hooks', 'persuasion', 'emotional_arc', 'engagement', or 'all' (default: 'all')"]
+            ],
+            required: []
         ))
 
         // read_draft — draft + polish
@@ -1771,6 +1831,10 @@ final class UnifiedWritingEngine: ObservableObject {
 
                 case "read_swipe_body":
                     resultContent = await handleReadSwipeBody(call.input)
+                    isError = false
+
+                case "analyze_swipe_patterns":
+                    resultContent = handleAnalyzeSwipePatterns(call.input)
                     isError = false
 
                 default:
@@ -2108,15 +2172,14 @@ final class UnifiedWritingEngine: ObservableObject {
             intent: "draft",
             format: formatStr
         )
-        if !policy.hardRules.isEmpty {
-            let violations = DeterministicWritingValidatorRunner.validate(
-                draft: renderedContent,
-                format: formatStr,
-                hardRules: policy.hardRules
-            )
-            if let violationMessage = DeterministicWritingValidatorRunner.formatViolationMessage(violations) {
-                complianceNote = "\n\n\(violationMessage)"
-            }
+        // Run deterministic validators unconditionally — static validators don't need hard rules
+        let violations = DeterministicWritingValidatorRunner.validate(
+            draft: renderedContent,
+            format: formatStr,
+            hardRules: policy.hardRules
+        )
+        if let violationMessage = DeterministicWritingValidatorRunner.formatViolationMessage(violations) {
+            complianceNote = "\n\n\(violationMessage)"
         }
 
         var result = "Draft written (\(wordCount) words, format: \(formatStr))\(evalSummary)\(validationNote)\(voiceNote)\(complianceNote)"
@@ -2594,6 +2657,87 @@ final class UnifiedWritingEngine: ObservableObject {
         }
     }
 
+    /// Analyze patterns across all loaded swipe examples (WP4).
+    private func handleAnalyzeSwipePatterns(_ input: [String: Any]) -> String {
+        let focus = (input["focus"] as? String)?.lowercased() ?? "all"
+        guard !selectedSwipes.isEmpty else {
+            return "No swipe examples loaded. Use search_swipes to find relevant swipes first."
+        }
+
+        var analysis: [String] = ["=== SWIPE PATTERN ANALYSIS ==="]
+
+        // Hook analysis
+        if focus == "hooks" || focus == "all" {
+            analysis.append("\n## HOOK ANALYSIS")
+            let hookGroups = Dictionary(grouping: selectedSwipes, by: { $0.hookType })
+            for (type, swipes) in hookGroups.sorted(by: { $0.value.map(\.hookScore).reduce(0, +) > $1.value.map(\.hookScore).reduce(0, +) }) {
+                guard type != "Unknown" else { continue }
+                let avg = swipes.map(\.hookScore).reduce(0, +) / Double(swipes.count)
+                let best = swipes.max(by: { $0.hookScore < $1.hookScore })
+                let bestTitle = best?.title ?? ""
+                analysis.append("  \(type): avg \(String(format: "%.1f", avg))/10 (\(swipes.count) swipes)")
+                if !bestTitle.isEmpty { analysis.append("    Best example: \"\(bestTitle)\" (\(String(format: "%.1f", best?.hookScore ?? 0))/10)") }
+            }
+        }
+
+        // Persuasion analysis
+        if focus == "persuasion" || focus == "all" {
+            analysis.append("\n## PERSUASION TECHNIQUE ANALYSIS")
+            var techCounts: [String: (count: Int, totalIntensity: Double)] = [:]
+            for swipe in selectedSwipes {
+                for technique in swipe.persuasionTechniques {
+                    let name = technique.components(separatedBy: " (").first ?? technique
+                    let intensityStr = technique.components(separatedBy: "(").last?.replacingOccurrences(of: ")", with: "") ?? "0.5"
+                    let intensity = Double(intensityStr) ?? 0.5
+                    let existing = techCounts[name] ?? (count: 0, totalIntensity: 0)
+                    techCounts[name] = (count: existing.count + 1, totalIntensity: existing.totalIntensity + intensity)
+                }
+            }
+            let sorted = techCounts.sorted { $0.value.count > $1.value.count }
+            for (name, data) in sorted.prefix(8) {
+                let avgIntensity = data.totalIntensity / Double(data.count)
+                analysis.append("  \(name): \(data.count)/\(selectedSwipes.count) swipes, avg intensity \(String(format: "%.1f", avgIntensity))")
+            }
+            // Top combos
+            let swipesWithTechniques = selectedSwipes.filter { !$0.persuasionTechniques.isEmpty }
+            if swipesWithTechniques.count >= 3 {
+                analysis.append("  Top combination pattern: \(sorted.prefix(3).map(\.key).joined(separator: " + "))")
+            }
+        }
+
+        // Emotional arc analysis
+        if focus == "emotional_arc" || focus == "all" {
+            analysis.append("\n## EMOTIONAL ARC ANALYSIS")
+            var arcPatterns: [String: Int] = [:]
+            for swipe in selectedSwipes where !swipe.emotionalArc.isEmpty {
+                let key = swipe.emotionalArc.prefix(4).joined(separator: " \u{2192} ")
+                arcPatterns[key, default: 0] += 1
+            }
+            for (arc, count) in arcPatterns.sorted(by: { $0.value > $1.value }).prefix(5) {
+                analysis.append("  \(arc) (\(count) swipes)")
+            }
+        }
+
+        // Engagement analysis
+        if focus == "engagement" || focus == "all" {
+            analysis.append("\n## ENGAGEMENT ANALYSIS")
+            let engagedSwipes = selectedSwipes.filter { $0.engagementRate > 0 }
+            if engagedSwipes.isEmpty {
+                analysis.append("  No engagement data available for loaded swipes.")
+            } else {
+                let sorted = engagedSwipes.sorted { $0.engagementRate > $1.engagementRate }
+                let avg = sorted.map(\.engagementRate).reduce(0, +) / Double(sorted.count)
+                analysis.append("  Avg engagement: \(String(format: "%.1f", avg))%")
+                analysis.append("  Top 3 performers:")
+                for swipe in sorted.prefix(3) {
+                    analysis.append("    \"\(swipe.title)\" — \(String(format: "%.1f", swipe.engagementRate))% | \(swipe.hookType) hook | \(swipe.persuasionTechniques.prefix(2).joined(separator: ", "))")
+                }
+            }
+        }
+
+        return analysis.joined(separator: "\n")
+    }
+
     private func handleSearchConnections(_ input: [String: Any]) async -> String {
         let query = input["query"] as? String ?? ""
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -2640,6 +2784,7 @@ final class UnifiedWritingEngine: ObservableObject {
         let metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self)
         let targetWritingFormat = detectContentFormat()
         let contentFormat = targetWritingFormat.rawValue
+        print("📊 [selectSwipes] Detected format: \(contentFormat) (\(targetWritingFormat.displayName)) for atom \(contentAtom.uuid) | explicitFormat: \(contentAtom.metadataDict?["explicitFormat"] as? String ?? "nil") | platform: \(metadata?.platform?.rawValue ?? "nil") | contentFormat meta: \(metadata?.contentFormat ?? "nil")")
         var candidates: [Atom] = []
 
         // Build set of primary swipe UUIDs (inherited from idea activation + source idea's linked swipes)
@@ -2720,12 +2865,24 @@ final class UnifiedWritingEngine: ObservableObject {
         candidates = Self.uniqueSwipeAtoms(candidates)
         let exactTypeCandidates = Self.filterSameTypeLibrarySwipes(candidates, targetFormat: targetWritingFormat)
 
-        // Filter: must have analysis with hook type
-        let analyzed = exactTypeCandidates.filter { $0.swipeAnalysis?.hookType != nil }
+        // Filter: accept swipes with ANY analysis (not just hookType).
+        // Many valid swipes have analysis but hookType was not classified.
+        let analyzed = exactTypeCandidates.filter { $0.swipeAnalysis != nil }
+        let withHookType = analyzed.filter { $0.swipeAnalysis?.hookType != nil }
+        let unanalyzed = exactTypeCandidates.filter { $0.swipeAnalysis == nil }
         let targetSwipeCount = 20
-        print("📊 [selectSwipes] inherited=\(sameTypeCandidates.count), total candidates=\(candidates.count), exactType=\(exactTypeCandidates.count), analyzed=\(analyzed.count)")
+        print("📊 [selectSwipes] inherited=\(sameTypeCandidates.count), total candidates=\(candidates.count), exactType=\(exactTypeCandidates.count), analyzed=\(analyzed.count) (hookType=\(withHookType.count)), unanalyzed=\(unanalyzed.count)")
 
-        guard !analyzed.isEmpty else {
+        // If we have very few analyzed swipes, supplement with unanalyzed ones
+        let scoringPool: [Atom]
+        if analyzed.count >= 5 {
+            scoringPool = analyzed
+        } else {
+            scoringPool = analyzed + unanalyzed
+            print("📊 [selectSwipes] Pool supplemented with \(unanalyzed.count) unanalyzed swipes")
+        }
+
+        guard !scoringPool.isEmpty else {
             // Same-type-only fallback when we have no analyzed matches.
             selectedSwipes = await selectSwipesFallback(
                 contentAtom: contentAtom,
@@ -2748,18 +2905,18 @@ final class UnifiedWritingEngine: ObservableObject {
 
         var scored: [(atom: Atom, finalScore: Double, hookType: String)] = []
 
-        for atom in analyzed {
-            guard let analysis = atom.swipeAnalysis else { continue }
+        for atom in scoringPool {
+            let analysis = atom.swipeAnalysis  // May be nil for unanalyzed swipes
 
             // Axis 1: Exact type match
             var formatScore = 0.0
-            if let swipeFormat = analysis.swipeContentFormat {
+            if let swipeFormat = analysis?.swipeContentFormat {
                 formatScore = targetWritingFormat.matchesSwipeFormat(swipeFormat) ? 1.0 : 0.0
             }
 
             // Axis 2: Structural score via BeatPatternService (0.0-1.0)
             var structuralScore = 0.3
-            if let fp = analysis.beatFingerprint, !fp.isEmpty {
+            if let fp = analysis?.beatFingerprint, !fp.isEmpty {
                 structuralScore = topFingerprints.contains(fp) ? 1.0 : 0.3
             }
 
@@ -2768,17 +2925,17 @@ final class UnifiedWritingEngine: ObservableObject {
             let stylisticScore = computeStylisticScore(swipeTranscript: transcript, clientProfile: clientMeta)
 
             // Axis 4: Performance score (normalized 0.0-1.0)
-            let perfScore = min((analysis.hookScore ?? 0.0) / 10.0, 1.0)
+            let perfScore = min((analysis?.hookScore ?? 0.0) / 10.0, 1.0)
 
-            // Weighted fusion
-            var finalScore = 0.3 * formatScore + 0.25 * structuralScore + 0.2 * stylisticScore + 0.25 * perfScore
+            // Weighted fusion — unanalyzed swipes get baseline 0.3 format score
+            var finalScore = 0.3 * (analysis != nil ? formatScore : 0.3) + 0.25 * structuralScore + 0.2 * stylisticScore + 0.25 * perfScore
 
             // Priority boost for primary swipes (inherited from idea activation or linked by user)
             if strictPrimarySwipeUUIDs.contains(atom.uuid) {
                 finalScore += 0.5
             }
 
-            let hookType = analysis.hookType?.rawValue ?? "unknown"
+            let hookType = analysis?.hookType?.rawValue ?? "unknown"
 
             scored.append((atom: atom, finalScore: finalScore, hookType: hookType))
         }
@@ -3185,7 +3342,26 @@ final class UnifiedWritingEngine: ObservableObject {
         let paragraphs = body.components(separatedBy: "\n\n")
         let ctaText = paragraphs.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        return CompressedSwipe(
+        // Persuasion techniques with intensity
+        let persuasionLabels: [String] = (analysis.persuasionTechniques ?? [])
+            .sorted { $0.intensity > $1.intensity }
+            .prefix(5)
+            .map { "\($0.type.displayName) (\(String(format: "%.1f", $0.intensity)))" }
+
+        // Emotional arc progression
+        let arcLabels: [String] = (analysis.emotionalArc ?? [])
+            .prefix(6)
+            .map { $0.emotion.displayName }
+
+        // Engagement summary
+        var engSummary = ""
+        var parts: [String] = []
+        if let views = analysis.viewsCount, views > 0 { parts.append(Self.formatCount(views) + " views") }
+        if let likes = analysis.likesCount, likes > 0 { parts.append(Self.formatCount(likes) + " likes") }
+        if let comments = analysis.commentsCount, comments > 0 { parts.append(Self.formatCount(comments) + " comments") }
+        engSummary = parts.joined(separator: ", ")
+
+        var swipe = CompressedSwipe(
             id: UUID(uuidString: atom.uuid) ?? UUID(),
             title: atom.title ?? "Untitled",
             hookText: String(hookText.prefix(500)),
@@ -3195,10 +3371,23 @@ final class UnifiedWritingEngine: ObservableObject {
             keyTransitions: transitions,
             ctaText: String(ctaText.prefix(150)),
             framework: analysis.frameworkType?.displayName ?? "Unknown",
-            format: analysis.swipeContentFormat?.displayName ?? "Unknown",
-            fullBody: body,
-            structuralBreakdown: buildStructuralBreakdown(analysis: analysis, body: body)
+            format: analysis.swipeContentFormat?.displayName ?? "Unknown"
         )
+        swipe.engagementSummary = engSummary
+        swipe.fullBody = body
+        swipe.structuralBreakdown = buildStructuralBreakdown(analysis: analysis, body: body)
+        swipe.persuasionTechniques = persuasionLabels
+        swipe.emotionalArc = arcLabels
+        swipe.engagementRate = analysis.engagementRate ?? 0
+        swipe.hookScoreReason = analysis.hookScoreReason ?? ""
+        return swipe
+    }
+
+    /// Format large numbers compactly (e.g. 1200 → "1.2K")
+    private static func formatCount(_ count: Int) -> String {
+        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
+        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
+        return "\(count)"
     }
 
     /// Minimal compression for swipes that lack full SwipeAnalysis (used in fallback path).
@@ -3220,6 +3409,108 @@ final class UnifiedWritingEngine: ObservableObject {
             format: "Unknown",
             fullBody: body
         )
+    }
+
+    /// Aggregate cross-swipe pattern intelligence for Block 3 injection (WP2).
+    private func buildPatternIntelligence() -> String {
+        guard !selectedSwipes.isEmpty else { return "" }
+
+        var lines: [String] = []
+        lines.append("--- PATTERN INTELLIGENCE (aggregated from \(selectedSwipes.count) loaded swipes) ---")
+
+        // Hook performance by type
+        let hookGroups = Dictionary(grouping: selectedSwipes, by: { $0.hookType })
+        let hookStats = hookGroups.compactMap { (type, swipes) -> (String, Double, Int)? in
+            guard type != "Unknown" else { return nil }
+            let avg = swipes.map(\.hookScore).reduce(0, +) / Double(swipes.count)
+            return (type, avg, swipes.count)
+        }.sorted { $0.1 > $1.1 }
+        if !hookStats.isEmpty {
+            let hookLine = hookStats.prefix(5).map { "\($0.0) avg \(String(format: "%.1f", $0.1))/10 (\($0.2))" }
+            lines.append("Hook Performance: \(hookLine.joined(separator: ", "))")
+        }
+
+        // Persuasion technique frequency
+        var persuasionCounts: [String: Int] = [:]
+        for swipe in selectedSwipes {
+            for technique in swipe.persuasionTechniques {
+                let name = technique.components(separatedBy: " (").first ?? technique
+                persuasionCounts[name, default: 0] += 1
+            }
+        }
+        let topPersuasion = persuasionCounts.sorted { $0.value > $1.value }.prefix(5)
+        if !topPersuasion.isEmpty {
+            let persuasionLine = topPersuasion.map { "\($0.key) (\($0.value)/\(selectedSwipes.count))" }
+            lines.append("Top Persuasion: \(persuasionLine.joined(separator: ", "))")
+        }
+
+        // Emotional arc consensus
+        var arcPatternCounts: [String: Int] = [:]
+        for swipe in selectedSwipes where !swipe.emotionalArc.isEmpty {
+            let key = swipe.emotionalArc.prefix(4).joined(separator: "\u{2192}")
+            arcPatternCounts[key, default: 0] += 1
+        }
+        if let dominantArc = arcPatternCounts.max(by: { $0.value < $1.value }) {
+            lines.append("Dominant Emotional Arc: \(dominantArc.key) (in \(dominantArc.value)/\(selectedSwipes.count) swipes)")
+        }
+
+        // Engagement distribution
+        let engagedSwipes = selectedSwipes.filter { $0.engagementRate > 0 }
+        if !engagedSwipes.isEmpty {
+            let avgEng = engagedSwipes.map(\.engagementRate).reduce(0, +) / Double(engagedSwipes.count)
+            let maxEng = engagedSwipes.map(\.engagementRate).max() ?? 0
+            lines.append("Avg Engagement: \(String(format: "%.1f", avgEng))% (best: \(String(format: "%.1f", maxEng))%)")
+        }
+
+        // Actionable directive
+        if let topHook = hookStats.first, !topPersuasion.isEmpty {
+            let topTech = topPersuasion.prefix(2).map(\.key).joined(separator: " + ")
+            lines.append("")
+            lines.append("APPLY: Use \(topTech) techniques (most frequent in top performers). Target \(topHook.0) hook style (avg \(String(format: "%.1f", topHook.1))/10).")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    /// Returns a compact swipe intelligence summary for agent-level tool results.
+    /// Aggregates hook types, persuasion techniques, and engagement from loaded swipes.
+    func swipeIntelligenceSummary() -> [String: Any] {
+        guard !selectedSwipes.isEmpty else { return [:] }
+
+        // Top hook types by performance
+        let hookGroups = Dictionary(grouping: selectedSwipes, by: { $0.hookType })
+        let hookStats = hookGroups.compactMap { (type, swipes) -> (String, Double, Int)? in
+            guard type != "Unknown" else { return nil }
+            let avg = swipes.map(\.hookScore).reduce(0, +) / Double(swipes.count)
+            return (type, avg, swipes.count)
+        }.sorted { $0.1 > $1.1 }
+        let topHookTypes = hookStats.prefix(4).map { "\($0.0) avg \(String(format: "%.1f", $0.1))/10 (\($0.2)x)" }
+
+        // Top persuasion techniques
+        var persuasionCounts: [String: Int] = [:]
+        for swipe in selectedSwipes {
+            for technique in swipe.persuasionTechniques {
+                let name = technique.components(separatedBy: " (").first ?? technique
+                persuasionCounts[name, default: 0] += 1
+            }
+        }
+        let topPersuasion = persuasionCounts.sorted { $0.value > $1.value }.prefix(4)
+            .map { "\($0.key) (\($0.value)/\(selectedSwipes.count))" }
+
+        // Avg engagement
+        let engagedSwipes = selectedSwipes.filter { $0.engagementRate > 0 }
+        let avgEngagement = engagedSwipes.isEmpty ? 0.0
+            : engagedSwipes.map(\.engagementRate).reduce(0, +) / Double(engagedSwipes.count)
+
+        var result: [String: Any] = [
+            "loadedSwipeCount": selectedSwipes.count,
+            "topHookTypes": topHookTypes.joined(separator: ", "),
+            "topPersuasion": topPersuasion.joined(separator: ", ")
+        ]
+        if avgEngagement > 0 {
+            result["avgEngagement"] = String(format: "%.1f%%", avgEngagement)
+        }
+        return result
     }
 
     /// Build a topic-free structural breakdown from SwipeAnalysis.
@@ -3283,18 +3574,24 @@ final class UnifiedWritingEngine: ObservableObject {
                 } else if slides.count > 15 {
                     violations.append(ConstraintViolation(constraintName: "Slide count", expected: "5-15", actual: "\(slides.count)", severity: .hard))
                 }
-                // Slide 1 (hook): max 80 chars
-                if let firstSlide = slides.first, let text = firstSlide["text"] as? String, text.count > 80 {
-                    violations.append(ConstraintViolation(constraintName: "Hook slide length", expected: "max 80 chars", actual: "\(text.count) chars", severity: .hard))
-                }
-                // Body slides: max 150 chars each
-                for (i, slide) in slides.dropFirst().dropLast().enumerated() {
-                    if let text = slide["text"] as? String, text.count > 150 {
-                        violations.append(ConstraintViolation(constraintName: "Slide \(i + 2) length", expected: "max 150 chars", actual: "\(text.count) chars", severity: .hard))
+                // ALL slides (including hook): max 300 chars
+                for (i, slide) in slides.enumerated() {
+                    if let text = slide["text"] as? String, text.count > 300 {
+                        violations.append(ConstraintViolation(constraintName: "Slide \(i + 1) length", expected: "max 300 chars", actual: "\(text.count) chars", severity: .hard))
                     }
                 }
             } else if content.contains("{") {
                 violations.append(ConstraintViolation(constraintName: "JSON format", expected: "valid carousel JSON", actual: "invalid JSON", severity: .hard))
+            }
+            // Also validate plaintext carousel format (SLIDE N pattern)
+            if content.contains("SLIDE 1") || content.contains("Slide 1") {
+                let slideLines = content.components(separatedBy: "\n")
+                    .filter { $0.uppercased().hasPrefix("SLIDE ") }
+                if slideLines.count > 15 {
+                    violations.append(ConstraintViolation(constraintName: "Slide count (plaintext)", expected: "5-15 slides", actual: "\(slideLines.count) slides", severity: .hard))
+                }
+                // LLM should be using JSON format, not plaintext
+                violations.append(ConstraintViolation(constraintName: "Draft format", expected: "carousel JSON {\"slides\": [...]}", actual: "plaintext SLIDE format", severity: .hard))
             }
 
         case .twitterThread:
@@ -3769,6 +4066,7 @@ final class UnifiedWritingEngine: ObservableObject {
         case "list_client_posts": return "Browsing client posts"
         case "read_client_post": return "Loading client post"
         case "read_swipe_body": return "Loading swipe body"
+        case "analyze_swipe_patterns": return "Analyzing swipe patterns"
         default: return "Processing..."
         }
     }

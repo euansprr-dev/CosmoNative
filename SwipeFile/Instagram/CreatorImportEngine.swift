@@ -251,6 +251,14 @@ final class CreatorImportEngine {
         selectedPostIds.removeAll()
 
         importState = .complete(saved: savedCount, enriched: enrichedCount)
+
+        // Notify views to refresh
+        NotificationCenter.default.post(
+            name: CosmoNotification.SwipeFile.creatorDataChanged,
+            object: nil,
+            userInfo: ["creatorUUID": creatorAtom.uuid]
+        )
+
         return savedCount
     }
 
@@ -385,6 +393,13 @@ final class CreatorImportEngine {
         } catch {
             print("[CreatorImport] Failed to update creator catalog metadata: \(error)")
         }
+
+        // Notify views to refresh (new creator or catalog update)
+        NotificationCenter.default.post(
+            name: CosmoNotification.SwipeFile.creatorDataChanged,
+            object: nil,
+            userInfo: ["creatorUUID": uuid]
+        )
     }
 
     private func formatCatalogAge(from date: Date) -> String {
@@ -463,6 +478,20 @@ final class CreatorImportEngine {
                let jsonStr = String(data: jsonData, encoding: .utf8) {
                 atom.structured = jsonStr
             }
+        }
+
+        // Persist carousel items from Apify so transcription can use them
+        if let items = post.carouselItems, !items.isEmpty {
+            var rc = atom.richContent ?? ResearchRichContent()
+            var igData = rc.instagramData ?? InstagramData(
+                originalURL: post.url,
+                contentType: .carousel
+            )
+            igData.carouselItems = items
+            rc.instagramData = igData
+            rc.sourceType = .instagramCarousel
+            rc.instagramType = "carousel"
+            atom.setRichContent(rc)
         }
 
         let savedAtom = try await repository.create(atom)

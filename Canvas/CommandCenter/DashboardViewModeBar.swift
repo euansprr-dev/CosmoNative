@@ -57,7 +57,7 @@ struct DashboardViewModeBar: View {
     @State private var pulseCompletedBadge = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DS.space4) {
             ForEach(DashboardViewMode.smartLists, id: \.self) { mode in
                 tabButton(mode)
             }
@@ -69,7 +69,8 @@ struct DashboardViewModeBar: View {
                 pulseCompletedBadge = true
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(420))
                 withAnimation(.easeOut(duration: 0.18)) {
                     pulseCompletedBadge = false
                 }
@@ -87,24 +88,24 @@ struct DashboardViewModeBar: View {
                 selectedMode = mode
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: mode.icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
 
                 Text(mode.label)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                    .font(DS.buttonText)
 
                 if count > 0 {
                     badge(for: mode, count: count, isSelected: isSelected)
                 }
             }
-            .foregroundColor(isSelected ? DS.accent : DS.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space6)
             .background(
                 ZStack {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
                             .fill(DS.surfaceElevated)
                             .matchedGeometryEffect(id: "tabBg", in: tabIndicator)
                             .dsRestingShadow()
@@ -120,9 +121,9 @@ struct DashboardViewModeBar: View {
         let isPulsing = isCompletedBadge && pulseCompletedBadge
 
         return Text("\(count)")
-            .font(.system(size: 10, weight: .semibold))
+            .font(DS.caption2)
             .contentTransition(.numericText(value: Double(count)))
-            .foregroundColor(isSelected ? DS.accent : DS.textMuted)
+            .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(

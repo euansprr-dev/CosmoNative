@@ -9,6 +9,7 @@ import os
 struct APIKeys {
     // MARK: - Keychain Service Name
     private static let keychainService = "com.cosmo.apikeys"
+    nonisolated(unsafe) private static var _migrationDone = false
 
     // MARK: - Key Identifiers
     private enum KeyIdentifier: String, CaseIterable {
@@ -38,6 +39,20 @@ struct APIKeys {
     private static func ensureCacheLoaded() {
         guard !_cacheLoaded else { return }
         _cacheLoaded = true
+
+        // Migrate legacy keychain items to Data Protection Keychain (one-time)
+        if !_migrationDone {
+            _migrationDone = true
+            for identifier in KeyIdentifier.allCases {
+                if readFromKeychain(identifier) == nil,
+                   let legacyValue = readFromLegacyKeychain(identifier) {
+                    // Re-save to Data Protection Keychain (also deletes legacy entry)
+                    writeToKeychain(legacyValue, identifier: identifier)
+                    print("Migrated \(identifier.rawValue) to Data Protection Keychain")
+                }
+            }
+        }
+
         for identifier in KeyIdentifier.allCases {
             if let value = readFromKeychain(identifier) {
                 _cache[identifier] = value
@@ -224,18 +239,34 @@ struct APIKeys {
     private static func writeToKeychain(_ value: String, identifier: KeyIdentifier) {
         guard let data = value.data(using: .utf8) else { return }
 
-        let query: [String: Any] = [
+        // Delete any existing item (both legacy and data protection)
+        let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: identifier.rawValue,
-            kSecValueData as String: data
+            kSecUseDataProtectionKeychain as String: true
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // Also clean up legacy keychain entry if present
+        let legacyDeleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: identifier.rawValue
+        ]
+        SecItemDelete(legacyDeleteQuery as CFDictionary)
+
+        // Add new item to Data Protection Keychain (no per-app ACL prompts)
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: identifier.rawValue,
+            kSecValueData as String: data,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
         ]
 
-        // Delete any existing item
-        SecItemDelete(query as CFDictionary)
-
-        // Add new item
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecSuccess {
             print("API key saved to Keychain: \(identifier.rawValue)")
         } else {
@@ -244,6 +275,30 @@ struct APIKeys {
     }
 
     private static func readFromKeychain(_ identifier: KeyIdentifier) -> String? {
+        // Try Data Protection Keychain first
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: identifier.rawValue,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecSuccess,
+           let data = result as? Data,
+           let key = String(data: data, encoding: .utf8) {
+            return key
+        }
+
+        return nil
+    }
+
+    /// Read from legacy keychain (without Data Protection) for migration
+    private static func readFromLegacyKeychain(_ identifier: KeyIdentifier) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -265,12 +320,21 @@ struct APIKeys {
     }
 
     private static func removeFromKeychain(identifier: KeyIdentifier) {
+        // Delete from Data Protection Keychain
         let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: identifier.rawValue,
+            kSecUseDataProtectionKeychain as String: true
+        ]
+        SecItemDelete(query as CFDictionary)
+
+        // Also delete from legacy keychain if present
+        let legacyQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: identifier.rawValue
         ]
-
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(legacyQuery as CFDictionary)
     }
 }

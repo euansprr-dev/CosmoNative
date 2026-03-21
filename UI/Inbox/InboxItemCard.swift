@@ -244,7 +244,7 @@ struct InboxItemCard: View {
             Text(label)
                 .font(.system(size: 12, weight: .semibold))
         }
-        .foregroundColor(.white)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(DS.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))

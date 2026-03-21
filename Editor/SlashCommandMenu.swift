@@ -17,14 +17,14 @@ struct SlashCommandMenu: View {
     @State private var menuAppeared = false
     @FocusState private var isSearchFocused: Bool
 
-    // MARK: - Dark Mode Colors
-    private var bgColor: Color { darkMode ? CosmoColors.thinkspaceTertiary : CosmoColors.softWhite }
-    private var textPrimary: Color { darkMode ? .white : CosmoColors.textPrimary }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : CosmoColors.textSecondary }
-    private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary }
-    private var accentColor: Color { darkMode ? CosmoColors.thinkspacePurple : CosmoColors.lavender }
-    private var borderColor: Color { darkMode ? Color.white.opacity(0.1) : CosmoColors.glassGrey.opacity(0.5) }
-    private var shadowColor: Color { darkMode ? CosmoColors.thinkspacePurple.opacity(0.3) : .black.opacity(0.10) }
+    // MARK: - Theme-Aware Colors
+    private var bgColor: Color { DS.surface }
+    private var textPrimary: Color { DS.text }
+    private var textSecondary: Color { DS.textSecondary }
+    private var textTertiary: Color { DS.textMuted }
+    private var accentColor: Color { DS.accent }
+    private var borderColor: Color { DS.border }
+    private var shadowColor: Color { .black.opacity(0.10) }
 
     private var filteredCommands: [SlashCommand] {
         if searchText.isEmpty {
@@ -75,12 +75,12 @@ struct SlashCommandMenu: View {
     private var searchFieldView: some View {
         HStack {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(textTertiary)
+                .foregroundStyle(textTertiary)
                 .symbolEffect(.bounce, value: menuAppeared)
 
             TextField("Search commands...", text: $searchText)
                 .textFieldStyle(.plain)
-                .foregroundColor(textPrimary)
+                .foregroundStyle(textPrimary)
                 .focused($isSearchFocused)
                 .onSubmit {
                     if let command = filteredCommands[safe: selectedIndex] {
@@ -156,18 +156,18 @@ struct SlashCommandMenu: View {
         HStack {
             Text("↑↓ Navigate")
                 .font(.caption2)
-                .foregroundColor(textTertiary)
+                .foregroundStyle(DS.textMuted)
             Spacer()
             Text("↵ Select")
                 .font(.caption2)
-                .foregroundColor(textTertiary)
+                .foregroundStyle(DS.textMuted)
             Text("⎋ Cancel")
                 .font(.caption2)
-                .foregroundColor(textTertiary)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(darkMode ? CosmoColors.thinkspaceSecondary : CosmoColors.mistGrey.opacity(0.6))
+        .background(DS.surfaceElevated)
     }
 
     private var menuBorder: some View {
@@ -242,7 +242,7 @@ struct SlashCommandRow: View {
             // Icon - Cosmo lavender/purple accent with symbol effect
             Image(systemName: command.icon)
                 .font(.system(size: 16))
-                .foregroundColor(isSelected ? .white : accentColor)
+                .foregroundStyle(isSelected ? .white : accentColor)
                 .symbolEffect(.bounce, value: iconBounce)
                 .frame(width: 28, height: 28)
                 .background(
@@ -259,11 +259,11 @@ struct SlashCommandRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(command.title)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(textPrimary)
+                    .foregroundStyle(textPrimary)
 
                 Text(command.subtitle)
                     .font(.system(size: 12))
-                    .foregroundColor(textSecondary)
+                    .foregroundStyle(textSecondary)
                     .lineLimit(1)
             }
 
@@ -273,18 +273,18 @@ struct SlashCommandRow: View {
             if let shortcut = command.shortcut {
                 Text(shortcut)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(textTertiary)
+                    .foregroundStyle(textTertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(darkMode ? Color.white.opacity(0.1) : CosmoColors.glassGrey.opacity(0.4))
-                    .cornerRadius(4)
+                    .clipShape(.rect(cornerRadius: DS.radiusXSmall))
             }
 
             // Selection indicator
             if isSelected {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(accentColor)
+                    .foregroundStyle(accentColor)
                     .transition(.scale.combined(with: .opacity))
             }
         }

@@ -254,7 +254,7 @@ struct InboxOverrideSheet: View {
                     Text("Create \(selectedAtomType.rawValue.capitalized)")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(DS.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

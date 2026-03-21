@@ -40,6 +40,11 @@ class CrossThinkspaceDragManager: ObservableObject {
     // Sidebar width for hit testing
     var sidebarWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
 
+    /// Total sidebar footprint including floating margins
+    var sidebarTotalWidth: CGFloat {
+        sidebarWidth + UnifiedSidebarMetrics.floatingMargin * 2
+    }
+
     // Timing
     private let hoverDelay: TimeInterval = 0.30
     private let blinkDuration: TimeInterval = 0.27
@@ -250,7 +255,7 @@ class CrossThinkspaceDragManager: ObservableObject {
                 if self.hasThinkspaceSwitched {
                     // Post-switch: still tracking cursor for final placement
                     // Check if cursor re-entered canvas area
-                    if windowPoint.x > self.sidebarWidth {
+                    if windowPoint.x > self.sidebarTotalWidth {
                         self.isOverSidebar = false
                     }
                 } else {
@@ -363,6 +368,7 @@ struct CrossThinkspaceDragPreview: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(DS.surfaceElevated)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(DS.border, lineWidth: 1)

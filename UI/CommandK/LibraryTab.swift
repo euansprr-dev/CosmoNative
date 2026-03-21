@@ -465,7 +465,7 @@ struct LibraryTab: View {
                     } label: {
                         Text("Create")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundStyle(DS.textOnAccent)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(

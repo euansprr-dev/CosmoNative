@@ -31,7 +31,6 @@ final class FlashLiteRouter {
     - get_calendar_blocks(date?) — show schedule (date format: YYYY-MM-DD)
     - get_content_pipeline(phase?) — content status
     - get_swipe_stats() — swipe library stats
-    - get_quest_status() — daily quest progress
     - get_unscheduled_tasks() — unscheduled tasks
     - filter_swipes_by_taxonomy(hookType?, frameworkType?, emotion?, platform?, format?)
     - find_similar_swipes(query, limit?)
@@ -445,9 +444,6 @@ final class FlashLiteRouter {
         case "get_swipe_stats":
             return resultJSON?["summary"] as? String ?? result
 
-        case "get_quest_status":
-            return formatQuestStatus(result: result)
-
         case "get_unscheduled_tasks":
             return formatTaskList(result: result)
 
@@ -533,27 +529,6 @@ final class FlashLiteRouter {
                     lines.append("  - \(title)")
                 }
             }
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func formatQuestStatus(result: String) -> String {
-        guard let data = result.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return result
-        }
-
-        let quests = json["quests"] as? [[String: Any]] ?? []
-        if quests.isEmpty { return "No active quests." }
-
-        var lines: [String] = ["Daily Quests:"]
-        for quest in quests {
-            let title = quest["title"] as? String ?? "Quest"
-            let progress = quest["progress"] as? Int ?? 0
-            let target = quest["target"] as? Int ?? 1
-            let done = quest["completed"] as? Bool ?? false
-            let check = done ? "x" : " "
-            lines.append("[\(check)] \(title) (\(progress)/\(target))")
         }
         return lines.joined(separator: "\n")
     }

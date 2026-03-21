@@ -90,7 +90,7 @@ struct InstagramSwipeModal: View {
 
                 Image(systemName: contentTypeIcon)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -428,7 +428,7 @@ struct InstagramButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(

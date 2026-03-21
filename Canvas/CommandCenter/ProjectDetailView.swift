@@ -53,8 +53,8 @@ struct ProjectDetailView: View {
     // MARK: - Project Header
 
     private var projectHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: DS.space12) {
                 // Back button
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
@@ -63,14 +63,14 @@ struct ProjectDetailView: View {
                     }
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.cardMeta)
                         .foregroundStyle(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
 
                 // Project name
                 Text(project.title ?? "Untitled Project")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
                     .tracking(-0.3)
 
@@ -79,7 +79,7 @@ struct ProjectDetailView: View {
                 // Progress
                 let progress = taskProgress
                 Text("\(progress.completed)/\(progress.total)")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.cardMeta)
                     .foregroundStyle(DS.textSecondary)
 
                 // Deadline badge
@@ -89,24 +89,24 @@ struct ProjectDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
     }
 
     @ViewBuilder
     private func deadlineBadge(_ date: Date) -> some View {
-        let daysUntil = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
-        let color: Color = daysUntil < 0 ? .red : daysUntil <= 3 ? .orange : DS.green
+        let daysUntil = Calendar.current.dateComponents([.day], from: Date.now, to: date).day ?? 0
+        let color: Color = daysUntil < 0 ? DS.red : daysUntil <= 3 ? DS.orange : DS.green
 
-        HStack(spacing: 4) {
+        HStack(spacing: DS.space4) {
             Image(systemName: "flag.fill")
-                .font(.system(size: 9))
+                .font(DS.caption2)
             Text(date.formatted(.dateTime.month(.abbreviated).day()))
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.footnote)
         }
         .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space2)
         .background(color.opacity(0.12), in: Capsule())
     }
 
@@ -115,11 +115,11 @@ struct ProjectDetailView: View {
     @ViewBuilder
     private func notesSection(_ notes: String) -> some View {
         Text(notes)
-            .font(.system(size: 13))
+            .font(DS.callout)
             .foregroundStyle(DS.textSecondary)
             .lineLimit(3)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space8)
     }
 
     // MARK: - Headed Task Sections
@@ -154,26 +154,26 @@ struct ProjectDetailView: View {
     @ViewBuilder
     private func headingSection(heading: ProjectHeading, tasks: [TaskViewModel]) -> some View {
         // Heading row
-        HStack(spacing: 8) {
+        HStack(spacing: DS.space8) {
             Image(systemName: heading.isCollapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 14)
 
             Text(heading.title)
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.accent)
 
             Spacer()
 
             if heading.isCollapsed {
                 Text("\(tasks.count)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
 
             // Context menu
-            Menu {
+            Menu("Options", systemImage: "ellipsis") {
                 Button("Rename") {
                     // Would trigger inline rename
                 }
@@ -182,16 +182,12 @@ struct ProjectDetailView: View {
                         await viewModel.deleteHeading(projectUUID: project.uuid, headingUUID: heading.id)
                     }
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DS.textMuted)
             }
             .menuStyle(.borderlessButton)
-            .frame(width: 20)
+            .frame(width: DS.space20)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
         .contentShape(Rectangle())
 
         // Tasks within heading (if not collapsed)
@@ -206,7 +202,7 @@ struct ProjectDetailView: View {
 
     @ViewBuilder
     private func compactTaskRow(_ task: TaskViewModel) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.space10) {
             // Checkbox
             Button {
                 Task {
@@ -214,14 +210,14 @@ struct ProjectDetailView: View {
                 }
             } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16))
+                    .font(DS.body)
                     .foregroundStyle(task.isCompleted ? DS.green : DS.borderSubtle)
             }
             .buttonStyle(.plain)
 
             // Title
             Text(task.title)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(task.isCompleted ? DS.textMuted : DS.text)
                 .strikethrough(task.isCompleted)
                 .lineLimit(1)
@@ -232,7 +228,7 @@ struct ProjectDetailView: View {
             let progress = task.checklistProgress
             if progress.total > 0 {
                 Text("\(progress.completed)/\(progress.total)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(progress.completed == progress.total ? DS.green : DS.textMuted)
             }
 
@@ -241,20 +237,20 @@ struct ProjectDetailView: View {
                 deadlineBadge(deadline)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space6)
         .contentShape(Rectangle())
     }
 
     // MARK: - Add Heading
 
     private var addHeadingButton: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             if showAddHeading {
-                HStack(spacing: 8) {
+                HStack(spacing: DS.space8) {
                     TextField("Heading title...", text: $newHeadingTitle)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DS.headline)
                         .foregroundStyle(DS.accent)
                         .onSubmit {
                             guard !newHeadingTitle.isEmpty else { return }
@@ -269,25 +265,25 @@ struct ProjectDetailView: View {
                         showAddHeading = false
                         newHeadingTitle = ""
                     }
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, DS.space16)
+                .padding(.vertical, DS.space8)
             } else {
                 Button {
                     showAddHeading = true
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DS.space6) {
                         Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(DS.caption2)
                         Text("Add Heading")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                     }
                     .foregroundStyle(DS.textMuted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.vertical, DS.space8)
                 }
                 .buttonStyle(.plain)
             }
@@ -305,15 +301,15 @@ struct ProjectDetailView: View {
     private func sectionHeader(_ title: String, count: Int) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.textMuted)
             Spacer()
             Text("\(count)")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space8)
     }
 
     private var gradientDivider: some View {

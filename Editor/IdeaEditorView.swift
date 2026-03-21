@@ -501,7 +501,7 @@ struct TagEditorSheet: View {
                 Button(action: addTag) {
                     Text("Add")
                         .font(CosmoTypography.label)
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(newTag.isEmpty ? CosmoColors.glassGrey : CosmoColors.lavender, in: RoundedRectangle(cornerRadius: 8))
@@ -536,7 +536,7 @@ struct TagEditorSheet: View {
             Button(action: { dismiss() }) {
                 Text("Done")
                     .font(CosmoTypography.label)
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                     .background(CosmoColors.lavender, in: RoundedRectangle(cornerRadius: 10))

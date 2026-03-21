@@ -41,7 +41,7 @@ struct CanvasSelectionInspector: View {
                 }
                 .padding(18)
             } else {
-                ScrollView(.vertical) {
+                ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 20) {
                         if let atom {
                             header(atom)

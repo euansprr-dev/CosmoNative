@@ -79,7 +79,7 @@ struct ContentBrainstormView: View {
             HStack(spacing: 8) {
                 Text("HOOKS")
                     .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .tracking(0.88)
 
                 Spacer()
@@ -87,7 +87,7 @@ struct ContentBrainstormView: View {
                 if !state.hooks.isEmpty {
                     Text("\(state.hooks.count) hooks")
                         .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 if !showContextSidebar {
@@ -97,8 +97,8 @@ struct ContentBrainstormView: View {
                         }
                     } label: {
                         Image(systemName: "sidebar.right")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.buttonText)
+                            .foregroundStyle(DS.textMuted)
                             .padding(5)
                             .background(DS.border, in: RoundedRectangle(cornerRadius: 5))
                     }
@@ -108,8 +108,8 @@ struct ContentBrainstormView: View {
             }
 
             Text("Opening lines that grab attention")
-                .font(.system(size: 13))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
 
             // Existing hooks
             ForEach(Array(state.hooks.enumerated()), id: \.offset) { index, hook in
@@ -134,13 +134,13 @@ struct ContentBrainstormView: View {
             // Add new hook
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .font(DS.title3)
+                    .foregroundStyle(DS.accent.opacity(0.6))
 
                 TextField("Add a hook...", text: $newHookText)
                     .textFieldStyle(.plain)
                     .font(DS.body)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .onSubmit {
                         addHook()
                     }
@@ -164,16 +164,16 @@ struct ContentBrainstormView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("DESCRIPTION")
                 .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .tracking(0.88)
 
             Text("Context, theme, or background for the content")
-                .font(.system(size: 13))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
 
             TextEditor(text: $state.contentDescription)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(DS.text)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
                 .lineSpacing(15 * 0.7)
                 .scrollContentBackground(.hidden)
                 .focused($descriptionFocused)
@@ -237,7 +237,7 @@ struct ContentBrainstormView: View {
 
             Text("Build out the structure of your content")
                 .font(DS.sectionDesc)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             // AI-suggested label
             if state.isAISuggestedOutline && !state.outline.isEmpty {
@@ -274,13 +274,13 @@ struct ContentBrainstormView: View {
             // Add new outline item
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .font(DS.title3)
+                    .foregroundStyle(DS.accent.opacity(0.6))
 
                 TextField("Add outline point...", text: $newOutlineText)
                     .textFieldStyle(.plain)
                     .font(DS.body)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .onSubmit {
                         addOutlineItem()
                     }
@@ -303,11 +303,11 @@ struct ContentBrainstormView: View {
         HStack(spacing: 4) {
             Text("\(state.outline.count) items")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             if totalEstimatedSeconds > 0 {
                 Text("~\(formattedDuration(totalEstimatedSeconds))")
                     .font(DS.timestamp)
-                    .foregroundColor(DS.accent.opacity(0.5))
+                    .foregroundStyle(DS.accent.opacity(0.5))
             }
         }
     }
@@ -316,14 +316,14 @@ struct ContentBrainstormView: View {
     private var aiSuggestedBadge: some View {
         HStack(spacing: 6) {
             Image(systemName: "sparkles")
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text("AI-suggested outline")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
             Text("Click to expand details")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
         }
-        .foregroundColor(DS.accent.opacity(0.7))
+        .foregroundStyle(DS.accent.opacity(0.7))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(DS.accent.opacity(0.1), in: Capsule())
@@ -354,7 +354,7 @@ struct ContentBrainstormView: View {
                     .tint(DS.accent)
                 Text("Generating...")
                     .font(DS.buttonText)
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
         } else {
             VStack(alignment: .leading, spacing: 4) {
@@ -365,8 +365,8 @@ struct ContentBrainstormView: View {
 
                 if let error = opusOutlineError {
                     Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(.orange.opacity(0.8))
+                        .font(DS.footnote)
+                        .foregroundStyle(.orange.opacity(0.8))
                 }
             }
         }
@@ -376,11 +376,11 @@ struct ContentBrainstormView: View {
     private var opusOutlineButtonLabel: some View {
         HStack(spacing: 5) {
             Image(systemName: "sparkles")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
             Text("Generate with Opus")
                 .font(DS.buttonText)
         }
-        .foregroundColor(DS.accent)
+        .foregroundStyle(DS.accent)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(
@@ -483,13 +483,13 @@ private struct ExpandableOutlineItemRow: View {
         HStack(spacing: 8) {
             // Drag handle
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 10))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
 
             // Number
             Text("\(item.sortOrder + 1).")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 20, alignment: .trailing)
 
             // Title (editable on double-click)
@@ -527,8 +527,8 @@ private struct ExpandableOutlineItemRow: View {
         if isEditingTitle {
             TextField("", text: $editTitle)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.text)
                 .focused($titleFocused)
                 .onSubmit { commitTitleEdit() }
                 .onChange(of: titleFocused) { _, focused in
@@ -536,8 +536,8 @@ private struct ExpandableOutlineItemRow: View {
                 }
         } else {
             Text(item.title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
                 .onTapGesture(count: 2) {
                     editTitle = item.title
@@ -550,8 +550,8 @@ private struct ExpandableOutlineItemRow: View {
     @ViewBuilder
     private func durationBadge(_ seconds: Int) -> some View {
         Text("~\(formattedDuration(seconds))")
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundColor(DS.accent.opacity(0.7))
+            .font(DS.caption2)
+            .foregroundStyle(DS.accent.opacity(0.7))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -563,8 +563,8 @@ private struct ExpandableOutlineItemRow: View {
     @ViewBuilder
     private var expandChevron: some View {
         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(DS.textMuted)
+            .font(DS.caption2)
+            .foregroundStyle(DS.textMuted)
             .frame(width: 16)
     }
 
@@ -577,16 +577,16 @@ private struct ExpandableOutlineItemRow: View {
                 titleFocused = true
             }) {
                 Image(systemName: "pencil")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
 
             Button(action: onDelete) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
@@ -621,8 +621,8 @@ private struct ExpandableOutlineItemRow: View {
                 emptyReasoningPlaceholder
             } else {
                 Text(item.reasoning)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
@@ -644,11 +644,11 @@ private struct ExpandableOutlineItemRow: View {
         }) {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
-                    .font(.system(size: 9))
+                    .font(DS.caption2)
                 Text("Add notes, reasoning, or shooting details...")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
             }
-            .foregroundColor(DS.textMuted)
+            .foregroundStyle(DS.textMuted)
         }
         .buttonStyle(.plain)
     }
@@ -656,8 +656,8 @@ private struct ExpandableOutlineItemRow: View {
     @ViewBuilder
     private var reasoningEditor: some View {
         TextEditor(text: $editReasoning)
-            .font(.system(size: 12))
-            .foregroundColor(DS.textSecondary)
+            .font(DS.subheadline)
+            .foregroundStyle(DS.textSecondary)
             .scrollContentBackground(.hidden)
             .focused($reasoningFocused)
             .frame(minHeight: 60, maxHeight: 120)
@@ -718,8 +718,8 @@ private struct HookItemRow: View {
         HStack(alignment: .top, spacing: 8) {
             // Hook number
             Text("\(index + 1).")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 20, alignment: .trailing)
                 .padding(.top, isEditing ? 4 : 0)
 
@@ -732,8 +732,8 @@ private struct HookItemRow: View {
                 )
             } else {
                 Text(hook)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         editText = hook
@@ -751,16 +751,16 @@ private struct HookItemRow: View {
                     isFocused = true
                 }) {
                     Image(systemName: "pencil")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
 
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)

@@ -153,8 +153,8 @@ struct SwipeStudyFocusModeView: View {
                     ProgressView().tint(DS.textMuted)
                     if isAnalyzing {
                         Text("Analyzing swipe file...")
-                            .font(.system(size: 13))
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.textSecondary)
                     }
                 }
             }
@@ -261,11 +261,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.border, in: Capsule())
@@ -274,17 +274,17 @@ struct SwipeStudyFocusModeView: View {
             }
 
             Text(atom.title ?? "Swipe File")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(DS.text)
+                .font(DS.title2)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             HStack(spacing: 4) {
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text("Teardown")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption)
             }
-            .foregroundColor(gold)
+            .foregroundStyle(gold)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(gold.opacity(0.15), in: Capsule())
@@ -292,11 +292,11 @@ struct SwipeStudyFocusModeView: View {
             if analysis?.studiedAt != nil {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                     Text("Studied")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                 }
-                .foregroundColor(DS.green)
+                .foregroundStyle(DS.green)
             }
 
             // Creator link — tappable to open creator profile
@@ -310,11 +310,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "person.crop.rectangle.fill")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                         Text("Creator")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                     }
-                    .foregroundColor(gold.opacity(0.8))
+                    .foregroundStyle(gold.opacity(0.8))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(gold.opacity(0.1), in: Capsule())
@@ -332,11 +332,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DS.caption)
                         Text("Retry")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                     }
-                    .foregroundColor(DS.orange)
+                    .foregroundStyle(DS.orange)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(DS.orange.opacity(0.12), in: Capsule())
@@ -349,8 +349,8 @@ struct SwipeStudyFocusModeView: View {
                 showDeleteConfirmation = true
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
                     .padding(8)
                     .background(DS.border, in: Circle())
             }
@@ -369,8 +369,8 @@ struct SwipeStudyFocusModeView: View {
             if isPaneContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.border, in: Circle())
                 }
@@ -381,7 +381,7 @@ struct SwipeStudyFocusModeView: View {
                 showTaxonomyManagement = true
             } label: {
                 Image(systemName: "tag.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textSecondary)
                     .padding(8)
                     .background(DS.border, in: Circle())
@@ -483,8 +483,8 @@ struct SwipeStudyFocusModeView: View {
                         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
 
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 48))
-                            .foregroundColor(DS.text)
+                            .font(DS.display)
+                            .foregroundStyle(DS.text)
                             .shadow(color: .black.opacity(0.4), radius: 8)
                     }
                 }
@@ -515,30 +515,30 @@ struct SwipeStudyFocusModeView: View {
                             ProgressView()
                                 .tint(DS.accent)
                             Text("Loading carousel...")
-                                .font(.system(size: 11))
-                                .foregroundColor(DS.textSecondary)
+                                .font(DS.footnote)
+                                .foregroundStyle(DS.textSecondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(DS.bg.opacity(0.7))
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "photo.on.rectangle.angled")
-                                .font(.system(size: 32))
-                                .foregroundColor(DS.textSecondary)
+                                .font(DS.display)
+                                .foregroundStyle(DS.textSecondary)
                             Text("Carousel images not loaded")
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.textSecondary)
+                                .font(DS.subheadline)
+                                .foregroundStyle(DS.textSecondary)
                             if let url = atom.url, let openURL = URL(string: url) {
                                 Button {
                                     NSWorkspace.shared.open(openURL)
                                 } label: {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.up.right.square")
-                                            .font(.system(size: 11))
+                                            .font(DS.footnote)
                                         Text("Open in Instagram")
-                                            .font(.system(size: 12, weight: .medium))
+                                            .font(DS.buttonText)
                                     }
-                                    .foregroundColor(.white)
+                                    .foregroundStyle(.white)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 8)
                                     .background(DS.red, in: Capsule())
@@ -567,8 +567,8 @@ struct SwipeStudyFocusModeView: View {
                                 ProgressView()
                                     .tint(.white)
                                 Text("Loading video...")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(DS.textSecondary)
+                                    .font(DS.footnote)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(.black.opacity(0.4))
@@ -588,8 +588,8 @@ struct SwipeStudyFocusModeView: View {
                                         ProgressView()
                                             .tint(DS.accent)
                                         Text("Refreshing video link...")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(DS.textSecondary)
+                                            .font(DS.footnote)
+                                            .foregroundStyle(DS.textSecondary)
                                     }
                                 )
                         }
@@ -610,22 +610,22 @@ struct SwipeStudyFocusModeView: View {
                         .overlay(
                             VStack(spacing: 12) {
                                 Image(systemName: "video.slash")
-                                    .font(.system(size: 32))
-                                    .foregroundColor(DS.textSecondary)
+                                    .font(DS.display)
+                                    .foregroundStyle(DS.textSecondary)
                                 Text("Could not load video")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(DS.textSecondary)
+                                    .font(DS.subheadline)
+                                    .foregroundStyle(DS.textSecondary)
                                 if let url = atom.url, let openURL = URL(string: url) {
                                     Button {
                                         NSWorkspace.shared.open(openURL)
                                     } label: {
                                         HStack(spacing: 4) {
                                             Image(systemName: "arrow.up.right.square")
-                                                .font(.system(size: 11))
+                                                .font(DS.footnote)
                                             Text("Open in Instagram")
-                                                .font(.system(size: 12, weight: .medium))
+                                                .font(DS.buttonText)
                                         }
-                                        .foregroundColor(.white)
+                                        .foregroundStyle(.white)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
                                         .background(DS.red, in: Capsule())
@@ -708,8 +708,8 @@ struct SwipeStudyFocusModeView: View {
                 .fill(Color.black.opacity(0.3))
                 .overlay(
                     Image(systemName: "camera.fill")
-                        .font(.system(size: 32))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.display)
+                        .foregroundStyle(DS.textMuted)
                 )
         }
     }
@@ -776,8 +776,8 @@ struct SwipeStudyFocusModeView: View {
             }
 
             Text("\(safeIndex + 1) / \(items.count)")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -795,11 +795,11 @@ struct SwipeStudyFocusModeView: View {
                     .overlay(
                         VStack(spacing: 8) {
                             Image(systemName: "photo")
-                                .font(.system(size: 24))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.title1)
+                                .foregroundStyle(DS.textMuted)
                             Text("Failed to load")
-                                .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.footnote)
+                                .foregroundStyle(DS.textMuted)
                         }
                     )
             case .empty:
@@ -819,8 +819,8 @@ struct SwipeStudyFocusModeView: View {
 
     private func carouselNavArrow(systemName: String) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(DS.text)
+            .font(DS.title2)
+            .foregroundStyle(DS.text)
             .frame(width: 36, height: 36)
             .background(.regularMaterial)
             .clipShape(Circle())
@@ -871,20 +871,20 @@ struct SwipeStudyFocusModeView: View {
                     toggleIGPlayback()
                 } label: {
                     Image(systemName: igIsPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.text)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.text)
                 }
                 .buttonStyle(.plain)
 
                 Text(formatIGTime(currentTimestamp))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
 
                 Spacer()
 
                 Text(formatIGTime(igMediaData?.duration ?? videoDuration))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
             }
         }
         .frame(maxWidth: 320)
@@ -896,25 +896,25 @@ struct SwipeStudyFocusModeView: View {
     private func igMetadataFooter(atom: Atom) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "camera.fill")
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
 
             if let username = igMediaData?.authorUsername {
                 Text("@\(username)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.textSecondary)
             } else if let author = atom.richContent?.author, !author.isEmpty {
                 Text("@\(author)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Text("·")
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text(contentTypeLabel(atom: atom))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isCarouselContent ? gold : DS.red)
+                .font(DS.caption)
+                .foregroundStyle(isCarouselContent ? gold : DS.red)
         }
         .frame(maxWidth: isCarouselContent ? 400 : 320)
         .padding(.horizontal, 8)
@@ -1458,11 +1458,11 @@ struct SwipeStudyFocusModeView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.trianglehead.clockwise")
-                                .font(.system(size: 9))
+                                .font(DS.caption2)
                             Text("Re-transcribe")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(DS.caption2)
                         }
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(DS.border, in: Capsule())
@@ -1484,11 +1484,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: copiedTranscript ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9))
+                            .font(DS.caption2)
                         Text(copiedTranscript ? "Copied" : "Copy")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(DS.caption2)
                     }
-                    .foregroundColor(copiedTranscript ? DS.green : DS.textMuted)
+                    .foregroundStyle(copiedTranscript ? DS.green : DS.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(DS.border, in: Capsule())
@@ -1496,8 +1496,8 @@ struct SwipeStudyFocusModeView: View {
                 .buttonStyle(.plain)
 
                 Text("\(displayedSlides.count) slide\(displayedSlides.count == 1 ? "" : "s")")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Auto-transcription progress
@@ -1512,8 +1512,8 @@ struct SwipeStudyFocusModeView: View {
                     rawTranscriptSlideCard(slide: slide)
                 }
                 Text("Raw capture is read-only. Switch back to Cleaned to edit the transcript.")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             } else {
                 ForEach(transcriptSlides) { slide in
                     let index = indexForSlide(withID: slide.id) ?? 0
@@ -1521,8 +1521,8 @@ struct SwipeStudyFocusModeView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("Slide \(index + 1)")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(gold.opacity(0.6))
+                                .font(DS.caption2)
+                                .foregroundStyle(gold.opacity(0.6))
 
                             if let source = slide.source {
                                 slideSourceBadge(source)
@@ -1530,8 +1530,8 @@ struct SwipeStudyFocusModeView: View {
 
                             if !slideComments.isEmpty {
                                 Text("\(slideComments.count)")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(DS.textOnAccent)
+                                    .font(DS.caption2)
+                                    .foregroundStyle(DS.textOnAccent)
                                     .frame(width: 16, height: 16)
                                     .background(gold, in: Circle())
                             }
@@ -1549,14 +1549,14 @@ struct SwipeStudyFocusModeView: View {
                                 }
                             } label: {
                                 Image(systemName: "bubble.left")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(activeCommentSlideIndex == index ? gold : DS.textMuted)
+                                    .font(DS.footnote)
+                                    .foregroundStyle(activeCommentSlideIndex == index ? gold : DS.textMuted)
                             }
                             .buttonStyle(.plain)
 
                             Text("\(slide.text.count)/450")
-                                .font(.system(size: 9).monospacedDigit())
-                                .foregroundColor(slide.text.count > 450 ? DS.red : DS.textMuted)
+                                .font(DS.caption2.monospacedDigit())
+                                .foregroundStyle(slide.text.count > 450 ? DS.red : DS.textMuted)
                             if transcriptSlides.count > 1 {
                                 Button {
                                     withAnimation(ProMotionSprings.snappy) {
@@ -1564,8 +1564,8 @@ struct SwipeStudyFocusModeView: View {
                                     }
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(DS.textMuted)
+                                        .font(DS.subheadline)
+                                        .foregroundStyle(DS.textMuted)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -1606,18 +1606,18 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                         Text("Add Slide")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                     }
-                    .foregroundColor(gold.opacity(0.7))
+                    .foregroundStyle(gold.opacity(0.7))
                     .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
 
                 Text("Return adds a line break. Press Command-Return to add a new slide below the current one.")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Caption section — check live extraction first, then persisted data
@@ -1627,8 +1627,8 @@ struct SwipeStudyFocusModeView: View {
                         .dsSectionLabel()
 
                     Text(caption)
-                        .font(.system(size: 13))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textSecondary)
                         .textSelection(.enabled)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1648,11 +1648,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 12))
+                            .font(DS.subheadline)
                         Text(analysis == nil ? "Analyze" : "Re-analyze")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                     }
-                    .foregroundColor(DS.textOnAccent)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(gold, in: Capsule())
@@ -1691,19 +1691,19 @@ struct SwipeStudyFocusModeView: View {
         if shouldShowTranscriptionWarning {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.orange)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.orange)
 
                 Text(transcriptionWarningText)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
 
                 Text("Degraded")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(DS.orange)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.orange)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(DS.orange.opacity(0.12), in: Capsule())
@@ -1722,8 +1722,8 @@ struct SwipeStudyFocusModeView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Slide \(slide.slideNumber)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(gold.opacity(0.6))
+                    .font(DS.caption2)
+                    .foregroundStyle(gold.opacity(0.6))
 
                 if let source = slide.source {
                     slideSourceBadge(source)
@@ -1733,14 +1733,14 @@ struct SwipeStudyFocusModeView: View {
 
                 if let timestamp = slide.timestamp {
                     Text(formatTime(timestamp))
-                        .font(.system(size: 9).monospacedDigit())
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
             Text(slide.text.isEmpty ? "No text captured for this slide." : slide.text)
-                .font(.system(size: 13))
-                .foregroundColor(slide.text.isEmpty ? DS.textMuted : DS.text)
+                .font(DS.callout)
+                .foregroundStyle(slide.text.isEmpty ? DS.textMuted : DS.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1907,8 +1907,8 @@ struct SwipeStudyFocusModeView: View {
                 .scaleEffect(0.6)
                 .tint(gold)
             Text(autoTranscriptionProgress)
-                .font(.system(size: 11))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textSecondary)
             Spacer()
         }
         .padding(10)
@@ -1932,11 +1932,11 @@ struct SwipeStudyFocusModeView: View {
 
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(DS.caption2)
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(gold.opacity(0.8))
+        .foregroundStyle(gold.opacity(0.8))
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(gold.opacity(0.1), in: Capsule())
@@ -1957,11 +1957,11 @@ struct SwipeStudyFocusModeView: View {
 
         HStack(spacing: 2) {
             Image(systemName: icon)
-                .font(.system(size: 7))
+                .font(DS.caption2)
             Text(label)
-                .font(.system(size: 8, weight: .medium))
+                .font(DS.caption2)
         }
-        .foregroundColor(DS.textMuted)
+        .foregroundStyle(DS.textMuted)
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
         .background(DS.border, in: Capsule())
@@ -1978,21 +1978,21 @@ struct SwipeStudyFocusModeView: View {
     private func slideCommentInput(slideIndex: Int) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "bubble.left.fill")
-                .font(.system(size: 10))
-                .foregroundColor(gold.opacity(0.5))
+                .font(DS.caption2)
+                .foregroundStyle(gold.opacity(0.5))
 
             TextField("Add a comment...", text: $newCommentText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.text)
                 .onSubmit {
                     addComment(toSlide: slideIndex)
                 }
 
             Button(action: { addComment(toSlide: slideIndex) }) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.textMuted : gold)
+                    .font(DS.title3)
+                    .foregroundStyle(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty ? DS.textMuted : gold)
             }
             .buttonStyle(.plain)
             .disabled(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -2016,19 +2016,19 @@ struct SwipeStudyFocusModeView: View {
     private func slideCommentCard(_ comment: TranscriptComment) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "bubble.left.fill")
-                .font(.system(size: 8))
-                .foregroundColor(gold.opacity(0.4))
+                .font(DS.caption2)
+                .foregroundStyle(gold.opacity(0.4))
                 .padding(.top, 3)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(comment.text)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(formatCommentDate(comment.createdAt))
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
 
             Spacer()
@@ -2039,8 +2039,8 @@ struct SwipeStudyFocusModeView: View {
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -2397,11 +2397,11 @@ struct SwipeStudyFocusModeView: View {
             .overlay(
                 VStack(spacing: 8) {
                     Image(systemName: "doc.text.fill")
-                        .font(.system(size: 32))
-                        .foregroundColor(gold.opacity(0.4))
+                        .font(DS.display)
+                        .foregroundStyle(gold.opacity(0.4))
                     Text("Swipe File")
-                        .font(.system(size: 13))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textMuted)
                 }
             )
     }
@@ -2419,11 +2419,11 @@ struct SwipeStudyFocusModeView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                     Text("Analyze with Claude")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.buttonText)
                 }
-                .foregroundColor(DS.textOnAccent)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(gold, in: Capsule())
@@ -2435,8 +2435,8 @@ struct SwipeStudyFocusModeView: View {
                     .scaleEffect(0.5)
                     .tint(gold)
                 Text("Analyzing...")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }
@@ -2532,9 +2532,9 @@ struct SwipeStudyFocusModeView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("TRANSCRIPT")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DS.callout)
                     .tracking(1.2)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
 
                 if isFetchingTranscript {
                     ProgressView()
@@ -2547,15 +2547,15 @@ struct SwipeStudyFocusModeView: View {
                 if let richContent = atom.richContent,
                    let author = richContent.author, !author.isEmpty {
                     Text(author)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
             if !transcriptText.isEmpty {
                 Text(transcriptText)
-                    .font(.system(size: 14))
-                    .foregroundColor(DS.text)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
                     .lineSpacing(6)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2570,11 +2570,11 @@ struct SwipeStudyFocusModeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "pencil")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                         Text("Edit Transcript")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                     }
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             } else if isFetchingTranscript {
@@ -2587,8 +2587,8 @@ struct SwipeStudyFocusModeView: View {
                 .padding(.vertical, 4)
             } else {
                 Text("No transcript available")
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.vertical, 12)
             }
 
@@ -2599,8 +2599,8 @@ struct SwipeStudyFocusModeView: View {
                         .dsSectionLabel()
 
                     Text(caption)
-                        .font(.system(size: 13))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textSecondary)
                         .textSelection(.enabled)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2628,11 +2628,11 @@ struct SwipeStudyFocusModeView: View {
                     if let insight = analysis.keyInsight, !insight.isEmpty {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "lightbulb.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(gold)
+                                .font(DS.subheadline)
+                                .foregroundStyle(gold)
                             Text(insight)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(DS.text)
+                                .font(DS.callout)
+                                .foregroundStyle(DS.text)
                                 .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -2649,8 +2649,8 @@ struct SwipeStudyFocusModeView: View {
                                 .scaleEffect(0.5)
                                 .tint(gold)
                             Text("Claude is analyzing structure...")
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.subheadline)
+                                .foregroundStyle(DS.textMuted)
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2771,11 +2771,11 @@ struct SwipeStudyFocusModeView: View {
 
             VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.title1)
+                    .foregroundStyle(DS.textMuted)
                 Text(message)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -2805,14 +2805,14 @@ struct SwipeStudyFocusModeView: View {
 
             VStack(spacing: 8) {
                 Image(systemName: "camera.fill")
-                    .font(.system(size: 22))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.title1)
+                    .foregroundStyle(DS.textMuted)
                 Text("Instagram Analysis")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textMuted)
                 Text("Coming Soon")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
@@ -2873,14 +2873,14 @@ struct SwipeStudyFocusModeView: View {
     private var noAnalysisPlaceholder: some View {
         VStack(spacing: 12) {
             Image(systemName: "wand.and.stars")
-                .font(.system(size: 28))
-                .foregroundColor(gold.opacity(0.4))
+                .font(DS.pageTitle)
+                .foregroundStyle(gold.opacity(0.4))
             Text("No analysis available")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.textSecondary)
             Text("Analysis will run automatically when content is available")
-                .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -3255,19 +3255,19 @@ struct SwipeStudyFocusModeView: View {
         VStack(spacing: 16) {
             HStack {
                 Text("Edit Transcript")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.title2)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Button("Cancel") {
                     showEditTranscript = false
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
             }
 
             TextEditor(text: $editTranscriptText)
-                .font(.system(size: 14))
-                .foregroundColor(DS.text)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.text)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 200, maxHeight: 400)
                 .padding(12)
@@ -3279,19 +3279,19 @@ struct SwipeStudyFocusModeView: View {
 
             HStack {
                 Text("\(editTranscriptText.split(separator: " ").count) words")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
                 Spacer()
                 Button {
                     saveEditedTranscript()
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(DS.subheadline)
                         Text("Save & Re-analyze")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textOnAccent)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(gold, in: Capsule())
@@ -3593,11 +3593,11 @@ private struct TaxonomySection: View {
         if let source = analysis?.classificationSource {
             HStack(spacing: 3) {
                 Image(systemName: source == .ai ? "checkmark.circle.fill" : "pencil.circle.fill")
-                    .font(.system(size: 9))
+                    .font(DS.caption2)
                 Text(source == .ai ? "AI" : "Manual")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(DS.caption2)
             }
-            .foregroundColor(source == .ai ? DS.green : DS.orange)
+            .foregroundStyle(source == .ai ? DS.green : DS.orange)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(
@@ -3608,8 +3608,8 @@ private struct TaxonomySection: View {
 
         if let confidence = analysis?.classificationConfidence {
             Text("\(Int(confidence * 100))%")
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -3626,12 +3626,12 @@ private struct TaxonomySection: View {
                         .tint(gold)
                 } else {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 9))
+                        .font(DS.caption2)
                 }
                 Text("Reclassify")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
             }
-            .foregroundColor(gold.opacity(0.8))
+            .foregroundStyle(gold.opacity(0.8))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(gold.opacity(0.1), in: Capsule())
@@ -3646,11 +3646,11 @@ private struct TaxonomySection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 10))
-                    .foregroundColor(gold)
+                    .font(DS.caption2)
+                    .foregroundStyle(gold)
                 Text("AI Suggestion")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(gold)
+                    .font(DS.caption)
+                    .foregroundStyle(gold)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -3671,11 +3671,11 @@ private struct TaxonomySection: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(DS.caption2)
                         Text("Accept")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DS.caption)
                     }
-                    .foregroundColor(DS.textOnAccent)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(gold, in: Capsule())
@@ -3686,8 +3686,8 @@ private struct TaxonomySection: View {
                     onRejectReclassification()
                 } label: {
                     Text("Keep Current")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(DS.border, in: Capsule())
@@ -3706,11 +3706,11 @@ private struct TaxonomySection: View {
     private func suggestionRow(_ label: String, value: String, color: Color) -> some View {
         HStack(spacing: 6) {
             Text(label + ":")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
             Text(value)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(color)
+                .font(DS.caption2)
+                .foregroundStyle(color)
         }
     }
 
@@ -3758,16 +3758,16 @@ private struct TaxonomySection: View {
                     .fill(n.color)
                     .frame(width: 6, height: 6)
                 Text(n.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(n.color)
+                    .font(DS.caption)
+                    .foregroundStyle(n.color)
             } else {
                 Text("Select...")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
             Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -3817,16 +3817,16 @@ private struct TaxonomySection: View {
                     .fill(n.color)
                     .frame(width: 6, height: 6)
                 Text(n.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(n.color)
+                    .font(DS.caption)
+                    .foregroundStyle(n.color)
             } else {
                 Text("None")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
             Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -3875,16 +3875,16 @@ private struct TaxonomySection: View {
                     .fill(f.color)
                     .frame(width: 6, height: 6)
                 Text(f.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(f.color)
+                    .font(DS.caption)
+                    .foregroundStyle(f.color)
             } else {
                 Text("Select...")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
             Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -3896,12 +3896,12 @@ private struct TaxonomySection: View {
             HStack(spacing: 4) {
                 if let niche = analysis?.niche, !niche.isEmpty {
                     Text(niche)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(gold.opacity(0.8))
+                        .font(DS.caption)
+                        .foregroundStyle(gold.opacity(0.8))
                 } else {
                     Text("No niche")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .padding(.horizontal, 8)
@@ -3942,8 +3942,8 @@ private struct TaxonomySection: View {
                 linkedCreatorName = nil
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -3953,11 +3953,11 @@ private struct TaxonomySection: View {
     private func creatorLinkedLabel(creatorUUID: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "person.fill")
-                .font(.system(size: 9))
-                .foregroundColor(gold.opacity(0.7))
+                .font(DS.caption2)
+                .foregroundStyle(gold.opacity(0.7))
             Text(linkedCreatorName ?? "Creator")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(gold.opacity(0.9))
+                .font(DS.caption)
+                .foregroundStyle(gold.opacity(0.9))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -3980,11 +3980,11 @@ private struct TaxonomySection: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus.circle")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                 Text("Link creator")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -3997,12 +3997,12 @@ private struct TaxonomySection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 9))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                 TextField("Search creators...", text: $creatorSearchText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.text)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.text)
                     .onChange(of: creatorSearchText) { _ in filterCreators() }
                 Button {
                     showCreatorSearch = false
@@ -4010,8 +4010,8 @@ private struct TaxonomySection: View {
                     creatorSearchResults = []
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             }
@@ -4062,11 +4062,11 @@ private struct TaxonomySection: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(gold.opacity(0.6))
+                    .font(DS.caption2)
+                    .foregroundStyle(gold.opacity(0.6))
                 Text(creator.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.text)
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -4082,11 +4082,11 @@ private struct TaxonomySection: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(gold)
+                    .font(DS.caption2)
+                    .foregroundStyle(gold)
                 Text("Create \"\(creatorSearchText)\"")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(gold)
+                    .font(DS.caption)
+                    .foregroundStyle(gold)
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -4193,12 +4193,12 @@ private struct TaxonomySection: View {
             HStack(spacing: 4) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 9))
-                        .foregroundColor(iconColor)
+                        .font(DS.caption2)
+                        .foregroundStyle(iconColor)
                 }
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
             }
             .frame(width: 80, alignment: .leading)
 

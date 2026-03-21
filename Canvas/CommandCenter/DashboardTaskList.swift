@@ -56,7 +56,7 @@ struct DashboardTaskList: View {
             taskSection(
                 title: "Overdue",
                 tasks: viewModel.overdueTasks,
-                headerColor: PlannerumColors.overdue,
+                headerColor: DS.red,
                 showReschedule: true,
                 section: .overdue
             )
@@ -198,26 +198,26 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private func projectHeadingSection(heading: ProjectHeading, tasks: [TaskViewModel]) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.space8) {
             Image(systemName: heading.isCollapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 14)
 
             Text(heading.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout)
                 .foregroundStyle(DS.accent)
 
             Spacer()
 
             if heading.isCollapsed {
                 Text("\(tasks.count)")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
+        .padding(.vertical, DS.space8)
+        .padding(.horizontal, DS.space12)
         .contentShape(Rectangle())
 
         if !heading.isCollapsed {
@@ -324,7 +324,7 @@ struct DashboardTaskList: View {
             addTaskField
         }
 
-        Spacer().frame(height: 16)
+        Spacer().frame(height: DS.space16)
     }
 
     // MARK: - Section Header
@@ -338,14 +338,14 @@ struct DashboardTaskList: View {
     ) -> some View {
         HStack(spacing: 6) {
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption)
                 .tracking(0.8)
-                .foregroundColor(color)
+                .foregroundStyle(color)
 
-            if let trailing = trailing {
+            if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(color.opacity(0.7))
+                    .font(DS.caption2)
+                    .foregroundStyle(color.opacity(0.7))
             }
 
             Spacer()
@@ -354,22 +354,22 @@ struct DashboardTaskList: View {
                 Button {
                     showOverdueRescheduleMenu.toggle()
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: DS.space4) {
                         Image(systemName: "calendar.badge.clock")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(DS.caption2)
                         Text("Reschedule")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                     }
-                    .foregroundColor(PlannerumColors.overdue)
+                    .foregroundStyle(DS.red)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
                         Capsule()
-                            .fill(PlannerumColors.overdue.opacity(0.08))
+                            .fill(DS.red.opacity(0.08))
                     )
                     .overlay(
                         Capsule()
-                            .stroke(PlannerumColors.overdue.opacity(0.2), lineWidth: 1)
+                            .stroke(DS.red.opacity(0.2), lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
@@ -386,9 +386,9 @@ struct DashboardTaskList: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
+        .padding(.horizontal, DS.space10)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space6)
     }
 
     // MARK: - Upcoming Day Section
@@ -398,19 +398,19 @@ struct DashboardTaskList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(upcomingDayLabel(day))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption)
                     .tracking(0.8)
-                    .foregroundColor(day.isToday ? DS.accent : DS.textSecondary)
+                    .foregroundStyle(day.isToday ? DS.accent : DS.textSecondary)
 
                 Text("\(day.taskCount)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
 
                 Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
+            .padding(.horizontal, DS.space10)
+            .padding(.top, DS.space12)
+            .padding(.bottom, DS.space6)
 
             ForEach(day.tasks) { task in
                 taskRow(task)
@@ -457,22 +457,23 @@ struct DashboardTaskList: View {
                 checkboxButton(task, completionState: completionState)
 
                 // Title + meta
-                taskContent(task, completionState: completionState)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard !isAnimatingCompletion else { return }
-                        if NSEvent.modifierFlags.contains(.shift) {
-                            if selectedTaskUUIDs.contains(task.uuid) {
-                                selectedTaskUUIDs.remove(task.uuid)
-                            } else {
-                                selectedTaskUUIDs.insert(task.uuid)
-                            }
+                Button {
+                    guard !isAnimatingCompletion else { return }
+                    if NSEvent.modifierFlags.contains(.shift) {
+                        if selectedTaskUUIDs.contains(task.uuid) {
+                            selectedTaskUUIDs.remove(task.uuid)
                         } else {
-                            selectedTaskUUIDs.removeAll()
-                            // Show task detail in right panel
-                            onSelectTask?(task)
+                            selectedTaskUUIDs.insert(task.uuid)
                         }
+                    } else {
+                        selectedTaskUUIDs.removeAll()
+                        onSelectTask?(task)
                     }
+                } label: {
+                    taskContent(task, completionState: completionState)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
                 Spacer(minLength: 4)
 
@@ -495,7 +496,7 @@ struct DashboardTaskList: View {
         }
         .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(
                     isActiveSession ? DS.accent.opacity(0.06)
                         : isMultiSelected ? DS.accent.opacity(0.06)
@@ -505,7 +506,7 @@ struct DashboardTaskList: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(
                     isActiveSession ? DS.accent.opacity(0.3)
                         : isMultiSelected ? DS.accent.opacity(0.4)
@@ -553,10 +554,10 @@ struct DashboardTaskList: View {
     // MARK: - Batch Action Bar
 
     private var batchActionBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.space12) {
             Text("\(selectedTaskUUIDs.count) selected")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.cardMeta)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
@@ -565,13 +566,13 @@ struct DashboardTaskList: View {
                 selectedTaskUUIDs.removeAll()
                 Task { await viewModel.deleteMultipleTasks(uuids: toDelete) }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                     Text("Delete")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.cardMeta)
                 }
-                .foregroundColor(PlannerumColors.overdue)
+                .foregroundStyle(DS.red)
             }
             .buttonStyle(.plain)
 
@@ -579,16 +580,16 @@ struct DashboardTaskList: View {
                 selectedTaskUUIDs.removeAll()
             } label: {
                 Text("Cancel")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.cardMeta)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .stroke(DS.accent.opacity(0.2), lineWidth: 1)
         )
     }
@@ -617,53 +618,53 @@ struct DashboardTaskList: View {
     private func taskContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
         let resolvedHabit = viewModel.resolvedHabit(for: task)
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+            HStack(spacing: DS.space4) {
                 if task.intent != .general {
                     Image(systemName: task.intent.iconName)
-                        .font(.system(size: 9))
-                        .foregroundColor(task.intent.color.opacity(0.7))
+                        .font(DS.caption2)
+                        .foregroundStyle(task.intent.color.opacity(0.7))
                 }
 
                 CommandCenterAnimatedTaskTitle(
                     title: task.title,
                     isCompleted: task.isCompleted,
                     completionState: completionState,
-                    font: .system(size: 13, weight: task.isCompleted ? .regular : .medium),
+                    font: DS.callout,
                     activeColor: DS.text,
                     completedColor: DS.textMuted
                 )
                 .lineLimit(1)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: DS.space6) {
                 if let timeInfo = task.timeInfo {
                     Label(timeInfo, systemImage: "clock")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 if task.isRecurring {
                     Label("Repeats", systemImage: "repeat")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.accent.opacity(0.85))
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.accent.opacity(0.85))
                 }
 
                 if let resolvedHabit {
                     Label(resolvedHabit.title, systemImage: resolvedHabit.icon)
-                        .font(.system(size: 10))
-                        .foregroundColor(resolvedHabit.accent.opacity(0.9))
+                        .font(DS.caption2)
+                        .foregroundStyle(resolvedHabit.accent.opacity(0.9))
                 }
 
                 if let projectName = task.projectName {
                     Text(projectName)
-                        .font(.system(size: 10))
-                        .foregroundColor(task.projectColor)
+                        .font(DS.caption2)
+                        .foregroundStyle(task.projectColor)
                 }
 
                 if task.sessionCount > 0 {
                     Label("\(task.totalFocusMinutes)m tracked", systemImage: "timer")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
         }
@@ -673,13 +674,13 @@ struct DashboardTaskList: View {
 
     private func dueDateChip(_ text: String, isOverdue: Bool) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(isOverdue ? PlannerumColors.overdue : DS.textMuted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .font(DS.caption2)
+            .foregroundStyle(isOverdue ? DS.red : DS.textMuted)
+            .padding(.horizontal, DS.space6)
+            .padding(.vertical, DS.space2)
             .background(
                 Capsule()
-                    .fill(isOverdue ? PlannerumColors.overdue.opacity(0.1) : DS.surface)
+                    .fill(isOverdue ? DS.red.opacity(0.1) : DS.surface)
             )
     }
 
@@ -695,9 +696,9 @@ struct DashboardTaskList: View {
             }
         } label: {
             Image(systemName: isActive ? "pause.fill" : "play.fill")
-                .font(.system(size: 10))
+                .font(DS.caption2)
                 .foregroundStyle(isActive ? DS.accent : DS.textMuted)
-                .frame(width: 24, height: 24)
+                .frame(width: DS.space24, height: DS.space24)
                 .background(
                     Circle()
                         .fill(isActive ? DS.accentSoft : DS.surface)
@@ -711,9 +712,9 @@ struct DashboardTaskList: View {
             activeTaskMenuUUID = task.uuid
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
-                .frame(width: 24, height: 24)
+                .font(DS.caption2)
+                .foregroundStyle(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
+                .frame(width: DS.space24, height: DS.space24)
                 .background(
                     Circle()
                         .fill(activeTaskMenuUUID == task.uuid ? DS.accentSoft : DS.surface)
@@ -765,28 +766,29 @@ struct DashboardTaskList: View {
 
     @ViewBuilder
     private func addTaskFieldForDate(_ date: Date) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textMuted)
-
-            Text("Add task")
-                .font(.system(size: 13))
-                .foregroundColor(DS.textMuted)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Focus the main add field and set date context
+        Button {
             viewModel.pendingTaskDate = date
+        } label: {
+            HStack(spacing: DS.space8) {
+                Image(systemName: "plus")
+                    .font(DS.cardMeta)
+                    .foregroundStyle(DS.textMuted)
+
+                Text("Add task")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
 
     private func emptyState(message: String, icon: String) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DS.space10) {
             ZStack {
                 Circle()
                     .stroke(DS.accent.opacity(0.08), lineWidth: 1)
@@ -797,16 +799,16 @@ struct DashboardTaskList: View {
                     .frame(width: 44, height: 44)
 
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: .light))
-                    .foregroundColor(DS.accent.opacity(0.6))
+                    .font(DS.title2)
+                    .foregroundStyle(DS.accent.opacity(0.6))
             }
 
             Text(message)
                 .font(DS.cardMeta)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
+        .padding(.vertical, DS.space32)
     }
 
     private func handleTaskCompletionTap(_ task: TaskViewModel) {
@@ -980,7 +982,7 @@ struct CommandCenterAnimatedTaskTitle: View {
     var body: some View {
         Text(title)
             .font(font)
-            .foregroundColor(isCompleted || completionState != nil ? completedColor : activeColor)
+            .foregroundStyle(isCompleted || completionState != nil ? completedColor : activeColor)
             .strikethrough(isCompleted, color: completedColor)
             .overlay(alignment: .leading) {
                 if !isCompleted {

@@ -13,8 +13,6 @@ struct ContentBlockView: View {
 
     @State private var contentTitle: String = ""
     @State private var contentBody: String = ""
-    @State private var isExpanded = false
-
     // Workflow state from ContentFocusModeState
     @State private var currentStep: ContentStep = .brainstorm
     @State private var currentContentPhase: ContentPhase = .ideation
@@ -33,8 +31,6 @@ struct ContentBlockView: View {
     @State private var observationCancellable: AnyCancellable?
     @State private var lastParsedMetadata: String?
 
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
     // Blue accent for content
     private let accentColor = CosmoMentionColors.content
 
@@ -44,7 +40,6 @@ struct ContentBlockView: View {
             accentColor: accentColor,
             icon: "doc.text.fill",
             title: displayTitle,
-            isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
             workflowCardView
@@ -119,12 +114,13 @@ struct ContentBlockView: View {
                 .fill(DS.border)
                 .frame(height: 1)
 
-            // Unified content preview
-            contentPreview
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-
-            Spacer(minLength: 0)
+            // Unified content preview (scrollable when content overflows)
+            ScrollView(.vertical, showsIndicators: false) {
+                contentPreview
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .frame(maxHeight: .infinity)
 
             // Bottom info bar
             bottomInfoBar
@@ -163,10 +159,9 @@ struct ContentBlockView: View {
         VStack(alignment: .leading, spacing: 6) {
             if !draftContent.isEmpty {
                 // Draft excerpt — primary display
-                Text(String(draftContent.prefix(120)))
+                Text(draftContent)
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
-                    .lineLimit(4)
 
                 // Word count badge
                 if wordCount > 0 {
@@ -183,16 +178,14 @@ struct ContentBlockView: View {
                 }
             } else if !coreIdea.isEmpty {
                 // Fallback to core idea
-                Text(String(coreIdea.prefix(120)))
+                Text(coreIdea)
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
-                    .lineLimit(4)
             } else if !contentDescription.isEmpty {
                 // Fallback to description
-                Text(String(contentDescription.prefix(120)))
+                Text(contentDescription)
                     .font(.system(size: 12))
                     .foregroundColor(DS.textSecondary)
-                    .lineLimit(4)
             } else if !hooks.isEmpty {
                 // Fallback to hooks
                 VStack(alignment: .leading, spacing: 2) {
@@ -719,7 +712,6 @@ struct ContentFooter: View {
         ContentBlockView(
             block: CanvasBlock.previewContentBlock()
         )
-        .environmentObject(BlockExpansionManager())
     }
     .frame(width: 400, height: 350)
 }

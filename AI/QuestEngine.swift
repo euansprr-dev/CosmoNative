@@ -177,7 +177,6 @@ class QuestEngine: ObservableObject {
         // Debounced re-eval on specific quest-relevant events
         let triggerNotifications: [Notification.Name] = [
             .deepWorkSessionEnded,
-            .taskCompleted,
         ]
         for name in triggerNotifications {
             NotificationCenter.default.publisher(for: name)

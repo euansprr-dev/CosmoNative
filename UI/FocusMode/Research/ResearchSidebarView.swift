@@ -31,7 +31,7 @@ struct ResearchSidebarView: View {
     @State private var filteredContent: [RelatedItem] = []
 
     private let panelWidth: CGFloat = 320
-    private let accentColor = OnyxColors.Dimension.knowledge
+    private let accentColor = DS.accent
 
     @StateObject private var ambientEngine = AmbientFieldEngine()
 
@@ -461,7 +461,7 @@ struct ResearchSidebarView: View {
                     Text("Analyze")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
                 .background(accentColor, in: RoundedRectangle(cornerRadius: 8))
@@ -1106,5 +1106,4 @@ struct ResearchSidebarView: View {
     }
     .frame(width: 720, height: 600)
     .background(DS.bg)
-    .preferredColorScheme(.dark)
 }

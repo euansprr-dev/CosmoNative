@@ -41,15 +41,12 @@ extension Notification.Name {
     /// Legacy notification for showing settings
     static let showSettings = Notification.Name("showSettings")
 
-    /// Legacy notification for expanding selected block
-    static let expandSelectedBlock = Notification.Name("expandSelectedBlock")
     static let closeSelectedBlock = Notification.Name("closeSelectedBlock")
     static let deleteSpecificBlock = Notification.Name("deleteSpecificBlock")
     static let moveBlockToTime = Notification.Name("moveBlockToTime")
     static let scheduleBlockCompleted = Notification.Name("scheduleBlockCompleted")
     static let createScheduleBlock = Notification.Name("createScheduleBlock")
     static let deleteBlockByContent = Notification.Name("deleteBlockByContent")
-    static let expandBlockByContent = Notification.Name("expandBlockByContent")
     static let duplicateBlockByContent = Notification.Name("duplicateBlockByContent")
     static let moveBlockByContentToTime = Notification.Name("moveBlockByContentToTime")
     static let resizeSelectedBlock = Notification.Name("resizeSelectedBlock")

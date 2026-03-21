@@ -23,10 +23,9 @@ enum RichDocumentPersistence {
         metadata: String?,
         fallbackPlainText: String?
     ) -> RichDocument {
-        if let stored = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey) {
-            return stored
-        }
-        return RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        let document = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey)
+            ?? RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        return field == .title ? normalizedTitleDocument(document) : document
     }
 
     static func loadBlockDocument(
@@ -34,11 +33,15 @@ enum RichDocumentPersistence {
         metadata: [String: String],
         fallbackPlainText: String?
     ) -> RichDocument {
-        guard let encoded = metadata[key], let data = encoded.data(using: .utf8),
-              let document = try? JSONDecoder().decode(RichDocument.self, from: data) else {
-            return RichDocument.migrateLegacy(fallbackPlainText ?? "")
+        let document: RichDocument
+        if let encoded = metadata[key],
+           let data = encoded.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(RichDocument.self, from: data) {
+            document = decoded
+        } else {
+            document = RichDocument.migrateLegacy(fallbackPlainText ?? "")
         }
-        return document
+        return key == RichDocumentMetadataKeys.titleDocument ? normalizedTitleDocument(document) : document
     }
 
     static func writeAtomDocuments(
@@ -48,9 +51,10 @@ enum RichDocumentPersistence {
         draftDocument: RichDocument? = nil
     ) -> (title: String?, body: String?, metadata: String?) {
         var metadata = existingMetadata
+        let normalizedTitleDocument = titleDocument.map(normalizedTitleDocument(_:))
 
-        if let titleDocument {
-            metadata = RichDocumentMetadataStorage.writeDocument(titleDocument, into: metadata, key: RichDocumentField.title.metadataKey)
+        if let normalizedTitleDocument {
+            metadata = RichDocumentMetadataStorage.writeDocument(normalizedTitleDocument, into: metadata, key: RichDocumentField.title.metadataKey)
         }
         if let bodyDocument {
             metadata = RichDocumentMetadataStorage.writeDocument(bodyDocument, into: metadata, key: RichDocumentField.body.metadataKey)
@@ -59,7 +63,7 @@ enum RichDocumentPersistence {
             metadata = RichDocumentMetadataStorage.writeDocument(draftDocument, into: metadata, key: RichDocumentField.draft.metadataKey)
         }
 
-        let titleText = titleDocument.map(titlePlainText(from:))
+        let titleText = normalizedTitleDocument.map(titlePlainText(from:))
         let bodyText = bodyDocument?.plainText ?? draftDocument?.plainText
 
         return (
@@ -75,7 +79,10 @@ enum RichDocumentPersistence {
         metadata: [String: String]
     ) -> [String: String] {
         var updated = metadata
-        if let data = try? JSONEncoder().encode(document),
+        let documentToWrite = key == RichDocumentMetadataKeys.titleDocument
+            ? normalizedTitleDocument(document)
+            : document
+        if let data = try? JSONEncoder().encode(documentToWrite),
            let string = String(data: data, encoding: .utf8) {
             updated[key] = string
         }
@@ -83,9 +90,24 @@ enum RichDocumentPersistence {
     }
 
     static func titlePlainText(from document: RichDocument) -> String {
-        document.plainText
-            .replacingOccurrences(of: "\n", with: " ")
+        document.blocks
+            .compactMap { block in
+                switch block.kind {
+                case .divider, .image:
+                    return nil
+                default:
+                    let text = block.inlines.map(\.plainText).joined()
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+            }
+            .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalizedTitleDocument(_ document: RichDocument) -> RichDocument {
+        let title = titlePlainText(from: document)
+        return title.isEmpty ? .empty : RichDocument(blocks: [.paragraph(title)])
     }
 
     static func nilIfEmpty(_ string: String) -> String? {

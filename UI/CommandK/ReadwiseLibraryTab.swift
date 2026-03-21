@@ -806,7 +806,7 @@ private struct ReadwiseSetupField: View {
                     Text(isValidating ? "Connecting..." : "Connect")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 10)
                 .background(

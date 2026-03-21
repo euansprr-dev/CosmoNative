@@ -257,7 +257,7 @@ struct ResearchCoreView: View {
 
                                 Image(systemName: "arrow.up.right.square")
                                     .font(.system(size: 24))
-                                    .foregroundColor(.white)
+                                    .foregroundStyle(.white)
                             }
                             Text("Open Video")
                                 .font(.system(size: 12, weight: .medium))
@@ -573,7 +573,7 @@ struct TimelineProgressView: View {
 
                 // Playhead
                 Circle()
-                    .fill(Color.white)
+                    .fill(DS.accent)
                     .frame(width: isDragging ? 14 : 10, height: isDragging ? 14 : 10)
                     .shadow(color: Color.black.opacity(0.3), radius: 4)
                     .position(

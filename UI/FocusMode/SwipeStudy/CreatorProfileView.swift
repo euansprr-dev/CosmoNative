@@ -23,6 +23,13 @@ enum SwipeSortOption: String, CaseIterable {
     }
 }
 
+// MARK: - CatalogViewMode
+
+private enum CatalogViewMode: String, CaseIterable {
+    case catalog = "Catalog"
+    case saved = "Saved"
+}
+
 // MARK: - CreatorProfileView
 
 struct CreatorProfileView: View {
@@ -52,6 +59,16 @@ struct CreatorProfileView: View {
     @State private var formatFilter: ContentFormat?
     @State private var swipeSortOption: SwipeSortOption = .recent
 
+    // Catalog state
+    @State private var catalogPosts: [ImportedPost] = []
+    @State private var catalogExistingShortcodes: Set<String> = []
+    @State private var catalogSelectedPostIds: Set<String> = []
+    @State private var catalogSortOption: ImportSortOption = .bestPerformers
+    @State private var catalogTypeFilter: InstagramContentType? = nil
+    @State private var catalogSavedFilter: SavedFilter = .all
+    @State private var catalogViewMode: CatalogViewMode = .catalog
+    @State private var isSavingFromCatalog = false
+
     // Cached derived data (avoid recomputing on every body eval)
     @State private var cachedAvgScore: Double?
     @State private var cachedTopNarrative: NarrativeStyle?
@@ -74,11 +91,25 @@ struct CreatorProfileView: View {
         mainContent
             .onAppear {
                 loadSwipes()
+                loadCatalog()
                 withAnimation(ProMotionSprings.snappy) { hasAppeared = true }
             }
             .onChange(of: narrativeFilter) { recomputeFilteredSwipes() }
             .onChange(of: formatFilter) { recomputeFilteredSwipes() }
             .onChange(of: swipeSortOption) { recomputeFilteredSwipes() }
+            .onChange(of: showingImport) { _, newValue in
+                if !newValue {
+                    loadCatalog()
+                    loadSwipes()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { notification in
+                if let uuid = notification.userInfo?["creatorUUID"] as? String,
+                   uuid == creator.uuid {
+                    loadCatalog()
+                    loadSwipes()
+                }
+            }
             .overlay {
                 if isEditing {
                     editOverlay
@@ -114,9 +145,12 @@ struct CreatorProfileView: View {
                 VStack(spacing: 20) {
                     headerSection
                     creatorStatsSection
-                    swipeGridSection
+                    gridSection
                 }
                 .padding(20)
+            }
+            .safeAreaInset(edge: .bottom) {
+                catalogSelectionToolbar
             }
         }
         .opacity(hasAppeared ? 1 : 0)
@@ -157,9 +191,9 @@ struct CreatorProfileView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.buttonText)
                 Text("Back")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
             }
             .foregroundStyle(DS.textSecondary)
         }
@@ -181,9 +215,9 @@ struct CreatorProfileView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Compare")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(gold)
             .padding(.horizontal, 12)
@@ -202,15 +236,16 @@ struct CreatorProfileView: View {
     private var importButton: some View {
         Button { showingImport = true } label: {
             HStack(spacing: 4) {
-                Image(systemName: hasCatalog ? "tray.full.fill" : "arrow.down.circle.fill")
-                    .font(.system(size: 11))
-                Text(hasCatalog ? "Browse Catalog" : "Import Posts")
-                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: !catalogPosts.isEmpty ? "arrow.clockwise" : "arrow.down.circle.fill")
+                    .font(DS.footnote)
+                Text(!catalogPosts.isEmpty ? "Refresh Catalog" : "Import Posts")
+                    .font(DS.buttonText)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(!catalogPosts.isEmpty ? gold : .white)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(gold, in: Capsule())
+            .background(!catalogPosts.isEmpty ? gold.opacity(0.12) : gold, in: Capsule())
+            .overlay(!catalogPosts.isEmpty ? Capsule().strokeBorder(gold.opacity(0.3), lineWidth: 1) : nil)
         }
         .buttonStyle(.plain)
     }
@@ -223,9 +258,9 @@ struct CreatorProfileView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "pencil")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Edit")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(DS.textSecondary)
         }
@@ -310,7 +345,7 @@ struct CreatorProfileView: View {
                     .font(.system(size: 20, weight: .bold).monospacedDigit())
                     .foregroundStyle(DS.text)
                 Text("Followers")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
         }
@@ -353,15 +388,15 @@ struct CreatorProfileView: View {
 
                 HStack(spacing: 0) {
                     if let avgLikes = meta.averageLikes {
-                        inlineStat(icon: "heart.fill", value: formatMetricCount(avgLikes), label: "Avg Likes", color: Color(hex: "#FF4444"))
+                        inlineStat(icon: "heart.fill", value: formatMetricCount(avgLikes), label: "Avg Likes", color: DS.red)
                     }
                     if let avgViews = meta.averageViews {
                         inlineStatDivider
-                        inlineStat(icon: "play.fill", value: formatMetricCount(avgViews), label: "Avg Views", color: Color(hex: "#8B5CF6"))
+                        inlineStat(icon: "play.fill", value: formatMetricCount(avgViews), label: "Avg Views", color: DS.entityConnection)
                     }
                     if let avgComments = meta.averageComments {
                         inlineStatDivider
-                        inlineStat(icon: "bubble.left.fill", value: formatMetricCount(avgComments), label: "Avg Comments", color: Color(hex: "#3B82F6"))
+                        inlineStat(icon: "bubble.left.fill", value: formatMetricCount(avgComments), label: "Avg Comments", color: DS.info)
                     }
                     if let rate = meta.medianEngagementRate {
                         inlineStatDivider
@@ -388,7 +423,7 @@ struct CreatorProfileView: View {
                     .minimumScaleFactor(0.6)
             }
             Text(label)
-                .font(.system(size: 10))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
@@ -422,36 +457,341 @@ struct CreatorProfileView: View {
         cachedTopFramework = fCounts.max(by: { $0.value < $1.value })?.key
     }
 
-    // MARK: - Swipe Grid Section
+    // MARK: - Grid Section (Catalog + Saved)
 
-    private var swipeGridSection: some View {
+    private var gridSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            swipeGridHeader
-            swipeGridBody
-        }
-    }
-
-    private var swipeGridHeader: some View {
-        HStack {
-            Text("SWIPES (\(cachedFilteredSwipes.count))")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
-
-            Spacer()
-
-            swipeFilterMenus
+            gridSectionHeader
+            if !catalogPosts.isEmpty && catalogViewMode == .catalog {
+                catalogSortFilterBar
+                catalogGridBody
+            } else {
+                savedSwipeGridBody
+            }
         }
     }
 
     @ViewBuilder
-    private var swipeGridBody: some View {
+    private var gridSectionHeader: some View {
+        if !catalogPosts.isEmpty {
+            HStack {
+                catalogSegmentPicker
+                Spacer()
+                if catalogViewMode == .saved {
+                    swipeFilterMenus
+                }
+            }
+        } else {
+            HStack {
+                Text("SWIPES (\(cachedFilteredSwipes.count))")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+                swipeFilterMenus
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var catalogSegmentPicker: some View {
+        HStack(spacing: 0) {
+            catalogSegmentButton(.catalog, label: "Catalog (\(catalogPosts.count))")
+            catalogSegmentButton(.saved, label: "Saved (\(swipes.count))")
+        }
+        .background(DS.surface, in: .rect(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func catalogSegmentButton(_ mode: CatalogViewMode, label: String) -> some View {
+        let isActive = catalogViewMode == mode
+        Button {
+            withAnimation(ProMotionSprings.snappy) { catalogViewMode = mode }
+        } label: {
+            Text(label)
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.textOnAccent : DS.textSecondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(isActive ? gold : Color.clear, in: .rect(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Catalog Sort & Filter Bar
+
+    @ViewBuilder
+    private var catalogSortFilterBar: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                catalogSortChips
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                catalogTypeFilterChips
+                Divider().frame(height: 16)
+                catalogSavedFilterChips
+                Spacer()
+                if catalogTypeFilter != nil || catalogSavedFilter != .all {
+                    catalogFilteredCountLabel
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .commandKToolbarGroup()
+    }
+
+    @ViewBuilder
+    private var catalogSortChips: some View {
+        ForEach(ImportSortOption.allCases, id: \.self) { option in
+            catalogSortChipButton(option)
+        }
+    }
+
+    @ViewBuilder
+    private func catalogSortChipButton(_ option: ImportSortOption) -> some View {
+        let isActive = catalogSortOption == option
+        Button {
+            withAnimation(ProMotionSprings.snappy) { catalogSortOption = option }
+        } label: {
+            Text(option.rawValue)
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.textOnAccent : DS.text)
+                .commandKToolbarChip(
+                    isActive: isActive,
+                    activeFill: gold,
+                    activeBorder: gold
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var catalogTypeFilterChips: some View {
+        catalogTypeFilterChipButton(nil, label: "All")
+        catalogTypeFilterChipButton(.reel, label: "Reels")
+        catalogTypeFilterChipButton(.carousel, label: "Carousels")
+        catalogTypeFilterChipButton(.image, label: "Images")
+    }
+
+    @ViewBuilder
+    private func catalogTypeFilterChipButton(_ type: InstagramContentType?, label: String) -> some View {
+        let isActive = catalogTypeFilter == type
+        Button {
+            withAnimation(ProMotionSprings.snappy) { catalogTypeFilter = type }
+        } label: {
+            Text(label)
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.textOnAccent : DS.textSecondary)
+                .commandKToolbarChip(
+                    isActive: isActive,
+                    activeFill: DS.accent,
+                    activeBorder: DS.accent
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var catalogSavedFilterChips: some View {
+        ForEach(SavedFilter.allCases, id: \.self) { filter in
+            catalogSavedFilterChipButton(filter)
+        }
+    }
+
+    @ViewBuilder
+    private func catalogSavedFilterChipButton(_ filter: SavedFilter) -> some View {
+        let isActive = catalogSavedFilter == filter
+        Button {
+            withAnimation(ProMotionSprings.snappy) { catalogSavedFilter = filter }
+        } label: {
+            Text(filter.rawValue)
+                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? DS.textOnAccent : DS.textSecondary)
+                .commandKToolbarChip(
+                    isActive: isActive,
+                    activeFill: DS.accent,
+                    activeBorder: DS.accent
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var catalogFilteredCountLabel: some View {
+        Text("\(sortedCatalogPosts.count) shown")
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundStyle(DS.textMuted)
+    }
+
+    // MARK: - Catalog Grid
+
+    private var sortedCatalogPosts: [ImportedPost] {
+        var filtered = catalogPosts
+        if let typeFilter = catalogTypeFilter {
+            filtered = filtered.filter { $0.contentType == typeFilter }
+        }
+        switch catalogSavedFilter {
+        case .all: break
+        case .unsaved:
+            filtered = filtered.filter { !catalogExistingShortcodes.contains($0.shortcode) }
+        case .saved:
+            filtered = filtered.filter { catalogExistingShortcodes.contains($0.shortcode) }
+        }
+        return catalogSortOption.sort(filtered)
+    }
+
+    @ViewBuilder
+    private var catalogGridBody: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let columnCount = max(2, Int(width / (236 + CommandKMetrics.cardSpacing)))
+            let totalSpacing = CGFloat(columnCount - 1) * CommandKMetrics.cardSpacing
+            let cardW = (width - totalSpacing) / CGFloat(columnCount)
+            let columns = distributeCatalogColumns(columnCount: columnCount, cardWidth: cardW)
+
+            HStack(alignment: .top, spacing: CommandKMetrics.cardSpacing) {
+                ForEach(0..<columnCount, id: \.self) { col in
+                    LazyVStack(spacing: CommandKMetrics.cardSpacing) {
+                        ForEach(col < columns.count ? columns[col] : []) { post in
+                            ImportedPostCard(
+                                post: post,
+                                isSelected: catalogSelectedPostIds.contains(post.id),
+                                isDuplicate: false,
+                                onToggle: { toggleCatalogSelection(post.id) },
+                                cardWidth: cardW
+                            )
+                            .overlay(alignment: .topTrailing) {
+                                catalogSavedBadge(for: post)
+                            }
+                        }
+                    }
+                    .frame(width: cardW)
+                }
+            }
+        }
+        .frame(minHeight: estimateCatalogGridHeight())
+    }
+
+    private func distributeCatalogColumns(columnCount: Int, cardWidth: CGFloat) -> [[ImportedPost]] {
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+        var columns: [[ImportedPost]] = Array(repeating: [], count: columnCount)
+
+        for post in sortedCatalogPosts {
+            let shortest = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            columns[shortest].append(post)
+            columnHeights[shortest] += ImportedPostCard.estimatedHeight(for: post, cardWidth: cardWidth) + CommandKMetrics.cardSpacing
+        }
+        return columns
+    }
+
+    private func estimateCatalogGridHeight() -> CGFloat {
+        let posts = sortedCatalogPosts
+        guard !posts.isEmpty else { return 200 }
+        let avgHeight = posts.prefix(20).reduce(CGFloat(0)) { sum, post in
+            sum + ImportedPostCard.estimatedHeight(for: post, cardWidth: 220)
+        } / CGFloat(min(posts.count, 20))
+        let estimatedRows = CGFloat(posts.count) / 4.0
+        return estimatedRows * (avgHeight + CommandKMetrics.cardSpacing)
+    }
+
+    @ViewBuilder
+    private func catalogSavedBadge(for post: ImportedPost) -> some View {
+        if catalogExistingShortcodes.contains(post.shortcode) {
+            Text("Saved")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(DS.accent.opacity(0.85), in: Capsule())
+                .padding(6)
+                .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: - Catalog Selection Toolbar
+
+    @ViewBuilder
+    private var catalogSelectionToolbar: some View {
+        if !catalogPosts.isEmpty && catalogViewMode == .catalog {
+            VStack(spacing: 0) {
+                DS.borderSubtle.frame(height: 1)
+                catalogSelectionToolbarContent
+            }
+            .background(DS.surfaceElevated)
+        }
+    }
+
+    @ViewBuilder
+    private var catalogSelectionToolbarContent: some View {
+        HStack(spacing: 8) {
+            catalogQuickSelectChip("Select All") { catalogSelectAll() }
+            catalogQuickSelectChip("Top 10") { catalogSelectTopN(10) }
+            catalogQuickSelectChip("Top 25") { catalogSelectTopN(25) }
+            catalogQuickSelectChip("All Reels") { catalogSelectAllReels() }
+            if !catalogSelectedPostIds.isEmpty {
+                catalogQuickSelectChip("Clear") { catalogSelectedPostIds.removeAll() }
+            }
+            Spacer()
+            catalogSaveCTA
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func catalogQuickSelectChip(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
+                .commandKToolbarChip()
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var catalogSaveCTA: some View {
+        if !catalogSelectedPostIds.isEmpty {
+            Button {
+                Task { await saveCatalogSelections() }
+            } label: {
+                HStack(spacing: 5) {
+                    if isSavingFromCatalog {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .tint(DS.textOnAccent)
+                    } else {
+                        Image(systemName: "square.and.arrow.down.fill")
+                    }
+                    Text("Save \(catalogSelectedPostIds.count) Selected")
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+                .background(DS.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingFromCatalog)
+        }
+    }
+
+    // MARK: - Saved Swipe Grid (existing)
+
+    @ViewBuilder
+    private var savedSwipeGridBody: some View {
         if isLoadingSwipes {
             HStack { Spacer(); ProgressView().tint(.white); Spacer() }
                 .padding(.vertical, 40)
         } else if cachedFilteredSwipes.isEmpty {
             Text("No swipes match current filters")
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.textMuted)
                 .padding(.vertical, 20)
                 .frame(maxWidth: .infinity)
@@ -517,7 +857,7 @@ struct CreatorProfileView: View {
             Image(systemName: swipeSortOption.icon)
                 .font(.system(size: 9, weight: .bold))
             Text(swipeSortOption.rawValue)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
         }
@@ -534,7 +874,7 @@ struct CreatorProfileView: View {
     private var narrativeFilterLabel: some View {
         HStack(spacing: 3) {
             Text(narrativeFilter?.displayName ?? "Narrative")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
         }
@@ -551,7 +891,7 @@ struct CreatorProfileView: View {
     private var formatFilterLabel: some View {
         HStack(spacing: 3) {
             Text(formatFilter?.displayName ?? "Format")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
             Image(systemName: "chevron.down")
                 .font(.system(size: 7, weight: .bold))
         }
@@ -677,7 +1017,7 @@ struct CreatorProfileView: View {
 
             Toggle(isOn: $editIsActive) {
                 Text("Actively Tracked")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
             }
             .toggleStyle(.switch)
@@ -693,7 +1033,7 @@ struct CreatorProfileView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(DS.textSecondary)
             TextEditor(text: $editNotes)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .scrollContentBackground(.hidden)
                 .frame(height: 100)
@@ -714,7 +1054,7 @@ struct CreatorProfileView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                     Text("Save")
                         .font(.system(size: 13, weight: .semibold))
                 }
@@ -734,7 +1074,7 @@ struct CreatorProfileView: View {
                 .foregroundStyle(DS.textSecondary)
             TextField(label, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .padding(8)
                 .background(DS.borderSubtle, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
@@ -758,6 +1098,72 @@ struct CreatorProfileView: View {
 
             await recalculateCreatorStats()
         }
+    }
+
+    private func loadCatalog() {
+        guard let posts = CatalogStore.load(creatorUUID: creator.uuid), !posts.isEmpty else {
+            // No catalog — default to saved view
+            catalogPosts = []
+            catalogViewMode = .saved
+            return
+        }
+        catalogPosts = posts
+        Task {
+            let shortcodes = posts.map(\.shortcode)
+            catalogExistingShortcodes = (try? await AtomRepository.shared.findExistingShortcodes(shortcodes)) ?? []
+        }
+    }
+
+    // MARK: - Catalog Selection
+
+    private func toggleCatalogSelection(_ postId: String) {
+        if catalogSelectedPostIds.contains(postId) {
+            catalogSelectedPostIds.remove(postId)
+        } else {
+            // Only allow selecting non-saved posts
+            if let post = catalogPosts.first(where: { $0.id == postId }),
+               !catalogExistingShortcodes.contains(post.shortcode) {
+                catalogSelectedPostIds.insert(postId)
+            }
+        }
+    }
+
+    private func catalogSelectAll() {
+        let selectable = catalogPosts.filter { !catalogExistingShortcodes.contains($0.shortcode) }
+        catalogSelectedPostIds = Set(selectable.map(\.id))
+    }
+
+    private func catalogSelectTopN(_ n: Int) {
+        let sorted = catalogSortOption.sort(catalogPosts)
+        let selectable = sorted.filter { !catalogExistingShortcodes.contains($0.shortcode) }
+        catalogSelectedPostIds = Set(selectable.prefix(n).map(\.id))
+    }
+
+    private func catalogSelectAllReels() {
+        let reels = catalogPosts.filter {
+            $0.contentType == .reel && !catalogExistingShortcodes.contains($0.shortcode)
+        }
+        catalogSelectedPostIds = Set(reels.map(\.id))
+    }
+
+    private func saveCatalogSelections() async {
+        isSavingFromCatalog = true
+
+        let engine = CreatorImportEngine()
+        await engine.loadCachedCatalog(creatorUUID: creator.uuid)
+        for id in catalogSelectedPostIds {
+            engine.toggleSelection(id)
+        }
+        _ = await engine.saveSelectedPosts()
+
+        // Update local state
+        let savedShortcodes = catalogSelectedPostIds.compactMap { id in
+            catalogPosts.first { $0.id == id }?.shortcode
+        }
+        catalogExistingShortcodes.formUnion(savedShortcodes)
+        catalogSelectedPostIds.removeAll()
+        loadSwipes()
+        isSavingFromCatalog = false
     }
 
     private func recalculateCreatorStats() async {
@@ -822,9 +1228,9 @@ struct CreatorProfileView: View {
     private func platformBadge(_ platform: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: platformIconFor(platform))
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(platformNameFor(platform))
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
         }
         .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 8)
@@ -834,7 +1240,7 @@ struct CreatorProfileView: View {
 
     private func nicheBadge(_ niche: String) -> some View {
         Text(niche)
-            .font(.system(size: 12, weight: .medium))
+            .font(DS.buttonText)
             .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

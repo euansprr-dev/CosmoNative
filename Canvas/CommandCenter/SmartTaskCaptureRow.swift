@@ -18,22 +18,22 @@ struct SmartTaskCaptureRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Input row
-            HStack(spacing: 8) {
+            HStack(spacing: DS.space8) {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.cardMeta)
                     .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
 
                 ZStack(alignment: .leading) {
                     if viewModel.newTaskTitle.isEmpty {
                         Text(placeholderText)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color(hex: "767685"))
+                            .font(DS.callout)
+                            .foregroundStyle(DS.textMuted)
                             .allowsHitTesting(false)
                     }
                     TextField("", text: $viewModel.newTaskTitle)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color(hex: "1A1A1F"))
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
                         .focused($isFocused)
                         .onSubmit {
                             Task { await submitTask() }
@@ -49,14 +49,14 @@ struct SmartTaskCaptureRow: View {
                         parsedInput = ParsedTaskInput(title: "")
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(DS.cardMeta)
                             .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
 
             // Parsed metadata chips (only when typing)
             if !viewModel.newTaskTitle.isEmpty && hasAnyMetadata {
@@ -139,7 +139,7 @@ struct SmartTaskCaptureRow: View {
                     metadataChip(
                         icon: timeOfDay == "morning" ? "sun.horizon" : "moon.stars",
                         label: timeOfDay.capitalized,
-                        color: timeOfDay == "morning" ? Color(hex: "F59E0B") : Color(hex: "6366F1")
+                        color: timeOfDay == "morning" ? DS.orange : DS.entityIdea
                     )
                 }
 
@@ -147,7 +147,7 @@ struct SmartTaskCaptureRow: View {
                     metadataChip(
                         icon: state == "someday" ? "archivebox" : "tray.full",
                         label: state.capitalized,
-                        color: Color(hex: "8B5CF6")
+                        color: DS.entityIdea
                     )
                 }
 
@@ -155,7 +155,7 @@ struct SmartTaskCaptureRow: View {
                     metadataChip(
                         icon: "flag.fill",
                         label: "Deadline: \(formatChipDate(deadline))",
-                        color: .orange
+                        color: DS.orange
                     )
                 }
             }
@@ -170,16 +170,16 @@ struct SmartTaskCaptureRow: View {
         Button {
             action?()
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: DS.space2) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(DS.caption2)
 
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
             }
             .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
             .background(color.opacity(0.1), in: Capsule())
         }
         .buttonStyle(.plain)
@@ -228,7 +228,8 @@ struct SmartTaskCaptureRow: View {
         await viewModel.smartAddTask(parsed)
 
         // Re-focus the text field for rapid entry
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
             isFocused = true
         }
     }

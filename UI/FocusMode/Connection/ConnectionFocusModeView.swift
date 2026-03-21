@@ -141,21 +141,21 @@ struct ConnectionFocusModeView: View {
                     }
                 )
             }
-            .padding(.leading, 8)
+            .padding(.leading, DS.space8)
             .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
             if isPaneContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.border, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 16)
-                .padding(.top, 16)
+                .padding(.trailing, DS.space16)
+                .padding(.top, DS.space16)
             }
         }
         .onAppear {
@@ -329,48 +329,48 @@ struct ConnectionFocusModeView: View {
             .frame(height: 44)
 
             // Stats (centered)
-            HStack(spacing: 12) {
-                HStack(spacing: 4) {
+            HStack(spacing: DS.space12) {
+                HStack(spacing: DS.space4) {
                     Text("\(viewModel.state.totalItemCount)")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
                     Text("items")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
                 Text("·")
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
 
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     Text("\(viewModel.state.completedSectionCount)/8")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
                     Text("sections")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                 }
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
             }
 
             // Ghost suggestions indicator
             if viewModel.state.isGeneratingGhosts {
-                HStack(spacing: 6) {
+                HStack(spacing: DS.space6) {
                     ProgressView()
                         .scaleEffect(0.6)
-                        .tint(CosmoColors.blockConnection)
+                        .tint(DS.entityConnection)
 
                     Text("Finding suggestions...")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
                 }
-                .padding(.top, 4)
+                .padding(.top, DS.space4)
             } else if viewModel.state.totalGhostCount > 0 {
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text("\(viewModel.state.totalGhostCount) suggestions available")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                 }
-                .foregroundColor(CosmoColors.blockConnection.opacity(0.7))
-                .padding(.top, 4)
+                .foregroundStyle(DS.entityConnection.opacity(0.7))
+                .padding(.top, DS.space4)
             }
         }
     }
@@ -382,32 +382,32 @@ struct ConnectionFocusModeView: View {
             // Back button (hidden in pane mode — X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DS.space6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space8)
                     .background(DS.surfaceElevated, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
 
             // Type badge (right next to back button)
-            HStack(spacing: 4) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: "link.circle.fill")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text("CONNECTION")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.8)
             }
-            .foregroundColor(CosmoColors.blockConnection)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(CosmoColors.blockConnection.opacity(0.15), in: Capsule())
+            .foregroundStyle(DS.entityConnection)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(DS.entityConnection.opacity(DS.opacitySubtle), in: Capsule())
 
             Spacer()
 
@@ -419,9 +419,9 @@ struct ConnectionFocusModeView: View {
                     }
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .font(.system(size: 13))
+                        .font(DS.callout)
                         .foregroundStyle(sidebarVisible ? DS.entityConnection : DS.textSecondary)
-                        .padding(8)
+                        .padding(DS.space8)
                         .background(
                             sidebarVisible ? DS.entityConnection.opacity(0.15) : DS.border,
                             in: Circle()
@@ -430,8 +430,8 @@ struct ConnectionFocusModeView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space12)
         .background(
             LinearGradient(
                 colors: [
@@ -448,22 +448,20 @@ struct ConnectionFocusModeView: View {
     // MARK: - Connected Sources Section
 
     private var connectedSourcesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Text("CONNECTED SOURCES")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(DS.textMuted)
-                    .tracking(1)
+                    .dsSectionLabel()
 
                 Spacer()
 
                 Text("\(viewModel.state.connectedSources.count) sources")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(spacing: DS.space10) {
                     ForEach(viewModel.state.connectedSources) { source in
                         ConnectedSourceChip(
                             source: source,
@@ -475,7 +473,7 @@ struct ConnectionFocusModeView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(DS.borderSubtle)
@@ -809,30 +807,30 @@ private struct RelationAreaOverlayCard: View {
     }
 
     private var relationAreaHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.space10) {
             Image(systemName: sourceIconName(state.sourceAtom.type))
-                .font(.system(size: 12))
-                .foregroundColor(sourceColor(state.sourceAtom.type))
+                .font(DS.subheadline)
+                .foregroundStyle(sourceColor(state.sourceAtom.type))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DS.space2) {
                 Text(state.sourceAtom.title ?? "Untitled")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Text(sourceTypeLabel(state.sourceAtom.type))
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.4)
-                    .foregroundColor(sourceColor(state.sourceAtom.type))
+                    .foregroundStyle(sourceColor(state.sourceAtom.type))
             }
 
             Spacer()
 
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .padding(6)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .padding(DS.space6)
                     .background(DS.glassCardFill, in: Circle())
             }
             .buttonStyle(.plain)
@@ -879,18 +877,18 @@ private struct RelationAreaOverlayCard: View {
         return Button {
             onChipTap(sectionType)
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: DS.space4) {
                 Image(systemName: sectionType.icon)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
 
                 Text(sectionType.displayName)
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(DS.caption2)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .foregroundColor(isHighlighted ? sectionType.accentColor : DS.textSecondary)
+            .foregroundStyle(isHighlighted ? sectionType.accentColor : DS.textSecondary)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .padding(.vertical, DS.space8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isHighlighted ? sectionType.accentColor.opacity(0.15) : DS.glassCardFill)
@@ -1263,27 +1261,27 @@ struct ConnectedSourceChip: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.space8) {
                 // Type icon
                 Image(systemName: iconForType(source.atomType))
-                    .font(.system(size: 11))
-                    .foregroundColor(colorForType(source.atomType))
+                    .font(DS.footnote)
+                    .foregroundStyle(colorForType(source.atomType))
 
                 // Title
                 Text(source.atomTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 // Connection strength
                 if source.connectionStrength > 1 {
                     Text("×\(source.connectionStrength)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isHovered ? DS.glassInputFillFocused : DS.glassCardFill)
@@ -1319,7 +1317,7 @@ struct ConnectedSourceChip: View {
         switch type {
         case .research: return CosmoColors.blockResearch
         case .idea: return CosmoColors.lavender
-        case .journalEntry: return Color(hex: "#EC4899")
+        case .journalEntry: return DS.entityNote
         case .content: return CosmoColors.blockContent
         case .connection: return CosmoColors.blockConnection
         default: return CosmoColors.slate

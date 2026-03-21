@@ -21,7 +21,7 @@ struct TaskTitleMentionField: View {
             // Title with colored mentions rendered inline
             TextField("Task title", text: $title)
                 .textFieldStyle(.plain)
-                .font(.system(size: 16, weight: .semibold))
+                .font(DS.body)
                 .foregroundStyle(DS.text)
                 .focused($isFocused)
                 .onSubmit { onSubmit() }
@@ -44,11 +44,11 @@ struct TaskTitleMentionField: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "at")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.accent)
 
                 Text("Link an item")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
 
                 Spacer()
@@ -57,7 +57,7 @@ struct TaskTitleMentionField: View {
                     cancelMention()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
@@ -65,7 +65,7 @@ struct TaskTitleMentionField: View {
 
             if mentionResults.isEmpty && !mentionQuery.isEmpty {
                 Text("No results for \"\(mentionQuery)\"")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                     .padding(.vertical, 4)
             } else {
@@ -77,7 +77,7 @@ struct TaskTitleMentionField: View {
         .padding(8)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
-        .shadow(color: .black.opacity(0.06), radius: 6, y: 3)
+        .dsRestingShadow()
     }
 
     @ViewBuilder
@@ -89,19 +89,19 @@ struct TaskTitleMentionField: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: result.entityType.icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(color)
                     .frame(width: 14)
 
                 Text(result.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text(result.typeLabel)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(color)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)

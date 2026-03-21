@@ -124,11 +124,11 @@ struct UpcomingBoardView: View {
             HStack(spacing: 6) {
                 Text("Overdue")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(PlannerumColors.overdue)
+                    .foregroundColor(DS.red)
 
                 Text("\(viewModel.overdueTasks.count)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(PlannerumColors.overdue.opacity(0.7))
+                    .foregroundColor(DS.red.opacity(0.7))
 
                 Spacer()
 
@@ -141,16 +141,16 @@ struct UpcomingBoardView: View {
                         Text("Reschedule")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(PlannerumColors.overdue)
+                    .foregroundColor(DS.red)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
                         Capsule()
-                            .fill(PlannerumColors.overdue.opacity(0.08))
+                            .fill(DS.red.opacity(0.08))
                     )
                     .overlay(
                         Capsule()
-                            .stroke(PlannerumColors.overdue.opacity(0.2), lineWidth: 1)
+                            .stroke(DS.red.opacity(0.2), lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
@@ -315,7 +315,7 @@ struct UpcomingBoardView: View {
                     Text(dueInfo)
                         .font(.system(size: 10))
                 }
-                .foregroundColor(task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
+                .foregroundColor(task.isOverdue ? DS.red : DS.textMuted)
             }
 
             if task.intent != .general {
@@ -499,7 +499,7 @@ struct UpcomingBoardView: View {
                     Text("Delete")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(PlannerumColors.overdue)
+                .foregroundColor(DS.red)
             }
             .buttonStyle(.plain)
 
@@ -540,7 +540,7 @@ struct UpcomingBoardView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(PlannerumColors.overdue)
+                        .foregroundColor(DS.red)
 
                     Text("Add task")
                         .font(.system(size: 13))
@@ -585,7 +585,7 @@ struct UpcomingBoardView: View {
                 } label: {
                     Text("Add task")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
                         .background(DS.accent, in: RoundedRectangle(cornerRadius: 6))

@@ -61,6 +61,7 @@ struct ImportedPost: Identifiable, Codable, Sendable, Equatable {
     let engagement: InstagramEngagement
     let hashtags: [String]
     let carouselMediaCount: Int?
+    let carouselItems: [CarouselItem]?
     let locationName: String?
     let ownerUsername: String
 

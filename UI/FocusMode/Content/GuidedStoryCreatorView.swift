@@ -56,7 +56,7 @@ struct GuidedStoryCreatorView: View {
         }
         .frame(width: 560, height: 620)
         .background(DS.surface)
-        .cornerRadius(DS.radiusLarge)
+        .clipShape(.rect(cornerRadius: DS.radiusLarge))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusLarge)
                 .stroke(DS.border, lineWidth: 1)
@@ -69,22 +69,22 @@ struct GuidedStoryCreatorView: View {
         HStack(spacing: 10) {
             Image(systemName: "list.bullet.rectangle")
                 .font(.system(size: 16))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
 
             Text("Guided Story Creator")
                 .font(DS.cardTitle)
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             Text("\(answeredCount)/8 answered")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
                     .font(DS.buttonText)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.border, in: Circle())
             }
@@ -119,12 +119,12 @@ struct GuidedStoryCreatorView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(prompt.question)
                         .font(DS.buttonText)
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(prompt.hint)
                         .font(DS.timestamp)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -133,13 +133,13 @@ struct GuidedStoryCreatorView: View {
                 if answers[index].isEmpty {
                     Text("Write your answer...")
                         .font(DS.cardMeta)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                 }
                 TextEditor(text: $answers[index])
                     .font(DS.cardMeta)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 60)
                     .padding(.horizontal, 8)
@@ -163,11 +163,11 @@ struct GuidedStoryCreatorView: View {
             if hasAnswer {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             } else {
                 Text("\(index + 1)")
                     .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
         .padding(.top, 2)
@@ -180,7 +180,7 @@ struct GuidedStoryCreatorView: View {
             Button(action: { dismiss() }) {
                 Text("Cancel")
                     .font(DS.buttonText)
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
 
@@ -204,9 +204,9 @@ struct GuidedStoryCreatorView: View {
             Text("Done (\(answeredCount) answers)")
                 .font(DS.buttonText)
         }
-        .foregroundColor(.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
+        .foregroundStyle(DS.textOnAccent)
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space8)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(answeredCount > 0 ? DS.accent : DS.border)

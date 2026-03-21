@@ -873,6 +873,7 @@ public final class ContentPipelineService: ObservableObject {
 struct ContentAtomMetadata: Codable, Sendable {
     var phase: ContentPhase
     var platform: SocialPlatform?
+    var contentFormat: String?
     var clientProfileUUID: String?
     var wordCount: Int
     var createdPhaseAt: Date?

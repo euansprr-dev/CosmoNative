@@ -31,8 +31,10 @@ struct FilmGrainOverlay: View {
 
     /// Generate the grain noise bitmap once using CGContext.
     /// Same algorithm as the old per-frame Canvas: deterministic LCG hash,
-    /// 2x2 dots, black at normalized * 0.15 opacity.
+    /// 2x2 dots. Light theme: white base + dark dots. Dark theme: dark base + light dots.
     private func generateGrainTexture() {
+        let isDark = DS.palette.isDark
+
         // Use a fixed tile size — will be stretched by .resizable()
         let tileWidth = 512
         let tileHeight = 512
@@ -51,8 +53,9 @@ struct FilmGrainOverlay: View {
             bitmapInfo: CGImageAlphaInfo.none.rawValue
         ) else { return }
 
-        // Fill with white (transparent grain — we'll use this as a mask-like overlay)
-        ctx.setFillColor(gray: 1.0, alpha: 1.0)
+        // Base fill: white for light themes, dark for dark themes
+        let baseFill: CGFloat = isDark ? 0.0 : 1.0
+        ctx.setFillColor(gray: baseFill, alpha: 1.0)
         ctx.fill(CGRect(x: 0, y: 0, width: tileWidth, height: tileHeight))
 
         for row in 0..<rows {
@@ -61,8 +64,14 @@ struct FilmGrainOverlay: View {
                 let hash = (seed &* 6364136223846793005) &+ 1442695040888963407
                 let normalized = Double(hash % 256) / 255.0
 
-                // Black dot at normalized * 0.15 opacity → gray value = 1.0 - (normalized * 0.15)
-                let gray = 1.0 - (normalized * 0.15)
+                // Light theme: dark dots on white (gray = 1.0 - noise)
+                // Dark theme: light dots on dark (gray = 0.0 + noise)
+                let gray: Double
+                if isDark {
+                    gray = normalized * 0.15
+                } else {
+                    gray = 1.0 - (normalized * 0.15)
+                }
                 ctx.setFillColor(gray: CGFloat(gray), alpha: 1.0)
                 ctx.fill(CGRect(
                     x: col * dotSize,

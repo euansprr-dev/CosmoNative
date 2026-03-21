@@ -26,12 +26,9 @@ struct CosmoMessageBubble: View {
             toolResultRow(name: name, summary: summary, isError: isError)
         case .contextTrace(let lookups, let sections):
             legacyContextTraceCard(lookups: lookups, sections: sections)
-        case .contextChange(_, let to):
-            timelineMarker(
-                icon: "arrow.triangle.branch",
-                title: "Context moved to \(to)",
-                tint: DS.accent
-            )
+        case .contextChange:
+            // Context changes are now reflected only in the top summary card — skip rendering
+            EmptyView()
         case .actionButtons(let buttons):
             actionButtonsBubble(buttons: buttons)
         }
@@ -156,12 +153,9 @@ struct CosmoMessageBubble: View {
     @ViewBuilder
     private var assistantContent: some View {
         if message.content.isEmpty && message.isStreaming {
-            HStack(spacing: 8) {
-                StreamingIndicator()
-                Text("Thinking through the answer")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-            }
+            // CosmoThinkingCard handles the thinking state with live tool activity —
+            // no need for a duplicate indicator here.
+            EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 CosmoMarkdownRenderer(content: message.content)

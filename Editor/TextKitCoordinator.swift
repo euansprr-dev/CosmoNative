@@ -16,6 +16,10 @@ fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
 final class CosmoTextView: NSTextView {
     fileprivate weak var shortcutDelegate: CosmoTextViewShortcutDelegate?
 
+    /// When true, scroll events are handled by the enclosing NSScrollView
+    /// instead of being forwarded up the responder chain (canvas zoom).
+    var scrollsInternally: Bool = false
+
     override func paste(_ sender: Any?) {
         let selectedRange = self.selectedRange()
 
@@ -35,7 +39,7 @@ final class CosmoTextView: NSTextView {
                 string: selectedText.string,
                 attributes: [
                     .link: url,
-                    .foregroundColor: NSColor.systemBlue,
+                    .foregroundColor: PolishHighlightColors.link,
                     .underlineStyle: NSUnderlineStyle.single.rawValue,
                     .font: font ?? NSFont.systemFont(ofSize: 16)
                 ]
@@ -57,13 +61,16 @@ final class CosmoTextView: NSTextView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // Forward scroll events to the outer SwiftUI ScrollView.
-        // The enclosing NSScrollView doesn't scroll (text view grows to fit),
-        // so we skip it and forward to the next responder in the chain.
-        if let scrollView = enclosingScrollView {
-            scrollView.nextResponder?.scrollWheel(with: event)
-        } else {
+        if scrollsInternally {
+            // Let the enclosing NSScrollView handle scrolling within the block
             super.scrollWheel(with: event)
+        } else {
+            // Forward scroll events up the responder chain (canvas zoom)
+            if let scrollView = enclosingScrollView {
+                scrollView.nextResponder?.scrollWheel(with: event)
+            } else {
+                super.scrollWheel(with: event)
+            }
         }
     }
 
@@ -116,6 +123,22 @@ extension CosmoTextView {
     }
 }
 
+enum EditorLayoutMetrics {
+    static func singleLineVerticalInset(fontSize: CGFloat, compact: Bool) -> CGFloat {
+        max(4, ceil(fontSize * 0.15))
+    }
+
+    static func singleLineHeight(
+        fontSize: CGFloat,
+        compact: Bool,
+        baseFontWeight: NSFont.Weight = .regular
+    ) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+        let inset = singleLineVerticalInset(fontSize: fontSize, compact: compact)
+        return ceil(font.ascender - font.descender + font.leading + inset * 2 + 2)
+    }
+}
+
 // MARK: - Representable
 
 struct TextKitEditorRepresentable: NSViewRepresentable {
@@ -135,6 +158,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var baseFontWeight: NSFont.Weight = .regular
     var polishHighlights: WritingAnalysis? = nil
     var textAlignment: NSTextAlignment = .natural
+
+    var typewriterMode: Bool = false
+
+    var isEditable: Bool = true
+    var scrollsInternally: Bool = false
 
     var onSlashCommand: ((CGPoint) -> Void)?
     var onMention: ((CGPoint, String) -> Void)?
@@ -203,8 +231,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     private func configureTextView(_ textView: CosmoTextView, context: Context, isInitial: Bool = true) {
         textView.isRichText = true
         textView.allowsUndo = true
-        textView.isEditable = true
+        textView.isEditable = isEditable
         textView.isSelectable = true
+        textView.scrollsInternally = scrollsInternally
         textView.usesFontPanel = false
         textView.usesRuler = false
         textView.importsGraphics = allowImages
@@ -252,8 +281,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
     private func baseParagraphStyle() -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = singleLine ? 0 : 4
-        style.paragraphSpacing = singleLine ? 0 : 8
+        if singleLine {
+            style.lineSpacing = 0
+            style.paragraphSpacing = 0
+        } else if compact {
+            style.lineSpacing = 4
+            style.paragraphSpacing = 8
+        } else {
+            style.lineSpacing = 6
+            style.paragraphSpacing = 12
+        }
         return style
     }
 
@@ -271,7 +308,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
     private func resolvedTextInsets() -> NSSize {
         if singleLine {
-            return NSSize(width: compact ? 0 : 2, height: compact ? 4 : max(4, floor(fontSize * 0.12)))
+            let verticalInset = EditorLayoutMetrics.singleLineVerticalInset(fontSize: fontSize, compact: compact)
+            return NSSize(width: compact ? 0 : 2, height: verticalInset)
         }
         if compact {
             return NSSize(width: 10, height: 8)
@@ -280,9 +318,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     }
 
     private func resolvedSingleLineHeight() -> CGFloat {
-        let font = resolvedBaseFont()
-        let insets = resolvedTextInsets().height * 2
-        return ceil(font.ascender - font.descender + font.leading + insets + 2)
+        EditorLayoutMetrics.singleLineHeight(
+            fontSize: fontSize,
+            compact: compact,
+            baseFontWeight: baseFontWeight
+        )
     }
 
     func makeCoordinator() -> Coordinator {
@@ -366,12 +406,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         deinit {
-            if let scrollContentView {
-                NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: scrollContentView)
-            }
-            if let observedScrollView {
-                NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: observedScrollView)
-            }
             NotificationCenter.default.removeObserver(self)
         }
 
@@ -421,16 +455,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             if let analysis = parent.polishHighlights {
                 for range in analysis.complexSentenceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: NSColor.yellow.withAlphaComponent(0.15), range: range)
+                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.complex, range: range)
                 }
                 for range in analysis.veryComplexSentenceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: NSColor.red.withAlphaComponent(0.15), range: range)
+                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.veryComplex, range: range)
                 }
                 for range in analysis.passiveVoiceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: NSColor.systemBlue.withAlphaComponent(0.15), range: range)
+                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.passive, range: range)
                 }
                 for range in analysis.adverbRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: NSColor.purple.withAlphaComponent(0.15), range: range)
+                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.adverb, range: range)
                 }
             }
 
@@ -475,6 +509,76 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             handleMentionState(in: textView, text: text, cursorLocation: cursorLocation)
             handleSlashState(in: textView, text: text, cursorLocation: cursorLocation)
+
+            // Scroll behavior — only when editor owns its own scroll (scrollsInternally)
+            // Skip when embedded inside a SwiftUI ScrollView (the default for focus modes)
+            if parent.scrollsInternally {
+                if parent.typewriterMode {
+                    scrollToCursorCenter(textView)
+                } else {
+                    ensureScrollMargin(textView)
+                }
+            }
+        }
+
+        // MARK: - Typewriter Scrolling
+
+        /// Keep cursor vertically centered — text scrolls around it
+        private func scrollToCursorCenter(_ textView: NSTextView) {
+            guard !parent.singleLine,
+                  !textView.string.isEmpty,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  let scrollView = textView.enclosingScrollView else { return }
+
+            let cursorRange = textView.selectedRange()
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: cursorRange, actualCharacterRange: nil)
+            let cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            let cursorY = cursorRect.midY + textView.textContainerInset.height
+
+            let visibleHeight = scrollView.contentView.bounds.height
+            // Don't center-scroll if document is shorter than viewport
+            let documentHeight = layoutManager.usedRect(for: textContainer).height + textView.textContainerInset.height * 2
+            guard documentHeight > visibleHeight else { return }
+
+            let targetY = max(0, cursorY - visibleHeight / 2)
+
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: targetY))
+            }
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+
+        // MARK: - Scroll Margin (30% Bottom)
+
+        /// Start scrolling before cursor hits viewport bottom — keeps eyes in upper 2/3
+        private func ensureScrollMargin(_ textView: NSTextView) {
+            guard !parent.singleLine,
+                  !textView.string.isEmpty,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  let scrollView = textView.enclosingScrollView else { return }
+
+            let cursorRange = textView.selectedRange()
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: cursorRange, actualCharacterRange: nil)
+            let cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            let cursorY = cursorRect.maxY + textView.textContainerInset.height
+
+            let visibleRect = scrollView.contentView.bounds
+            let bottomMargin = visibleRect.height * 0.3
+            let bottomThreshold = visibleRect.maxY - bottomMargin
+
+            if cursorY > bottomThreshold {
+                let targetY = cursorY - visibleRect.height + bottomMargin
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.1
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: max(0, targetY)))
+                }
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -607,33 +711,49 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         resetToNormalTypingAttributes(textView)
                         syncBindings(from: textView)
                         return true
+                    } else if activeBlockMode == .quote {
+                        // Quote blocks: continue with prefix on single Enter
+                        // Use tight paragraph spacing so quote lines stay visually connected
+                        if let prefix = continuationPrefix(for: textView) {
+                            let quoteStyle = NSMutableParagraphStyle()
+                            quoteStyle.lineSpacing = parent.compact ? 2 : 4
+                            quoteStyle.paragraphSpacing = parent.compact ? 2 : 4
+                            var quoteAttrs = textView.typingAttributes
+                            quoteAttrs[.paragraphStyle] = quoteStyle
+                            textView.typingAttributes = quoteAttrs
+
+                            textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                            syncBindings(from: textView)
+                            return true
+                        }
                     } else if let prefix = continuationPrefix(for: textView) {
-                        // Non-empty block line → continue with prefix
+                        // Bullets/numbered/checklists: continue with prefix, reset inline formatting
                         textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                        resetInlineFormattingOnly(textView)
                         syncBindings(from: textView)
                         return true
                     }
                 }
 
-                // Heading mode: Enter resets to normal (Bug 5 fix — synchronous)
-                if isInHeadingMode {
-                    textView.insertText("\n", replacementRange: textView.selectedRange())
-                    resetToNormalTypingAttributes(textView)
+                // Default Enter: reset typing attributes BEFORE inserting newline
+                // so the \n character itself doesn't carry heading/bold attributes
+                resetToNormalTypingAttributes(textView)
+                textView.insertText("\n", replacementRange: textView.selectedRange())
 
-                    // Reset attributes on text that moved to the new line (Enter mid-heading)
-                    let newLineRange = currentLineRange(in: textView)
-                    if newLineRange.length > 0 {
-                        textView.textStorage?.addAttributes([
-                            .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
-                            .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
-                            .paragraphStyle: defaultParagraphStyle()
-                        ], range: newLineRange)
-                        textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: newLineRange)
-                    }
-
-                    syncBindings(from: textView)
-                    return true
+                // Stamp normal attributes on the \n character we just inserted,
+                // so adjacent text insertion (slash command prefixes) won't inherit heading font
+                let cursorPos = textView.selectedRange().location
+                if cursorPos > 0 {
+                    let nlRange = NSRange(location: cursorPos - 1, length: 1)
+                    textView.textStorage?.addAttributes([
+                        .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                        .paragraphStyle: defaultParagraphStyle()
+                    ], range: nlRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: nlRange)
                 }
+                syncBindings(from: textView)
+                return true
             }
 
             if commandSelector == #selector(NSResponder.insertTab(_:)) && parent.singleLine {
@@ -1022,11 +1142,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             switch level {
             case 1:
-                font = NSFont.systemFont(ofSize: max(28, parent.fontSize + 12), weight: .bold)
+                font = NSFont.systemFont(ofSize: max(32, parent.fontSize + 16), weight: .bold)
             case 2:
-                font = NSFont.systemFont(ofSize: max(22, parent.fontSize + 8), weight: .semibold)
+                font = NSFont.systemFont(ofSize: max(24, parent.fontSize + 8), weight: .semibold)
             default:
-                font = NSFont.systemFont(ofSize: max(18, parent.fontSize + 4), weight: .semibold)
+                font = NSFont.systemFont(ofSize: max(20, parent.fontSize + 4), weight: .medium)
             }
 
             let lineRange = currentLineRange(in: textView)
@@ -1068,7 +1188,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
-            paragraphStyle.paragraphSpacingBefore = 16
+            // Proportional top margin — larger headings get more breathing room above
+            switch level {
+            case 1: paragraphStyle.paragraphSpacingBefore = 32
+            case 2: paragraphStyle.paragraphSpacingBefore = 24
+            default: paragraphStyle.paragraphSpacingBefore = 16
+            }
 
             if updatedLineRange.length > 0 {
                 textView.textStorage?.addAttributes([
@@ -1103,13 +1228,44 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 newMode = .none
             } else {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: prefix)
-                if kind == .quote { newMode = .quote }
-                else if kind == .bulletList { newMode = .bulletList }
+                switch kind {
+                case .quote: newMode = .quote
+                case .bulletList: newMode = .bulletList
+                case .checklist: newMode = .checklist
+                case .numberedList: newMode = .numberedList
+                default: break
+                }
             }
 
-            if kind != .quote {
+            if kind == .quote {
+                // Quote blocks use tight paragraph spacing so lines stay visually connected
+                let quoteStyle = NSMutableParagraphStyle()
+                quoteStyle.lineSpacing = parent.compact ? 2 : 4
+                quoteStyle.paragraphSpacing = parent.compact ? 2 : 4
+                var quoteAttrs = textView.typingAttributes
+                quoteAttrs[.paragraphStyle] = quoteStyle
+                textView.typingAttributes = quoteAttrs
+
+                let updatedLineRange = currentLineRange(in: textView)
+                if updatedLineRange.length > 0 {
+                    textView.textStorage?.addAttribute(.paragraphStyle, value: quoteStyle, range: updatedLineRange)
+                }
+            } else {
                 resetToNormalTypingAttributes(textView)
+
+                // Stamp normal paragraph attributes on the entire line to clear any
+                // inherited heading/bold attributes from adjacent text storage
+                let updatedLineRange = currentLineRange(in: textView)
+                if updatedLineRange.length > 0 {
+                    textView.textStorage?.addAttributes([
+                        .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                        .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                        .paragraphStyle: defaultParagraphStyle()
+                    ], range: updatedLineRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
+                }
             }
+
             // Set block mode AFTER reset so it isn't overwritten
             activeBlockMode = newMode
 
@@ -1133,6 +1289,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 newMode = .numberedList
             }
             resetToNormalTypingAttributes(textView)
+
+            // Clear inherited heading/bold attributes from the line
+            let updatedLineRange = currentLineRange(in: textView)
+            if updatedLineRange.length > 0 {
+                textView.textStorage?.addAttributes([
+                    .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
+                    .foregroundColor: parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+                    .paragraphStyle: defaultParagraphStyle()
+                ], range: updatedLineRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
+            }
+
             activeBlockMode = newMode
 
             if let container = textView.textContainer {
@@ -1175,10 +1343,33 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             ]
         }
 
+        /// Reset only inline formatting (bold/italic/heading font) but preserve block mode
+        /// so bullet/list continuation still works on the new line.
+        private func resetInlineFormattingOnly(_ textView: NSTextView) {
+            isInHeadingMode = false
+            var attrs = textView.typingAttributes
+            attrs[.font] = NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight)
+            attrs[.foregroundColor] = parent.darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
+            attrs.removeValue(forKey: RichDocumentAttributeKeys.headingLevel)
+            // Preserve existing paragraphStyle (block indentation) if in a list
+            if attrs[.paragraphStyle] == nil {
+                attrs[.paragraphStyle] = defaultParagraphStyle()
+            }
+            textView.typingAttributes = attrs
+        }
+
         private func defaultParagraphStyle() -> NSParagraphStyle {
             let style = NSMutableParagraphStyle()
-            style.lineSpacing = parent.singleLine ? 0 : 4
-            style.paragraphSpacing = parent.singleLine ? 0 : 8
+            if parent.singleLine {
+                style.lineSpacing = 0
+                style.paragraphSpacing = 0
+            } else if parent.compact {
+                style.lineSpacing = 4
+                style.paragraphSpacing = 8
+            } else {
+                style.lineSpacing = 6
+                style.paragraphSpacing = 12
+            }
             return style
         }
 
@@ -1345,8 +1536,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             layoutManager.ensureLayout(for: textContainer)
-            let usedRect = layoutManager.usedRect(for: textContainer)
-            let measuredHeight = ceil(usedRect.height + (textView.textContainerInset.height * 2))
+            let measuredHeight = measuredSingleLineContentHeight(for: textView)
+                ?? ceil(layoutManager.usedRect(for: textContainer).height + (textView.textContainerInset.height * 2))
             let minimum = parent.singleLine ? parent.resolvedSingleLineHeight() : 0
             let newHeight = max(minimum, measuredHeight)
             // Only notify when height changes by >1pt to prevent sub-pixel jitter
@@ -1361,7 +1552,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return
             }
 
-            let targetHeight = parent.resolvedSingleLineHeight()
+            let targetHeight = max(
+                parent.resolvedSingleLineHeight(),
+                measuredSingleLineContentHeight(for: textView) ?? 0
+            )
             let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
             if textView.frame.height != targetHeight || textView.frame.width != currentWidth {
                 textView.setFrameSize(NSSize(width: currentWidth, height: targetHeight))
@@ -1372,6 +1566,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 clipView.scroll(to: .zero)
                 scrollView.reflectScrolledClipView(clipView)
             }
+        }
+
+        private func measuredSingleLineContentHeight(for textView: NSTextView) -> CGFloat? {
+            guard parent.singleLine,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return nil
+            }
+
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            return ceil(usedRect.height + (textView.textContainerInset.height * 2))
         }
     }
 }

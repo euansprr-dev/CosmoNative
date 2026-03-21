@@ -383,7 +383,10 @@ public enum SanctuaryDimension: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// Note: ZoomDirection is defined in SanctuaryHaptics.swift
+/// Zoom direction for knowledge graph navigation
+public enum ZoomDirection: String, Codable, Sendable {
+    case `in`, out
+}
 
 /// Sanctuary panels that can be toggled
 public enum SanctuaryPanel: String, Codable, Sendable {

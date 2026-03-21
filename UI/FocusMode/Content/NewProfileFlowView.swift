@@ -65,7 +65,7 @@ struct NewProfileFlowView: View {
         }
         .frame(width: 620, height: 720)
         .background(DS.surface)
-        .cornerRadius(DS.radiusLarge)
+        .clipShape(.rect(cornerRadius: DS.radiusLarge))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusLarge)
                 .stroke(DS.border, lineWidth: 1)
@@ -148,7 +148,7 @@ struct NewProfileFlowView: View {
                 if isCompleted {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                 } else {
                     Text("\(step)")
                         .font(.system(size: 12, weight: .semibold))
@@ -704,7 +704,7 @@ struct NewProfileFlowView: View {
             Text("Generate Intelligence Model")
                 .font(.system(size: 13, weight: .semibold))
         }
-        .foregroundColor(.white)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 24)
         .padding(.vertical, 12)
         .background(
@@ -817,7 +817,7 @@ struct NewProfileFlowView: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
         }
-        .foregroundColor(.white)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
         .background(
@@ -837,7 +837,7 @@ struct NewProfileFlowView: View {
             Text(existingAtom == nil ? "Create Profile" : "Save Changes")
                 .font(.system(size: 13, weight: .semibold))
         }
-        .foregroundColor(.white)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
         .background(
@@ -915,7 +915,7 @@ struct NewProfileFlowView: View {
         }
         .frame(width: 500, height: 400)
         .background(DS.surface)
-        .cornerRadius(DS.radiusMedium)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
@@ -926,7 +926,7 @@ struct NewProfileFlowView: View {
     private var pasteAddButtonLabel: some View {
         Text("Add")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
             .background(
@@ -1004,7 +1004,7 @@ struct NewProfileFlowView: View {
         }
         .frame(width: 520, height: 480)
         .background(DS.surface)
-        .cornerRadius(DS.radiusMedium)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
@@ -1015,7 +1015,7 @@ struct NewProfileFlowView: View {
     private var writeSaveButtonLabel: some View {
         Text("Save")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
             .background(
@@ -1036,7 +1036,7 @@ struct NewProfileFlowView: View {
         }
         .frame(width: 480, height: 220)
         .background(DS.surface)
-        .cornerRadius(DS.radiusMedium)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(DS.border, lineWidth: 1)
@@ -1104,7 +1104,7 @@ struct NewProfileFlowView: View {
         let isValid = isValidInstagramURL(urlInput)
         Text("Transcribe")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
             .background(
@@ -1166,7 +1166,7 @@ struct NewProfileFlowView: View {
             }
             .frame(width: 500, height: 420)
             .background(DS.surface)
-            .cornerRadius(DS.radiusMedium)
+            .clipShape(.rect(cornerRadius: DS.radiusMedium))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .stroke(DS.border, lineWidth: 1)
@@ -1222,7 +1222,7 @@ struct NewProfileFlowView: View {
             Button(action: { saveAndCloseURLReview() }) {
                 Text("Save Changes")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
                     .background(DS.accent, in: RoundedRectangle(cornerRadius: DS.radiusSmall))

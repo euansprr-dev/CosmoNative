@@ -1,34 +1,6 @@
 import SwiftUI
 import GRDB
 
-// MARK: - Cross-Platform Colors
-
-private extension Color {
-    static var contentBackground: Color {
-        #if os(iOS)
-        return Color(UIColor.systemBackground)
-        #else
-        return Color(NSColor.windowBackgroundColor)
-        #endif
-    }
-
-    static var contentSecondaryBackground: Color {
-        #if os(iOS)
-        return Color(UIColor.secondarySystemBackground)
-        #else
-        return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
-
-    static var contentTertiaryBackground: Color {
-        #if os(iOS)
-        return Color(UIColor.tertiarySystemBackground)
-        #else
-        return Color(NSColor.underPageBackgroundColor)
-        #endif
-    }
-}
-
 // MARK: - Content Performance View
 
 /// Detailed view for content performance metrics
@@ -50,31 +22,31 @@ public struct ContentPerformanceView: View {
 
         var icon: String {
             switch self {
-            case .all: return "square.grid.2x2.fill"
-            case .twitter: return "bird.fill"
-            case .linkedin: return "link"
-            case .instagram: return "camera.fill"
-            case .tiktok: return "play.circle.fill"
+            case .all: "square.grid.2x2.fill"
+            case .twitter: "bird.fill"
+            case .linkedin: "link"
+            case .instagram: "camera.fill"
+            case .tiktok: "play.circle.fill"
             }
         }
 
         var color: Color {
             switch self {
-            case .all: return .purple
-            case .twitter: return .blue
-            case .linkedin: return .blue
-            case .instagram: return .pink
-            case .tiktok: return .black
+            case .all: DS.entityConnection
+            case .twitter: DS.entityContent
+            case .linkedin: DS.entityContent
+            case .instagram: DS.entityTask
+            case .tiktok: DS.text
             }
         }
 
         var socialPlatform: SocialPlatform? {
             switch self {
-            case .all: return nil
-            case .twitter: return .twitter
-            case .linkedin: return .linkedin
-            case .instagram: return .instagram
-            case .tiktok: return .tiktok
+            case .all: nil
+            case .twitter: .twitter
+            case .linkedin: .linkedin
+            case .instagram: .instagram
+            case .tiktok: .tiktok
             }
         }
     }
@@ -87,10 +59,10 @@ public struct ContentPerformanceView: View {
 
         var days: Int {
             switch self {
-            case .sevenDays: return 7
-            case .thirtyDays: return 30
-            case .ninetyDays: return 90
-            case .year: return 365
+            case .sevenDays: 7
+            case .thirtyDays: 30
+            case .ninetyDays: 90
+            case .year: 365
             }
         }
     }
@@ -101,38 +73,20 @@ public struct ContentPerformanceView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                // Hero Stats
+            VStack(spacing: DS.space24) {
                 heroStatsSection
-
-                // Platform Picker
                 platformPicker
-
-                // Timeframe Picker
                 timeframePicker
-
-                // Reach Chart
                 reachChartSection
-
-                // Engagement Metrics
                 engagementMetricsSection
-
-                // Viral Content
                 viralContentSection
-
-                // Top Performing Content
                 topContentSection
-
-                // Client Performance (if applicable)
                 clientPerformanceSection
             }
-            .padding()
+            .padding(DS.space16)
         }
-        .background(Color.contentBackground)
+        .background(DS.surface)
         .navigationTitle("Content Performance")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
-        #endif
         .task {
             await viewModel.loadData()
         }
@@ -147,110 +101,34 @@ public struct ContentPerformanceView: View {
     // MARK: - Hero Stats Section
 
     private var heroStatsSection: some View {
-        VStack(spacing: 20) {
-            // Total Reach
-            VStack(spacing: 8) {
-                Text("LIFETIME REACH")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .tracking(1.5)
-
-                Text(viewModel.formatNumber(viewModel.lifetimeReach))
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-
-                Text("Views across all platforms")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 8)
-
-            // Quick Stats Row
-            HStack(spacing: 0) {
-                heroStatItem(
-                    value: viewModel.formatNumber(viewModel.weeklyReach),
-                    label: "This Week",
-                    trend: viewModel.weeklyTrend,
-                    trendValue: viewModel.weeklyTrendText
-                )
-
-                Divider()
-                    .frame(height: 40)
-
-                heroStatItem(
-                    value: viewModel.formatNumber(viewModel.monthlyReach),
-                    label: "This Month",
-                    trend: viewModel.monthlyTrend,
-                    trendValue: viewModel.monthlyTrendText
-                )
-
-                Divider()
-                    .frame(height: 40)
-
-                heroStatItem(
-                    value: "\(viewModel.viralCount)",
-                    label: "Viral Posts",
-                    trend: viewModel.viralCount > 0 ? .up : .stable,
-                    trendValue: viewModel.viralCount > 0 ? "+\(viewModel.viralCount)" : ""
-                )
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.contentSecondaryBackground)
-            )
+        VStack(spacing: DS.space20) {
+            ContentPerformanceHeroCard(viewModel: viewModel)
+            ContentPerformanceQuickRow(viewModel: viewModel)
         }
-    }
-
-    private func heroStatItem(
-        value: String,
-        label: String,
-        trend: Trend,
-        trendValue: String
-    ) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundColor(.primary)
-
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-
-            if !trendValue.isEmpty {
-                HStack(spacing: 2) {
-                    Image(systemName: trend == .up ? "arrow.up.right" : "arrow.down.right")
-                        .font(.system(size: 9, weight: .bold))
-                    Text(trendValue)
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundColor(trend == .up ? .green : .red)
-            }
-        }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Platform Picker
 
     private var platformPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.space8) {
                 ForEach(Platform.allCases, id: \.self) { platform in
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withAnimation(ProMotionSprings.snappy) {
                             selectedPlatform = platform
                         }
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: DS.space6) {
                             Image(systemName: platform.icon)
-                                .font(.system(size: 12))
+                                .font(DS.subheadline)
 
                             Text(platform.rawValue)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(DS.callout)
+                                .fontWeight(.semibold)
                         }
-                        .foregroundColor(selectedPlatform == platform ? DS.textOnAccent : .secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
+                        .foregroundStyle(selectedPlatform == platform ? DS.textOnAccent : DS.textSecondary)
+                        .padding(.horizontal, DS.space16)
+                        .padding(.vertical, DS.space8)
                         .background(
                             Capsule()
                                 .fill(selectedPlatform == platform ? platform.color : Color.clear)
@@ -258,10 +136,10 @@ public struct ContentPerformanceView: View {
                     }
                 }
             }
-            .padding(4)
+            .padding(DS.space4)
             .background(
                 Capsule()
-                    .fill(Color.contentSecondaryBackground)
+                    .fill(DS.surfaceCard)
             )
         }
     }
@@ -269,21 +147,22 @@ public struct ContentPerformanceView: View {
     // MARK: - Timeframe Picker
 
     private var timeframePicker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.space8) {
             ForEach(ContentTimeframe.allCases, id: \.self) { frame in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(ProMotionSprings.snappy) {
                         selectedTimeframe = frame
                     }
                 } label: {
                     Text(frame.rawValue)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(selectedTimeframe == frame ? .primary : .secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .font(DS.buttonText)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(selectedTimeframe == frame ? DS.text : DS.textSecondary)
+                        .padding(.horizontal, DS.space12)
+                        .padding(.vertical, DS.space6)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedTimeframe == frame ? Color.contentTertiaryBackground : Color.clear)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .fill(selectedTimeframe == frame ? DS.surfaceElevated : Color.clear)
                         )
                 }
             }
@@ -293,154 +172,73 @@ public struct ContentPerformanceView: View {
     // MARK: - Reach Chart Section
 
     private var reachChartSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.space16) {
             Text("REACH OVER TIME")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
             ReachChartView(platform: selectedPlatform, timeframe: selectedTimeframe)
                 .frame(height: 200)
-                .padding()
+                .padding(DS.space16)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.contentSecondaryBackground)
+                    RoundedRectangle(cornerRadius: DS.radiusLarge)
+                        .fill(DS.surfaceCard)
                 )
+                .dsRestingShadow()
         }
     }
 
     // MARK: - Engagement Metrics Section
 
     private var engagementMetricsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("ENGAGEMENT")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
                 GridItem(.flexible()),
                 GridItem(.flexible())
-            ], spacing: 12) {
-                engagementCard(
-                    title: "Avg ER",
-                    value: String(format: "%.1f%%", viewModel.avgEngagementRate * 100),
-                    subtitle: viewModel.engagementPercentile,
-                    color: .green
-                )
-
-                engagementCard(
-                    title: "Likes",
-                    value: viewModel.formatNumber(viewModel.totalLikes),
-                    subtitle: "This month",
-                    color: .red
-                )
-
-                engagementCard(
-                    title: "Comments",
-                    value: viewModel.formatNumber(viewModel.totalComments),
-                    subtitle: "This month",
-                    color: .blue
-                )
-
-                engagementCard(
-                    title: "Shares",
-                    value: viewModel.formatNumber(viewModel.totalShares),
-                    subtitle: "This month",
-                    color: .orange
-                )
-
-                engagementCard(
-                    title: "Saves",
-                    value: viewModel.formatNumber(viewModel.totalSaves),
-                    subtitle: "This month",
-                    color: .purple
-                )
-
-                engagementCard(
-                    title: "Follows",
-                    value: "+\(viewModel.formatNumber(viewModel.followsGained))",
-                    subtitle: "New this month",
-                    color: .cyan
-                )
+            ], spacing: DS.space12) {
+                EngagementCard(title: "Avg ER", value: String(format: "%.1f%%", viewModel.avgEngagementRate * 100), subtitle: viewModel.engagementPercentile, color: DS.green)
+                EngagementCard(title: "Likes", value: viewModel.formatNumber(viewModel.totalLikes), subtitle: "This month", color: DS.red)
+                EngagementCard(title: "Comments", value: viewModel.formatNumber(viewModel.totalComments), subtitle: "This month", color: DS.entityContent)
+                EngagementCard(title: "Shares", value: viewModel.formatNumber(viewModel.totalShares), subtitle: "This month", color: DS.orange)
+                EngagementCard(title: "Saves", value: viewModel.formatNumber(viewModel.totalSaves), subtitle: "This month", color: DS.entityConnection)
+                EngagementCard(title: "Follows", value: "+\(viewModel.formatNumber(viewModel.followsGained))", subtitle: "New this month", color: DS.entityImage)
             }
         }
-    }
-
-    private func engagementCard(
-        title: String,
-        value: String,
-        subtitle: String,
-        color: Color
-    ) -> some View {
-        VStack(spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.secondary)
-
-            Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundColor(color)
-
-            Text(subtitle)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.contentSecondaryBackground)
-        )
     }
 
     // MARK: - Viral Content Section
 
     private var viralContentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Text("VIRAL CONTENT")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(DS.sectionLabel)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(1.5)
 
                 Spacer()
 
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "flame.fill")
-                        .foregroundColor(.orange)
+                        .foregroundStyle(DS.orange)
                     Text("247 viral posts")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ViralContentCard(
-                        platform: .twitter,
-                        impressions: "2.4M",
-                        engagementRate: "8.2%",
-                        preview: "Thread: The future of AI in...",
-                        date: "3 days ago"
-                    )
-
-                    ViralContentCard(
-                        platform: .linkedin,
-                        impressions: "847K",
-                        engagementRate: "5.4%",
-                        preview: "Why most founders fail at...",
-                        date: "1 week ago"
-                    )
-
-                    ViralContentCard(
-                        platform: .instagram,
-                        impressions: "1.2M",
-                        engagementRate: "12.1%",
-                        preview: "Carousel: 10 productivity...",
-                        date: "2 weeks ago"
-                    )
+                HStack(spacing: DS.space12) {
+                    ViralContentCard(platform: .twitter, impressions: "2.4M", engagementRate: "8.2%", preview: "Thread: The future of AI in...", date: "3 days ago")
+                    ViralContentCard(platform: .linkedin, impressions: "847K", engagementRate: "5.4%", preview: "Why most founders fail at...", date: "1 week ago")
+                    ViralContentCard(platform: .instagram, impressions: "1.2M", engagementRate: "12.1%", preview: "Carousel: 10 productivity...", date: "2 weeks ago")
                 }
             }
         }
@@ -449,11 +247,11 @@ public struct ContentPerformanceView: View {
     // MARK: - Top Content Section
 
     private var topContentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Text("TOP PERFORMING")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(DS.sectionLabel)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(1.5)
 
                 Spacer()
@@ -461,34 +259,14 @@ public struct ContentPerformanceView: View {
                 Button("See All") {
                     showingContentDetail = true
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.blue)
+                .font(DS.buttonText)
+                .foregroundStyle(DS.accent)
             }
 
-            VStack(spacing: 8) {
-                TopContentRow(
-                    rank: 1,
-                    title: "AI Predictions Thread",
-                    platform: .twitter,
-                    impressions: "4.8M",
-                    engagement: "12.4%"
-                )
-
-                TopContentRow(
-                    rank: 2,
-                    title: "Founder Lessons Carousel",
-                    platform: .instagram,
-                    impressions: "2.1M",
-                    engagement: "14.2%"
-                )
-
-                TopContentRow(
-                    rank: 3,
-                    title: "Productivity Masterclass",
-                    platform: .linkedin,
-                    impressions: "1.4M",
-                    engagement: "6.8%"
-                )
+            VStack(spacing: DS.space8) {
+                TopContentRow(rank: 1, title: "AI Predictions Thread", platform: .twitter, impressions: "4.8M", engagement: "12.4%")
+                TopContentRow(rank: 2, title: "Founder Lessons Carousel", platform: .instagram, impressions: "2.1M", engagement: "14.2%")
+                TopContentRow(rank: 3, title: "Productivity Masterclass", platform: .linkedin, impressions: "1.4M", engagement: "6.8%")
             }
         }
     }
@@ -496,38 +274,132 @@ public struct ContentPerformanceView: View {
     // MARK: - Client Performance Section
 
     private var clientPerformanceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("CLIENT BREAKDOWN")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
-            VStack(spacing: 8) {
-                ClientPerformanceRow(
-                    clientName: "Tech Founder A",
-                    platforms: [.twitter, .linkedin],
-                    reach: "124.5M",
-                    posts: 847,
-                    avgER: "4.2%"
-                )
-
-                ClientPerformanceRow(
-                    clientName: "VC Partner B",
-                    platforms: [.twitter],
-                    reach: "89.2M",
-                    posts: 1240,
-                    avgER: "3.8%"
-                )
-
-                ClientPerformanceRow(
-                    clientName: "Creator C",
-                    platforms: [.instagram, .tiktok],
-                    reach: "247.8M",
-                    posts: 432,
-                    avgER: "8.4%"
-                )
+            VStack(spacing: DS.space8) {
+                ClientPerformanceRow(clientName: "Tech Founder A", platforms: [.twitter, .linkedin], reach: "124.5M", posts: 847, avgER: "4.2%")
+                ClientPerformanceRow(clientName: "VC Partner B", platforms: [.twitter], reach: "89.2M", posts: 1240, avgER: "3.8%")
+                ClientPerformanceRow(clientName: "Creator C", platforms: [.instagram, .tiktok], reach: "247.8M", posts: 432, avgER: "8.4%")
             }
         }
+    }
+}
+
+// MARK: - Content Performance Hero Card
+
+struct ContentPerformanceHeroCard: View {
+    @ObservedObject var viewModel: ContentPerformanceViewModel
+
+    var body: some View {
+        VStack(spacing: DS.space8) {
+            Text("LIFETIME REACH")
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
+                .tracking(1.5)
+
+            Text(viewModel.formatNumber(viewModel.lifetimeReach))
+                .font(DS.display)
+                .fontDesign(.rounded)
+                .foregroundStyle(DS.text)
+
+            Text("Views across all platforms")
+                .font(DS.navTitle)
+                .foregroundStyle(DS.textSecondary)
+        }
+        .padding(.vertical, DS.space8)
+    }
+}
+
+// MARK: - Content Performance Quick Row
+
+struct ContentPerformanceQuickRow: View {
+    @ObservedObject var viewModel: ContentPerformanceViewModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ContentHeroStatItem(value: viewModel.formatNumber(viewModel.weeklyReach), label: "This Week", trend: viewModel.weeklyTrend, trendValue: viewModel.weeklyTrendText)
+            Divider().frame(height: 40)
+            ContentHeroStatItem(value: viewModel.formatNumber(viewModel.monthlyReach), label: "This Month", trend: viewModel.monthlyTrend, trendValue: viewModel.monthlyTrendText)
+            Divider().frame(height: 40)
+            ContentHeroStatItem(value: "\(viewModel.viralCount)", label: "Viral Posts", trend: viewModel.viralCount > 0 ? .up : .stable, trendValue: viewModel.viralCount > 0 ? "+\(viewModel.viralCount)" : "")
+        }
+        .padding(DS.space16)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusLarge)
+                .fill(DS.surfaceCard)
+        )
+        .dsRestingShadow()
+    }
+}
+
+// MARK: - Content Hero Stat Item
+
+struct ContentHeroStatItem: View {
+    let value: String
+    let label: String
+    let trend: Trend
+    let trendValue: String
+
+    var body: some View {
+        VStack(spacing: DS.space4) {
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.text)
+
+            Text(label)
+                .font(DS.footnote)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
+
+            if !trendValue.isEmpty {
+                HStack(spacing: DS.space2) {
+                    Image(systemName: trend == .up ? "arrow.up.right" : "arrow.down.right")
+                        .font(.system(size: 9, weight: .bold))
+                    Text(trendValue)
+                        .font(DS.caption2)
+                        .fontWeight(.semibold)
+                }
+                .foregroundStyle(trend == .up ? DS.green : DS.red)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Engagement Card
+
+struct EngagementCard: View {
+    let title: String
+    let value: String
+    let subtitle: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: DS.space6) {
+            Text(title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.textSecondary)
+
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(color)
+
+            Text(subtitle)
+                .font(DS.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DS.space12)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
+        )
+        .dsRestingShadow()
     }
 }
 
@@ -543,7 +415,6 @@ struct ReachChartView: View {
             let maxValue = data.max() ?? 1
 
             VStack(spacing: 0) {
-                // Chart area
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(data.indices, id: \.self) { index in
                         let height = (data[index] / maxValue) * (geometry.size.height - 30)
@@ -561,36 +432,35 @@ struct ReachChartView: View {
                 }
                 .frame(maxHeight: .infinity, alignment: .bottom)
 
-                // X-axis labels
                 HStack {
                     Text(startLabel)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(DS.textSecondary)
 
                     Spacer()
 
                     Text(endLabel)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
-                .padding(.top, 8)
+                .padding(.top, DS.space8)
             }
         }
     }
 
     private var startLabel: String {
         switch timeframe {
-        case .sevenDays: return "7 days ago"
-        case .thirtyDays: return "30 days ago"
-        case .ninetyDays: return "90 days ago"
-        case .year: return "Jan"
+        case .sevenDays: "7 days ago"
+        case .thirtyDays: "30 days ago"
+        case .ninetyDays: "90 days ago"
+        case .year: "Jan"
         }
     }
 
     private var endLabel: String {
         switch timeframe {
-        case .sevenDays, .thirtyDays, .ninetyDays: return "Today"
-        case .year: return "Dec"
+        case .sevenDays, .thirtyDays, .ninetyDays: "Today"
+        case .year: "Dec"
         }
     }
 
@@ -602,9 +472,7 @@ struct ReachChartView: View {
         case .ninetyDays: count = 90
         case .year: count = 12
         }
-
         return (0..<count).map { index in
-            // Generate trending upward data with some variance
             let base = Double(index) / Double(count) * 100
             let variance = Double.random(in: -20...30)
             return max(10, base + variance)
@@ -622,68 +490,83 @@ struct ViralContentCard: View {
     let date: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Platform badge
-            HStack {
-                Image(systemName: platform.icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textOnAccent)
-                    .padding(6)
-                    .background(platform.color)
-                    .cornerRadius(6)
-
-                Spacer()
-
-                HStack(spacing: 2) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 10))
-                    Text("Viral")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundColor(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.15))
-                .cornerRadius(6)
-            }
-
-            Text(preview)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.primary)
-                .lineLimit(2)
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(impressions)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
-                    Text("impressions")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(engagementRate)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(.green)
-                    Text("engagement")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            Text(date)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: DS.space10) {
+            viralCardHeader
+            viralCardPreview
+            viralCardStats
+            viralCardDate
         }
-        .padding(14)
+        .padding(DS.space16)
         .frame(width: 200)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.contentSecondaryBackground)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
         )
+        .dsRestingShadow()
+    }
+
+    private var viralCardHeader: some View {
+        HStack {
+            Image(systemName: platform.icon)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textOnAccent)
+                .padding(DS.space6)
+                .background(platform.color)
+                .clipShape(.rect(cornerRadius: DS.space6))
+
+            Spacer()
+
+            HStack(spacing: DS.space2) {
+                Image(systemName: "flame.fill")
+                    .font(DS.caption2)
+                Text("Viral")
+                    .font(DS.caption2)
+                    .fontWeight(.semibold)
+            }
+            .foregroundStyle(DS.orange)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(DS.orangeSoft)
+            .clipShape(.rect(cornerRadius: DS.space6))
+        }
+    }
+
+    private var viralCardPreview: some View {
+        Text(preview)
+            .font(DS.callout)
+            .fontWeight(.medium)
+            .foregroundStyle(DS.text)
+            .lineLimit(2)
+    }
+
+    private var viralCardStats: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: DS.space2) {
+                Text(impressions)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.text)
+                Text("impressions")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: DS.space2) {
+                Text(engagementRate)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.green)
+                Text("engagement")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
+            }
+        }
+    }
+
+    private var viralCardDate: some View {
+        Text(date)
+            .font(DS.caption2)
+            .foregroundStyle(DS.textSecondary)
     }
 }
 
@@ -697,53 +580,50 @@ struct TopContentRow: View {
     let engagement: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Rank
+        HStack(spacing: DS.space12) {
             Text("\(rank)")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundColor(rankColor)
+                .foregroundStyle(rankColor)
                 .frame(width: 28)
 
-            // Platform icon
             Image(systemName: platform.icon)
-                .font(.system(size: 14))
-                .foregroundColor(DS.textOnAccent)
+                .font(DS.navTitle)
+                .foregroundStyle(DS.textOnAccent)
                 .frame(width: 28, height: 28)
                 .background(platform.color)
-                .cornerRadius(6)
+                .clipShape(.rect(cornerRadius: DS.space6))
 
-            // Content info
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DS.space2) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
 
                 Text("\(impressions) impressions")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Spacer()
 
-            // Engagement
             Text(engagement)
                 .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(.green)
+                .foregroundStyle(DS.green)
         }
-        .padding(12)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.contentSecondaryBackground)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
         )
+        .dsRestingShadow()
     }
 
     private var rankColor: Color {
         switch rank {
-        case 1: return .yellow
-        case 2: return .gray
-        case 3: return .brown
-        default: return .secondary
+        case 1: DS.entityStickyNote
+        case 2: DS.borderActive
+        case 3: DS.entityNote
+        default: DS.textSecondary
         }
     }
 }
@@ -758,12 +638,11 @@ struct ClientPerformanceRow: View {
     let avgER: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Avatar placeholder
+        HStack(spacing: DS.space12) {
             Circle()
                 .fill(
                     LinearGradient(
-                        colors: [.blue, .purple],
+                        colors: [DS.entityContent, DS.entityConnection],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -772,51 +651,53 @@ struct ClientPerformanceRow: View {
                 .overlay(
                     Text(clientName.prefix(1))
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(DS.textOnAccent)
+                        .foregroundStyle(DS.textOnAccent)
                 )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DS.space4) {
                 Text(clientName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
 
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     ForEach(platforms, id: \.self) { platform in
                         Image(systemName: platform.icon)
-                            .font(.system(size: 10))
-                            .foregroundColor(platform.color)
+                            .font(DS.caption2)
+                            .foregroundStyle(platform.color)
                     }
 
-                    Text("• \(posts) posts")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                    Text("\u{2022} \(posts) posts")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DS.space2) {
                 Text(reach)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(DS.text)
 
                 Text("ER: \(avgER)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.green)
+                    .font(DS.footnote)
+                    .fontWeight(.medium)
+                    .foregroundStyle(DS.green)
             }
         }
-        .padding(12)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.contentSecondaryBackground)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
         )
+        .dsRestingShadow()
     }
 }
 
 // MARK: - Preview
 
 #Preview {
-    NavigationView {
+    NavigationStack {
         ContentPerformanceView(levelService: LevelSystemService(database: CosmoDatabase.shared.dbQueue!))
     }
 }
@@ -874,37 +755,21 @@ final class ContentPerformanceViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            // Load weekly reach
             weeklyReach = try await analyticsEngine.calculateWeeklyReach()
-
-            // Load monthly viral count
             viralCount = try await analyticsEngine.calculateMonthlyViralCount()
-
-            // Load average engagement
             avgEngagementRate = try await analyticsEngine.calculateAverageEngagementRate()
-
-            // Calculate percentile
             engagementPercentile = calculateEngagementPercentile(avgEngagementRate)
-
-            // Load platform breakdown
             platformPerformance = try await analyticsEngine.getPerformanceByPlatform()
-
-            // Load top content
             topContent = try await analyticsEngine.getTopContent(limit: 5)
-
-            // Calculate aggregates from performance atoms
             await loadAggregateMetrics(days: days, platform: platform)
-
-            // Calculate trends
             await calculateTrends()
-
         } catch {
             // Handle error silently - keep existing values
         }
     }
 
     private func loadAggregateMetrics(days: Int, platform: SocialPlatform?) async {
-        let startDate = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
+        let startDate = Calendar.current.date(byAdding: .day, value: -days, to: Date.now)!
 
         do {
             let atoms = try await database.read { db -> [Atom] in
@@ -912,7 +777,7 @@ final class ContentPerformanceViewModel: ObservableObject {
                     .filter(Column("type") == AtomType.contentPerformance.rawValue)
                     .filter(Column("created_at") >= startDate.ISO8601Format())
 
-                if let platform = platform {
+                if let platform {
                     query = query.filter(sql: "json_extract(metadata, '$.platform') = ?", arguments: [platform.rawValue])
                 }
 
@@ -961,11 +826,10 @@ final class ContentPerformanceViewModel: ObservableObject {
     }
 
     private func calculateTrends() async {
-        let twoWeeksAgo = Calendar.current.date(byAdding: .day, value: -14, to: Date())!
-        let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        let twoWeeksAgo = Calendar.current.date(byAdding: .day, value: -14, to: Date.now)!
+        let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date.now)!
 
         do {
-            // Get last week's reach
             let lastWeekReach = try await database.read { db -> Int in
                 let atoms = try Atom
                     .filter(Column("type") == AtomType.contentPerformance.rawValue)
@@ -981,7 +845,6 @@ final class ContentPerformanceViewModel: ObservableObject {
                 }
             }
 
-            // Calculate trend
             if lastWeekReach > 0 {
                 let ratio = Double(weeklyReach) / Double(lastWeekReach)
                 if ratio > 1.1 {
@@ -996,7 +859,6 @@ final class ContentPerformanceViewModel: ObservableObject {
                 }
             }
 
-            // Similar for monthly
             monthlyTrend = weeklyTrend
             monthlyTrendText = weeklyTrendText
 
@@ -1006,23 +868,24 @@ final class ContentPerformanceViewModel: ObservableObject {
     }
 
     private func calculateEngagementPercentile(_ rate: Double) -> String {
-        if rate >= 0.08 { return "Top 1%" }
-        if rate >= 0.05 { return "Top 5%" }
-        if rate >= 0.03 { return "Top 20%" }
-        if rate >= 0.02 { return "Above avg" }
-        return "Average"
+        if rate >= 0.08 { "Top 1%" }
+        else if rate >= 0.05 { "Top 5%" }
+        else if rate >= 0.03 { "Top 20%" }
+        else if rate >= 0.02 { "Above avg" }
+        else { "Average" }
     }
 
     // MARK: - Formatting
 
     func formatNumber(_ number: Int) -> String {
         if number >= 1_000_000_000 {
-            return String(format: "%.1fB", Double(number) / 1_000_000_000)
+            String(format: "%.1fB", Double(number) / 1_000_000_000)
         } else if number >= 1_000_000 {
-            return String(format: "%.1fM", Double(number) / 1_000_000)
+            String(format: "%.1fM", Double(number) / 1_000_000)
         } else if number >= 1_000 {
-            return String(format: "%.1fK", Double(number) / 1_000)
+            String(format: "%.1fK", Double(number) / 1_000)
+        } else {
+            "\(number)"
         }
-        return "\(number)"
     }
 }

@@ -137,14 +137,14 @@ public struct CommandKView: View {
     private var searchBarSection: some View {
         HStack(spacing: 14) {
             Image(systemName: viewModel.isTaskCreationMode ? "plus.circle.fill" : "magnifyingglass")
-                .font(.system(size: 18, weight: .medium))
+                .font(DS.title2)
                 .foregroundStyle(viewModel.isTaskCreationMode ? DS.accent : (isSearchFocused ? DS.accent : DS.textSecondary))
                 .symbolEffect(.pulse, isActive: viewModel.currentPhase == .searching)
                 .frame(width: 22)
 
             TextField(searchPlaceholder, text: $viewModel.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 17, weight: .medium))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
                 .focused($isSearchFocused)
                 .onSubmit {
@@ -161,7 +161,7 @@ public struct CommandKView: View {
             // Task creation hint
             if viewModel.isTaskCreationMode {
                 Text("Enter to create task")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption)
                     .foregroundStyle(DS.accent)
                     .commandKToolbarChip(
                         isActive: true,
@@ -174,9 +174,9 @@ public struct CommandKView: View {
                 viewModel.isVoiceActive.toggle()
             } label: {
                 Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
-                    .font(.system(size: 15))
+                    .font(DS.headline)
                     .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: DS.space32, height: DS.space32)
                     .background(
                         Circle()
                             .fill(viewModel.isVoiceActive ? DS.accentSoft : DS.surface)
@@ -194,7 +194,7 @@ public struct CommandKView: View {
                     .tint(DS.textSecondary)
             }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, DS.space24)
         .frame(height: CommandKMetrics.searchBarHeight)
     }
 
@@ -204,22 +204,22 @@ public struct CommandKView: View {
 
     @ViewBuilder
     private func typePrefixBadge(_ type: AtomType) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DS.space4) {
             Image(systemName: iconForType(type))
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(type.displayName)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
         }
         .foregroundStyle(entityColor(type))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space4)
         .background(entityColor(type).opacity(0.15))
         .clipShape(Capsule())
     }
 
     // MARK: - Tab Bar
     private var tabBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.space6) {
             CommandKTabButton(
                 title: "Database",
                 icon: "tray.full.fill",
@@ -281,16 +281,16 @@ public struct CommandKView: View {
 
             Spacer()
 
-            HStack(spacing: 5) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: "arrow.right.to.line.compact")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2)
                 Text("Tab")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption)
             }
             .foregroundStyle(DS.textMuted)
             .commandKToolbarChip(cornerRadius: 8)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, DS.space20)
         .frame(height: CommandKMetrics.tabBarHeight + 4)
     }
 
@@ -337,7 +337,7 @@ private struct CommandKTabButton: View {
         Button(action: action) {
             VStack(spacing: 5) {
                 tabLabel
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, DS.space12)
                     .frame(height: CommandKMetrics.tabBarHeight)
                     .background(tabBackground)
 
@@ -351,16 +351,16 @@ private struct CommandKTabButton: View {
     }
 
     private var tabLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.space6) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(isActive ? accentColor : DS.textMuted)
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(isActive ? DS.text : DS.textSecondary)
             if count > 0 {
                 Text("\(count)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2)
                     .contentTransition(.numericText(value: Double(count)))
                     .foregroundStyle(isActive ? accentColor : DS.textMuted)
                     .padding(.horizontal, 5)
@@ -376,7 +376,7 @@ private struct CommandKTabButton: View {
     @ViewBuilder
     private var tabBackground: some View {
         if isActive {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .fill(DS.surface)
                 .matchedGeometryEffect(id: "commandKTabBg", in: namespace)
         }

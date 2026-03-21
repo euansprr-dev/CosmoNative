@@ -29,6 +29,7 @@ enum ConnectionStatus: String {
 // MARK: - Settings Tab
 
 enum SettingsTab: String, CaseIterable {
+    case appearance = "Appearance"
     case connections = "Connections"
     case profiles = "Profiles"
     case voice = "Voice"
@@ -39,6 +40,7 @@ enum SettingsTab: String, CaseIterable {
 
     var icon: String {
         switch self {
+        case .appearance: return "paintbrush.fill"
         case .connections: return "link"
         case .profiles: return "person.2.fill"
         case .voice: return "waveform"
@@ -114,19 +116,20 @@ struct SanctuarySettingsView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "gearshape.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.navTitle)
+                .fontWeight(.semibold)
                 .foregroundStyle(DS.accent)
 
             Text("Settings")
-                .font(.system(size: 16, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
 
             Spacer()
 
             FloatingOverlayCloseButton(action: performClose)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
     }
 
     // MARK: - Sidebar
@@ -138,30 +141,31 @@ struct SanctuarySettingsView: View {
             }
             Spacer()
         }
-        .padding(8)
+        .padding(DS.space8)
         .frame(width: 160)
     }
 
     private func sidebarTabButton(_ tab: SettingsTab) -> some View {
         Button(action: {
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(ProMotionSprings.snappy) {
                 selectedTab = tab
             }
         }) {
             HStack(spacing: 8) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DS.navTitle)
                     .foregroundStyle(selectedTab == tab ? DS.accent : DS.textSecondary)
                     .frame(width: 20)
 
                 Text(tab.rawValue)
-                    .font(.system(size: 14, weight: selectedTab == tab ? .medium : .regular))
+                    .font(DS.navTitle)
+                    .fontWeight(selectedTab == tab ? .medium : .regular)
                     .foregroundStyle(selectedTab == tab ? DS.text : DS.textSecondary)
 
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space10)
             .commandKToolbarChip(
                 isActive: selectedTab == tab,
                 activeFill: DS.accentSoft,
@@ -178,6 +182,8 @@ struct SanctuarySettingsView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 24) {
                 switch selectedTab {
+                case .appearance:
+                    ThemePickerView()
                 case .connections:
                     connectionsTab
                 case .profiles:
@@ -194,7 +200,7 @@ struct SanctuarySettingsView: View {
                     aboutTab
                 }
             }
-            .padding(24)
+            .padding(DS.space24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -250,14 +256,15 @@ struct SanctuarySettingsView: View {
                         .frame(width: 14, height: 14)
                 } else {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
+                .fontWeight(.medium)
                 }
                 Text(socialSyncService.isSyncing ? "Syncing..." : "Sync All Platforms")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(DS.accent)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, DS.space10)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(DS.accentSoft)
@@ -274,11 +281,11 @@ struct SanctuarySettingsView: View {
     private var voiceTab: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("Voice Activation")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
 
             Text("Configure how you activate voice commands")
-                .font(.system(size: 14))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.textMuted)
 
             voiceKeybindSection
@@ -292,7 +299,7 @@ struct SanctuarySettingsView: View {
     private var voiceKeybindSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Activation Keybind")
-                .font(.system(size: 15, weight: .medium))
+                .font(DS.title3)
                 .foregroundStyle(DS.text)
 
             VStack(spacing: 8) {
@@ -304,31 +311,31 @@ struct SanctuarySettingsView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
     private var voiceCurrentKeybindDisplay: some View {
         HStack(spacing: 8) {
             Image(systemName: "keyboard")
-                .font(.system(size: 14))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.accent)
 
             Text("Current keybind:")
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
 
             Text(HotkeyManager.shared.currentHotkey.displayName)
                 .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 .foregroundStyle(DS.accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space4)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(DS.accentSoft)
                 )
         }
-        .padding(.top, 8)
+        .padding(.top, DS.space8)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -338,11 +345,11 @@ struct SanctuarySettingsView: View {
     private var apiKeysTab: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("API Keys")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
 
             Text("Configure your API keys for AI features")
-                .font(.system(size: 14))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.textMuted)
 
             APIKeyCard(
@@ -392,11 +399,11 @@ struct SanctuarySettingsView: View {
     private var shortcutsTab: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("Keyboard Shortcuts")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
 
             Text("Quick reference for all shortcuts")
-                .font(.system(size: 14))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.textMuted)
 
             VStack(spacing: 0) {
@@ -427,7 +434,7 @@ struct SanctuarySettingsView: View {
     private var aboutTab: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("About Cosmo")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
 
             aboutInfoCard
@@ -445,14 +452,14 @@ struct SanctuarySettingsView: View {
             aboutBranding
             aboutVersionRows
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
     private var aboutBranding: some View {
         VStack(spacing: 8) {
             Image(systemName: "brain.head.profile")
-                .font(.system(size: 48))
+                .font(.system(size: 48, weight: .regular))
                 .foregroundStyle(
                     LinearGradient(
                         colors: [DS.accent, DS.accent.opacity(0.6)],
@@ -462,40 +469,43 @@ struct SanctuarySettingsView: View {
                 )
 
             Text("CosmoOS")
-                .font(.system(size: 20, weight: .semibold))
+                .font(DS.title2)
+                .fontWeight(.semibold)
                 .foregroundStyle(DS.text)
 
             Text("Your AI-powered second brain")
-                .font(.system(size: 14))
+                .font(DS.navTitle)
                 .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, DS.space24)
     }
 
     private var aboutVersionRows: some View {
         VStack(spacing: 16) {
             HStack {
                 Text("Version")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textSecondary)
                 Spacer()
                 Text("1.0.0 (Local First)")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
+                .fontWeight(.medium)
                     .foregroundStyle(DS.text)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DS.space16)
 
             HStack {
                 Text("Built for")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textSecondary)
                 Spacer()
                 Text("Apple Silicon")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
+                .fontWeight(.medium)
                     .foregroundStyle(DS.text)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DS.space16)
         }
     }
 
@@ -503,7 +513,7 @@ struct SanctuarySettingsView: View {
     private var dataExportContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Export your writing engine (system prompt, swipes, client profiles) for use in Claude Projects.")
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
 
             dataExportButton
@@ -513,14 +523,14 @@ struct SanctuarySettingsView: View {
                     NSWorkspace.shared.open(WritingContextExporter.exportRoot)
                 }) {
                     Text("Open ~/Desktop/CosmoExport")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.buttonText)
                         .foregroundStyle(DS.accent)
                         .underline()
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
@@ -541,14 +551,16 @@ struct SanctuarySettingsView: View {
                         .frame(width: 14, height: 14)
                 } else {
                     Image(systemName: exportComplete ? "checkmark.circle.fill" : "folder.badge.gearshape")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
+                .fontWeight(.medium)
                 }
                 Text(isExporting ? "Exporting..." : exportComplete ? "Exported to Desktop" : "Export for Claude Projects")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
+                .fontWeight(.medium)
             }
             .foregroundStyle(exportComplete ? DS.green : DS.accent)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space8)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill((exportComplete ? DS.green : DS.accent).opacity(0.12))
@@ -572,11 +584,11 @@ struct SanctuarySettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(DS.sectionLabel)
                     .foregroundStyle(color)
 
                 Text(title)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(DS.sectionLabel)
                     .foregroundStyle(DS.textMuted)
                     .tracking(1.2)
             }
@@ -588,7 +600,7 @@ struct SanctuarySettingsView: View {
     private var healthCard: some View {
         HStack(spacing: 16) {
             Image(systemName: "heart.fill")
-                .font(.system(size: 20))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.red)
                 .frame(width: 40, height: 40)
                 .background(DS.red.opacity(0.15))
@@ -596,11 +608,11 @@ struct SanctuarySettingsView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apple Health")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.title3)
                     .foregroundStyle(DS.text)
 
                 Text("HRV, sleep, heart rate, workouts")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -627,7 +639,7 @@ struct SanctuarySettingsView: View {
                 .labelsHidden()
                 .tint(DS.accent)
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
@@ -639,29 +651,29 @@ struct SanctuarySettingsView: View {
     ) -> some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(DS.title2)
                 .foregroundStyle(accentColor.opacity(0.5))
                 .frame(width: 36, height: 36)
                 .background(accentColor.opacity(0.08))
                 .clipShape(.rect(cornerRadius: DS.radiusSmall))
 
             Text(name)
-                .font(.system(size: 15, weight: .medium))
+                .font(DS.title3)
                 .foregroundStyle(DS.textSecondary)
 
             Spacer()
 
             Text("Coming Soon")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
+                .padding(.horizontal, DS.space16)
+                .padding(.vertical, DS.space4)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(DS.surface)
                 )
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
@@ -675,14 +687,14 @@ struct SanctuarySettingsView: View {
             }
             readwiseErrorDisplay
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
     private var readwiseHeaderRow: some View {
         HStack(spacing: 16) {
             Image(systemName: "book.closed.fill")
-                .font(.system(size: 20))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.entityResearch)
                 .frame(width: 40, height: 40)
                 .background(DS.entityResearch.opacity(0.15))
@@ -690,11 +702,11 @@ struct SanctuarySettingsView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Readwise")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.title3)
                     .foregroundStyle(DS.text)
 
                 Text("Import highlights and reading data")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -716,11 +728,11 @@ struct SanctuarySettingsView: View {
                     .fill(valid ? DS.green : DS.red)
                     .frame(width: 6, height: 6)
                 Text(valid ? "Valid" : "Invalid")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(valid ? DS.green : DS.red)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
             .background(
                 Capsule()
                     .fill((valid ? DS.green : DS.red).opacity(0.1))
@@ -733,9 +745,9 @@ struct SanctuarySettingsView: View {
     private var readwiseAPIKeyInput: some View {
         SecureField("Readwise API Key", text: $readwiseAPIKey)
             .textFieldStyle(.plain)
-            .font(.system(size: 14))
+            .font(DS.navTitle)
             .foregroundStyle(DS.text)
-            .padding(8)
+            .padding(DS.space8)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(DS.surface)
@@ -777,14 +789,14 @@ struct SanctuarySettingsView: View {
                             .frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                     }
                     Text(readwiseService.isSyncing ? "Syncing..." : "Sync Now")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.buttonText)
                 }
                 .foregroundStyle(DS.entityResearch)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(DS.entityResearch.opacity(0.12))
@@ -798,7 +810,7 @@ struct SanctuarySettingsView: View {
                 readwiseService.disconnect()
             }) {
                 Text("Disconnect")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.red)
             }
             .buttonStyle(.plain)
@@ -812,10 +824,10 @@ struct SanctuarySettingsView: View {
             if readwiseService.highlightCount > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "text.quote")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                     Text("\(readwiseService.highlightCount) highlights")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textSecondary)
                 }
             }
@@ -823,10 +835,10 @@ struct SanctuarySettingsView: View {
             if let lastSync = readwiseService.lastSyncDate {
                 HStack(spacing: 4) {
                     Image(systemName: "clock")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                     Text("Last sync: \(lastSync, style: .relative) ago")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textSecondary)
                 }
             }
@@ -840,10 +852,10 @@ struct SanctuarySettingsView: View {
         if let error = readwiseService.syncError {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.red)
                 Text(error)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.red)
                     .lineLimit(2)
             }
@@ -853,7 +865,7 @@ struct SanctuarySettingsView: View {
     private var screenTimeCard: some View {
         HStack(spacing: 16) {
             Image(systemName: "hourglass")
-                .font(.system(size: 20))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.orange)
                 .frame(width: 40, height: 40)
                 .background(DS.orange.opacity(0.15))
@@ -861,11 +873,11 @@ struct SanctuarySettingsView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Screen Time")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.title3)
                     .foregroundStyle(DS.text)
 
                 Text("Track app usage and distraction patterns")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -878,7 +890,7 @@ struct SanctuarySettingsView: View {
                 .labelsHidden()
                 .tint(DS.accent)
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(glassCard)
     }
 
@@ -891,7 +903,7 @@ struct SanctuarySettingsView: View {
         Button(action: onSelect) {
             HStack {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16))
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
 
                 Text(hotkey.displayName)
@@ -900,13 +912,13 @@ struct SanctuarySettingsView: View {
                     .frame(width: 110, alignment: .leading)
 
                 Text(hotkeyDescription(hotkey))
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textMuted)
 
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space10)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
                     .fill(isSelected ? DS.accentSoft : Color.clear)
@@ -943,13 +955,13 @@ struct SanctuarySettingsView: View {
                 .frame(width: 100, alignment: .leading)
 
             Text(description)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
 
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
         .overlay(
             Rectangle()
                 .fill(DS.borderSubtle)
@@ -969,11 +981,11 @@ struct SanctuarySettingsView: View {
                 .frame(width: 6, height: 6)
 
             Text(status.label)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(status.color)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space4)
         .background(
             Capsule()
                 .fill(status.color.opacity(0.1))
@@ -1016,7 +1028,7 @@ private struct APIKeyCard: View {
             if showInstructions { apiKeyInstructions }
             apiKeySavedIndicator
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .fill(DS.surface)
@@ -1037,14 +1049,15 @@ private struct APIKeyCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(DS.title3)
                         .foregroundStyle(DS.text)
 
                     if isRequired {
                         Text("Required")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
+                            .font(DS.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(DS.textOnAccent)
+                            .padding(.horizontal, DS.space6)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
@@ -1054,7 +1067,7 @@ private struct APIKeyCard: View {
                 }
 
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
 
@@ -1063,9 +1076,9 @@ private struct APIKeyCard: View {
             Button(action: { showInstructions.toggle() }) {
                 HStack(spacing: 4) {
                     Image(systemName: "questionmark.circle")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                     Text("How to get")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                 }
                 .foregroundStyle(DS.accent)
             }
@@ -1088,7 +1101,7 @@ private struct APIKeyCard: View {
 
             Button(action: { isSecure.toggle() }) {
                 Image(systemName: isSecure ? "eye.slash" : "eye")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
@@ -1096,14 +1109,14 @@ private struct APIKeyCard: View {
             if !apiKey.isEmpty {
                 Button(action: saveKey) {
                     Image(systemName: showSuccess ? "checkmark.circle.fill" : "arrow.right.circle.fill")
-                        .font(.system(size: 16))
+                        .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(showSuccess ? DS.green : DS.accent)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space10)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(DS.surface)
@@ -1117,15 +1130,15 @@ private struct APIKeyCard: View {
     private var apiKeyInstructions: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How to get your API key:")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.text)
 
             Text(instructions)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textSecondary)
                 .lineSpacing(4)
         }
-        .padding(8)
+        .padding(DS.space8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
@@ -1138,11 +1151,11 @@ private struct APIKeyCard: View {
         if let stored = storedKey, !stored.isEmpty {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.green)
 
                 Text("API key saved")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textSecondary)
             }
         }
@@ -1165,9 +1178,9 @@ private struct APIKeyCard: View {
     private func saveKey() {
         guard !apiKey.allSatisfy({ $0 == "\u{2022}" }) else { return }
         APIKeys.save(apiKey, identifier: keyIdentifier)
-        withAnimation(.easeInOut(duration: 0.2)) { showSuccess = true }
+        withAnimation(ProMotionSprings.snappy) { showSuccess = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation(.easeInOut(duration: 0.2)) { showSuccess = false }
+            withAnimation(ProMotionSprings.snappy) { showSuccess = false }
         }
     }
 }
@@ -1203,7 +1216,7 @@ private struct SocialPlatformConnectionCard: View {
             if let msg = statusMessage { statusMessageRow(msg) }
             if let error = syncError { errorRow(error) }
         }
-        .padding(16)
+        .padding(DS.space16)
         .background(platformGlassCard)
     }
 
@@ -1213,7 +1226,7 @@ private struct SocialPlatformConnectionCard: View {
     private var headerRow: some View {
         HStack(spacing: 16) {
             Image(systemName: platform.icon)
-                .font(.system(size: 18))
+                .font(DS.title2)
                 .foregroundStyle(isConnected ? platform.accentColor : platform.accentColor.opacity(0.5))
                 .frame(width: 36, height: 36)
                 .background(platform.accentColor.opacity(isConnected ? 0.15 : 0.08))
@@ -1221,12 +1234,12 @@ private struct SocialPlatformConnectionCard: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(platform.displayName)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(DS.title3)
                     .foregroundStyle(isConnected ? DS.text : DS.textSecondary)
 
                 if isConnected, let handle = syncResult?.accountHandle, !handle.isEmpty {
                     Text(handle)
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                 }
             }
@@ -1248,11 +1261,11 @@ private struct SocialPlatformConnectionCard: View {
                 .fill(DS.green)
                 .frame(width: 6, height: 6)
             Text("Connected")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.green)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space4)
         .background(
             Capsule()
                 .fill(DS.green.opacity(0.1))
@@ -1267,7 +1280,7 @@ private struct SocialPlatformConnectionCard: View {
             statusMessage = nil
         }) {
             Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 16))
+                .font(.system(size: 16, weight: .regular))
                 .foregroundStyle(DS.textMuted)
         }
         .buttonStyle(.plain)
@@ -1275,15 +1288,15 @@ private struct SocialPlatformConnectionCard: View {
 
     private var connectToggleButton: some View {
         Button(action: {
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(ProMotionSprings.snappy) {
                 isExpanded.toggle()
             }
         }) {
             Text(isExpanded ? "Cancel" : "Connect")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(isExpanded ? DS.textMuted : platform.accentColor)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
+                .padding(.horizontal, DS.space16)
+                .padding(.vertical, DS.space4)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(isExpanded ? DS.surface : platform.accentColor.opacity(0.12))
@@ -1310,32 +1323,32 @@ private struct SocialPlatformConnectionCard: View {
     private var youTubeInputFields: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("YouTube API Key")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             SecureField("AIza...", text: $tokenInput)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(DS.text)
-                .padding(8)
+                .padding(DS.space8)
                 .background(tokenFieldBackground)
         }
 
         VStack(alignment: .leading, spacing: 4) {
             Text("Channel ID")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             TextField("UC...", text: $channelIdInput)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(DS.text)
-                .padding(8)
+                .padding(DS.space8)
                 .background(tokenFieldBackground)
         }
 
         Text("Find your Channel ID at youtube.com/account_advanced")
-            .font(.system(size: 10))
+            .font(DS.caption2)
             .foregroundStyle(DS.textMuted)
     }
 
@@ -1343,29 +1356,29 @@ private struct SocialPlatformConnectionCard: View {
     private var singleTokenInput: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(tokenLabel)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             SecureField(tokenPlaceholder, text: $tokenInput)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(DS.text)
-                .padding(8)
+                .padding(DS.space8)
                 .background(tokenFieldBackground)
         }
 
         Text(tokenInstructions)
-            .font(.system(size: 10))
+            .font(DS.caption2)
             .foregroundStyle(DS.textMuted)
     }
 
     private var saveButton: some View {
         Button(action: saveToken) {
             Text("Save & Connect")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white)
+                .font(DS.buttonText)
+                .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, DS.space8)
                 .background(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(platform.accentColor)
@@ -1398,10 +1411,10 @@ private struct SocialPlatformConnectionCard: View {
     private func metricPill(icon: String, value: String, label: String) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: 9, weight: .regular))
                 .foregroundStyle(DS.textMuted)
             Text(value)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.text)
         }
     }
@@ -1412,10 +1425,10 @@ private struct SocialPlatformConnectionCard: View {
     private func statusMessageRow(_ msg: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.green)
             Text(msg)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textSecondary)
         }
     }
@@ -1424,10 +1437,10 @@ private struct SocialPlatformConnectionCard: View {
     private func errorRow(_ error: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.red)
             Text(error)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.red)
                 .lineLimit(2)
         }

@@ -19,17 +19,17 @@ struct ProfileManagementTab: View {
     @State private var isLoading = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(alignment: .leading, spacing: DS.space24) {
             // Header
             HStack {
-                VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+                VStack(alignment: .leading, spacing: DS.space4) {
                     Text("Content Profiles")
-                        .font(SanctuaryTypography.titleMedium)
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .font(DS.title2)
+                        .foregroundStyle(DS.text)
 
                     Text("Brand voice profiles for AI-powered content drafting")
-                        .font(SanctuaryTypography.bodySmall)
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 Spacer()
@@ -37,17 +37,17 @@ struct ProfileManagementTab: View {
                 Button(action: {
                     profileSheetItem = ProfileSheetItem(atom: nil)
                 }) {
-                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    HStack(spacing: DS.space4) {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .semibold))
                         Text("New Profile")
-                            .font(SanctuaryTypography.label)
+                            .font(DS.caption)
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                    .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space8)
                     .background(
-                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
                             .fill(CosmoColors.lavender)
                     )
                 }
@@ -64,7 +64,7 @@ struct ProfileManagementTab: View {
                 profileList
             }
 
-            Spacer(minLength: SanctuaryLayout.Spacing.lg)
+            Spacer(minLength: DS.space24)
         }
         .onAppear { loadProfiles() }
         .sheet(item: $profileSheetItem) { item in
@@ -97,28 +97,28 @@ struct ProfileManagementTab: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.md) {
+        VStack(spacing: DS.space12) {
             Image(systemName: "person.crop.rectangle.stack")
                 .font(.system(size: 32))
-                .foregroundColor(SanctuaryColors.Text.muted)
+                .foregroundStyle(DS.textMuted)
 
             Text("No profiles yet")
-                .font(SanctuaryTypography.titleSmall)
-                .foregroundColor(SanctuaryColors.Text.secondary)
+                .font(DS.title3)
+                .foregroundStyle(DS.textSecondary)
 
             Text("Create one to enable brand-aware AI drafting.")
-                .font(SanctuaryTypography.bodySmall)
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, SanctuaryLayout.Spacing.xl)
+        .padding(.vertical, DS.space32)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-                .fill(SanctuaryColors.Glass.primary)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceHover)
                 .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-                        .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusMedium)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
                 )
         )
     }
@@ -126,7 +126,7 @@ struct ProfileManagementTab: View {
     // MARK: - Profile List
 
     private var profileList: some View {
-        VStack(spacing: SanctuaryLayout.Spacing.sm) {
+        VStack(spacing: DS.space8) {
             ForEach(profiles, id: \.uuid) { profile in
                 profileCard(profile)
             }
@@ -137,47 +137,47 @@ struct ProfileManagementTab: View {
     private func profileCard(_ profile: Atom) -> some View {
         let meta = profile.metadataValue(as: ClientProfileMetadata.self)
 
-        HStack(spacing: SanctuaryLayout.Spacing.md) {
+        HStack(spacing: DS.space12) {
             // Avatar
             ZStack {
                 Circle()
                     .fill(CosmoColors.lavender.opacity(0.15))
                 Image(systemName: "person.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(CosmoColors.lavender)
+                    .foregroundStyle(CosmoColors.lavender)
             }
             .frame(width: 40, height: 40)
 
             // Info
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: DS.space8) {
                     Text(profile.title ?? "Untitled")
-                        .font(SanctuaryTypography.titleSmall)
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .font(DS.title3)
+                        .foregroundStyle(DS.text)
 
                     if meta?.activeStatus == true {
                         Text("Active")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(SanctuaryColors.Semantic.success)
+                            .foregroundStyle(DS.green)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(SanctuaryColors.Semantic.success.opacity(0.12))
+                                    .fill(DS.green.opacity(0.12))
                             )
                     }
                 }
 
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: DS.space8) {
                     if let handle = meta?.handle, !handle.isEmpty {
                         Text(handle)
-                            .font(SanctuaryTypography.caption)
-                            .foregroundColor(SanctuaryColors.Text.tertiary)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textMuted)
                     }
                     if let niche = meta?.niche, !niche.isEmpty {
                         Text(niche)
-                            .font(SanctuaryTypography.caption)
-                            .foregroundColor(SanctuaryColors.Text.tertiary)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
 
@@ -195,11 +195,11 @@ struct ProfileManagementTab: View {
             }) {
                 Image(systemName: "pencil")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.secondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 30, height: 30)
                     .background(
-                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                            .fill(SanctuaryColors.Glass.secondary)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(DS.surfaceHover)
                     )
             }
             .buttonStyle(.plain)
@@ -210,22 +210,22 @@ struct ProfileManagementTab: View {
             }) {
                 Image(systemName: "trash")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Semantic.danger.opacity(0.7))
+                    .foregroundStyle(DS.red.opacity(0.7))
                     .frame(width: 30, height: 30)
                     .background(
-                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                            .fill(SanctuaryColors.Semantic.danger.opacity(0.08))
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(DS.red.opacity(0.08))
                     )
             }
             .buttonStyle(.plain)
         }
-        .padding(SanctuaryLayout.Spacing.md)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-                .fill(SanctuaryColors.Glass.primary)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceHover)
                 .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-                        .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusMedium)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
@@ -241,18 +241,18 @@ struct ProfileManagementTab: View {
             ForEach(platforms.prefix(4), id: \.self) { platform in
                 Text(platform.displayName)
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.tertiary)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(SanctuaryColors.Glass.secondary)
+                            .fill(DS.surfaceHover)
                     )
             }
             if platforms.count > 4 {
                 Text("+\(platforms.count - 4)")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.muted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }

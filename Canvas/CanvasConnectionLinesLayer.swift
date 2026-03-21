@@ -344,7 +344,7 @@ struct CanvasConnectionLinesLayer: View {
                 Text("Remove Link")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(

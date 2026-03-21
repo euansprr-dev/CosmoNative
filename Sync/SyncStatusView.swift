@@ -28,7 +28,7 @@ struct SyncStatusView: View {
             if syncEngine.pendingChanges > 0 {
                 Text("\(syncEngine.pendingChanges)")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Color.orange)

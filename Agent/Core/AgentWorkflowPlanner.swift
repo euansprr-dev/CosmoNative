@@ -325,8 +325,7 @@ class AgentWorkflowPlanner {
         - complete_block: Mark block as completed
         - get_unscheduled_tasks: Get unscheduled tasks
         - create_task: Create a new task
-        - get_quest_status: Get daily quest status
-        - get_dimension_xp: Get Sanctuary dimension XP
+        - get_dimension_xp: Get dimension XP data
         - store_preference: Store a user preference
         - search_by_client: Search items for a specific client
 

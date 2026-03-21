@@ -97,15 +97,15 @@ struct CreatorImportSheet: View {
     private var headerLeading: some View {
         HStack(spacing: 8) {
             Image(systemName: engine.isCachedCatalog ? "tray.full.fill" : "arrow.down.circle.fill")
-                .font(.system(size: 18))
+                .font(DS.title2)
                 .foregroundStyle(DS.entitySwipe)
             VStack(alignment: .leading, spacing: 1) {
                 Text(engine.isCachedCatalog ? "Browse Catalog" : "Import Creator")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
                 if let age = engine.catalogAge {
                     Text(age)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
             }
@@ -139,9 +139,9 @@ struct CreatorImportSheet: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2)
                 Text("Refresh")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(DS.entitySwipe)
             .commandKToolbarChip(
@@ -156,7 +156,7 @@ struct CreatorImportSheet: View {
     @ViewBuilder
     private var postCountChip: some View {
         Text("\(engine.importedPosts.count) posts")
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .font(DS.caption)
             .foregroundStyle(DS.entitySwipe)
             .commandKToolbarChip(
                 isActive: true,
@@ -184,7 +184,7 @@ struct CreatorImportSheet: View {
     private var inputField: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Instagram Handle or URL")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
@@ -207,14 +207,14 @@ struct CreatorImportSheet: View {
     @ViewBuilder
     private var inputFieldContent: some View {
         Image(systemName: "at")
-            .font(.system(size: 14, weight: .medium))
+            .font(DS.navTitle)
             .foregroundStyle(DS.textMuted)
 
         TextField("username or instagram.com/username", text: $handleInput, onEditingChanged: { focused in
             isInputFocused = focused
         })
         .textFieldStyle(.plain)
-        .font(.system(size: 14))
+        .font(DS.navTitle)
         .onSubmit { startImport() }
 
         pasteButton
@@ -229,7 +229,7 @@ struct CreatorImportSheet: View {
             }
         } label: {
             Text("Paste")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -246,7 +246,7 @@ struct CreatorImportSheet: View {
                 Text("Lookup")
                 Image(systemName: "magnifyingglass")
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(DS.buttonText)
             .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
@@ -262,7 +262,7 @@ struct CreatorImportSheet: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             Text("Apify API key not configured. Add it in Settings \u{2192} API Keys.")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textSecondary)
         }
         .padding(12)
@@ -345,7 +345,7 @@ struct CreatorImportSheet: View {
             .overlay(Circle().stroke(DS.entitySwipe.opacity(0.3), lineWidth: 2))
             .overlay {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 22))
+                    .font(DS.title1)
                     .foregroundStyle(DS.entitySwipe)
             }
     }
@@ -355,20 +355,20 @@ struct CreatorImportSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(profile.fullName ?? profile.username)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DS.title2)
                     .foregroundStyle(DS.text)
                 if profile.isVerified {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 13))
+                        .font(DS.callout)
                         .foregroundStyle(.blue)
                 }
             }
             Text("@\(profile.username)")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.textMuted)
             if let bio = profile.biography, !bio.isEmpty {
                 Text(bio)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(2)
             }
@@ -394,11 +394,11 @@ struct CreatorImportSheet: View {
     private func statColumn(value: String, label: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(DS.title3)
                 .monospacedDigit()
                 .foregroundStyle(DS.text)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
@@ -430,11 +430,11 @@ struct CreatorImportSheet: View {
         VStack(spacing: 8) {
             HStack {
                 Text("Posts to import")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
                 Spacer()
                 Text("\(Int(maxPostsSlider))")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .font(DS.title1)
                     .foregroundStyle(DS.entitySwipe)
             }
             Slider(value: $maxPostsSlider, in: 25...min(1000, Double(engine.creatorProfile?.postsCount ?? 100)), step: 25)
@@ -461,9 +461,9 @@ struct CreatorImportSheet: View {
     private func costChip(icon: String, value: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(DS.buttonText)
         }
         .foregroundStyle(DS.text)
         .commandKToolbarChip()
@@ -478,7 +478,7 @@ struct CreatorImportSheet: View {
                 Image(systemName: "arrow.down.circle.fill")
                 Text("Import Posts")
             }
-            .font(.system(size: 14, weight: .semibold))
+            .font(DS.navTitle)
             .foregroundStyle(DS.textOnAccent)
             .frame(maxWidth: .infinity)
             .frame(height: 40)
@@ -494,7 +494,7 @@ struct CreatorImportSheet: View {
                 Image(systemName: "info.circle")
                 Text(warning)
             }
-            .font(.system(size: 11))
+            .font(DS.footnote)
             .foregroundStyle(.orange)
         }
     }
@@ -528,12 +528,12 @@ struct CreatorImportSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
                     .foregroundStyle(DS.text)
                 Spacer()
                 if let fraction {
                     Text(fraction)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .font(DS.buttonText)
                         .foregroundStyle(DS.textMuted)
                 }
             }
@@ -555,13 +555,13 @@ struct CreatorImportSheet: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
             Text(message)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
             Spacer()
             Button("Try Again") {
                 engine.reset()
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(DS.buttonText)
             .foregroundStyle(DS.accent)
             .buttonStyle(.plain)
         }
@@ -665,7 +665,7 @@ struct CreatorImportSheet: View {
     @ViewBuilder
     private var filteredCountLabel: some View {
         Text("\(engine.sortedPosts.count) shown")
-            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .font(DS.caption2)
             .foregroundStyle(DS.textMuted)
     }
 
@@ -705,9 +705,9 @@ struct CreatorImportSheet: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: engine.autoTranscribe ? "waveform.circle.fill" : "waveform.circle")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Auto-transcribe")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(engine.autoTranscribe ? DS.entitySwipe : DS.textMuted)
             .commandKToolbarChip(
@@ -723,19 +723,53 @@ struct CreatorImportSheet: View {
 
     @ViewBuilder
     private var postGrid: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 12)],
-            spacing: 12
-        ) {
-            ForEach(engine.sortedPosts) { post in
-                ImportedPostCard(
-                    post: post,
-                    isSelected: engine.selectedPostIds.contains(post.id),
-                    isDuplicate: engine.existingShortcodes.contains(post.shortcode),
-                    onToggle: { engine.toggleSelection(post.id) }
-                )
+        GeometryReader { geo in
+            let width = geo.size.width
+            let columnCount = max(2, Int(width / (236 + CommandKMetrics.cardSpacing)))
+            let totalSpacing = CGFloat(columnCount - 1) * CommandKMetrics.cardSpacing
+            let cardW = (width - totalSpacing) / CGFloat(columnCount)
+            let columns = distributeImportColumns(columnCount: columnCount, cardWidth: cardW)
+
+            HStack(alignment: .top, spacing: CommandKMetrics.cardSpacing) {
+                ForEach(0..<columnCount, id: \.self) { col in
+                    LazyVStack(spacing: CommandKMetrics.cardSpacing) {
+                        ForEach(col < columns.count ? columns[col] : []) { post in
+                            ImportedPostCard(
+                                post: post,
+                                isSelected: engine.selectedPostIds.contains(post.id),
+                                isDuplicate: engine.existingShortcodes.contains(post.shortcode),
+                                onToggle: { engine.toggleSelection(post.id) },
+                                cardWidth: cardW
+                            )
+                        }
+                    }
+                    .frame(width: cardW)
+                }
             }
         }
+        .frame(minHeight: estimateImportGridHeight())
+    }
+
+    private func distributeImportColumns(columnCount: Int, cardWidth: CGFloat) -> [[ImportedPost]] {
+        var columnHeights = Array(repeating: CGFloat(0), count: columnCount)
+        var columns: [[ImportedPost]] = Array(repeating: [], count: columnCount)
+
+        for post in engine.sortedPosts {
+            let shortest = columnHeights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
+            columns[shortest].append(post)
+            columnHeights[shortest] += ImportedPostCard.estimatedHeight(for: post, cardWidth: cardWidth) + CommandKMetrics.cardSpacing
+        }
+        return columns
+    }
+
+    private func estimateImportGridHeight() -> CGFloat {
+        let posts = engine.sortedPosts
+        guard !posts.isEmpty else { return 200 }
+        let avgHeight = posts.prefix(20).reduce(CGFloat(0)) { sum, post in
+            sum + ImportedPostCard.estimatedHeight(for: post, cardWidth: 220)
+        } / CGFloat(min(posts.count, 20))
+        let estimatedRows = CGFloat(posts.count) / 4.0
+        return estimatedRows * (avgHeight + CommandKMetrics.cardSpacing)
     }
 
     // MARK: - Selection Toolbar (Sticky Bottom)
@@ -780,7 +814,7 @@ struct CreatorImportSheet: View {
     private func quickSelectChip(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(DS.text)
                 .commandKToolbarChip()
         }
@@ -797,7 +831,7 @@ struct CreatorImportSheet: View {
                     Image(systemName: "square.and.arrow.down.fill")
                     Text("Save \(engine.selectedPostIds.count) Selected")
                 }
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout)
                 .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 8)
@@ -833,7 +867,7 @@ struct CreatorImportSheet: View {
     @ViewBuilder
     private var completionCheckmark: some View {
         Image(systemName: "checkmark.circle.fill")
-            .font(.system(size: 36))
+            .font(DS.display)
             .foregroundStyle(DS.accent)
             .scaleEffect(completionAppeared ? 1.0 : 0.5)
             .opacity(completionAppeared ? 1.0 : 0.0)
@@ -844,7 +878,7 @@ struct CreatorImportSheet: View {
     private func completionInfo(saved: Int, enriched: Int) -> some View {
         VStack(spacing: 6) {
             Text("Import Complete")
-                .font(.system(size: 16, weight: .semibold))
+                .font(DS.title2)
                 .foregroundStyle(DS.text)
 
             HStack(spacing: 8) {
@@ -860,10 +894,10 @@ struct CreatorImportSheet: View {
     private func completionStatPill(value: String, label: String) -> some View {
         HStack(spacing: 3) {
             Text(value)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
             Text(label)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
         }
         .commandKToolbarChip()
@@ -874,7 +908,7 @@ struct CreatorImportSheet: View {
         VStack(spacing: 8) {
             Button { performClose() } label: {
                 Text("Done")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.textOnAccent)
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
@@ -884,7 +918,7 @@ struct CreatorImportSheet: View {
 
             Button { performClose() } label: {
                 Text("View in Swipe Gallery")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
                     .foregroundStyle(DS.accent)
                     .frame(maxWidth: .infinity)
                     .frame(height: 36)

@@ -291,7 +291,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(

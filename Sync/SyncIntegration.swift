@@ -30,51 +30,6 @@ extension AtomRepository {
     }
 }
 
-// MARK: - Scheduler Engine Sync Extension
-extension SchedulerEngine {
-    func createBlockAndSync(_ block: inout ScheduleBlock) async throws {
-        block = try await createBlockAndSync(block)
-    }
-
-    func createBlockAndSync(_ block: ScheduleBlock) async throws -> ScheduleBlock {
-        let created = try await CosmoDatabase.shared.asyncWrite { db -> ScheduleBlock in
-            var insertingBlock = block
-            try insertingBlock.insert(db)
-            insertingBlock.databaseId = db.lastInsertedRowID
-            return insertingBlock
-        }
-
-        Task {
-            await ChangeTracker.shared.trackInsert(table: "schedule_blocks", entity: created)
-        }
-
-        return created
-    }
-
-    func updateBlockAndSync(_ block: ScheduleBlock) async throws {
-        try await CosmoDatabase.shared.asyncWrite { db in
-            try block.update(db)
-        }
-
-        Task {
-            await ChangeTracker.shared.trackUpdate(table: "schedule_blocks", entity: block)
-        }
-    }
-
-    func deleteBlockAndSync(id: Int64, uuid: String) async throws {
-        try await CosmoDatabase.shared.asyncWrite { db in
-            try db.execute(
-                sql: "UPDATE schedule_blocks SET is_deleted = 1, updated_at = ? WHERE id = ?",
-                arguments: [ISO8601DateFormatter().string(from: Date()), id]
-            )
-        }
-
-        Task {
-            await ChangeTracker.shared.trackDelete(table: "schedule_blocks", uuid: uuid, rowId: id)
-        }
-    }
-}
-
 // MARK: - Canvas Block Sync
 extension SpatialEngine {
     func saveBlockAndSync(_ block: CanvasBlock) async {

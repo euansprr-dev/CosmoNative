@@ -26,7 +26,7 @@ struct TaskDetailPanel: View {
 
     var body: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.space16) {
                 // Title
                 titleSection
 
@@ -60,7 +60,7 @@ struct TaskDetailPanel: View {
                 // Delete
                 deleteSection
             }
-            .padding(16)
+            .padding(DS.space16)
         }
         .scrollIndicators(.hidden)
         .onAppear {
@@ -102,14 +102,14 @@ struct TaskDetailPanel: View {
     // MARK: - Scheduling
 
     private var schedulingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.space10) {
             // When date
             detailRow(label: "When", icon: "calendar") {
                 if let date = editedWhenDate {
                     Button(date.formatted(.dateTime.month(.abbreviated).day())) {
                         showWhenPicker.toggle()
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.accent)
                     .buttonStyle(.plain)
 
@@ -118,7 +118,7 @@ struct TaskDetailPanel: View {
                         Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: nil) }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                             .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
@@ -127,7 +127,7 @@ struct TaskDetailPanel: View {
                         editedWhenDate = Date()
                         showWhenPicker = true
                     }
-                    .font(.system(size: 12))
+                    .font(DS.cardMeta)
                     .foregroundStyle(DS.textMuted)
                     .buttonStyle(.plain)
                 }
@@ -140,6 +140,7 @@ struct TaskDetailPanel: View {
                         timeOfDayChip("Morning", value: "morning", icon: "sun.horizon")
                         timeOfDayChip("Evening", value: "evening", icon: "moon.stars")
                     }
+                    .fixedSize()
                 }
             }
 
@@ -149,8 +150,8 @@ struct TaskDetailPanel: View {
                     Button(date.formatted(.dateTime.month(.abbreviated).day())) {
                         showDeadlinePicker.toggle()
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.orange)
                     .buttonStyle(.plain)
 
                     Button {
@@ -158,7 +159,7 @@ struct TaskDetailPanel: View {
                         Task { await viewModel.setDeadline(taskUUID: task.uuid, date: nil) }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                             .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
@@ -167,7 +168,7 @@ struct TaskDetailPanel: View {
                         editedDeadline = Calendar.current.date(byAdding: .day, value: 7, to: Date())
                         showDeadlinePicker = true
                     }
-                    .font(.system(size: 12))
+                    .font(DS.cardMeta)
                     .foregroundStyle(DS.textMuted)
                     .buttonStyle(.plain)
                 }
@@ -198,9 +199,9 @@ struct TaskDetailPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(DS.caption2)
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(isActive ? DS.accent : DS.textMuted)
             .padding(.horizontal, 8)
@@ -228,7 +229,7 @@ struct TaskDetailPanel: View {
             }
         } label: {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
                 .foregroundStyle(isActive ? DS.accent : DS.textMuted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -258,7 +259,7 @@ struct TaskDetailPanel: View {
             if task.totalFocusMinutes > 0 {
                 detailRow(label: "Tracked", icon: "timer") {
                     Text("\(task.sessionCount) sessions, \(task.totalFocusMinutes)m")
-                        .font(.system(size: 12))
+                        .font(DS.cardMeta)
                         .foregroundStyle(DS.textSecondary)
                 }
             }
@@ -271,10 +272,10 @@ struct TaskDetailPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "flag.fill")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                 Text("Priority")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
             }
 
@@ -297,7 +298,7 @@ struct TaskDetailPanel: View {
             }
         } label: {
             Text(priority.displayName)
-                .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                .font(DS.caption)
                 .foregroundStyle(isActive ? priority.color : DS.textMuted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
@@ -331,11 +332,11 @@ struct TaskDetailPanel: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: editedIntent.iconName)
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text(editedIntent.displayName)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(DS.caption2)
                 }
                 .foregroundStyle(editedIntent.color)
                 .padding(.horizontal, 8)
@@ -377,11 +378,11 @@ struct TaskDetailPanel: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: currentHabit?.icon ?? "slash.circle")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text(currentHabit?.title ?? "None")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(DS.caption2)
                 }
                 .foregroundStyle(currentHabit?.accent ?? DS.textMuted)
                 .padding(.horizontal, 8)
@@ -397,11 +398,11 @@ struct TaskDetailPanel: View {
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Notes")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption)
                 .foregroundStyle(DS.textSecondary)
 
             TextEditor(text: $editedNotes)
-                .font(.system(size: 12))
+                .font(DS.cardMeta)
                 .foregroundStyle(DS.text)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 60, maxHeight: 120)
@@ -440,11 +441,11 @@ struct TaskDetailPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "trash")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Delete Task")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
-            .foregroundStyle(.red.opacity(0.8))
+            .foregroundStyle(DS.red.opacity(0.8))
         }
         .buttonStyle(.plain)
     }
@@ -456,11 +457,11 @@ struct TaskDetailPanel: View {
         HStack(alignment: .center, spacing: 10) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 14)
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
             }
             .frame(width: 80, alignment: .leading)

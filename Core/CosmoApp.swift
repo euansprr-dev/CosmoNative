@@ -25,10 +25,13 @@ struct CosmoApp: App {
     @State private var cosmoWindowController: CosmoWindowPanelController?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
+    @State private var themeRefreshID = UUID()
+
     var body: some Scene {
         WindowGroup {
             MainView()
-                .preferredColorScheme(.light) // Greenhouse is light-only — prevents dark-mode NSTextField placeholder issues
+                .id(themeRefreshID)
+                .preferredColorScheme(ThemeManager.shared.currentTheme.isDark ? .dark : .light)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
@@ -40,6 +43,9 @@ struct CosmoApp: App {
                 .environmentObject(glassCenter)
                 .environmentObject(swipeFileEngine)
                 .environmentObject(cosmoAgent)
+                .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Theme.changed)) { _ in
+                    themeRefreshID = UUID()
+                }
                 .onAppear {
                     initializeApp()
                 }
@@ -77,12 +83,6 @@ struct CosmoApp: App {
         // Initialize semantic search index (background)
         Task {
             await semanticSearch.indexAllEntities()
-        }
-
-        // Initialize recurring task engine (generate today's instances + schedule midnight refresh)
-        Task {
-            try? await TaskRecurrenceEngine.shared.generateTodayInstances()
-            TaskRecurrenceEngine.shared.scheduleMidnightRefresh()
         }
 
         // Migrate existing lessons to add intent scope

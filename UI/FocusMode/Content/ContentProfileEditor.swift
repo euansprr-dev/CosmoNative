@@ -90,18 +90,18 @@ struct ContentProfileEditor: View {
     private var editorHeader: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.rectangle.stack.fill")
-                .font(.system(size: 16))
+                .font(DS.title3)
                 .foregroundStyle(DS.accent)
 
             Text(existingAtom == nil ? "New Profile" : "Edit Profile")
-                .font(.system(size: 15, weight: .semibold))
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
 
             Spacer()
 
             Button(action: { performClose() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.surface, in: Circle())
@@ -187,9 +187,9 @@ struct ContentProfileEditor: View {
     private func platformChipLabel(_ platform: SocialPlatform, isSelected: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: platform.iconName)
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(platform.displayName)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
         }
         .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
         .padding(.horizontal, 10)
@@ -228,7 +228,7 @@ struct ContentProfileEditor: View {
             VStack(alignment: .leading, spacing: 8) {
                 fieldLabel("Signature Phrases")
                 Text("Catchphrases, recurring openers, trademark expressions")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
                 ForEach(signaturePhrases.indices, id: \.self) { index in
                     phraseRow(index: index)
@@ -242,13 +242,13 @@ struct ContentProfileEditor: View {
     private func beliefRow(index: Int) -> some View {
         HStack(spacing: 8) {
             Text(coreBeliefs[index])
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: { coreBeliefs.remove(at: index) }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -262,7 +262,7 @@ struct ContentProfileEditor: View {
         HStack(spacing: 8) {
             TextField("Add a core belief...", text: $newBelief)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -273,7 +273,7 @@ struct ContentProfileEditor: View {
 
             Button(action: { addBelief() }) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.accent.opacity(0.7))
             }
             .buttonStyle(.plain)
@@ -307,7 +307,7 @@ struct ContentProfileEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             fieldLabel("Top Performing Content")
             Text("Paste transcripts or Instagram URLs of best-performing posts")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             // URL-transcribed documents
@@ -338,7 +338,7 @@ struct ContentProfileEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             fieldLabel("Underperforming Content")
             Text("Posts that didn't perform well — helps AI learn what to avoid")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             // URL-transcribed underperforming documents
@@ -381,7 +381,7 @@ struct ContentProfileEditor: View {
     @ViewBuilder
     private func formatChipLabel(_ format: ContentFormat, isSelected: Bool) -> some View {
         Text(format.displayName)
-            .font(.system(size: 11, weight: .medium))
+            .font(DS.caption)
             .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -422,15 +422,15 @@ struct ContentProfileEditor: View {
         HStack(spacing: 6) {
             if let sourceURL = doc.sourceURL {
                 Image(systemName: "link")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.accent.opacity(0.7))
                 Text(sourceURL.count > 40 ? "..." + sourceURL.suffix(37) : sourceURL)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             } else {
                 Text(doc.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
             }
 
@@ -440,7 +440,7 @@ struct ContentProfileEditor: View {
 
             Button(action: { removeDocument(doc.id) }) {
                 Image(systemName: "trash")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -451,7 +451,7 @@ struct ContentProfileEditor: View {
     private func documentCategoryPill(_ category: ProfileDocumentCategory) -> some View {
         let color: Color = category.isHighPerformer ? CosmoColors.emerald : .orange
         Text(category.isHighPerformer ? "Top" : "Under")
-            .font(.system(size: 9, weight: .medium))
+            .font(DS.caption2)
             .foregroundStyle(color.opacity(0.8))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -466,17 +466,17 @@ struct ContentProfileEditor: View {
                 CosmicShimmerText(lines: 3, entityColor: DS.accent, lineHeight: 10, lineSpacing: 4)
                     .frame(height: 42)
                 Text(state?.progressText ?? "Transcribing...")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.accent.opacity(0.6))
             }
         } else if let error = state?.error {
             // Error state
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(.orange)
                 Text(error)
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                     .foregroundStyle(.orange.opacity(0.8))
                     .lineLimit(2)
             }
@@ -485,10 +485,10 @@ struct ContentProfileEditor: View {
                 if let warning = state?.warning ?? doc.warning {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                             .foregroundStyle(.yellow)
                         Text(warning)
-                            .font(.system(size: 10))
+                            .font(DS.caption2)
                             .foregroundStyle(.yellow.opacity(0.85))
                             .lineLimit(2)
                     }
@@ -497,7 +497,7 @@ struct ContentProfileEditor: View {
                 if !doc.content.isEmpty {
                     Button(action: { openReviewOverlay(doc) }) {
                         Text(String(doc.content.prefix(120)) + (doc.content.count > 120 ? "..." : ""))
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                             .foregroundStyle(DS.textSecondary)
                             .lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -514,12 +514,12 @@ struct ContentProfileEditor: View {
     private func urlInputRow(text: Binding<String>, category: ProfileDocumentCategory) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "link")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.accent.opacity(0.5))
 
             TextField("Paste Instagram URL...", text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .onSubmit { submitURL(text: text, category: category) }
 
@@ -537,7 +537,7 @@ struct ContentProfileEditor: View {
     @ViewBuilder
     private func urlSubmitIcon(text: Binding<String>) -> some View {
         Image(systemName: "arrow.right.circle.fill")
-            .font(.system(size: 16))
+            .font(DS.title3)
             .foregroundStyle(
                 isValidInstagramURL(text.wrappedValue)
                     ? DS.accent
@@ -554,7 +554,7 @@ struct ContentProfileEditor: View {
                 get: { index < topPerformingTranscripts.count ? topPerformingTranscripts[index] : "" },
                 set: { if index < topPerformingTranscripts.count { topPerformingTranscripts[index] = $0 } }
             ))
-            .font(.system(size: 12))
+            .font(DS.subheadline)
             .foregroundStyle(DS.text)
             .scrollContentBackground(.hidden)
             .frame(height: 60)
@@ -564,7 +564,7 @@ struct ContentProfileEditor: View {
             if topPerformingTranscripts.count > 1 {
                 Button(action: { topPerformingTranscripts.remove(at: index) }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
@@ -580,9 +580,9 @@ struct ContentProfileEditor: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(DS.accent.opacity(0.7))
         }
@@ -673,13 +673,13 @@ struct ContentProfileEditor: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Transcript Review")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.text)
                 if let reviewId = reviewingDocumentId,
                    let doc = documents.first(where: { $0.id == reviewId }),
                    let sourceURL = doc.sourceURL {
                     Text(sourceURL)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
                 }
@@ -687,7 +687,7 @@ struct ContentProfileEditor: View {
             Spacer()
             Button(action: { saveAndCloseReview() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.surface, in: Circle())
@@ -700,7 +700,7 @@ struct ContentProfileEditor: View {
     @ViewBuilder
     private var reviewOverlayEditor: some View {
         TextEditor(text: $reviewEditText)
-            .font(.system(size: 12))
+            .font(DS.subheadline)
             .foregroundStyle(DS.text)
             .scrollContentBackground(.hidden)
             .padding(12)
@@ -710,12 +710,12 @@ struct ContentProfileEditor: View {
     private var reviewOverlayFooter: some View {
         HStack {
             Text("\(reviewEditText.count) characters")
-                .font(.system(size: 10))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
             Spacer()
             Button(action: { saveAndCloseReview() }) {
                 Text("Save Changes")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.buttonText)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
@@ -751,13 +751,13 @@ struct ContentProfileEditor: View {
     private func postTimeRow(index: Int) -> some View {
         HStack(spacing: 8) {
             Text(preferredPostTimes[index])
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: { preferredPostTimes.remove(at: index) }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -771,7 +771,7 @@ struct ContentProfileEditor: View {
         HStack(spacing: 8) {
             TextField("e.g., 9:00 AM EST", text: $newPostTime)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -780,7 +780,7 @@ struct ContentProfileEditor: View {
 
             Button(action: { addPostTime() }) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.accent.opacity(0.7))
             }
             .buttonStyle(.plain)
@@ -795,7 +795,7 @@ struct ContentProfileEditor: View {
             if existingAtom != nil {
                 Button(action: { performClose() }) {
                     Text("Cancel")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
                         .foregroundStyle(DS.textSecondary)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -824,7 +824,7 @@ struct ContentProfileEditor: View {
                     .tint(.white)
             }
             Text(existingAtom == nil ? "Create Profile" : "Save Changes")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.callout)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 20)
@@ -841,14 +841,14 @@ struct ContentProfileEditor: View {
 
     private func sectionLabel(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .font(DS.caption)
             .foregroundStyle(DS.textMuted)
             .tracking(1.2)
     }
 
     private func fieldLabel(_ label: String) -> some View {
         Text(label)
-            .font(.system(size: 12, weight: .medium))
+            .font(DS.buttonText)
             .foregroundStyle(DS.textSecondary)
     }
 
@@ -858,7 +858,7 @@ struct ContentProfileEditor: View {
                 .frame(width: 80, alignment: .trailing)
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -872,13 +872,13 @@ struct ContentProfileEditor: View {
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
                     Text(placeholder)
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                 }
                 TextEditor(text: text)
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.text)
                     .scrollContentBackground(.hidden)
                     .frame(height: 56)
@@ -895,13 +895,13 @@ struct ContentProfileEditor: View {
     private func phraseRow(index: Int) -> some View {
         HStack(spacing: 8) {
             Text(signaturePhrases[index])
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: { signaturePhrases.remove(at: index) }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -915,7 +915,7 @@ struct ContentProfileEditor: View {
         HStack(spacing: 8) {
             TextField("Add a signature phrase...", text: $newPhrase)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -924,7 +924,7 @@ struct ContentProfileEditor: View {
 
             Button(action: { addPhrase() }) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14))
+                    .font(DS.navTitle)
                     .foregroundStyle(DS.accent.opacity(0.7))
             }
             .buttonStyle(.plain)
@@ -946,7 +946,7 @@ struct ContentProfileEditor: View {
             sectionLabel("Context Files")
 
             Text("Upload documents with brand context (best posts, brand docs, etc.) for AI auto-fill")
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.textMuted)
 
             // File list
@@ -969,10 +969,10 @@ struct ContentProfileEditor: View {
             if let error = autoFillError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(.orange)
                     Text(error)
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(.orange.opacity(0.9))
                         .lineLimit(2)
                 }
@@ -984,11 +984,11 @@ struct ContentProfileEditor: View {
     private func contextFileRow(index: Int, url: URL) -> some View {
         HStack(spacing: 8) {
             Image(systemName: fileIcon(for: url))
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.accent.opacity(0.7))
 
             Text(url.lastPathComponent)
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -997,7 +997,7 @@ struct ContentProfileEditor: View {
 
             Button(action: { contextFileURLs.remove(at: index) }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DS.subheadline)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
@@ -1011,9 +1011,9 @@ struct ContentProfileEditor: View {
     private var addFilesButtonLabel: some View {
         HStack(spacing: 4) {
             Image(systemName: "doc.badge.plus")
-                .font(.system(size: 11))
+                .font(DS.footnote)
             Text("Add Files (.pdf, .txt, .docx)")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.caption)
         }
         .foregroundStyle(DS.accent.opacity(0.7))
     }
@@ -1027,10 +1027,10 @@ struct ContentProfileEditor: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                 }
                 Text(isAutoFilling ? "Analyzing..." : "Auto-Fill with AI")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)

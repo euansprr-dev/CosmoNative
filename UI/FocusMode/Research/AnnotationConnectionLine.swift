@@ -126,7 +126,6 @@ struct AnnotationConnectionLine_Previews: PreviewProvider {
                 .frame(width: 8, height: 8)
                 .position(x: 400, y: 200)
         }
-        .preferredColorScheme(.dark)
     }
 }
 #endif

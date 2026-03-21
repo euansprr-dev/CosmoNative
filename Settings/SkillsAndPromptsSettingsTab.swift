@@ -36,14 +36,14 @@ struct SkillsAndPromptsSettingsTab: View {
     private let intentFilters = ["all", "universal", "draft", "plan", "strategy", "brainstorm", "analyze", "reflect"]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(alignment: .leading, spacing: DS.space24) {
             Text("Skills & Prompts")
-                .font(SanctuaryTypography.titleMedium)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.title2)
+                .foregroundStyle(DS.text)
 
             Text("Configure AI behavior, writing methodology, and learned skills")
-                .font(SanctuaryTypography.bodyMedium)
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(DS.callout)
+                .foregroundStyle(DS.textMuted)
 
             // Section 1: Master Prompt
             unifiedPromptSection
@@ -63,7 +63,7 @@ struct SkillsAndPromptsSettingsTab: View {
             // Section 6: Batch Analysis Reports
             batchAnalysisSection
 
-            Spacer(minLength: SanctuaryLayout.Spacing.lg)
+            Spacer(minLength: DS.space24)
         }
         .task {
             await loadLearnedSkills()
@@ -83,29 +83,29 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isUnifiedPromptExpanded {
-                VStack(spacing: SanctuaryLayout.Spacing.md) {
+                VStack(spacing: DS.space12) {
                     Text("The unified system prompt that defines the AI writing partner's behavior. Includes {METHODOLOGY_TEXT} and {PLATFORM_CONSTRAINTS} placeholders.")
-                        .font(SanctuaryTypography.bodySmall)
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
 
                     WritingEngineTextEditor(text: $promptStore.unifiedSystemPrompt)
                         .frame(height: 200)
                         .background(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .fill(SanctuaryColors.Glass.secondary)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .fill(DS.surfaceHover)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                        .stroke(promptStore.isUnifiedDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                        .stroke(promptStore.isUnifiedDirty ? CosmoColors.cosmoAI.opacity(0.4) : DS.borderSubtle, lineWidth: 1)
                                 )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .onChange(of: promptStore.unifiedSystemPrompt) { newValue in
                             promptStore.isUnifiedDirty = newValue != PromptTemplateStore.DEFAULT_UNIFIED_SYSTEM_PROMPT
                         }
 
                     Text("\(promptStore.unifiedTokenCount()) estimated tokens")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.muted)
+                        .foregroundStyle(DS.textMuted)
 
                     sanctuaryButtons(
                         onSave: { promptStore.saveUnifiedSystemPrompt() },
@@ -113,7 +113,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         isDirty: promptStore.isUnifiedDirty
                     )
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -133,29 +133,29 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isMethodologyExpanded {
-                VStack(spacing: SanctuaryLayout.Spacing.md) {
+                VStack(spacing: DS.space12) {
                     Text("The foundational content playbook injected as context for all AI generation.")
-                        .font(SanctuaryTypography.bodySmall)
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
 
                     WritingEngineTextEditor(text: $promptStore.methodology)
                         .frame(height: 200)
                         .background(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .fill(SanctuaryColors.Glass.secondary)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .fill(DS.surfaceHover)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                        .stroke(promptStore.isDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                        .stroke(promptStore.isDirty ? CosmoColors.cosmoAI.opacity(0.4) : DS.borderSubtle, lineWidth: 1)
                                 )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .onChange(of: promptStore.methodology) { newValue in
                             promptStore.isDirty = newValue != PromptTemplateStore.DEFAULT_METHODOLOGY
                         }
 
                     Text("\(promptStore.tokenCount()) estimated tokens")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.muted)
+                        .foregroundStyle(DS.textMuted)
 
                     sanctuaryButtons(
                         onSave: { promptStore.saveMethodology() },
@@ -163,7 +163,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         isDirty: promptStore.isDirty
                     )
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -183,29 +183,29 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isPlatformExpanded {
-                VStack(spacing: SanctuaryLayout.Spacing.md) {
+                VStack(spacing: DS.space12) {
                     Text("Hard format rules for each platform (character limits, slide counts, durations).")
-                        .font(SanctuaryTypography.bodySmall)
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
 
                     WritingEngineTextEditor(text: $promptStore.platformConstraints)
                         .frame(height: 200)
                         .background(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .fill(SanctuaryColors.Glass.secondary)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .fill(DS.surfaceHover)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                        .stroke(promptStore.isPlatformConstraintsDirty ? CosmoColors.cosmoAI.opacity(0.4) : SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                        .stroke(promptStore.isPlatformConstraintsDirty ? CosmoColors.cosmoAI.opacity(0.4) : DS.borderSubtle, lineWidth: 1)
                                 )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
                         .onChange(of: promptStore.platformConstraints) { newValue in
                             promptStore.isPlatformConstraintsDirty = newValue != PromptTemplateStore.DEFAULT_PLATFORM_CONSTRAINTS
                         }
 
                     Text("\(promptStore.platformConstraintsTokenCount()) estimated tokens")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.muted)
+                        .foregroundStyle(DS.textMuted)
 
                     sanctuaryButtons(
                         onSave: { promptStore.savePlatformConstraints() },
@@ -213,7 +213,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         isDirty: promptStore.isPlatformConstraintsDirty
                     )
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -234,7 +234,7 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isSkillModulesExpanded {
-                VStack(spacing: SanctuaryLayout.Spacing.sm) {
+                VStack(spacing: DS.space8) {
                     ForEach(promptStore.modules) { module in
                         skillModuleRow(module: module)
                     }
@@ -244,7 +244,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         addModuleForm
                     }
 
-                    HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                    HStack(spacing: DS.space8) {
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 isAddModulePresented.toggle()
@@ -252,17 +252,17 @@ struct SkillsAndPromptsSettingsTab: View {
                                 newModuleContent = ""
                             }
                         }) {
-                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            HStack(spacing: DS.space4) {
                                 Image(systemName: isAddModulePresented ? "xmark" : "plus.circle.fill")
                                     .font(.system(size: 12))
                                 Text(isAddModulePresented ? "Cancel" : "Add Module")
-                                    .font(SanctuaryTypography.label)
+                                    .font(DS.caption)
                             }
-                            .foregroundColor(CosmoColors.cosmoAI)
-                            .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                            .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                            .foregroundStyle(CosmoColors.cosmoAI)
+                            .padding(.horizontal, DS.space12)
+                            .padding(.vertical, DS.space8)
                             .background(
-                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                                RoundedRectangle(cornerRadius: DS.radiusSmall)
                                     .fill(CosmoColors.cosmoAI.opacity(0.1))
                             )
                         }
@@ -274,25 +274,25 @@ struct SkillsAndPromptsSettingsTab: View {
                             promptStore.resetAllModulesToDefaults()
                             editingModuleId = nil
                         }) {
-                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            HStack(spacing: DS.space4) {
                                 Image(systemName: "arrow.counterclockwise")
                                     .font(.system(size: 12))
                                 Text("Reset All to Defaults")
-                                    .font(SanctuaryTypography.label)
+                                    .font(DS.caption)
                             }
-                            .foregroundColor(SanctuaryColors.Text.secondary)
-                            .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                            .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                            .foregroundStyle(DS.textSecondary)
+                            .padding(.horizontal, DS.space12)
+                            .padding(.vertical, DS.space8)
                             .background(
-                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                    .fill(SanctuaryColors.Glass.secondary)
+                                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                    .fill(DS.surfaceHover)
                             )
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.top, SanctuaryLayout.Spacing.xs)
+                    .padding(.top, DS.space4)
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -302,8 +302,8 @@ struct SkillsAndPromptsSettingsTab: View {
     @ViewBuilder
     private func skillModuleRow(module: PromptModule) -> some View {
         let isEditing = editingModuleId == module.id
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space8) {
                 Toggle("", isOn: Binding(
                     get: { module.isEnabled },
                     set: { newValue in
@@ -319,15 +319,15 @@ struct SkillsAndPromptsSettingsTab: View {
                 .frame(width: 36)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    HStack(spacing: DS.space4) {
                         Text(module.title)
-                            .font(SanctuaryTypography.label)
-                            .foregroundColor(module.isEnabled ? SanctuaryColors.Text.primary : SanctuaryColors.Text.muted)
+                            .font(DS.caption)
+                            .foregroundStyle(module.isEnabled ? DS.text : DS.textMuted)
 
                         if promptStore.isCustomModule(id: module.id) {
                             Text("Custom")
                                 .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.orange)
+                                .foregroundStyle(.orange)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
@@ -337,7 +337,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         } else {
                             Text("Core")
                                 .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.teal)
+                                .foregroundStyle(.teal)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
@@ -353,7 +353,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         if linkedCount > 0 {
                             Text("\(linkedCount) rules")
                                 .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.green)
+                                .foregroundStyle(.green)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
@@ -365,7 +365,7 @@ struct SkillsAndPromptsSettingsTab: View {
 
                     Text("~\(promptStore.moduleTokenCount(module)) tokens")
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.muted)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 Spacer()
@@ -377,7 +377,7 @@ struct SkillsAndPromptsSettingsTab: View {
                 }) {
                     Image(systemName: isEditing ? "chevron.up" : "pencil")
                         .font(.system(size: 11))
-                        .foregroundColor(CosmoColors.cosmoAI)
+                        .foregroundStyle(CosmoColors.cosmoAI)
                         .padding(6)
                         .background(Circle().fill(CosmoColors.cosmoAI.opacity(0.15)))
                 }
@@ -389,9 +389,9 @@ struct SkillsAndPromptsSettingsTab: View {
                     }) {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 10))
-                            .foregroundColor(SanctuaryColors.Text.muted)
+                            .foregroundStyle(DS.textMuted)
                             .padding(5)
-                            .background(Circle().fill(SanctuaryColors.Glass.secondary))
+                            .background(Circle().fill(DS.surfaceHover))
                     }
                     .buttonStyle(.plain)
                 }
@@ -404,9 +404,9 @@ struct SkillsAndPromptsSettingsTab: View {
                     }) {
                         Image(systemName: "trash")
                             .font(.system(size: 10))
-                            .foregroundColor(SanctuaryColors.Semantic.error)
+                            .foregroundStyle(DS.red)
                             .padding(5)
-                            .background(Circle().fill(SanctuaryColors.Semantic.error.opacity(0.1)))
+                            .background(Circle().fill(DS.red.opacity(0.1)))
                     }
                     .buttonStyle(.plain)
                 }
@@ -416,44 +416,44 @@ struct SkillsAndPromptsSettingsTab: View {
                 skillModuleEditor(moduleId: module.id)
             }
         }
-        .padding(.horizontal, SanctuaryLayout.Spacing.sm)
-        .padding(.vertical, SanctuaryLayout.Spacing.sm)
-        .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(
-            module.isEnabled ? SanctuaryColors.Glass.secondary : Color.clear
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space8)
+        .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(
+            module.isEnabled ? DS.surfaceHover : Color.clear
         ))
     }
 
     @ViewBuilder
     private func skillModuleEditor(moduleId: String) -> some View {
         if let idx = promptStore.modules.firstIndex(where: { $0.id == moduleId }) {
-            VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+            VStack(alignment: .leading, spacing: DS.space8) {
                 WritingEngineTextEditor(text: $promptStore.modules[idx].content)
                     .frame(height: 140)
                     .background(
-                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                            .fill(SanctuaryColors.Glass.secondary)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(DS.surfaceHover)
                             .overlay(
-                                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                    .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                    .stroke(DS.borderSubtle, lineWidth: 1)
                             )
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
 
-                HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                HStack(spacing: DS.space8) {
                     Button(action: {
                         promptStore.saveModuleState()
                         editingModuleId = nil
                     }) {
-                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        HStack(spacing: DS.space4) {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 10))
                             Text("Save")
-                                .font(SanctuaryTypography.label)
+                                .font(DS.caption)
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                        .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
-                        .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(CosmoColors.cosmoAI))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, DS.space8 + 2)
+                        .padding(.vertical, DS.space4 + 1)
+                        .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(CosmoColors.cosmoAI))
                     }
                     .buttonStyle(.plain)
 
@@ -462,17 +462,17 @@ struct SkillsAndPromptsSettingsTab: View {
                         editingModuleId = nil
                     }) {
                         Text("Cancel")
-                            .font(SanctuaryTypography.label)
-                            .foregroundColor(SanctuaryColors.Text.muted)
-                            .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                            .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textMuted)
+                            .padding(.horizontal, DS.space8 + 2)
+                            .padding(.vertical, DS.space4 + 1)
                     }
                     .buttonStyle(.plain)
 
                     Spacer()
                 }
             }
-            .padding(.top, SanctuaryLayout.Spacing.xs)
+            .padding(.top, DS.space4)
         }
     }
 
@@ -485,22 +485,22 @@ struct SkillsAndPromptsSettingsTab: View {
 
     @ViewBuilder
     private var addModuleForm: some View {
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             Text("New Skill Module")
-                .font(SanctuaryTypography.label)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
 
             TextField("Module title", text: $newModuleTitle)
                 .textFieldStyle(.plain)
-                .font(SanctuaryTypography.bodySmall)
-                .foregroundColor(SanctuaryColors.Text.primary)
-                .padding(SanctuaryLayout.Spacing.sm)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.text)
+                .padding(DS.space8)
                 .background(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                        .fill(SanctuaryColors.Glass.secondary)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .fill(DS.surfaceHover)
                         .overlay(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .stroke(DS.borderSubtle, lineWidth: 1)
                         )
                 )
 
@@ -509,27 +509,27 @@ struct SkillsAndPromptsSettingsTab: View {
             WritingEngineTextEditor(text: $newModuleContent)
                 .frame(height: 100)
                 .background(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                        .fill(SanctuaryColors.Glass.secondary)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .fill(DS.surfaceHover)
                         .overlay(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .stroke(DS.borderSubtle, lineWidth: 1)
                         )
                 )
-                .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
 
-            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+            HStack(spacing: DS.space8) {
                 Button(action: createCustomModule) {
-                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    HStack(spacing: DS.space4) {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10))
                         Text("Create Module")
-                            .font(SanctuaryTypography.label)
+                            .font(DS.caption)
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                    .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
-                    .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, DS.space8 + 2)
+                    .padding(.vertical, DS.space4 + 1)
+                    .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(
                         canCreateModule ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3)
                     ))
                 }
@@ -542,22 +542,22 @@ struct SkillsAndPromptsSettingsTab: View {
                     }
                 }) {
                     Text("Cancel")
-                        .font(SanctuaryTypography.label)
-                        .foregroundColor(SanctuaryColors.Text.muted)
-                        .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                        .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, DS.space8 + 2)
+                        .padding(.vertical, DS.space4 + 1)
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
             }
         }
-        .padding(SanctuaryLayout.Spacing.md)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+            RoundedRectangle(cornerRadius: DS.radiusSmall)
                 .fill(CosmoColors.cosmoAI.opacity(0.05))
                 .overlay(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .stroke(CosmoColors.cosmoAI.opacity(0.2), lineWidth: 1)
                 )
         )
@@ -571,7 +571,7 @@ struct SkillsAndPromptsSettingsTab: View {
             .replacingOccurrences(of: "[^a-z0-9_]", with: "", options: .regularExpression)
         Text("ID: \(generatedId.isEmpty ? "..." : generatedId)")
             .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(SanctuaryColors.Text.muted)
+            .foregroundStyle(DS.textMuted)
     }
 
     private var canCreateModule: Bool {
@@ -608,18 +608,18 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isLearnedSkillsExpanded {
-                VStack(spacing: SanctuaryLayout.Spacing.md) {
+                VStack(spacing: DS.space12) {
                     // Filter chips
-                    VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+                    VStack(alignment: .leading, spacing: DS.space4) {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            HStack(spacing: DS.space4) {
                                 ForEach(intentFilters, id: \.self) { filter in
                                     intentFilterChip(filter)
                                 }
                             }
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                            HStack(spacing: DS.space4) {
                                 ForEach(["all", "hard", "advisory"], id: \.self) { filter in
                                     enforcementFilterChip(filter)
                                 }
@@ -628,16 +628,16 @@ struct SkillsAndPromptsSettingsTab: View {
                     }
 
                     if filteredSkills.isEmpty {
-                        VStack(spacing: SanctuaryLayout.Spacing.sm) {
+                        VStack(spacing: DS.space8) {
                             Image(systemName: "brain")
                                 .font(.system(size: 24))
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .foregroundStyle(DS.textMuted)
                             Text("No skills learned yet. As you work with Cosmo, skills will appear here.")
-                                .font(SanctuaryTypography.bodySmall)
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .font(DS.subheadline)
+                                .foregroundStyle(DS.textMuted)
                                 .multilineTextAlignment(.center)
                         }
-                        .padding(.vertical, SanctuaryLayout.Spacing.lg)
+                        .padding(.vertical, DS.space24)
                         .frame(maxWidth: .infinity)
                     } else {
                         ForEach(filteredSkills) { skill in
@@ -645,7 +645,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         }
                     }
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -682,11 +682,11 @@ struct SkillsAndPromptsSettingsTab: View {
         Button(action: { selectedIntentFilter = filter }) {
             Text(filter.capitalized)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                .foregroundColor(isSelected ? .white : SanctuaryColors.Text.secondary)
-                .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
+                .foregroundStyle(isSelected ? .white : DS.textSecondary)
+                .padding(.horizontal, DS.space8 + 2)
+                .padding(.vertical, DS.space4 + 1)
                 .background(
-                    Capsule().fill(isSelected ? CosmoColors.cosmoAI : SanctuaryColors.Glass.secondary)
+                    Capsule().fill(isSelected ? CosmoColors.cosmoAI : DS.surfaceHover)
                 )
         }
         .buttonStyle(.plain)
@@ -699,11 +699,11 @@ struct SkillsAndPromptsSettingsTab: View {
         Button(action: { selectedEnforcementFilter = filter }) {
             Text(filter.capitalized)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                .foregroundColor(isSelected ? .white : SanctuaryColors.Text.secondary)
-                .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                .padding(.vertical, SanctuaryLayout.Spacing.xs + 1)
+                .foregroundStyle(isSelected ? .white : DS.textSecondary)
+                .padding(.horizontal, DS.space8 + 2)
+                .padding(.vertical, DS.space4 + 1)
                 .background(
-                    Capsule().fill(isSelected ? chipColor : SanctuaryColors.Glass.secondary)
+                    Capsule().fill(isSelected ? chipColor : DS.surfaceHover)
                 )
         }
         .buttonStyle(.plain)
@@ -712,30 +712,30 @@ struct SkillsAndPromptsSettingsTab: View {
     @ViewBuilder
     private func learnedSkillRow(_ skill: InferredLesson) -> some View {
         let isEditing = editingSkillId == skill.id
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
-            HStack(alignment: .top, spacing: SanctuaryLayout.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(alignment: .top, spacing: DS.space8) {
                 Circle()
                     .fill(confidenceColor(skill.confidence))
                     .frame(width: 8, height: 8)
                     .padding(.top, 5)
 
-                VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.xs) {
+                VStack(alignment: .leading, spacing: DS.space4) {
                     if isEditing {
                         TextField("Rule text", text: $editingSkillRule, axis: .vertical)
                             .textFieldStyle(.plain)
-                            .font(SanctuaryTypography.bodySmall)
-                            .foregroundColor(SanctuaryColors.Text.primary)
+                            .font(DS.subheadline)
+                            .foregroundStyle(DS.text)
                             .lineLimit(3...6)
-                            .padding(SanctuaryLayout.Spacing.sm)
-                            .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(SanctuaryColors.Glass.secondary))
+                            .padding(DS.space8)
+                            .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceHover))
                     } else {
                         Text(skill.rule)
-                            .font(SanctuaryTypography.bodySmall)
-                            .foregroundColor(SanctuaryColors.Text.primary)
+                            .font(DS.subheadline)
+                            .foregroundStyle(DS.text)
                             .lineLimit(2)
                     }
 
-                    HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                    HStack(spacing: DS.space4) {
                         enforcementBadge(skill.effectiveEnforcement)
                         categoryBadge(skill.category)
                         intentBadge(skill.intent ?? "universal")
@@ -745,7 +745,7 @@ struct SkillsAndPromptsSettingsTab: View {
                            let module = promptStore.modules.first(where: { $0.id == moduleId }) {
                             Text(module.title)
                                 .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.green)
+                                .foregroundStyle(.green)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
@@ -757,15 +757,15 @@ struct SkillsAndPromptsSettingsTab: View {
                         if skill.clientUUID != nil {
                             Text("client-specific")
                                 .font(.system(size: 9))
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
 
                     if isEditing {
-                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        HStack(spacing: DS.space4) {
                             Text("Scope:")
                                 .font(.system(size: 11))
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .foregroundStyle(DS.textMuted)
                             Picker("", selection: $editingSkillIntent) {
                                 Text("Universal").tag("universal")
                                 Text("Draft").tag("draft")
@@ -779,21 +779,21 @@ struct SkillsAndPromptsSettingsTab: View {
                             .frame(width: 120)
                         }
 
-                        HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                        HStack(spacing: DS.space8) {
                             Button(action: { saveEditedSkill(skill) }) {
                                 Text("Save")
-                                    .font(SanctuaryTypography.label)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, SanctuaryLayout.Spacing.sm + 2)
-                                    .padding(.vertical, SanctuaryLayout.Spacing.xs)
-                                    .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(CosmoColors.cosmoAI))
+                                    .font(DS.caption)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, DS.space8 + 2)
+                                    .padding(.vertical, DS.space4)
+                                    .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(CosmoColors.cosmoAI))
                             }
                             .buttonStyle(.plain)
 
                             Button(action: { editingSkillId = nil }) {
                                 Text("Cancel")
-                                    .font(SanctuaryTypography.label)
-                                    .foregroundColor(SanctuaryColors.Text.muted)
+                                    .font(DS.caption)
+                                    .foregroundStyle(DS.textMuted)
                             }
                             .buttonStyle(.plain)
                         }
@@ -810,20 +810,20 @@ struct SkillsAndPromptsSettingsTab: View {
                     }) {
                         Image(systemName: "pencil")
                             .font(.system(size: 10))
-                            .foregroundColor(SanctuaryColors.Text.muted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 
                     Button(action: { deleteLearnedSkill(skill) }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 10))
-                            .foregroundColor(SanctuaryColors.Text.muted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
-        .padding(.vertical, SanctuaryLayout.Spacing.xs)
+        .padding(.vertical, DS.space4)
     }
 
     // MARK: - Section 6: Batch Analysis Reports
@@ -838,28 +838,28 @@ struct SkillsAndPromptsSettingsTab: View {
             )
 
             if isBatchAnalysisExpanded {
-                VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.md) {
+                VStack(alignment: .leading, spacing: DS.space12) {
                     Text("Pattern analysis reports generated from your swipe library.")
-                        .font(SanctuaryTypography.bodySmall)
-                        .foregroundColor(SanctuaryColors.Text.tertiary)
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
 
                     if promptStore.batchAnalysisReports.isEmpty {
-                        HStack(spacing: SanctuaryLayout.Spacing.sm) {
+                        HStack(spacing: DS.space8) {
                             Image(systemName: "info.circle")
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .foregroundStyle(DS.textMuted)
                             Text("Reports are generated automatically every 30 swipes per content type.")
-                                .font(SanctuaryTypography.bodySmall)
-                                .foregroundColor(SanctuaryColors.Text.muted)
+                                .font(DS.subheadline)
+                                .foregroundStyle(DS.textMuted)
                         }
-                        .padding(SanctuaryLayout.Spacing.sm)
-                        .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(SanctuaryColors.Glass.secondary))
+                        .padding(DS.space8)
+                        .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceHover))
                     } else {
                         batchReportsList
                     }
 
                     addReportButton
                 }
-                .padding(SanctuaryLayout.Spacing.md)
+                .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -869,24 +869,24 @@ struct SkillsAndPromptsSettingsTab: View {
     @ViewBuilder
     private var batchReportsList: some View {
         ForEach(promptStore.batchAnalysisReports) { report in
-            VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.sm) {
+            VStack(alignment: .leading, spacing: DS.space8) {
                 HStack {
                     Text(report.sourceType.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(SanctuaryColors.Text.primary)
+                        .foregroundStyle(DS.text)
 
                     Text("\(report.swipeCount) swipes")
                         .font(.system(size: 11))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(CosmoColors.cosmoAI.opacity(0.15)))
-                        .foregroundColor(CosmoColors.cosmoAI)
+                        .foregroundStyle(CosmoColors.cosmoAI)
 
                     Spacer()
 
                     Text(report.dateLabel)
                         .font(.system(size: 11))
-                        .foregroundColor(SanctuaryColors.Text.muted)
+                        .foregroundStyle(DS.textMuted)
 
                     Button(action: {
                         if editingReportId == report.id {
@@ -899,14 +899,14 @@ struct SkillsAndPromptsSettingsTab: View {
                     }) {
                         Image(systemName: editingReportId == report.id ? "checkmark.circle.fill" : "pencil")
                             .font(.system(size: 12))
-                            .foregroundColor(SanctuaryColors.Text.muted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
 
                     Button(action: { promptStore.deleteBatchAnalysisReport(report) }) {
                         Image(systemName: "trash")
                             .font(.system(size: 12))
-                            .foregroundColor(SanctuaryColors.Text.muted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
                 }
@@ -915,23 +915,23 @@ struct SkillsAndPromptsSettingsTab: View {
                     WritingEngineTextEditor(text: $editingReportContent)
                         .frame(height: 180)
                         .background(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                                .fill(SanctuaryColors.Glass.secondary)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
+                                .fill(DS.surfaceHover)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                                         .stroke(CosmoColors.cosmoAI.opacity(0.3), lineWidth: 1)
                                 )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusSmall))
                 } else {
                     Text(report.content.prefix(300) + (report.content.count > 300 ? "..." : ""))
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(SanctuaryColors.Text.secondary)
+                        .foregroundStyle(DS.textSecondary)
                         .lineLimit(6)
                 }
             }
-            .padding(SanctuaryLayout.Spacing.sm)
-            .background(RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm).fill(SanctuaryColors.Glass.secondary))
+            .padding(DS.space8)
+            .background(RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceHover))
         }
     }
 
@@ -948,18 +948,18 @@ struct SkillsAndPromptsSettingsTab: View {
                 editingReportContent = newReport.content
             }
         }) {
-            HStack(spacing: SanctuaryLayout.Spacing.xs) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 13))
                 Text("Add Report Manually")
-                    .font(SanctuaryTypography.label)
+                    .font(DS.caption)
             }
-            .foregroundColor(SanctuaryColors.Text.secondary)
-            .padding(.horizontal, SanctuaryLayout.Spacing.md)
-            .padding(.vertical, SanctuaryLayout.Spacing.sm)
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
             .background(
-                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                    .fill(SanctuaryColors.Glass.secondary)
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .fill(DS.surfaceHover)
             )
         }
         .buttonStyle(.plain)
@@ -971,7 +971,7 @@ struct SkillsAndPromptsSettingsTab: View {
     private func categoryBadge(_ category: String) -> some View {
         Text(category.replacingOccurrences(of: "_", with: " "))
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(CosmoColors.cosmoAI)
+            .foregroundStyle(CosmoColors.cosmoAI)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -985,7 +985,7 @@ struct SkillsAndPromptsSettingsTab: View {
         let color = intentColor(intent)
         Text(intent)
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(color)
+            .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -1000,7 +1000,7 @@ struct SkillsAndPromptsSettingsTab: View {
             HStack(spacing: 1) {
                 ForEach(0..<5, id: \.self) { i in
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Double(i) / 5.0 < confidence ? confidenceColor(confidence) : SanctuaryColors.Glass.borderSubtle)
+                        .fill(Double(i) / 5.0 < confidence ? confidenceColor(confidence) : DS.borderSubtle)
                         .frame(width: 6, height: 4)
                 }
             }
@@ -1009,18 +1009,18 @@ struct SkillsAndPromptsSettingsTab: View {
     }
 
     private func confidenceColor(_ confidence: Double) -> Color {
-        if confidence >= 0.8 { return SanctuaryColors.Semantic.success }
+        if confidence >= 0.8 { return DS.green }
         if confidence >= 0.5 { return .orange }
-        return SanctuaryColors.Semantic.error
+        return DS.red
     }
 
     @ViewBuilder
     private func enforcementBadge(_ enforcement: LessonEnforcement) -> some View {
         let isHard = enforcement == .hard
-        let color: Color = isHard ? .red : SanctuaryColors.Text.muted
+        let color: Color = isHard ? .red : DS.textMuted
         Text(isHard ? "Hard" : "Advisory")
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(color)
+            .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
@@ -1037,7 +1037,7 @@ struct SkillsAndPromptsSettingsTab: View {
         case "brainstorm": return .green
         case "analyze": return .cyan
         case "reflect": return .pink
-        default: return SanctuaryColors.Text.muted
+        default: return DS.textMuted
         }
     }
 
@@ -1113,19 +1113,19 @@ struct SkillsAndPromptsSettingsTab: View {
 
     @ViewBuilder
     private func sanctuaryButtons(onSave: @escaping () -> Void, onReset: @escaping () -> Void, isDirty: Bool) -> some View {
-        HStack(spacing: SanctuaryLayout.Spacing.md) {
+        HStack(spacing: DS.space12) {
             Button(action: onSave) {
-                HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 12))
                     Text("Save Changes")
-                        .font(SanctuaryTypography.label)
+                        .font(DS.caption)
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                .foregroundStyle(.white)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
                 .background(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
                         .fill(isDirty ? CosmoColors.cosmoAI : CosmoColors.cosmoAI.opacity(0.3))
                 )
             }
@@ -1133,18 +1133,18 @@ struct SkillsAndPromptsSettingsTab: View {
             .disabled(!isDirty)
 
             Button(action: onReset) {
-                HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "arrow.counterclockwise")
                         .font(.system(size: 12))
                     Text("Reset to Default")
-                        .font(SanctuaryTypography.label)
+                        .font(DS.caption)
                 }
-                .foregroundColor(SanctuaryColors.Text.secondary)
-                .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                .padding(.vertical, SanctuaryLayout.Spacing.sm)
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
                 .background(
-                    RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
-                        .fill(SanctuaryColors.Glass.secondary)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall)
+                        .fill(DS.surfaceHover)
                 )
             }
             .buttonStyle(.plain)
@@ -1166,15 +1166,15 @@ struct SkillsAndPromptsSettingsTab: View {
                 isExpanded.wrappedValue.toggle()
             }
         }) {
-            HStack(spacing: SanctuaryLayout.Spacing.sm) {
+            HStack(spacing: DS.space8) {
                 Image(systemName: icon)
                     .font(.system(size: 14))
-                    .foregroundColor(CosmoColors.cosmoAI)
+                    .foregroundStyle(CosmoColors.cosmoAI)
                     .frame(width: 20)
 
                 Text(title)
-                    .font(SanctuaryTypography.titleSmall)
-                    .foregroundColor(SanctuaryColors.Text.primary)
+                    .font(DS.title3)
+                    .foregroundStyle(DS.text)
 
                 if let color = statusColor {
                     Circle()
@@ -1186,26 +1186,26 @@ struct SkillsAndPromptsSettingsTab: View {
 
                 Text(subtitle)
                     .font(.system(size: 12))
-                    .foregroundColor(SanctuaryColors.Text.muted)
+                    .foregroundStyle(DS.textMuted)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(SanctuaryColors.Text.muted)
+                    .foregroundStyle(DS.textMuted)
                     .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
             }
-            .padding(.horizontal, SanctuaryLayout.Spacing.md)
-            .padding(.vertical, SanctuaryLayout.Spacing.sm + 2)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8 + 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private var glassCard: some View {
-        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-            .fill(SanctuaryColors.Glass.primary)
+        RoundedRectangle(cornerRadius: DS.radiusMedium)
+            .fill(DS.surfaceHover)
             .overlay(
-                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.card)
-                    .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
             )
     }
 }

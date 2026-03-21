@@ -515,80 +515,13 @@ class CosmoCore: ObservableObject {
         }
     }
 
-    // MARK: - Schedule Handler
+    // MARK: - Schedule Handler (Legacy scheduler removed)
     private func handleSchedule(details: String) async -> CosmoResponse {
-        print("📅 Cosmo: Scheduling (local AI)...")
-
-        // Use InstantParser + LocalLLM for parsing
-        let parser = InstantParser()
-        let parsed = parser.parse(details)
-
-        let formatter = ISO8601DateFormatter()
-        let now = Date()
-        let oneHourLater = now.addingTimeInterval(3600)
-
-        let eventTitle: String
-        let startTimeStr: String
-        let endTimeStr: String
-        let eventIsAllDay: Bool
-
-        if let p = parsed {
-            eventTitle = p.title
-            startTimeStr = formatter.string(from: p.startTime)
-            endTimeStr = formatter.string(from: p.endTime)
-            eventIsAllDay = p.isAllDay
-        } else {
-            eventTitle = "New Event"
-            startTimeStr = formatter.string(from: now)
-            endTimeStr = formatter.string(from: oneHourLater)
-            eventIsAllDay = false
-        }
-
-        do {
-            let startDate = ISO8601DateFormatter().date(from: startTimeStr) ?? Date()
-            let endDate = ISO8601DateFormatter().date(from: endTimeStr) ?? startDate.addingTimeInterval(3600)
-            let durationMins = Int((endDate.timeIntervalSince(startDate)) / 60)
-
-            var block = ScheduleBlock.task(
-                title: eventTitle,
-                startTime: startDate,
-                durationMinutes: durationMins
-            )
-            block.endTime = endDate
-            block.isAllDay = eventIsAllDay
-            block.reminderMinutes = 15
-
-            // Capture block by value for async context
-            let blockToSave = block
-            try await database.asyncWrite { db in
-                let mutableBlock = blockToSave
-                try mutableBlock.insert(db)
-            }
-
-            return CosmoResponse(
-                message: "📅 Scheduled: **\(blockToSave.title)**\n\nTime: \(formatBlockTime(blockToSave))",
-                entities: [EntityReference(type: .calendar, id: blockToSave.databaseId ?? -1, title: blockToSave.title)],
-                suggestedActions: [.openCalendar]
-            )
-
-        } catch {
-            return CosmoResponse(
-                message: "❌ Couldn't schedule: \(error.localizedDescription)",
-                entities: [],
-                suggestedActions: []
-            )
-        }
-    }
-
-    private func formatBlockTime(_ block: ScheduleBlock) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-
-        if let date = block.startTime {
-            return formatter.string(from: date)
-        }
-        return "Unscheduled"
+        CosmoResponse(
+            message: "Scheduling is not yet available in this version.",
+            entities: [],
+            suggestedActions: []
+        )
     }
 
     // MARK: - Navigation Handler

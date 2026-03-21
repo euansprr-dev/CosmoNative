@@ -30,6 +30,9 @@ struct ContentFocusModeView: View {
     /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
     @State private var localDraftContent: String = ""
 
+    /// Typewriter mode — cursor stays vertically centered while typing
+    @AppStorage("typewriterMode") private var typewriterMode = false
+
     /// Tracks the last AI-generated draft content so we can detect user edits for lesson extraction
     @State private var lastAIGeneratedDraft: String?
 
@@ -217,8 +220,8 @@ struct ContentFocusModeView: View {
                         Spacer()
                         Button(action: onClose) {
                             Image(systemName: "xmark")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.buttonText)
+                                .foregroundStyle(DS.textMuted)
                                 .frame(width: 28, height: 28)
                                 .background(DS.border, in: Circle())
                         }
@@ -237,8 +240,8 @@ struct ContentFocusModeView: View {
                     HStack {
                         Spacer()
                         Text("+\(xp) XP")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(DS.green)
+                            .font(DS.title2)
+                            .foregroundStyle(DS.green)
                             .shadow(color: DS.green.opacity(0.5), radius: 8)
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.5).combined(with: .opacity).combined(with: .move(edge: .bottom)),
@@ -516,7 +519,7 @@ struct ContentFocusModeView: View {
                         if !viewModel.state.contentDescription.isEmpty {
                             Text(viewModel.state.contentDescription)
                                 .font(DS.body)
-                                .foregroundColor(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondary)
                                 .lineLimit(3)
                                 .padding(.bottom, 20)
                         }
@@ -538,11 +541,13 @@ struct ContentFocusModeView: View {
                         // Draft editor — NSTextView for selection tracking
                         CosmoDocumentEditor(
                             document: $draftDocument,
+                            fontSize: 17,
                             placeholder: "Start writing...",
                             allowSlashCommands: true,
                             allowMentions: true,
                             allowSelectionMenu: true,
                             allowImages: true,
+                            typewriterMode: typewriterMode,
                             polishHighlights: isPolishModeActive ? polishAnalysis : nil,
                             onSelectionChanged: { snapshot in
                                 handleSelectionChange(
@@ -625,19 +630,19 @@ struct ContentFocusModeView: View {
                         .scaleEffect(0.8)
                         .tint(DS.accent)
                     Text("Opus is writing your draft...")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .padding(.vertical, 24)
             } else {
                 Button(action: generateAIDraft) {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DS.caption)
                         Text("Generate Draft with Opus")
                             .font(DS.buttonText)
                     }
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(
@@ -654,8 +659,8 @@ struct ContentFocusModeView: View {
 
             if let error = draftGenerationError {
                 Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange.opacity(0.8))
+                    .font(DS.footnote)
+                    .foregroundStyle(.orange.opacity(0.8))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -714,20 +719,20 @@ struct ContentFocusModeView: View {
     private var polishToggleLabel: some View {
         HStack(spacing: 5) {
             Image(systemName: "sparkles")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
             Text("Polish")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption)
         }
-        .foregroundColor(isPolishModeActive ? Color(hex: "#34D399") : DS.textSecondary)
+        .foregroundStyle(isPolishModeActive ? DS.green : DS.textSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(isPolishModeActive ? Color(hex: "#34D399").opacity(0.15) : DS.surface)
+                .fill(isPolishModeActive ? DS.green.opacity(0.15) : DS.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .stroke(isPolishModeActive ? Color(hex: "#34D399").opacity(0.3) : DS.border, lineWidth: 1)
+                .stroke(isPolishModeActive ? DS.green.opacity(0.3) : DS.border, lineWidth: 1)
         )
     }
 
@@ -775,16 +780,16 @@ struct ContentFocusModeView: View {
             // Header
             HStack {
                 Image(systemName: "sparkles")
-                    .foregroundColor(DS.accent)
-                    .font(.system(size: 12))
+                    .foregroundStyle(DS.accent)
+                    .font(DS.subheadline)
                 Text("AI Suggestion")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Button(action: { dismissInlineAI() }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
             }
@@ -798,8 +803,8 @@ struct ContentFocusModeView: View {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.7).tint(DS.accent)
                     Text("Generating...")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
@@ -808,15 +813,15 @@ struct ContentFocusModeView: View {
             } else if let error = inlineAssistant.error {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 16))
-                        .foregroundColor(.orange)
+                        .font(DS.title3)
+                        .foregroundStyle(.orange)
                     Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
                     Button(action: { dismissInlineAI() }) {
                         Text("Dismiss")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.accent)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.accent)
                     }
                     .buttonStyle(.plain)
                 }
@@ -841,11 +846,11 @@ struct ContentFocusModeView: View {
             // Action tag
             HStack(spacing: 4) {
                 Image(systemName: result.action.iconName)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
                 Text(result.action.displayName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -857,8 +862,8 @@ struct ContentFocusModeView: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 ScrollView {
                     Text(continuation)
-                        .font(.system(size: 11))
-                        .foregroundColor(.green.opacity(0.9))
+                        .font(DS.footnote)
+                        .foregroundStyle(.green.opacity(0.9))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 120)
@@ -882,10 +887,10 @@ struct ContentFocusModeView: View {
             HStack(spacing: 8) {
                 Button(action: { acceptInlineResult(result) }) {
                     HStack(spacing: 3) {
-                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
-                        Text("Accept").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "checkmark").font(DS.caption2)
+                        Text("Accept").font(DS.caption)
                     }
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 14).padding(.vertical, 6)
                     .background(RoundedRectangle(cornerRadius: 6).fill(DS.accent))
                 }
@@ -893,10 +898,10 @@ struct ContentFocusModeView: View {
 
                 Button(action: { dismissInlineAI() }) {
                     HStack(spacing: 3) {
-                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
-                        Text("Reject").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "xmark").font(DS.caption2)
+                        Text("Reject").font(DS.caption)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 14).padding(.vertical, 6)
                     .background(RoundedRectangle(cornerRadius: 6).fill(DS.border))
                 }
@@ -1099,11 +1104,11 @@ struct ContentFocusModeView: View {
                 Button(action: onClose) {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(DS.border, in: Capsule())
@@ -1113,8 +1118,8 @@ struct ContentFocusModeView: View {
 
             // Editable title
             Text(editableTitle.isEmpty ? "Content title..." : editableTitle)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(editableTitle.isEmpty ? DS.textMuted : DS.text)
+                .font(DS.headline)
+                .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.text)
                 .lineLimit(1)
                 .frame(maxWidth: layoutMode == .compact ? 180 : 300, alignment: .leading)
 
@@ -1122,15 +1127,15 @@ struct ContentFocusModeView: View {
             if layoutMode != .compact {
                 HStack(spacing: 4) {
                     Image(systemName: "doc.text.fill")
-                        .font(.system(size: 10))
+                        .font(DS.caption2)
                     Text("Content")
-                        .font(.system(size: 10, weight: .medium))
-                        .tracking(OnyxTypography.labelTracking)
+                        .font(DS.caption2)
+                        .tracking(0.5)
                 }
-                .foregroundColor(OnyxColors.Dimension.creative)
+                .foregroundStyle(DS.entityContent)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(OnyxColors.Dimension.creative.opacity(0.12), in: Capsule())
+                .background(DS.entityContent.opacity(0.12), in: Capsule())
             }
 
             Spacer()
@@ -1141,8 +1146,8 @@ struct ContentFocusModeView: View {
                 let words = textToCount.split(whereSeparator: \.isWhitespace).count
                 let chars = textToCount.count
                 Text("\(words) words · \(chars) chars")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(DS.border, in: Capsule())
@@ -1156,7 +1161,7 @@ struct ContentFocusModeView: View {
                     }
                 } label: {
                     Image(systemName: "sidebar.left")
-                        .font(.system(size: 13))
+                        .font(DS.callout)
                         .foregroundStyle(sidebarVisible ? DS.entityContent : DS.textSecondary)
                         .padding(8)
                         .background(

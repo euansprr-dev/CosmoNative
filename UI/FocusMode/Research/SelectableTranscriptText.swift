@@ -223,5 +223,4 @@ struct SelectableTranscriptText: NSViewRepresentable {
     .padding(20)
     .frame(width: 340, height: 280)
     .background(DS.bg)
-    .preferredColorScheme(.light)
 }

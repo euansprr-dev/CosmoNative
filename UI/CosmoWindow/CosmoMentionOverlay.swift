@@ -45,7 +45,7 @@ struct CosmoMentionOverlay: View {
 
             resultsSection
         }
-        .frame(maxHeight: 340)
+        .frame(maxHeight: 420)
         .background(DS.surface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(

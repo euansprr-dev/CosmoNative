@@ -146,11 +146,11 @@ public struct XPSummaryOverlay: View {
         VStack(spacing: 12) {
             Text(greeting)
                 .font(.system(size: 32, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
 
             Text("Here's your progress from yesterday")
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.7))
         }
     }
 
@@ -170,7 +170,7 @@ public struct XPSummaryOverlay: View {
         VStack(spacing: 16) {
             Text("XP EARNED")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
                 .tracking(2)
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -180,12 +180,12 @@ public struct XPSummaryOverlay: View {
 
                 Text("\(displayedXP)")
                     .font(.system(size: 72, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .contentTransition(.numericText())
 
                 Text("XP")
                     .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundStyle(.white.opacity(0.7))
             }
 
             // Bonus indicator
@@ -207,7 +207,7 @@ public struct XPSummaryOverlay: View {
         VStack(spacing: 12) {
             Text("BY DIMENSION")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
                 .tracking(1.5)
 
             HStack(spacing: 16) {
@@ -307,7 +307,7 @@ public struct XPSummaryOverlay: View {
         VStack(spacing: 12) {
             Text("BADGES UNLOCKED")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
                 .tracking(1.5)
 
             HStack(spacing: 16) {
@@ -339,12 +339,12 @@ public struct XPSummaryOverlay: View {
 
                     Text("47")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                 }
 
                 Text("Day Streak")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundStyle(.white.opacity(0.7))
             }
             .padding(16)
             .background(
@@ -376,7 +376,7 @@ public struct XPSummaryOverlay: View {
         VStack(spacing: 12) {
             Text("TODAY'S FOCUS")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
                 .tracking(1.5)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -391,11 +391,11 @@ public struct XPSummaryOverlay: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Primary Quest")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundStyle(.white.opacity(0.5))
 
                         Text("Complete 60 min deep work")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                     }
 
                     Spacer()
@@ -413,7 +413,7 @@ public struct XPSummaryOverlay: View {
 
                     Text("Your readiness is 85% - great day for peak performance!")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundStyle(.white.opacity(0.7))
                 }
             }
             .padding(16)
@@ -575,11 +575,11 @@ struct DimensionXPChip: View {
 
             Text("+\(xp)")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
 
             Text(dimension)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
         }
         .frame(width: 80)
         .padding(.vertical, 12)
@@ -603,12 +603,12 @@ struct LevelUpCard: View {
         VStack(spacing: 8) {
             Text(dimension)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.7))
 
             HStack(spacing: 8) {
                 Text("\(previousLevel)")
                     .font(.system(size: isMainLevel ? 28 : 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.5))
 
                 Image(systemName: "arrow.right")
                     .font(.system(size: 12, weight: .bold))
@@ -616,7 +616,7 @@ struct LevelUpCard: View {
 
                 Text("\(newLevel)")
                     .font(.system(size: isMainLevel ? 28 : 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
         }
         .padding(.vertical, 12)
@@ -664,7 +664,7 @@ struct BadgeUnlockCard: View {
 
             Text(name)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
         }
         .frame(width: 100)

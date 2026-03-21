@@ -8,6 +8,11 @@ import SwiftUI
 
 // MARK: - Data Structures
 
+/// Trend direction for a Sanctuary dimension over a given period.
+enum DimensionTrend: String, Codable, Equatable {
+    case rising, falling, stable
+}
+
 struct CrossInsight: Identifiable, Codable, Equatable {
     var id: String { "\(source)-\(target)" }
     let source: String

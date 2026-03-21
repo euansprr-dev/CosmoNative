@@ -97,7 +97,7 @@ struct ContentPipelineBar: View {
                     .shadow(color: DS.accentGlow, radius: compact ? 6 : 12, x: 0, y: 0)
                 Image(systemName: phase.iconName)
                     .font(.system(size: compact ? 8 : 10, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             }
         } else if phaseIndex(phase) <= phaseIndex(maxPhase) {
             // Completed phase: DS.green fill, checkmark, 8px green glow
@@ -108,7 +108,7 @@ struct ContentPipelineBar: View {
                     .shadow(color: DS.greenGlow, radius: compact ? 4 : 8, x: 0, y: 0)
                 Image(systemName: "checkmark")
                     .font(.system(size: compact ? 6 : 8, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             }
         } else {
             // Inactive phase: transparent with 1px DS.textMuted border, number inside

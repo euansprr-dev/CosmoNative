@@ -121,8 +121,8 @@ enum RelatedContentTier: String, Codable, Sendable, CaseIterable {
 
     var accentColor: Color {
         switch self {
-        case .primary: return Color(hex: "#FFD700")   // Gold
-        case .secondary: return Color(hex: "#C0C0C0") // Silver
+        case .primary: return DS.orange              // Gold tier
+        case .secondary: return DS.textMuted.opacity(0.6) // Silver tier
         case .tertiary: return DS.textMuted
         }
     }

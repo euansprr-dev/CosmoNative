@@ -102,7 +102,7 @@ struct CosmoAIFocusModeView: View {
                     .foregroundColor(DS.accent)
                 Text("Cosmo AI")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.text)
             }
 
             Spacer()
@@ -265,7 +265,7 @@ struct CosmoAIFocusModeView: View {
                         TextField("", text: $inputText)
                             .textFieldStyle(.plain)
                             .font(.system(size: 14))
-                            .foregroundColor(.white)
+                            .foregroundStyle(DS.text)
                             .focused($isInputFocused)
                             .onSubmit {
                                 sendCurrentMessage()

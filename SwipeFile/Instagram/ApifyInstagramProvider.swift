@@ -284,10 +284,36 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
         let videoUrl = (json["videoUrl"] as? String)
             .flatMap { URL(string: $0) }
 
-        // Carousel count
+        // Carousel count + items
         let carouselCount: Int?
+        var carouselItems: [CarouselItem]?
         if let children = json["childPosts"] as? [[String: Any]] {
             carouselCount = children.count
+            var items: [CarouselItem] = []
+            for (index, child) in children.enumerated() {
+                let childType = (child["type"] as? String ?? "").lowercased()
+                let isVideo = childType == "video"
+                let mediaType: CarouselMediaType = isVideo ? .video : .image
+
+                // Apify provides displayUrl for images, videoUrl for videos
+                let urlStr = isVideo
+                    ? (child["videoUrl"] as? String ?? child["displayUrl"] as? String)
+                    : (child["displayUrl"] as? String)
+                guard let urlStr, let mediaURL = URL(string: urlStr) else { continue }
+
+                let thumbStr = child["displayUrl"] as? String
+                let thumbURL = thumbStr.flatMap { URL(string: $0) }
+
+                items.append(CarouselItem(
+                    index: index,
+                    mediaType: mediaType,
+                    mediaURL: mediaURL,
+                    thumbnailURL: thumbURL
+                ))
+            }
+            if !items.isEmpty {
+                carouselItems = items
+            }
         } else if let count = json["imagesCount"] as? Int, count > 1 {
             carouselCount = count
         } else {
@@ -313,6 +339,7 @@ final class ApifyInstagramProvider: InstagramDataProvider, @unchecked Sendable {
             engagement: engagement,
             hashtags: hashtags,
             carouselMediaCount: carouselCount,
+            carouselItems: carouselItems,
             locationName: locationName,
             ownerUsername: owner
         )

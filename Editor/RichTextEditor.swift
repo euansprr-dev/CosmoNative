@@ -30,6 +30,9 @@ struct RichTextEditor: View {
     var allowImages: Bool = true
     var singleLine: Bool = false
     var baseFontWeight: NSFont.Weight = .regular
+    var typewriterMode: Bool = false
+    var isEditable: Bool = true
+    var scrollsInternally: Bool = false
     var polishHighlights: WritingAnalysis? = nil
     var textAlignment: NSTextAlignment = .natural
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
@@ -64,6 +67,9 @@ struct RichTextEditor: View {
         allowImages: Bool = true,
         singleLine: Bool = false,
         baseFontWeight: NSFont.Weight = .regular,
+        typewriterMode: Bool = false,
+        isEditable: Bool = true,
+        scrollsInternally: Bool = false,
         polishHighlights: WritingAnalysis? = nil,
         textAlignment: NSTextAlignment = .natural,
         onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil,
@@ -84,6 +90,9 @@ struct RichTextEditor: View {
         self.allowImages = allowImages
         self.singleLine = singleLine
         self.baseFontWeight = baseFontWeight
+        self.typewriterMode = typewriterMode
+        self.isEditable = isEditable
+        self.scrollsInternally = scrollsInternally
         self.polishHighlights = polishHighlights
         self.textAlignment = textAlignment
         self.onSelectionChanged = onSelectionChanged
@@ -113,6 +122,9 @@ struct RichTextEditor: View {
                     baseFontWeight: baseFontWeight,
                     polishHighlights: polishHighlights,
                     textAlignment: textAlignment,
+                    typewriterMode: typewriterMode,
+                    isEditable: isEditable,
+                    scrollsInternally: scrollsInternally,
                     onSlashCommand: { position in
                         guard allowSlashCommands else { return }
                         slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 330), in: geometry.size)
@@ -154,7 +166,7 @@ struct RichTextEditor: View {
                 if plainText.isEmpty {
                     Text(placeholder)
                         .font(.system(size: fontSize, weight: swiftUIFontWeight))
-                        .foregroundColor(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
+                        .foregroundStyle(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
                         .padding(.top, editorInsets.top)
                         .padding(.leading, editorInsets.leading)
                         .allowsHitTesting(false)

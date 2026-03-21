@@ -34,7 +34,8 @@ struct GlassSurface: ViewModifier {
     }
 
     func body(content: Self.Content) -> some View {
-        content
+        let isDark = DS.palette.isDark
+        return content
             // Layer 1: Background (solid for cards, material for overlays)
             .background(backgroundLayer)
             // Layer 2: Tint overlay
@@ -42,15 +43,15 @@ struct GlassSurface: ViewModifier {
                 tint.opacity(intensity),
                 in: RoundedRectangle(cornerRadius: cornerRadius)
             )
-            // Layer 3: Gradient border highlight
+            // Layer 3: Gradient border highlight (theme-aware)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(
                         LinearGradient(
                             colors: [
-                                .white.opacity(0.6),
-                                .white.opacity(0.2),
-                                tint.opacity(0.3)
+                                .white.opacity(isDark ? 0.12 : 0.6),
+                                .white.opacity(isDark ? 0.05 : 0.2),
+                                tint.opacity(isDark ? 0.15 : 0.3)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -68,6 +69,7 @@ struct GlassSurface: ViewModifier {
 
     @ViewBuilder
     private var backgroundLayer: some View {
+        let isDark = DS.palette.isDark
         if useMaterial {
             // Material for overlays/chrome only
             RoundedRectangle(cornerRadius: cornerRadius)
@@ -80,7 +82,7 @@ struct GlassSurface: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.5), tint.opacity(0.03)],
+                            colors: [Color.white.opacity(isDark ? 0.05 : 0.5), tint.opacity(isDark ? 0.02 : 0.03)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -164,21 +166,22 @@ struct FrostedGlass: ViewModifier {
     }
 
     func body(content: Self.Content) -> some View {
-        content
+        let isDark = DS.palette.isDark
+        return content
             .background(
                 ZStack {
                     // Frosted base
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(.ultraThinMaterial)
 
-                    // White overlay for opacity
+                    // White overlay for opacity (theme-aware)
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(Color.white.opacity(opacity - 0.5))
+                        .fill(Color.white.opacity(isDark ? 0.03 : (opacity - 0.5)))
                 }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                    .stroke(Color.white.opacity(isDark ? 0.1 : 0.5), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.1), radius: 20, y: 10)
     }

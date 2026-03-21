@@ -18,6 +18,41 @@ import Foundation
 import GRDB
 import Combine
 
+// MARK: - Stub Types (Sanctuary system removed)
+
+/// Minimal stub for CorrelationInsight (CausalityEngine deleted with Sanctuary)
+public struct CorrelationInsight: Sendable {
+    public let uuid: String
+    public let sourceMetric: String
+    public let targetMetric: String
+    public let coefficient: Double
+    public let effectSize: Double
+    public let occurrences: Int
+    public let humanDescription: String
+    public let actionableAdvice: String?
+}
+
+/// Minimal stub for CausalityEngine (deleted with Sanctuary)
+public class CausalityEngine: @unchecked Sendable {
+    public func getActiveInsights() async throws -> [CorrelationInsight] {
+        return []
+    }
+}
+
+/// Minimal stub for SanctuaryOrchestrator (deleted with Sanctuary)
+public class SanctuaryOrchestrator: @unchecked Sendable {
+    public static let shared = SanctuaryOrchestrator()
+    public func runAnalysis(trigger: CorrelationTrigger, timeframeDays: Int) async throws -> CorrelationAnalysisResult {
+        return CorrelationAnalysisResult(
+            correlations: [],
+            trigger: trigger,
+            analyzedAt: Date().ISO8601Format(),
+            dimensionsAnalyzed: [],
+            dataPointsConsidered: 0
+        )
+    }
+}
+
 // MARK: - Insight Lifecycle State
 
 /// Lifecycle state of an insight - determines display priority and styling

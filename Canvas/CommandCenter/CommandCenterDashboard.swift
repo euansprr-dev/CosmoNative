@@ -17,7 +17,7 @@ struct CommandCenterDashboard: View {
             centerColumn
             rightColumn
         }
-        .padding(24)
+        .padding(DS.space24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
             await viewModel.loadAreas()
@@ -32,13 +32,13 @@ struct CommandCenterDashboard: View {
     private var leftColumn: some View {
         CommandCenterSidebar(viewModel: viewModel)
             .frame(width: 240)
-            .padding(.trailing, 24)
+            .padding(.trailing, DS.space24)
     }
 
     // MARK: - Center Column — Timer + Content (Smart List or Project)
 
     private var centerColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             // Greeting
             greetingSection
 
@@ -85,7 +85,7 @@ struct CommandCenterDashboard: View {
             )
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, DS.space16)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.keyboardAction"))) { notification in
             handleKeyboardAction(notification)
         }
@@ -208,7 +208,7 @@ struct CommandCenterDashboard: View {
     // MARK: - Right Column (280px) — Context-Sensitive Panel
 
     private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             // Context-sensitive tab bar
             HStack(spacing: 0) {
                 if selectedTaskForDetail != nil {
@@ -217,10 +217,10 @@ struct CommandCenterDashboard: View {
                 rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
                 rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
             }
-            .padding(2)
-            .background(DS.surface, in: RoundedRectangle(cornerRadius: 10))
+            .padding(DS.space2)
+            .background(DS.surface, in: .rect(cornerRadius: DS.radiusMedium))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .stroke(DS.borderSubtle, lineWidth: 1)
             )
 
@@ -245,7 +245,7 @@ struct CommandCenterDashboard: View {
             quickStats
         }
         .frame(width: 280)
-        .padding(.leading, 24)
+        .padding(.leading, DS.space24)
     }
 
     private enum RightColumnTab {
@@ -281,16 +281,16 @@ struct CommandCenterDashboard: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
             }
             .foregroundStyle(isActive ? DS.text : DS.textMuted)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(isActive ? DS.surfaceElevated : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.vertical, DS.space6)
+            .background(isActive ? DS.surfaceElevated : Color.clear, in: .rect(cornerRadius: DS.radiusSmall))
         }
         .buttonStyle(.plain)
     }
@@ -312,16 +312,16 @@ struct CommandCenterDashboard: View {
     // MARK: - Greeting
 
     private var greetingSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.space4) {
             Text(viewModel.greetingText)
                 .font(DS.pageTitle)
                 .tracking(-0.3)
                 .foregroundStyle(DS.text)
 
-            HStack(spacing: 6) {
+            HStack(spacing: DS.space6) {
                 Circle()
                     .fill(DS.accent.opacity(0.5))
-                    .frame(width: 4, height: 4)
+                    .frame(width: DS.space4, height: DS.space4)
 
                 Text(viewModel.dateText)
                     .font(DS.cardMeta)
@@ -333,12 +333,12 @@ struct CommandCenterDashboard: View {
     // MARK: - Quick Stats
 
     private var quickStats: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: DS.space16) {
             statPill(
                 icon: "star.fill",
                 value: "Lv.\(viewModel.xpProgress.level)",
                 detail: "\(viewModel.xpProgress.currentXP) XP",
-                color: Color(hex: "D97706")
+                color: DS.orange
             )
 
             if viewModel.currentStreak > 0 {
@@ -350,26 +350,26 @@ struct CommandCenterDashboard: View {
                 )
             }
         }
-        .padding(.top, 4)
+        .padding(.top, DS.space4)
     }
 
     @ViewBuilder
     private func statPill(icon: String, value: String, detail: String, color: Color) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.space6) {
             Image(systemName: icon)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(color)
 
             Text(value)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.cardMeta)
                 .foregroundStyle(DS.text)
 
             Text(detail)
-                .font(.system(size: 10))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space4)
         .background(DS.surface, in: Capsule())
     }
 }

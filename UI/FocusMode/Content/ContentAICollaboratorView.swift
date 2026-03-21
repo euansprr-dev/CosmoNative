@@ -77,7 +77,7 @@ struct ContentAICollaboratorView: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
 
             Text("AI COLLABORATOR")
                 .dsSectionLabel()
@@ -91,7 +91,7 @@ struct ContentAICollaboratorView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 24, height: 24)
                     .background(DS.border, in: Circle())
             }
@@ -152,7 +152,7 @@ struct ContentAICollaboratorView: View {
                 Text("Run Full Scorecard")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(DS.accent)
+            .foregroundStyle(DS.accent)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
@@ -193,7 +193,7 @@ struct ContentAICollaboratorView: View {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
         }
-        .foregroundColor(DS.accent)
+        .foregroundStyle(DS.accent)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
@@ -257,11 +257,11 @@ struct ContentAICollaboratorView: View {
         VStack(spacing: 10) {
             Image(systemName: "sparkles")
                 .font(.system(size: 24))
-                .foregroundColor(DS.accent.opacity(0.3))
+                .foregroundStyle(DS.accent.opacity(0.3))
 
             Text("Ask me anything about your content")
                 .font(.system(size: 12))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -272,11 +272,11 @@ struct ContentAICollaboratorView: View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.orange)
+                .foregroundStyle(.orange)
 
             Text(error)
                 .font(.system(size: 11))
-                .foregroundColor(.orange.opacity(0.9))
+                .foregroundStyle(.orange.opacity(0.9))
                 .lineLimit(2)
         }
         .padding(10)
@@ -316,7 +316,7 @@ struct ContentAICollaboratorView: View {
                         Text("\(completedSteps.count) action\(completedSteps.count == 1 ? "" : "s") completed")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
 
@@ -333,7 +333,7 @@ struct ContentAICollaboratorView: View {
                         .tint(DS.textSecondary)
                     Text(active.label)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .transition(.opacity)
             } else {
@@ -347,11 +347,11 @@ struct ContentAICollaboratorView: View {
             } label: {
                 Text("Cancel")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(DS.surfaceElevated)
-                    .cornerRadius(DS.radiusSmall)
+                    .clipShape(.rect(cornerRadius: DS.radiusSmall))
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusSmall)
                             .stroke(DS.border, lineWidth: 1)
@@ -370,10 +370,10 @@ struct ContentAICollaboratorView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                     Text(step.label)
                         .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
         }
@@ -387,11 +387,11 @@ struct ContentAICollaboratorView: View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.uturn.backward.circle.fill")
                 .font(.system(size: 14))
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
 
             Text(state.undoToastMessage)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
@@ -400,7 +400,7 @@ struct ContentAICollaboratorView: View {
             }) {
                 Text("Undo")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
                     .background(
@@ -421,7 +421,7 @@ struct ContentAICollaboratorView: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -448,7 +448,7 @@ struct ContentAICollaboratorView: View {
             TextField("Ask about your content...", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .lineLimit(1...4)
                 .focused($isInputFocused)
                 .onSubmit {
@@ -463,7 +463,7 @@ struct ContentAICollaboratorView: View {
                 } label: {
                     Image(systemName: "stop.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(.red.opacity(0.8))
+                        .foregroundStyle(.red.opacity(0.8))
                 }
                 .buttonStyle(.plain)
                 .help("Cancel request")
@@ -473,7 +473,7 @@ struct ContentAICollaboratorView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(
+                        .foregroundStyle(
                             inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? DS.textMuted
                                 : DS.accent
@@ -514,7 +514,7 @@ struct ContentAICollaboratorView: View {
 
             Text(scorecardEngine.evaluationProgress.isEmpty ? "Evaluating draft..." : scorecardEngine.evaluationProgress)
                 .font(.system(size: 12))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -526,14 +526,14 @@ struct ContentAICollaboratorView: View {
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.doc.horizontal")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                 Text("Content Scorecard")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text("Confidence: \(scorecard.overallConfidence)%")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             // Score circles row
@@ -592,12 +592,12 @@ struct ContentAICollaboratorView: View {
                     .rotationEffect(.degrees(-90))
                 Text(String(format: "%.1f", score))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
             }
             .shadow(color: scoreColor(category).opacity(0.15), radius: 8)
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 
@@ -615,11 +615,11 @@ struct ContentAICollaboratorView: View {
             HStack {
                 Text("Voice Match")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                 Spacer()
                 Text("\(Int(percentage))%")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -674,7 +674,7 @@ struct ContentAICollaboratorView: View {
                 Text(label)
                     .font(.system(size: 10, weight: .semibold))
             }
-            .foregroundColor(DS.accent)
+            .foregroundStyle(DS.accent)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
@@ -694,7 +694,7 @@ struct ContentAICollaboratorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Voice Drifts (\(drifts.count))")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             ForEach(drifts.prefix(3)) { drift in
                 voiceDriftRow(drift)
@@ -706,13 +706,13 @@ struct ContentAICollaboratorView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Line \(drift.lineNumber): \(drift.issue)")
                 .font(.system(size: 10))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(2)
 
             HStack(spacing: 6) {
                 Text("\"\(drift.draftText.prefix(40))...\"")
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
                 Spacer()
                 Button {
@@ -720,7 +720,7 @@ struct ContentAICollaboratorView: View {
                 } label: {
                     Text("Fix")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(DS.accent)
+                        .foregroundStyle(DS.accent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
@@ -768,7 +768,7 @@ struct ContentAICollaboratorView: View {
             Text("\(Int(alignment.alignmentScore))%")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
     }
 
     @ViewBuilder
@@ -778,11 +778,11 @@ struct ContentAICollaboratorView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("DRAFT")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                     ForEach(alignment.draftBeats, id: \.self) { beat in
                         Text(beat)
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textSecondary)
+                            .foregroundStyle(DS.textSecondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -790,11 +790,11 @@ struct ContentAICollaboratorView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RECOMMENDED")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                     ForEach(alignment.recommendedBeats, id: \.self) { beat in
                         Text(beat)
                             .font(.system(size: 10))
-                            .foregroundColor(DS.accent.opacity(0.7))
+                            .foregroundStyle(DS.accent.opacity(0.7))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -804,7 +804,7 @@ struct ContentAICollaboratorView: View {
                 ForEach(alignment.suggestions, id: \.self) { suggestion in
                     Text("- \(suggestion)")
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
         }
@@ -840,7 +840,7 @@ struct ContentAICollaboratorView: View {
             Text("\(slides.count) sections")
                 .font(.system(size: 10))
         }
-        .foregroundColor(DS.textSecondary)
+        .foregroundStyle(DS.textSecondary)
     }
 
     @ViewBuilder
@@ -851,18 +851,18 @@ struct ContentAICollaboratorView: View {
                     HStack {
                         Text("Section \(slide.sectionIndex + 1)")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.textSecondary)
+                            .foregroundStyle(DS.textSecondary)
                         Text("[\(slide.beatLabel)]")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(DS.accent.opacity(0.7))
+                            .foregroundStyle(DS.accent.opacity(0.7))
                     }
                     Text(slide.swipeComparison)
                         .font(.system(size: 10))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                         .lineLimit(3)
                     Text(slide.suggestion)
                         .font(.system(size: 10))
-                        .foregroundColor(Color(hex: "F59E0B").opacity(0.8))
+                        .foregroundStyle(Color(hex: "F59E0B").opacity(0.8))
                         .lineLimit(2)
                 }
                 .padding(6)
@@ -887,7 +887,7 @@ struct ContentAICollaboratorView: View {
                 Text("Run Red Team")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(.red.opacity(0.9))
+            .foregroundStyle(.red.opacity(0.9))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
@@ -912,7 +912,7 @@ struct ContentAICollaboratorView: View {
                     .tint(.red.opacity(0.7))
                 Text(redTeamEngine.evaluationProgress.isEmpty ? "Running adversarial analysis..." : redTeamEngine.evaluationProgress)
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
@@ -927,15 +927,15 @@ struct ContentAICollaboratorView: View {
             HStack(spacing: 6) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.red.opacity(0.9))
+                    .foregroundStyle(.red.opacity(0.9))
                 Text("Red Team Analysis")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 if result.highRiskCount > 0 {
                     Text("\(result.highRiskCount) HIGH")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(.red))
@@ -943,7 +943,7 @@ struct ContentAICollaboratorView: View {
                 if result.mediumRiskCount > 0 {
                     Text("\(result.mediumRiskCount) MED")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(.orange))
@@ -975,11 +975,11 @@ struct ContentAICollaboratorView: View {
                     .frame(width: 6, height: 6)
                 Text(card.title)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Spacer()
                 Text(card.riskType.displayName)
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -991,7 +991,7 @@ struct ContentAICollaboratorView: View {
             if !card.evidence.isEmpty {
                 Text("\"" + card.evidence.prefix(120) + (card.evidence.count > 120 ? "..." : "") + "\"")
                     .font(.system(size: 11).italic())
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(2)
             }
 
@@ -999,14 +999,14 @@ struct ContentAICollaboratorView: View {
             if !card.metric.isEmpty {
                 Text(card.metric)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(card.severity.color.opacity(0.9))
+                    .foregroundStyle(card.severity.color.opacity(0.9))
             }
 
             // Recommendation + Fix button
             HStack(alignment: .top, spacing: 8) {
                 Text(card.recommendation)
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1016,7 +1016,7 @@ struct ContentAICollaboratorView: View {
                     } label: {
                         Text("Fix")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                             .background(
@@ -1099,16 +1099,16 @@ private struct WritingMessageBubble: View {
                 if isAssistant {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
-                        .foregroundColor(DS.accent)
+                        .foregroundStyle(DS.accent)
                 }
                 if isSystem {
                     Image(systemName: "arrow.right.arrow.left")
                         .font(.system(size: 9))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 Text(message.timestamp, style: .time)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
 
@@ -1121,7 +1121,7 @@ private struct WritingMessageBubble: View {
             if !message.content.isEmpty {
                 Text(message.content)
                     .font(.system(size: 13))
-                    .foregroundColor(isSystem ? DS.textSecondary : DS.text)
+                    .foregroundStyle(isSystem ? DS.textSecondary : DS.text)
                     .textSelection(.enabled)
                     .padding(12)
                     .background(
@@ -1155,7 +1155,7 @@ private struct WritingMessageBubble: View {
                         .font(.system(size: 10, weight: .medium))
                     statusIcon(call.status)
                 }
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
@@ -1171,7 +1171,7 @@ private struct WritingMessageBubble: View {
         case .completed:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 8))
-                .foregroundColor(.green)
+                .foregroundStyle(.green)
         case .executing:
             ProgressView()
                 .scaleEffect(0.4)
@@ -1179,7 +1179,7 @@ private struct WritingMessageBubble: View {
         case .failed:
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 8))
-                .foregroundColor(.red)
+                .foregroundStyle(.red)
         case .pending:
             Circle()
                 .fill(Color.gray.opacity(0.3))
@@ -1229,7 +1229,7 @@ private struct WritingMessageBubble: View {
                     Text("Copy")
                         .font(.system(size: 10))
                 }
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -1245,7 +1245,7 @@ private struct CollaboratorTypingIndicator: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 10))
-                .foregroundColor(DS.accent.opacity(0.5))
+                .foregroundStyle(DS.accent.opacity(0.5))
 
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { i in

@@ -750,7 +750,7 @@ struct CommandBarView: View {
                 TextField("Type a command...", text: $textInput)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .focused($isTextFieldFocused)
                     .onSubmit {

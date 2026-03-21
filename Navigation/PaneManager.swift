@@ -11,7 +11,6 @@ enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
     case thinkspace(thinkspaceId: String)
     case commandCenter
-    case dimension(LevelDimension)
 
     var id: String {
         switch self {
@@ -21,8 +20,6 @@ enum PaneContent: Identifiable, Equatable {
             return "thinkspace_\(thinkspaceId)"
         case .commandCenter:
             return "commandCenter"
-        case .dimension(let dimension):
-            return "dimension_\(dimension.rawValue)"
         }
     }
 
@@ -30,7 +27,7 @@ enum PaneContent: Identifiable, Equatable {
     var entityId: Int64? {
         switch self {
         case .entity(let entity): return entity.id
-        case .thinkspace, .commandCenter, .dimension: return nil
+        case .thinkspace, .commandCenter: return nil
         }
     }
 
@@ -38,23 +35,16 @@ enum PaneContent: Identifiable, Equatable {
     var entitySelection: EntitySelection? {
         switch self {
         case .entity(let entity): return entity
-        case .thinkspace, .commandCenter, .dimension: return nil
+        case .thinkspace, .commandCenter: return nil
         }
     }
 
     /// The thinkspace ID if this is a thinkspace pane
     var thinkspaceId: String? {
         switch self {
-        case .entity, .commandCenter, .dimension: return nil
+        case .entity, .commandCenter: return nil
         case .thinkspace(let id): return id
         }
-    }
-
-    var dimension: LevelDimension? {
-        if case .dimension(let dimension) = self {
-            return dimension
-        }
-        return nil
     }
 
     static func == (lhs: PaneContent, rhs: PaneContent) -> Bool {
@@ -111,11 +101,6 @@ class PaneManager: ObservableObject {
         Set(panes.compactMap { $0.thinkspaceId })
     }
 
-    /// Set of all dimensions currently open in panes
-    var openDimensions: Set<LevelDimension> {
-        Set(panes.compactMap(\.dimension))
-    }
-
     // MARK: - Duplicate Prevention
 
     /// Check if an entity can be opened as a pane.
@@ -140,13 +125,6 @@ class PaneManager: ObservableObject {
     /// Check if Command Center can be opened as a pane.
     func canOpenCommandCenter() -> Bool {
         guard !panes.contains(where: { $0.id == PaneContent.commandCenter.id }) else { return false }
-        guard panes.count < maxPanes else { return false }
-        return true
-    }
-
-    /// Check if a dimension can be opened as a pane.
-    func canOpenDimension(_ dimension: LevelDimension) -> Bool {
-        guard !openDimensions.contains(dimension) else { return false }
         guard panes.count < maxPanes else { return false }
         return true
     }

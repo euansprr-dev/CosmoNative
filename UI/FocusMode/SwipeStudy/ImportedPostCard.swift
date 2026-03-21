@@ -9,8 +9,35 @@ struct ImportedPostCard: View {
     let isSelected: Bool
     let isDuplicate: Bool
     let onToggle: () -> Void
+    var cardWidth: CGFloat = 220
 
     @State private var isHovered = false
+
+    /// Thumbnail height based on content type aspect ratio, matching SwipeGalleryCardView
+    private var thumbnailHeight: CGFloat {
+        switch post.contentType {
+        case .reel, .story:
+            return min(cardWidth * 16 / 9, 420)
+        case .carousel:
+            return cardWidth * 5 / 4
+        case .image, .videoPost:
+            return cardWidth
+        }
+    }
+
+    /// Estimated total card height for masonry distribution
+    static func estimatedHeight(for post: ImportedPost, cardWidth: CGFloat) -> CGFloat {
+        let thumbH: CGFloat
+        switch post.contentType {
+        case .reel, .story:
+            thumbH = min(cardWidth * 16 / 9, 420)
+        case .carousel:
+            thumbH = cardWidth * 5 / 4
+        case .image, .videoPost:
+            thumbH = cardWidth
+        }
+        return thumbH
+    }
 
     var body: some View {
         Button(action: onToggle) {
@@ -57,13 +84,13 @@ struct ImportedPostCard: View {
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(height: 180)
+                        .frame(height: thumbnailHeight)
                         .clipped()
                 case .failure:
                     placeholderView
                 case .empty:
                     ProgressView()
-                        .frame(height: 180)
+                        .frame(height: thumbnailHeight)
                         .frame(maxWidth: .infinity)
                         .background(DS.surface)
                 }
@@ -77,7 +104,7 @@ struct ImportedPostCard: View {
     private var placeholderView: some View {
         Rectangle()
             .fill(DS.surface)
-            .frame(height: 180)
+            .frame(height: thumbnailHeight)
             .overlay {
                 Image(systemName: post.contentType.isVideo ? "video.fill" : "photo.fill")
                     .font(.title2)
@@ -137,9 +164,9 @@ struct ImportedPostCard: View {
     private func engagementPill(icon: String, value: String) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
+                .font(DS.caption2)
             Text(value)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .font(DS.caption2)
         }
         .foregroundStyle(DS.text)
         .padding(.horizontal, 7)
@@ -163,7 +190,7 @@ struct ImportedPostCard: View {
         let (icon, label) = contentTypeInfo
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .bold))
+                .font(DS.caption2)
             contentTypeBadgeText(label)
         }
         .foregroundStyle(DS.text)
@@ -176,10 +203,10 @@ struct ImportedPostCard: View {
     private func contentTypeBadgeText(_ label: String) -> some View {
         if let count = post.carouselMediaCount {
             Text("\(count)")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(DS.caption2)
         } else {
             Text(label)
-                .font(.system(size: 9, weight: .bold))
+                .font(DS.caption2)
         }
     }
 
@@ -220,7 +247,7 @@ struct ImportedPostCard: View {
                 .frame(width: 22, height: 22)
             if isSelected {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textOnAccent)
             }
         }
@@ -235,7 +262,7 @@ struct ImportedPostCard: View {
             HStack {
                 Spacer()
                 Text("Already saved")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

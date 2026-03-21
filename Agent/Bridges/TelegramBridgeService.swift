@@ -187,7 +187,7 @@ private actor TelegramWritingProgressTracker {
                 isDirty = false
                 let elapsed = Date().timeIntervalSince(lastEditTime)
                 if elapsed < throttleInterval {
-                    try? await Task.sleep(nanoseconds: UInt64((throttleInterval - elapsed) * 1_000_000_000))
+                    try? await Task.sleep(for: .seconds(throttleInterval - elapsed))
                 }
                 guard !isFinalized else { break }
                 await flush(isFinal: false)
@@ -441,7 +441,7 @@ class TelegramBridgeService: ObservableObject {
                 lastError = error.localizedDescription
                 print("[Telegram] Polling error: \(error). Retrying in \(backoffInterval)s")
 
-                try? await Task.sleep(nanoseconds: UInt64(backoffInterval * 1_000_000_000))
+                try? await Task.sleep(for: .seconds(backoffInterval))
                 backoffInterval = min(backoffInterval * 2, maxBackoff)
             }
         }
@@ -738,7 +738,7 @@ class TelegramBridgeService: ObservableObject {
 
         // Start debounce timer — waits for debounceWindow, then flushes buffer
         debounceTimers[chatIdStr] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64((self?.debounceWindow ?? 2.5) * 1_000_000_000))
+            try? await Task.sleep(for: .seconds(self?.debounceWindow ?? 2.5))
             guard !Task.isCancelled else { return }
             await self?.flushDebounceBuffer(chatId: chatIdStr)
         }
@@ -1406,7 +1406,7 @@ class TelegramBridgeService: ObservableObject {
                             ?? Double(retryAfterHeader ?? "")
                             ?? pow(2.0, Double(retryCount + 1))
                         print("[Telegram] Rate limited (429). Waiting \(waitTime)s before retry \(retryCount + 1)/\(maxSendRetries)")
-                        try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+                        try? await Task.sleep(for: .seconds(waitTime))
                         retryCount += 1
                         continue
                     }
@@ -1507,7 +1507,7 @@ class TelegramBridgeService: ObservableObject {
     private func keepTyping(chatId: String) async {
         await sendChatAction(chatId: chatId, action: "typing")
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { break }
             await sendChatAction(chatId: chatId, action: "typing")
         }

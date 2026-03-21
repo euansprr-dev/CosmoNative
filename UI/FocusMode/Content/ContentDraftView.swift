@@ -1277,25 +1277,25 @@ struct DraftEditorTextView: NSViewRepresentable {
             // Complex sentences (15-25 words): yellow
             for range in analysis.complexSentenceRanges {
                 guard range.location + range.length <= textLength else { continue }
-                storage.addAttribute(.backgroundColor, value: NSColor.yellow.withAlphaComponent(0.15), range: range)
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.complex, range: range)
             }
 
             // Very complex sentences (>25 words): red
             for range in analysis.veryComplexSentenceRanges {
                 guard range.location + range.length <= textLength else { continue }
-                storage.addAttribute(.backgroundColor, value: NSColor.red.withAlphaComponent(0.15), range: range)
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.veryComplex, range: range)
             }
 
             // Passive voice: blue
             for range in analysis.passiveVoiceRanges {
                 guard range.location + range.length <= textLength else { continue }
-                storage.addAttribute(.backgroundColor, value: NSColor.systemBlue.withAlphaComponent(0.15), range: range)
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.passive, range: range)
             }
 
             // Adverbs: purple
             for range in analysis.adverbRanges {
                 guard range.location + range.length <= textLength else { continue }
-                storage.addAttribute(.backgroundColor, value: NSColor.purple.withAlphaComponent(0.15), range: range)
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.adverb, range: range)
             }
         }
 

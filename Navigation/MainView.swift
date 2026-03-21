@@ -38,8 +38,13 @@ struct MainView: View {
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
-    @State private var previousNonDimensionDestination: SidebarDestination = .commandCenter
-
+    // Sidebar state (3-state: hidden / peek / expanded)
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
+    @State private var isPeeking: Bool = false
+    @State private var peekTimer: Timer?
+    @State private var peekDismissTimer: Timer?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
 
@@ -312,11 +317,11 @@ struct MainView: View {
                     VStack(spacing: 16) {
                         ProgressView()
                             .scaleEffect(1.3)
-                            .tint(.white)
+                            .tint(DS.text)
 
                         Text(activationLoadingMessage)
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.9))
+                            .foregroundStyle(DS.text.opacity(0.9))
                     }
                     .padding(32)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -416,12 +421,6 @@ struct MainView: View {
                 withAnimation(ProMotionSprings.snappy) {
                     paneManager.openPane(.thinkspace(thinkspaceId: thinkspaceId))
                 }
-            } else if let rawDimension = notification.userInfo?["dimensionId"] as? String,
-                      let dimension = LevelDimension(rawValue: rawDimension) {
-                guard paneManager.canOpenDimension(dimension) else { return }
-                withAnimation(ProMotionSprings.snappy) {
-                    paneManager.openPane(.dimension(dimension))
-                }
             } else if notification.userInfo?["commandCenter"] as? Bool == true {
                 guard paneManager.canOpenCommandCenter() else { return }
                 withAnimation(ProMotionSprings.snappy) {
@@ -461,13 +460,16 @@ struct MainView: View {
             }
         }
         .onChange(of: currentDestination) { _, newDest in
+            // Dismiss focus mode when navigating via sidebar
+            if appState.focusedEntity != nil {
+                withAnimation(ProMotionSprings.snappy) {
+                    appState.focusedEntity = nil
+                }
+            }
             // Track last-used thinkspace for T-key navigation
             if case .thinkspace(let id) = newDest {
                 lastThinkspaceId = id
                 canvasThinkspaceId = id
-            }
-            if !newDest.isDimension {
-                previousNonDimensionDestination = newDest
             }
             // Switch thinkspace when destination changes
             switch newDest {
@@ -479,8 +481,6 @@ struct MainView: View {
                 }
             case .inbox:
                 break
-            case .dimension:
-                break
             }
             // Update Cosmo Window context (panel is now system-wide, always update)
             let vm = CosmoWindowViewModel.shared
@@ -491,8 +491,6 @@ struct MainView: View {
                 vm.updateContextManually(type: .sanctuary)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
-            case .dimension:
-                vm.updateContextManually(type: .sanctuary)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
@@ -611,22 +609,11 @@ struct MainView: View {
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
             configureProMotion()
-            Task {
-                await DimensionWorkspaceCoordinator.shared.start()
-            }
             // No thinkspace switch needed — Command Center is full-screen now
         }
         .onDisappear {
             removeRightClickMonitor()
             removeGlobalKeyMonitor()
-        }
-        // Satellite navigation handlers (legacy notifications → new routing)
-        .onReceive(NotificationCenter.default.publisher(for: .sanctuaryThinkspaceRequested)) { _ in
-            navigateToLastThinkspace()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .sanctuaryPlannerumRequested)) { _ in
-            // Plannerum is now a zone inside Command Center
-            currentDestination = .commandCenter
         }
         // Voice navigation handler
         .onReceive(NotificationCenter.default.publisher(for: .voiceNavigationRequested)) { notification in
@@ -636,24 +623,6 @@ struct MainView: View {
         // Command Center navigation (from other systems)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
             currentDestination = .commandCenter
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToDimension)) { notification in
-            guard let payload = CosmoNotification.Navigation.DimensionPayload(from: notification) else { return }
-            currentDestination = .dimension(payload.dimension)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openDimensionAsPane)) { notification in
-            guard let payload = CosmoNotification.Navigation.DimensionPayload(from: notification) else { return }
-            guard paneManager.canOpenDimension(payload.dimension) else { return }
-            withAnimation(ProMotionSprings.snappy) {
-                paneManager.openPane(.dimension(payload.dimension))
-            }
-            if showCommandK || commandKBehindFocusMode {
-                withAnimation(.spring(response: 0.2)) {
-                    showCommandK = false
-                    commandKBehindFocusMode = false
-                    commandKViewModel.clear()
-                }
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
             guard let payload = CosmoNotification.Navigation.ThinkspacePayload(from: notification) else { return }
@@ -670,23 +639,45 @@ struct MainView: View {
 
     @ViewBuilder
     private var mainContentLayout: some View {
-        ZStack {
-            HStack(spacing: 0) {
+        ZStack(alignment: .leading) {
+            // Content fills full width — extends behind sidebar
+            SplitPaneContainer(paneManager: paneManager) {
+                ZStack {
+                    destinationContent
+                    focusModeOverlay
+                }
+            }
+            .zIndex(appState.focusedEntity != nil ? 195 : 10)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+
+            // Full sidebar (when expanded)
+            if !isSidebarHidden {
                 UnifiedSidebar(
                     currentDestination: $currentDestination,
                     thinkspaceManager: thinkspaceManager
                 )
                 .environmentObject(crossDragManager)
+                .transition(.move(edge: .leading).combined(with: .opacity))
                 .zIndex(200)
+            }
 
-                SplitPaneContainer(paneManager: paneManager) {
-                    ZStack {
-                        destinationContent
-                        focusModeOverlay
-                    }
-                }
-                .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+            // Toggle button (when hidden)
+            if isSidebarHidden && !isPeeking {
+                sidebarToggleButton
+                    .zIndex(201)
+            }
+
+            // Peek rail overlay (when hovering left edge)
+            if isPeeking && isSidebarHidden {
+                peekSidebarRail
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .zIndex(202)
+            }
+
+            // Left-edge hover trigger (when hidden and not peeking)
+            if isSidebarHidden && !isPeeking {
+                sidebarEdgeTrigger
+                    .zIndex(199)
             }
 
             // Cross-thinkspace floating drag preview
@@ -699,9 +690,107 @@ struct MainView: View {
                     .allowsHitTesting(false)
             }
         }
-        .background(DS.surface)
+        .background(DS.canvas)
         .onAppear {
             setupCrossThinkspaceDragCallbacks()
+        }
+        .onChange(of: isSidebarHidden) { _, hidden in
+            crossDragManager.sidebarWidth = hidden ? 0 : UnifiedSidebarMetrics.defaultExpandedWidth
+        }
+    }
+
+    // MARK: - Sidebar Toggle Button
+
+    private var sidebarToggleButton: some View {
+        Button("Show sidebar", systemImage: "sidebar.left") {
+            withAnimation(ProMotionSprings.sidebar) {
+                isSidebarHidden = false
+            }
+        }
+        .labelStyle(.iconOnly)
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(DS.textSecondary)
+        .frame(width: 32, height: 32)
+        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+        .padding(.leading, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .help("Show sidebar (Cmd+\\)")
+    }
+
+    // MARK: - Sidebar Edge Trigger
+
+    private var sidebarEdgeTrigger: some View {
+        Color.clear
+            .frame(width: 3)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    peekTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
+                        DispatchQueue.main.async {
+                            withAnimation(ProMotionSprings.snappy) {
+                                isPeeking = true
+                            }
+                        }
+                    }
+                } else {
+                    peekTimer?.invalidate()
+                    peekTimer = nil
+                }
+            }
+    }
+
+    // MARK: - Peek Sidebar Rail
+
+    private var peekSidebarRail: some View {
+        VStack(spacing: 0) {
+            PeekSidebarContent(
+                currentDestination: $currentDestination,
+                thinkspaceManager: thinkspaceManager
+            )
+        }
+        .frame(width: UnifiedSidebarMetrics.collapsedWidth)
+        .frame(maxHeight: .infinity)
+        .background {
+            if reduceTransparency {
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(DS.surface)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous).fill(DS.surface.opacity(DS.palette.isDark ? 0.55 : 0.35))
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.floatingCornerRadius, style: .continuous)
+                .stroke(DS.glassBorder, lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(DS.palette.isDark ? 0.35 : 0.08), radius: 12, y: 4)
+        .padding(.top, UnifiedSidebarMetrics.floatingMargin)
+        .padding(.bottom, UnifiedSidebarMetrics.floatingMargin)
+        .padding(.trailing, UnifiedSidebarMetrics.floatingMargin)
+        // No leading padding — hug the left window edge so there's no gap
+        .contentShape(Rectangle())
+        .environmentObject(crossDragManager)
+        .onHover { hovering in
+            if hovering {
+                // Cancel any pending dismiss
+                peekDismissTimer?.invalidate()
+                peekDismissTimer = nil
+            } else {
+                // Delay dismiss to avoid flicker from brief hover gaps
+                peekDismissTimer?.invalidate()
+                peekDismissTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
+                    DispatchQueue.main.async {
+                        withAnimation(ProMotionSprings.snappy) {
+                            isPeeking = false
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -766,7 +855,7 @@ struct MainView: View {
         switch currentDestination {
         case .commandCenter: return ThinkspaceManager.commandCenterUUID
         case .thinkspace(let id): return id
-        case .inbox, .dimension: return nil
+        case .inbox: return nil
         }
     }
 
@@ -805,14 +894,6 @@ struct MainView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .transition(.opacity)
-            } else if case .dimension(let dimension) = currentDestination {
-                DimensionWorkspaceView(
-                    dimension: dimension,
-                    onBack: restoreFromDimension
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DS.bg)
-                .transition(.opacity)
             }
         }
     }
@@ -836,18 +917,6 @@ struct MainView: View {
             currentDestination = .commandCenter
         case "thinkspace", "canvas":
             navigateToLastThinkspace()
-        case "cognitive":
-            currentDestination = .dimension(.cognitive)
-        case "creative":
-            currentDestination = .dimension(.creative)
-        case "physiological", "health":
-            currentDestination = .dimension(.physiological)
-        case "behavioral":
-            currentDestination = .dimension(.behavioral)
-        case "knowledge":
-            currentDestination = .dimension(.knowledge)
-        case "reflection", "journal":
-            currentDestination = .dimension(.reflection)
         default:
             break
         }
@@ -877,7 +946,7 @@ struct MainView: View {
                     let entityId = atom.id ?? 0
 
                     // Brief delay for the loading overlay to be visible
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    try? await Task.sleep(for: .milliseconds(300))
 
                     // Dismiss current focus mode if one is open, then navigate
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -885,7 +954,7 @@ struct MainView: View {
                     }
 
                     // Small delay to allow the previous focus mode to close
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    try? await Task.sleep(for: .milliseconds(200))
 
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         appState.focusedEntity = EntitySelection(id: entityId, type: entityType)
@@ -922,11 +991,6 @@ struct MainView: View {
             lastThinkspaceId = first.id
             currentDestination = .thinkspace(id: first.id)
         }
-    }
-
-    private func restoreFromDimension() {
-        guard currentDestination.isDimension else { return }
-        currentDestination = previousNonDimensionDestination
     }
 
     // MARK: - Global Keyboard Monitor
@@ -1010,13 +1074,7 @@ struct MainView: View {
                     return nil
                 }
 
-                // 11. Navigate back out of a dimension workspace
-                if currentDestination.isDimension {
-                    restoreFromDimension()
-                    return nil
-                }
-
-                // 12. Navigate from thinkspace back to Command Center
+                // 11. Navigate from thinkspace back to Command Center
                 if isThinkspaceActive {
                     currentDestination = .commandCenter
                     return nil
@@ -1048,7 +1106,10 @@ struct MainView: View {
                event.keyCode == 42,  // \ key
                event.modifierFlags.contains(.command),
                !isFirstResponderTextField() {
-                ThinkspaceManager.shared.isSidebarVisible.toggle()
+                withAnimation(ProMotionSprings.sidebar) {
+                    isSidebarHidden.toggle()
+                    if isSidebarHidden { isPeeking = false }
+                }
                 return nil
             }
 
@@ -1269,16 +1330,16 @@ struct MainView: View {
             )
 
             // Don't intercept right-clicks on the sidebar — let SwiftUI contextMenu handle them
-            let sidebarWidth = crossDragManager.sidebarWidth
-            if screenPoint.x < sidebarWidth + 4 {
+            let sidebarTotalWidth: CGFloat = isSidebarHidden ? 0 : crossDragManager.sidebarTotalWidth
+            if screenPoint.x < sidebarTotalWidth + 4 {
                 return event
             }
 
             // Don't intercept right-clicks in the pane column — let the pane's own monitor handle them
             if paneManager.isActive {
-                let containerWidth = window.frame.width - sidebarWidth
+                let containerWidth = window.frame.width - sidebarTotalWidth
                 let mainContentWidth = containerWidth * paneManager.mainSplitRatio
-                let paneColumnStart = sidebarWidth + mainContentWidth
+                let paneColumnStart = sidebarTotalWidth + mainContentWidth
                 if screenPoint.x > paneColumnStart {
                     return event
                 }
@@ -1291,7 +1352,7 @@ struct MainView: View {
 
             // Hit-test against tracked block frames (canvas-local coordinates)
             let canvasLocalPoint = CGPoint(
-                x: screenPoint.x - sidebarWidth,
+                x: screenPoint.x - sidebarTotalWidth,
                 y: screenPoint.y
             )
             if let hitBlockId = blockFrameTracker.hitTest(at: canvasLocalPoint) {
@@ -1526,7 +1587,7 @@ struct LoadingView: View {
 
                 Text("CosmoOS")
                     .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundStyle(CosmoColors.textPrimary)
 
                 ProgressView()
                     .scaleEffect(1.2)
@@ -1534,7 +1595,7 @@ struct LoadingView: View {
 
                 Text("Initializing your cognitive space...")
                     .font(.subheadline)
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundStyle(CosmoColors.textSecondary)
             }
             .padding(60)
             .background(CosmoColors.glassGrey.opacity(0.5), in: RoundedRectangle(cornerRadius: 24))
@@ -1554,15 +1615,15 @@ struct ErrorView: View {
             VStack(spacing: 20) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 56))
-                    .foregroundColor(CosmoColors.softRed)
+                    .foregroundStyle(CosmoColors.softRed)
 
                 Text("Error")
                     .font(.title.bold())
-                    .foregroundColor(CosmoColors.textPrimary)
+                    .foregroundStyle(CosmoColors.textPrimary)
 
                 Text(message)
                     .font(.body)
-                    .foregroundColor(CosmoColors.textSecondary)
+                    .foregroundStyle(CosmoColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
 

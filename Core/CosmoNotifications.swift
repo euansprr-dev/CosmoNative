@@ -24,6 +24,12 @@ import SwiftUI
 /// ```
 enum CosmoNotification {
 
+    // MARK: - Theme Notifications
+    enum Theme {
+        /// Posted when the active theme changes. Triggers root view re-render.
+        static let changed = Notification.Name("com.cosmo.theme.changed")
+    }
+
     // MARK: - Canvas Notifications
     enum Canvas {
         // Block lifecycle
@@ -38,8 +44,6 @@ enum CosmoNotification {
         static let toggleBlockPin = Notification.Name("com.cosmo.canvas.toggleBlockPin")
         static let changeStickyColor = Notification.Name("com.cosmo.canvas.changeStickyColor")
         static let blurAllBlocks = Notification.Name("com.cosmo.canvas.blurAllBlocks")
-        static let collapseExpandedBlock = Notification.Name("com.cosmo.canvas.collapseExpandedBlock")
-
         // Block position/size
         static let updateBlockPosition = Notification.Name("com.cosmo.canvas.updateBlockPosition")
         static let updateBlockSize = Notification.Name("com.cosmo.canvas.updateBlockSize")
@@ -64,15 +68,12 @@ enum CosmoNotification {
         // Smart actions (content-based)
         static let moveBlockByContentToTime = Notification.Name("com.cosmo.canvas.moveBlockByContentToTime")
         static let deleteBlockByContent = Notification.Name("com.cosmo.canvas.deleteBlockByContent")
-        static let expandBlockByContent = Notification.Name("com.cosmo.canvas.expandBlockByContent")
         static let duplicateBlockByContent = Notification.Name("com.cosmo.canvas.duplicateBlockByContent")
 
         // Smart actions (by ID)
         static let moveBlockToTime = Notification.Name("com.cosmo.canvas.moveBlockToTime")
         static let deleteSpecificBlock = Notification.Name("com.cosmo.canvas.deleteSpecificBlock")
         static let resizeSelectedBlock = Notification.Name("com.cosmo.canvas.resizeSelectedBlock")
-        static let expandSelectedBlock = Notification.Name("com.cosmo.canvas.expandSelectedBlock")
-        static let collapseSelectedBlock = Notification.Name("com.cosmo.canvas.collapseSelectedBlock")
         static let duplicateSelectedBlock = Notification.Name("com.cosmo.canvas.duplicateSelectedBlock")
         static let closeSelectedBlock = Notification.Name("com.cosmo.canvas.closeSelectedBlock")
 
@@ -359,6 +360,10 @@ enum CosmoNotification {
         /// Fired when a source type accumulates a multiple of 30 swipes globally.
         /// userInfo: ["sourceType": String, "swipeCount": Int]
         static let batchSwipeAnalysisTriggered = Notification.Name("com.cosmo.swipefile.batchSwipeAnalysisTriggered")
+
+        /// Fired when creator data changes (new creator saved, posts saved, stats updated).
+        /// userInfo: ["creatorUUID": String] (optional — nil means reload all)
+        static let creatorDataChanged = Notification.Name("com.cosmo.swipefile.creatorDataChanged")
     }
 
     // MARK: - Daemon Notifications
@@ -667,7 +672,7 @@ public struct XPAwardHelper {
         from sourceFrame: CGRect,
         to targetFrame: CGRect,
         in coordinateSpace: CoordinateSpace = .global,
-        dimensionColors: [Color] = [PlannerumColors.xpGold]
+        dimensionColors: [Color] = [.orange]
     ) {
         let sourceCenter = CGPoint(x: sourceFrame.midX, y: sourceFrame.midY)
         let targetCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)

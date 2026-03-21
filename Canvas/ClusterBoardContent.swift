@@ -135,7 +135,7 @@ struct ClusterBoardCard: View {
             .overlay(
                 Image(systemName: block.entityType.icon)
                     .font(.system(size: 7, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
             )
     }
 

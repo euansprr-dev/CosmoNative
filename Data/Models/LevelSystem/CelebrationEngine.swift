@@ -528,11 +528,11 @@ public struct CelebrationOverlayView: View {
                         if let iconName = event.iconName {
                             Image(systemName: iconName)
                                 .font(.system(size: 44))
-                                .foregroundColor(.white)
+                                .foregroundStyle(.white)
                         } else {
                             Image(systemName: iconForType(event.type))
                                 .font(.system(size: 44))
-                                .foregroundColor(.white)
+                                .foregroundStyle(.white)
                         }
                     }
                     .scaleEffect(showContent ? 1.0 : 0.5)
@@ -541,17 +541,17 @@ public struct CelebrationOverlayView: View {
                     // Title
                     Text(event.title)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
 
                     // Subtitle
                     Text(event.subtitle)
                         .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundStyle(.white.opacity(0.9))
 
                     // Message
                     Text(event.message)
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundStyle(.white.opacity(0.8))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
 

@@ -1,25 +1,5 @@
 import SwiftUI
 
-// MARK: - Cross-Platform Colors
-
-private extension Color {
-    static var streakBackground: Color {
-        #if os(iOS)
-        return Color(UIColor.systemBackground)
-        #else
-        return Color(NSColor.windowBackgroundColor)
-        #endif
-    }
-
-    static var streakSecondaryBackground: Color {
-        #if os(iOS)
-        return Color(UIColor.secondarySystemBackground)
-        #else
-        return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
-}
-
 // MARK: - Streak Details View
 
 /// Comprehensive view for streak tracking across all dimensions
@@ -35,197 +15,61 @@ public struct StreakDetailsView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                // Overall Streak Hero
+            VStack(spacing: DS.space24) {
                 overallStreakHero
-
-                // Active Streaks Grid
                 activeStreaksSection
-
-                // At-Risk Streaks Warning
                 atRiskStreaksSection
-
-                // Streak Records
                 streakRecordsSection
-
-                // Streak Calendar
                 streakCalendarSection
-
-                // Streak Multipliers
                 streakMultipliersSection
-
-                // Streak History
                 streakHistorySection
             }
-            .padding()
+            .padding(DS.space16)
         }
-        .background(Color.streakBackground)
+        .background(DS.surface)
         .navigationTitle("Streaks")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
-        #endif
     }
 
     // MARK: - Overall Streak Hero
 
     private var overallStreakHero: some View {
-        VStack(spacing: 16) {
-            // Main streak display
-            ZStack {
-                // Outer glow ring
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color.orange.opacity(0.3),
-                                Color.orange.opacity(0.1),
-                                Color.clear
-                            ],
-                            center: .center,
-                            startRadius: 50,
-                            endRadius: 100
-                        )
-                    )
-                    .frame(width: 200, height: 200)
+        VStack(spacing: DS.space16) {
+            StreakHeroRing()
 
-                // Progress ring
-                Circle()
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 8)
-                    .frame(width: 140, height: 140)
-
-                Circle()
-                    .trim(from: 0, to: 0.78) // 78% to next milestone
-                    .stroke(
-                        LinearGradient(
-                            colors: [.orange, .red],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                    )
-                    .frame(width: 140, height: 140)
-                    .rotationEffect(.degrees(-90))
-
-                VStack(spacing: 4) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(.orange)
-
-                    Text("47")
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
-
-                    Text("Days")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            // Streak info
-            VStack(spacing: 8) {
+            VStack(spacing: DS.space8) {
                 Text("Overall Consistency Streak")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .font(DS.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
 
-                HStack(spacing: 16) {
-                    streakInfoPill(label: "1.35x", subtitle: "XP Multiplier")
-                    streakInfoPill(label: "13 days", subtitle: "To 60-day badge")
+                HStack(spacing: DS.space16) {
+                    StreakInfoPill(label: "1.35x", subtitle: "XP Multiplier")
+                    StreakInfoPill(label: "13 days", subtitle: "To 60-day badge")
                 }
             }
         }
-        .padding(.vertical, 8)
-    }
-
-    private func streakInfoPill(label: String, subtitle: String) -> some View {
-        VStack(spacing: 2) {
-            Text(label)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundColor(.orange)
-
-            Text(subtitle)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.streakSecondaryBackground)
-        )
+        .padding(.vertical, DS.space8)
     }
 
     // MARK: - Active Streaks Section
 
     private var activeStreaksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("ACTIVE STREAKS")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
                 GridItem(.flexible())
-            ], spacing: 12) {
-                StreakCard(
-                    type: .deepWork,
-                    title: "Deep Work",
-                    icon: "brain.head.profile",
-                    color: .blue,
-                    currentStreak: 32,
-                    bestStreak: 89,
-                    multiplier: 1.2
-                )
-
-                StreakCard(
-                    type: .writing,
-                    title: "Writing",
-                    icon: "pencil.line",
-                    color: .purple,
-                    currentStreak: 47,
-                    bestStreak: 124,
-                    multiplier: 1.35
-                )
-
-                StreakCard(
-                    type: .journal,
-                    title: "Journal",
-                    icon: "book.fill",
-                    color: .indigo,
-                    currentStreak: 21,
-                    bestStreak: 45,
-                    multiplier: 1.1
-                )
-
-                StreakCard(
-                    type: .hrv,
-                    title: "HRV Check",
-                    icon: "heart.fill",
-                    color: .red,
-                    currentStreak: 15,
-                    bestStreak: 30,
-                    multiplier: 1.1
-                )
-
-                StreakCard(
-                    type: .sleep,
-                    title: "Sleep Target",
-                    icon: "moon.fill",
-                    color: .cyan,
-                    currentStreak: 8,
-                    bestStreak: 22,
-                    multiplier: 1.1
-                )
-
-                StreakCard(
-                    type: .routine,
-                    title: "Morning Routine",
-                    icon: "sunrise.fill",
-                    color: .orange,
-                    currentStreak: 12,
-                    bestStreak: 34,
-                    multiplier: 1.1
-                )
+            ], spacing: DS.space12) {
+                StreakCard(type: .deepWork, title: "Deep Work", icon: "brain.head.profile", color: DS.entityContent, currentStreak: 32, bestStreak: 89, multiplier: 1.2)
+                StreakCard(type: .writing, title: "Writing", icon: "pencil.line", color: DS.entityConnection, currentStreak: 47, bestStreak: 124, multiplier: 1.35)
+                StreakCard(type: .journal, title: "Journal", icon: "book.fill", color: DS.entityIdea, currentStreak: 21, bestStreak: 45, multiplier: 1.1)
+                StreakCard(type: .hrv, title: "HRV Check", icon: "heart.fill", color: DS.red, currentStreak: 15, bestStreak: 30, multiplier: 1.1)
+                StreakCard(type: .sleep, title: "Sleep Target", icon: "moon.fill", color: DS.entityImage, currentStreak: 8, bestStreak: 22, multiplier: 1.1)
+                StreakCard(type: .routine, title: "Morning Routine", icon: "sunrise.fill", color: DS.orange, currentStreak: 12, bestStreak: 34, multiplier: 1.1)
             }
         }
     }
@@ -233,40 +77,29 @@ public struct StreakDetailsView: View {
     // MARK: - At-Risk Streaks Section
 
     private var atRiskStreaksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.yellow)
+                    .foregroundStyle(DS.entityStickyNote)
 
                 Text("AT RISK TODAY")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(DS.sectionLabel)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(1.5)
             }
 
-            VStack(spacing: 8) {
-                AtRiskStreakRow(
-                    title: "Sleep Target",
-                    currentStreak: 8,
-                    timeRemaining: "4 hours left",
-                    action: "Hit 7+ hours tonight"
-                )
-
-                AtRiskStreakRow(
-                    title: "Morning Routine",
-                    currentStreak: 12,
-                    timeRemaining: "Complete by 10 AM",
-                    action: "Finish deep work block"
-                )
+            VStack(spacing: DS.space8) {
+                AtRiskStreakRow(title: "Sleep Target", currentStreak: 8, timeRemaining: "4 hours left", action: "Hit 7+ hours tonight")
+                AtRiskStreakRow(title: "Morning Routine", currentStreak: 12, timeRemaining: "Complete by 10 AM", action: "Finish deep work block")
             }
         }
-        .padding()
+        .padding(DS.space16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.yellow.opacity(0.1))
+            RoundedRectangle(cornerRadius: DS.radiusLarge)
+                .fill(DS.orangeSoft)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.yellow.opacity(0.3), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DS.radiusLarge)
+                        .strokeBorder(DS.orange.opacity(0.3), lineWidth: 1)
                 )
         )
     }
@@ -274,43 +107,17 @@ public struct StreakDetailsView: View {
     // MARK: - Streak Records Section
 
     private var streakRecordsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("PERSONAL RECORDS")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    RecordCard(
-                        title: "Longest Ever",
-                        value: "124",
-                        unit: "days",
-                        type: "Writing",
-                        date: "Aug 2025",
-                        icon: "crown.fill",
-                        color: .yellow
-                    )
-
-                    RecordCard(
-                        title: "Deep Focus",
-                        value: "89",
-                        unit: "days",
-                        type: "Deep Work",
-                        date: "Jun 2025",
-                        icon: "brain.head.profile",
-                        color: .blue
-                    )
-
-                    RecordCard(
-                        title: "Reflection",
-                        value: "45",
-                        unit: "days",
-                        type: "Journal",
-                        date: "Oct 2025",
-                        icon: "book.fill",
-                        color: .indigo
-                    )
+                HStack(spacing: DS.space12) {
+                    RecordCard(title: "Longest Ever", value: "124", unit: "days", type: "Writing", date: "Aug 2025", icon: "crown.fill", color: DS.entityStickyNote)
+                    RecordCard(title: "Deep Focus", value: "89", unit: "days", type: "Deep Work", date: "Jun 2025", icon: "brain.head.profile", color: DS.entityContent)
+                    RecordCard(title: "Reflection", value: "45", unit: "days", type: "Journal", date: "Oct 2025", icon: "book.fill", color: DS.entityIdea)
                 }
             }
         }
@@ -319,11 +126,11 @@ public struct StreakDetailsView: View {
     // MARK: - Streak Calendar Section
 
     private var streakCalendarSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Text("STREAK CALENDAR")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(DS.sectionLabel)
+                    .foregroundStyle(DS.textSecondary)
                     .tracking(1.5)
 
                 Spacer()
@@ -331,83 +138,65 @@ public struct StreakDetailsView: View {
                 Button("Full View") {
                     showingCalendar = true
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.blue)
+                .font(DS.buttonText)
+                .foregroundStyle(DS.accent)
             }
 
             StreakCalendarView()
-                .padding()
+                .padding(DS.space16)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.streakSecondaryBackground)
+                    RoundedRectangle(cornerRadius: DS.radiusLarge)
+                        .fill(DS.surfaceCard)
                 )
+                .dsRestingShadow()
         }
     }
 
     // MARK: - Streak Multipliers Section
 
     private var streakMultipliersSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("XP MULTIPLIERS")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
             VStack(spacing: 0) {
                 MultiplierRow(days: 7, multiplier: 1.1, isUnlocked: true, isCurrent: false)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 14, multiplier: 1.2, isUnlocked: true, isCurrent: false)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 30, multiplier: 1.35, isUnlocked: true, isCurrent: true)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 60, multiplier: 1.5, isUnlocked: false, isCurrent: false)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 90, multiplier: 1.75, isUnlocked: false, isCurrent: false)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 180, multiplier: 2.0, isUnlocked: false, isCurrent: false)
-                Divider().padding(.horizontal)
+                Divider().padding(.horizontal, DS.space16)
                 MultiplierRow(days: 365, multiplier: 2.5, isUnlocked: false, isCurrent: false)
             }
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.streakSecondaryBackground)
+                RoundedRectangle(cornerRadius: DS.radiusLarge)
+                    .fill(DS.surfaceCard)
             )
+            .dsRestingShadow()
         }
     }
 
     // MARK: - Streak History Section
 
     private var streakHistorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             Text("STREAK HISTORY")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
+                .font(DS.sectionLabel)
+                .foregroundStyle(DS.textSecondary)
                 .tracking(1.5)
 
-            VStack(spacing: 8) {
-                StreakHistoryRow(
-                    type: "Writing",
-                    length: 124,
-                    startDate: "Apr 12, 2025",
-                    endDate: "Aug 14, 2025",
-                    endReason: "Vacation"
-                )
-
-                StreakHistoryRow(
-                    type: "Deep Work",
-                    length: 89,
-                    startDate: "Mar 1, 2025",
-                    endDate: "May 28, 2025",
-                    endReason: "Illness"
-                )
-
-                StreakHistoryRow(
-                    type: "Overall",
-                    length: 67,
-                    startDate: "Feb 1, 2025",
-                    endDate: "Apr 8, 2025",
-                    endReason: "Travel"
-                )
+            VStack(spacing: DS.space8) {
+                StreakHistoryRow(type: "Writing", length: 124, startDate: "Apr 12, 2025", endDate: "Aug 14, 2025", endReason: "Vacation")
+                StreakHistoryRow(type: "Deep Work", length: 89, startDate: "Mar 1, 2025", endDate: "May 28, 2025", endReason: "Illness")
+                StreakHistoryRow(type: "Overall", length: 67, startDate: "Feb 1, 2025", endDate: "Apr 8, 2025", endReason: "Travel")
             }
         }
     }
@@ -416,14 +205,80 @@ public struct StreakDetailsView: View {
 // MARK: - UI Streak Type Enum
 
 fileprivate enum UIStreakType: String, CaseIterable {
-    case overall
-    case deepWork
-    case writing
-    case journal
-    case hrv
-    case sleep
-    case routine
-    case workout
+    case overall, deepWork, writing, journal, hrv, sleep, routine, workout
+}
+
+// MARK: - Streak Hero Ring
+
+struct StreakHeroRing: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [DS.orange.opacity(0.3), DS.orange.opacity(0.1), Color.clear],
+                        center: .center,
+                        startRadius: 50,
+                        endRadius: 100
+                    )
+                )
+                .frame(width: 200, height: 200)
+
+            Circle()
+                .stroke(DS.borderSubtle, lineWidth: 8)
+                .frame(width: 140, height: 140)
+
+            Circle()
+                .trim(from: 0, to: 0.78)
+                .stroke(
+                    LinearGradient(colors: [DS.orange, DS.red], startPoint: .leading, endPoint: .trailing),
+                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                )
+                .frame(width: 140, height: 140)
+                .rotationEffect(.degrees(-90))
+
+            VStack(spacing: DS.space4) {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(DS.orange)
+
+                Text("47")
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.text)
+
+                Text("Days")
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.textSecondary)
+            }
+        }
+    }
+}
+
+// MARK: - Streak Info Pill
+
+struct StreakInfoPill: View {
+    let label: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: DS.space2) {
+            Text(label)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(DS.orange)
+
+            Text(subtitle)
+                .font(DS.footnote)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space8)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
+        )
+        .dsRestingShadow()
+    }
 }
 
 // MARK: - Streak Card
@@ -438,67 +293,83 @@ fileprivate struct StreakCard: View {
     let multiplier: Double
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 16))
-                    .foregroundColor(color)
+        VStack(alignment: .leading, spacing: DS.space10) {
+            streakCardHeader
+            streakCardTitle
+            streakCardValue
+            streakCardProgress
+        }
+        .padding(DS.space16)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
+        )
+        .dsRestingShadow()
+    }
 
-                Spacer()
+    private var streakCardHeader: some View {
+        HStack {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundStyle(color)
 
-                if multiplier > 1.0 {
-                    Text("\(multiplier, specifier: "%.2f")x")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(4)
-                }
-            }
+            Spacer()
 
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
-
-            HStack(alignment: .bottom, spacing: 4) {
-                Image(systemName: "flame.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(currentStreak > 0 ? .orange : .gray)
-
-                Text("\(currentStreak)")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(currentStreak > 0 ? .primary : .secondary)
-            }
-
-            // Progress to best
-            VStack(alignment: .leading, spacing: 4) {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.gray.opacity(0.2))
-                            .frame(height: 4)
-
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(color)
-                            .frame(
-                                width: geometry.size.width * min(Double(currentStreak) / Double(bestStreak), 1.0),
-                                height: 4
-                            )
-                    }
-                }
-                .frame(height: 4)
-
-                Text("Best: \(bestStreak)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
+            if multiplier > 1.0 {
+                Text("\(multiplier, specifier: "%.2f")x")
+                    .font(DS.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(DS.orange)
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, DS.space2)
+                    .background(DS.orangeSoft)
+                    .clipShape(.rect(cornerRadius: DS.radiusXSmall))
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.streakSecondaryBackground)
-        )
+    }
+
+    private var streakCardTitle: some View {
+        Text(title)
+            .font(DS.callout)
+            .fontWeight(.semibold)
+            .foregroundStyle(DS.text)
+    }
+
+    private var streakCardValue: some View {
+        HStack(alignment: .bottom, spacing: DS.space4) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(currentStreak > 0 ? DS.orange : DS.textMuted)
+
+            Text("\(currentStreak)")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(currentStreak > 0 ? DS.text : DS.textSecondary)
+        }
+    }
+
+    private var streakCardProgress: some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(DS.borderSubtle)
+                        .frame(height: 4)
+
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color)
+                        .frame(
+                            width: geometry.size.width * min(Double(currentStreak) / Double(bestStreak), 1.0),
+                            height: 4
+                        )
+                }
+            }
+            .frame(height: 4)
+
+            Text("Best: \(bestStreak)")
+                .font(DS.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
+        }
     }
 }
 
@@ -511,39 +382,40 @@ struct AtRiskStreakRow: View {
     let action: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+        HStack(spacing: DS.space12) {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                HStack(spacing: DS.space6) {
                     Image(systemName: "flame.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.orange)
+                        .foregroundStyle(DS.orange)
 
                     Text("\(currentStreak) day streak")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.primary)
+                        .font(DS.navTitle)
+                        .foregroundStyle(DS.text)
                 }
 
                 Text(title)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: DS.space4) {
                 Text(timeRemaining)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.yellow)
+                    .font(DS.buttonText)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.orange)
 
                 Text(action)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
             }
         }
-        .padding(12)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.streakBackground)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
         )
     }
 }
@@ -560,42 +432,44 @@ struct RecordCard: View {
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack {
                 Image(systemName: icon)
                     .font(.system(size: 18))
-                    .foregroundColor(color)
-
+                    .foregroundStyle(color)
                 Spacer()
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .bottom, spacing: 4) {
+            VStack(alignment: .leading, spacing: DS.space2) {
+                HStack(alignment: .bottom, spacing: DS.space4) {
                     Text(value)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
+                        .font(DS.display)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(DS.text)
 
                     Text(unit)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(.bottom, 4)
+                        .font(DS.navTitle)
+                        .foregroundStyle(DS.textSecondary)
+                        .padding(.bottom, DS.space4)
                 }
 
                 Text(type)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .font(DS.callout)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.text)
 
                 Text(date)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
             }
         }
-        .padding(16)
+        .padding(DS.space16)
         .frame(width: 140)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.streakSecondaryBackground)
+            RoundedRectangle(cornerRadius: DS.radiusLarge)
+                .fill(DS.surfaceCard)
         )
+        .dsRestingShadow()
     }
 }
 
@@ -606,72 +480,53 @@ struct StreakCalendarView: View {
     private let weekdays = ["S", "M", "T", "W", "T", "F", "S"]
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Month header
+        VStack(spacing: DS.space8) {
             HStack {
                 Text("December 2025")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
-
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.text)
                 Spacer()
             }
 
-            // Weekday headers
             HStack(spacing: 4) {
                 ForEach(weekdays, id: \.self) { day in
                     Text(day)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(DS.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(DS.textSecondary)
                         .frame(maxWidth: .infinity)
                 }
             }
 
-            // Calendar grid
             LazyVGrid(columns: columns, spacing: 4) {
-                // Empty cells for offset (December 2025 starts on Monday)
                 ForEach(0..<1, id: \.self) { _ in
-                    Color.clear
-                        .frame(height: 32)
+                    Color.clear.frame(height: 32)
                 }
-
-                // Days of the month
                 ForEach(1...21, id: \.self) { day in
-                    CalendarDayView(
-                        day: day,
-                        hasStreak: day <= 21,
-                        isToday: day == 21
-                    )
+                    CalendarDayView(day: day, hasStreak: day <= 21, isToday: day == 21)
                 }
-
-                // Future days (grayed out)
                 ForEach(22...31, id: \.self) { day in
-                    CalendarDayView(
-                        day: day,
-                        hasStreak: false,
-                        isToday: false,
-                        isFuture: true
-                    )
+                    CalendarDayView(day: day, hasStreak: false, isToday: false, isFuture: true)
                 }
             }
 
-            // Legend
-            HStack(spacing: 16) {
-                legendItem(color: .orange, label: "Streak day")
-                legendItem(color: .gray.opacity(0.2), label: "Missed")
+            HStack(spacing: DS.space16) {
+                calendarLegendItem(color: DS.orange, label: "Streak day")
+                calendarLegendItem(color: DS.borderSubtle, label: "Missed")
             }
-            .padding(.top, 8)
+            .padding(.top, DS.space8)
         }
     }
 
-    private func legendItem(color: Color, label: String) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 4)
+    private func calendarLegendItem(color: Color, label: String) -> some View {
+        HStack(spacing: DS.space4) {
+            RoundedRectangle(cornerRadius: DS.radiusXSmall)
                 .fill(color)
                 .frame(width: 12, height: 12)
 
             Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
         }
     }
 }
@@ -684,34 +539,31 @@ struct CalendarDayView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: DS.space6)
                 .fill(backgroundColor)
                 .frame(height: 32)
 
             Text("\(day)")
-                .font(.system(size: 12, weight: isToday ? .bold : .medium))
-                .foregroundColor(textColor)
+                .font(DS.buttonText)
+                .fontWeight(isToday ? .bold : .medium)
+                .foregroundStyle(textColor)
         }
         .overlay(
-            isToday ?
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.blue, lineWidth: 2)
+            isToday
+                ? RoundedRectangle(cornerRadius: DS.space6)
+                    .strokeBorder(DS.accent, lineWidth: 2)
                 : nil
         )
     }
 
     private var backgroundColor: Color {
-        if isFuture {
-            return Color.gray.opacity(0.1)
-        }
-        return hasStreak ? Color.orange : Color.gray.opacity(0.2)
+        if isFuture { DS.surface }
+        else { hasStreak ? DS.orange : DS.borderSubtle }
     }
 
     private var textColor: Color {
-        if isFuture {
-            return .secondary.opacity(0.5)
-        }
-        return hasStreak ? DS.textOnAccent : .secondary
+        if isFuture { DS.textMuted }
+        else { hasStreak ? DS.textOnAccent : DS.textSecondary }
     }
 }
 
@@ -724,33 +576,32 @@ struct MultiplierRow: View {
     let isCurrent: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Status icon
+        HStack(spacing: DS.space12) {
             ZStack {
                 Circle()
-                    .fill(isUnlocked ? Color.green : Color.gray.opacity(0.2))
+                    .fill(isUnlocked ? DS.green : DS.borderSubtle)
                     .frame(width: 24, height: 24)
 
                 if isUnlocked {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(DS.textOnAccent)
+                        .foregroundStyle(DS.textOnAccent)
                 } else {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(.gray)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DS.space2) {
                 Text("\(days)-day streak")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isUnlocked ? .primary : .secondary)
+                    .font(DS.navTitle)
+                    .foregroundStyle(isUnlocked ? DS.text : DS.textSecondary)
 
                 if isCurrent {
                     Text("Current milestone")
-                        .font(.system(size: 11))
-                        .foregroundColor(.green)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.green)
                 }
             }
 
@@ -758,11 +609,11 @@ struct MultiplierRow: View {
 
             Text("\(multiplier, specifier: "%.2f")x XP")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(isUnlocked ? .orange : .secondary)
+                .foregroundStyle(isUnlocked ? DS.orange : DS.textSecondary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(isCurrent ? Color.green.opacity(0.1) : Color.clear)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+        .background(isCurrent ? DS.greenSoft : Color.clear)
     }
 }
 
@@ -776,48 +627,50 @@ struct StreakHistoryRow: View {
     let endReason: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+        HStack(spacing: DS.space12) {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                HStack(spacing: DS.space6) {
                     Text("\(length) days")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
+                        .foregroundStyle(DS.text)
 
-                    Text("•")
-                        .foregroundColor(.secondary)
+                    Text("\u{2022}")
+                        .foregroundStyle(DS.textSecondary)
 
                     Text(type)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(DS.navTitle)
+                        .foregroundStyle(DS.textSecondary)
                 }
 
-                Text("\(startDate) → \(endDate)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                Text("\(startDate) \u{2192} \(endDate)")
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Spacer()
 
             Text(endReason)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.15))
-                .cornerRadius(6)
+                .font(DS.footnote)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, DS.space4)
+                .background(DS.borderSubtle)
+                .clipShape(.rect(cornerRadius: DS.space6))
         }
-        .padding(12)
+        .padding(DS.space12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.streakSecondaryBackground)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceCard)
         )
+        .dsRestingShadow()
     }
 }
 
 // MARK: - Preview
 
 #Preview {
-    NavigationView {
+    NavigationStack {
         StreakDetailsView(levelService: LevelSystemService(database: CosmoDatabase.shared.dbQueue!))
     }
 }

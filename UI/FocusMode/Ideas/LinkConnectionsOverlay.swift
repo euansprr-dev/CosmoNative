@@ -71,18 +71,18 @@ struct LinkConnectionsOverlay: View {
         HStack(spacing: 10) {
             Image(systemName: "point.3.connected.trianglepath.dotted")
                 .font(.system(size: 14))
-                .foregroundColor(accentColor)
+                .foregroundStyle(accentColor)
 
             Text("Link Connections")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             if !selectedUUIDs.isEmpty {
                 Text("\(selectedUUIDs.count) selected")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(accentColor)
+                    .foregroundStyle(accentColor)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(accentColor.opacity(0.12), in: Capsule())
@@ -93,7 +93,7 @@ struct LinkConnectionsOverlay: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(8)
                     .background(DS.border, in: Circle())
             }
@@ -109,12 +109,12 @@ struct LinkConnectionsOverlay: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             TextField("Search connections by name, topic...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -130,7 +130,7 @@ struct LinkConnectionsOverlay: View {
                     ProgressView().tint(accentColor)
                     Text("Loading connections...")
                         .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
@@ -138,10 +138,10 @@ struct LinkConnectionsOverlay: View {
                 VStack(spacing: 12) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 28))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                     Text(searchText.isEmpty ? "No connections found" : "No connections match '\(searchText)'")
                         .font(.system(size: 13))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
@@ -207,14 +207,14 @@ struct LinkConnectionsOverlay: View {
                     .overlay(
                         Image(systemName: "point.3.connected.trianglepath.dotted")
                             .font(.system(size: 16))
-                            .foregroundColor(accentColor.opacity(0.7))
+                            .foregroundStyle(accentColor.opacity(0.7))
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
                     // Name
                     Text(connection.title ?? "Untitled Connection")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
 
                     // Badges
@@ -223,16 +223,16 @@ struct LinkConnectionsOverlay: View {
 
                         Text("\(filledCount)/8 sections")
                             .font(.system(size: 9))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
 
                         if let cid = viewModel.idea.ideaMetadata?.clientUUID,
                            hasClientLink(connection, clientUUID: cid) {
                             Text("Client")
                                 .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(OnyxColors.Accent.amber)
+                                .foregroundStyle(DS.orange)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(OnyxColors.Accent.amber.opacity(0.12), in: Capsule())
+                                .background(DS.orange.opacity(0.12), in: Capsule())
                         }
                     }
 
@@ -240,7 +240,7 @@ struct LinkConnectionsOverlay: View {
                     if let goalText = connectionGoalText(connection), !goalText.isEmpty {
                         Text(String(goalText.prefix(80)))
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .lineLimit(1)
                     }
                 }
@@ -251,15 +251,15 @@ struct LinkConnectionsOverlay: View {
                 if isAlreadyLinked {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(DS.green)
+                        .foregroundStyle(DS.green)
                 } else if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(accentColor)
+                        .foregroundStyle(accentColor)
                 } else {
                     Image(systemName: "circle")
                         .font(.system(size: 16))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
             }
             .padding(10)
@@ -292,7 +292,7 @@ struct LinkConnectionsOverlay: View {
             Text(level.displayName)
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.3)
-                .foregroundColor(color)
+                .foregroundStyle(color)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -305,7 +305,7 @@ struct LinkConnectionsOverlay: View {
         HStack(spacing: 12) {
             Text("\(allConnections.count) connections in library")
                 .font(.system(size: 11))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Spacer()
 
@@ -314,7 +314,7 @@ struct LinkConnectionsOverlay: View {
             } label: {
                 Text("Cancel")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(DS.border, in: RoundedRectangle(cornerRadius: 8))
@@ -332,7 +332,7 @@ struct LinkConnectionsOverlay: View {
             } label: {
                 Text("Link Selected (\(selectedUUIDs.count))")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(accentColor, in: RoundedRectangle(cornerRadius: 8))

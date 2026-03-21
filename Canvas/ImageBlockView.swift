@@ -27,7 +27,7 @@ struct ImageBlockView: View {
                     .clipped()
             } else {
                 // Placeholder while loading
-                RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .fill(DS.surfaceElevated)
                     .frame(width: blockSize.width, height: blockSize.height)
                     .overlay {
@@ -48,9 +48,9 @@ struct ImageBlockView: View {
                     }
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .strokeBorder(
                     isSelected ? DS.entityImage.opacity(0.5) : Color.black.opacity(0.06),
                     lineWidth: isSelected ? 2 : 1
@@ -70,7 +70,7 @@ struct ImageBlockView: View {
                 maxSize: CGSize(width: 1200, height: 1000)
             )
         }
-        .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
+        .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
         .onTapGesture {
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.blockSelected,

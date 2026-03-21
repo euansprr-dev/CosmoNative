@@ -59,16 +59,16 @@ class SpatialEngine: ObservableObject {
                 // Build metadata from database record
                 var metadata: [String: String] = [:]
 
-                // For note and content blocks, restore content from note_content field
-                // Both types use metadata-based storage rather than atoms table
-                if (record.entityType == "note" || record.entityType == "content"),
+                // For note, stickyNote, and content blocks, restore content from note_content field
+                // These types use metadata-based storage rather than atoms table
+                if (record.entityType == "note" || record.entityType == "sticky_note" || record.entityType == "content"),
                    let noteContent = record.noteContent {
                     metadata["content"] = noteContent
                 }
 
-                // For note and content blocks, also restore title in metadata
+                // For note, stickyNote, and content blocks, also restore title in metadata
                 // This is needed because the block views load title from metadata
-                if (record.entityType == "note" || record.entityType == "content"),
+                if (record.entityType == "note" || record.entityType == "sticky_note" || record.entityType == "content"),
                    let title = record.entityTitle, !title.isEmpty {
                     metadata["title"] = title
                 }
@@ -135,6 +135,11 @@ class SpatialEngine: ObservableObject {
                 return true
             }
 
+            // Guard: don't apply results if thinkspace changed while loading
+            guard thinkspaceId == currentThinkspaceId else {
+                isLoading = false
+                return
+            }
             self.blocks = deduped
             isLoading = false
             print("✅ Loaded \(deduped.count) canvas blocks for \(documentType)/\(documentId) (\(enrichedBlocks.count - deduped.count) duplicates removed)")
@@ -153,8 +158,8 @@ class SpatialEngine: ObservableObject {
 
         do {
             try await database.asyncWrite { db in
-                // Extract content from metadata for note and content blocks (both use metadata-based storage)
-                let noteContent: String? = (block.entityType == .note || block.entityType == .content)
+                // Extract content from metadata for note, stickyNote, and content blocks (all use metadata-based storage)
+                let noteContent: String? = (block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content)
                     ? block.metadata["content"]
                     : nil
 

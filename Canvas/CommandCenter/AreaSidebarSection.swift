@@ -31,24 +31,24 @@ struct AreaSidebarSection: View {
                     isCollapsed.toggle()
                 }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DS.space8) {
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
-                        .frame(width: 10)
+                        .frame(width: DS.space10)
 
                     Image(systemName: areaMeta?.icon ?? "square.stack.fill")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.footnote)
                         .foregroundStyle(areaColor)
 
                     Text(area.title ?? "Untitled Area")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.buttonText)
                         .foregroundStyle(DS.text)
 
                     Spacer()
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -61,7 +61,7 @@ struct AreaSidebarSection: View {
                         isSelected: viewModel.selectedProjectUUID == project.uuid,
                         viewModel: viewModel
                     )
-                    .padding(.leading, 16)
+                    .padding(.leading, DS.space16)
                 }
             }
         }

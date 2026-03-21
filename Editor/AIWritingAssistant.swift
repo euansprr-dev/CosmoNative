@@ -345,7 +345,7 @@ struct AIAssistantOverlay: View {
             header
 
             Rectangle()
-                .fill(Color.white.opacity(0.08))
+                .fill(DS.borderSubtle)
                 .frame(height: 1)
 
             // Content
@@ -362,13 +362,13 @@ struct AIAssistantOverlay: View {
         .frame(width: 340)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color(white: 0.12))
+                .fill(DS.surfaceElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(DS.border, lineWidth: 1)
                 )
         )
-        .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+        .dsFloatingShadow()
     }
 
     // MARK: - Header
@@ -376,19 +376,19 @@ struct AIAssistantOverlay: View {
     private var header: some View {
         HStack {
             Image(systemName: "sparkles")
-                .foregroundColor(.purple)
+                .foregroundStyle(DS.accent)
                 .font(.system(size: 14))
 
             Text("AI Assistant")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
             Button(action: { isVisible = false }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)
         }
@@ -424,15 +424,15 @@ struct AIAssistantOverlay: View {
         VStack(spacing: 6) {
             Image(systemName: action.iconName)
                 .font(.system(size: 18))
-                .foregroundColor(.purple)
+                .foregroundStyle(DS.accent)
 
             Text(action.displayName)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.text)
 
             Text(action.description)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
         }
@@ -441,10 +441,10 @@ struct AIAssistantOverlay: View {
         .padding(.horizontal, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(0.05))
+                .fill(DS.surfaceHover)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
                 )
         )
     }
@@ -455,11 +455,11 @@ struct AIAssistantOverlay: View {
         VStack(spacing: 10) {
             ProgressView()
                 .scaleEffect(0.8)
-                .tint(.purple)
+                .tint(DS.accent)
 
             Text("Processing...")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(DS.textSecondary)
         }
         .frame(height: 100)
         .frame(maxWidth: .infinity)
@@ -475,10 +475,10 @@ struct AIAssistantOverlay: View {
             HStack(spacing: 6) {
                 Image(systemName: result.action.iconName)
                     .font(.system(size: 12))
-                    .foregroundColor(.purple)
+                    .foregroundStyle(DS.accent)
                 Text(result.action.displayName)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.purple)
+                    .foregroundStyle(DS.accent)
             }
 
             // Variant picker for rephrase
@@ -528,12 +528,12 @@ struct AIAssistantOverlay: View {
             Text("Accept")
                 .font(.system(size: 12, weight: .medium))
         }
-        .foregroundColor(.white)
+        .foregroundStyle(DS.textOnAccent)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.purple)
+                .fill(DS.accent)
         )
     }
 
@@ -545,12 +545,12 @@ struct AIAssistantOverlay: View {
             Text("Reject")
                 .font(.system(size: 12, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.6))
+        .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.06))
+                .fill(DS.surfaceHover)
         )
     }
 
@@ -570,7 +570,7 @@ struct AIAssistantOverlay: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.surfaceHover)
         )
     }
 
@@ -583,14 +583,14 @@ struct AIAssistantOverlay: View {
         ScrollView {
             Text(continuation)
                 .font(.system(size: 13))
-                .foregroundColor(.green.opacity(0.9))
+                .foregroundStyle(DS.accent.opacity(0.9))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 180)
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.04))
+                .fill(DS.surfaceHover)
         )
     }
 
@@ -613,12 +613,12 @@ struct AIAssistantOverlay: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: selectedVariantIndex == index ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 14))
-                .foregroundColor(selectedVariantIndex == index ? .purple : .white.opacity(0.3))
+                .foregroundStyle(selectedVariantIndex == index ? DS.accent : DS.textMuted)
                 .padding(.top, 2)
 
             Text(variant)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundStyle(DS.text.opacity(0.8))
                 .multilineTextAlignment(.leading)
                 .lineLimit(4)
         }
@@ -627,12 +627,12 @@ struct AIAssistantOverlay: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(selectedVariantIndex == index
-                      ? Color.purple.opacity(0.12)
-                      : Color.white.opacity(0.04))
+                      ? DS.accent.opacity(0.12)
+                      : DS.surfaceHover)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(selectedVariantIndex == index
-                                ? Color.purple.opacity(0.3)
+                                ? DS.accent.opacity(0.3)
                                 : Color.clear, lineWidth: 1)
                 )
         )
@@ -645,11 +645,11 @@ struct AIAssistantOverlay: View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 20))
-                .foregroundColor(.orange)
+                .foregroundStyle(.orange)
 
             Text(errorMessage)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundStyle(DS.textSecondary)
                 .multilineTextAlignment(.center)
 
             Button(action: {
@@ -658,7 +658,7 @@ struct AIAssistantOverlay: View {
             }) {
                 Text("Try Again")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.purple)
+                    .foregroundStyle(DS.accent)
             }
             .buttonStyle(.plain)
         }
@@ -698,14 +698,14 @@ private struct WrappingDiffText: View {
             switch w.type {
             case .unchanged:
                 return result + separator + Text(w.text)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundStyle(DS.text.opacity(0.7))
             case .removed:
                 return result + separator + Text(w.text)
-                    .foregroundColor(.red.opacity(0.8))
-                    .strikethrough(true, color: .red.opacity(0.6))
+                    .foregroundStyle(CosmoColors.softRed.opacity(0.8))
+                    .strikethrough(true, color: CosmoColors.softRed.opacity(0.6))
             case .added:
                 return result + separator + Text(w.text)
-                    .foregroundColor(.green.opacity(0.9))
+                    .foregroundStyle(CosmoColors.emerald.opacity(0.9))
             }
         }
         .font(.system(size: 13))
@@ -723,17 +723,17 @@ struct SuggestionRow: View {
             HStack(spacing: 12) {
                 Image(systemName: iconForType(suggestion.type))
                     .font(.system(size: 14))
-                    .foregroundColor(.purple)
+                    .foregroundStyle(DS.accent)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(suggestion.title)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
 
                     Text(suggestion.description)
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -743,8 +743,8 @@ struct SuggestionRow: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(10)
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(8)
+            .background(DS.surface)
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
         }
         .buttonStyle(.plain)
     }

@@ -752,16 +752,6 @@ class AgentContextAssembler {
             }
         }
 
-        // Quest progress
-        let questSummary = await fetchQuestSummary()
-        if !questSummary.isEmpty {
-            parts.append("Quests: \(questSummary)")
-        }
-
-        // Dimension snapshot for objectives context
-        let engine = DimensionIndexEngine.shared
-        parts.append("Sanctuary level: \(engine.sanctuaryLevel)")
-
         return parts.joined(separator: "\n")
     }
 
@@ -858,44 +848,6 @@ class AgentContextAssembler {
 
     private func buildAnalyticsContext() async -> String {
         var parts: [String] = ["[USER CONTEXT - Analytics & Performance]"]
-
-        // Dimension indices
-        let engine = DimensionIndexEngine.shared
-        parts.append("Sanctuary level: \(engine.sanctuaryLevel)")
-        parts.append("Overall trend: \(engine.overallTrend.rawValue)")
-
-        for (dimension, index) in engine.dimensionIndices {
-            parts.append("  \(dimension.displayName): \(index.trend.rawValue)")
-        }
-
-        // Streak data
-        do {
-            let snapshots = try await atomRepo.fetchAll(type: .dimensionSnapshot)
-            let calendar = Calendar.current
-            let today = calendar.startOfDay(for: Date())
-            let dailyDates = snapshots.compactMap { atom -> Date? in
-                ISO8601DateFormatter().date(from: atom.createdAt)
-            }.map { calendar.startOfDay(for: $0) }
-            let uniqueDays = Set(dailyDates).sorted(by: >)
-
-            var streak = 0
-            var checkDate = today
-            for day in uniqueDays {
-                if calendar.isDate(day, inSameDayAs: checkDate) {
-                    streak += 1
-                    checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate)!
-                } else {
-                    break
-                }
-            }
-            parts.append("Current streak: \(streak) days")
-        } catch {}
-
-        // Quest summary
-        let questSummary = await fetchQuestSummary()
-        if !questSummary.isEmpty {
-            parts.append("Quests: \(questSummary)")
-        }
 
         // Content pipeline performance
         let pipelineCounts = await fetchPipelinePhaseCounts()
@@ -1006,19 +958,6 @@ class AgentContextAssembler {
 
     private func buildReflectContext() async -> String {
         var parts: [String] = ["[USER CONTEXT - Reflection]"]
-
-        // Dimension snapshot
-        let engine = DimensionIndexEngine.shared
-        parts.append("Sanctuary level: \(engine.sanctuaryLevel)")
-        for (dimension, index) in engine.dimensionIndices {
-            parts.append("  \(dimension.displayName): \(index.trend.rawValue)")
-        }
-
-        // Quest summary
-        let questSummary = await fetchQuestSummary()
-        if !questSummary.isEmpty {
-            parts.append("Today's quests: \(questSummary)")
-        }
 
         // Today's completed blocks
         let todayBlocks = await fetchTodayBlocks()
@@ -1575,26 +1514,6 @@ class AgentContextAssembler {
         } catch {
             return [:]
         }
-    }
-
-    private func fetchQuestSummary() async -> String {
-        let engine = QuestEngine()
-        await engine.evaluate()
-
-        let completed = engine.quests.filter { $0.isComplete }.count
-        let total = engine.quests.count
-
-        if total == 0 { return "" }
-
-        let inProgress = engine.quests
-            .filter { !$0.isComplete && $0.progress > 0 }
-            .map { $0.title }
-
-        var result = "\(completed)/\(total) complete"
-        if !inProgress.isEmpty {
-            result += ", in progress: " + inProgress.joined(separator: ", ")
-        }
-        return result
     }
 
     private func fetchClientProfileNames() async -> [String] {

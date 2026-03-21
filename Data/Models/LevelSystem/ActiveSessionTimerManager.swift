@@ -2,8 +2,7 @@
 //  ActiveSessionTimerManager.swift
 //  CosmoOS
 //
-//  Manages active focus sessions with timer state, quest progress,
-//  and XP awarding. Integrates with DailyQuestEngine and XPCalculationEngine.
+//  Manages active focus sessions with timer state and XP awarding.
 //
 
 import Foundation
@@ -156,7 +155,6 @@ public struct SessionResult: Sendable {
     public let completedAt: Date
     public let actualMinutes: Int
     public let xpAwarded: Int
-    public let questsProgressed: [String]
     public let streakContributed: Bool
 
     public init(
@@ -164,14 +162,12 @@ public struct SessionResult: Sendable {
         completedAt: Date,
         actualMinutes: Int,
         xpAwarded: Int,
-        questsProgressed: [String],
         streakContributed: Bool
     ) {
         self.session = session
         self.completedAt = completedAt
         self.actualMinutes = actualMinutes
         self.xpAwarded = xpAwarded
-        self.questsProgressed = questsProgressed
         self.streakContributed = streakContributed
     }
 }
@@ -195,7 +191,6 @@ public final class ActiveSessionTimerManager: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let questEngine: DailyQuestEngine
     private let atomRepository: AtomRepository
 
     // MARK: - Timer
@@ -213,10 +208,8 @@ public final class ActiveSessionTimerManager: ObservableObject {
     // MARK: - Initialization
 
     init(
-        questEngine: DailyQuestEngine = DailyQuestEngine(),
         atomRepository: AtomRepository? = nil
     ) {
-        self.questEngine = questEngine
         self.atomRepository = atomRepository ?? AtomRepository.shared
 
         // Restore session if app was backgrounded
@@ -366,10 +359,6 @@ public final class ActiveSessionTimerManager: ObservableObject {
             xpAmount = Int(Double(xpAmount) * 1.25) // 25% completion bonus
         }
 
-        // Update quest progress
-        var questsProgressed: [String] = []
-        // Would integrate with DailyQuestEngine here
-
         // Check streak contribution
         let streakContributed = actualMinutes >= 25 // 25min minimum for streak
 
@@ -384,7 +373,6 @@ public final class ActiveSessionTimerManager: ObservableObject {
             completedAt: completedAt,
             actualMinutes: actualMinutes,
             xpAwarded: xpAmount,
-            questsProgressed: questsProgressed,
             streakContributed: streakContributed
         )
     }

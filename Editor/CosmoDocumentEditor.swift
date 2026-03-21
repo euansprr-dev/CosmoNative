@@ -32,6 +32,9 @@ struct CosmoDocumentEditor: View {
     var allowImages: Bool = true
     var singleLine: Bool = false
     var baseFontWeight: NSFont.Weight = .regular
+    var typewriterMode: Bool = false
+    var isEditable: Bool = true
+    var scrollsInternally: Bool = false
     var textAlignment: NSTextAlignment = .natural
     var polishHighlights: WritingAnalysis? = nil
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
@@ -54,6 +57,9 @@ struct CosmoDocumentEditor: View {
             allowImages: allowImages,
             singleLine: singleLine,
             baseFontWeight: baseFontWeight,
+            typewriterMode: typewriterMode,
+            isEditable: isEditable,
+            scrollsInternally: scrollsInternally,
             polishHighlights: polishHighlights,
             textAlignment: textAlignment,
             onSelectionChanged: onSelectionChanged,

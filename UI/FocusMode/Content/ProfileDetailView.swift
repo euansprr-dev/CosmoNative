@@ -30,7 +30,7 @@ struct ProfileDetailView: View {
         }
         .frame(width: 620, height: 680)
         .background(DS.surface)
-        .cornerRadius(DS.radiusLarge)
+        .clipShape(.rect(cornerRadius: DS.radiusLarge))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusLarge)
                 .stroke(DS.border, lineWidth: 1)
@@ -48,20 +48,20 @@ struct ProfileDetailView: View {
                     .fill(DS.accent.opacity(0.15))
                 Image(systemName: "person.fill")
                     .font(.system(size: 18))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
             }
             .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(atom.title ?? "Untitled Profile")
                     .font(DS.cardTitle)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 HStack(spacing: 8) {
                     if let handle = meta?.handle, !handle.isEmpty {
                         Text(handle)
                             .font(DS.cardMeta)
-                            .foregroundColor(DS.textSecondary)
+                            .foregroundStyle(DS.textSecondary)
                     }
 
                     if let platform = meta?.primaryPlatform {
@@ -83,7 +83,7 @@ struct ProfileDetailView: View {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
                     .font(DS.buttonText)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.border, in: Circle())
             }
@@ -101,7 +101,7 @@ struct ProfileDetailView: View {
             Text(platform.displayName)
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundColor(DS.accent)
+        .foregroundStyle(DS.accent)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(
@@ -121,10 +121,10 @@ struct ProfileDetailView: View {
         HStack(spacing: 4) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 9))
-                .foregroundColor(DS.orange)
+                .foregroundStyle(DS.orange)
             Text("Legacy data — re-save to migrate")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(DS.orange.opacity(0.8))
+                .foregroundStyle(DS.orange.opacity(0.8))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -158,7 +158,7 @@ struct ProfileDetailView: View {
     private func tabButtonLabel(title: String, isSelected: Bool) -> some View {
         Text(title)
             .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-            .foregroundColor(isSelected ? DS.text : DS.textMuted)
+            .foregroundStyle(isSelected ? DS.text : DS.textMuted)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .overlay(alignment: .bottom) {
@@ -212,15 +212,15 @@ struct ProfileDetailView: View {
         VStack(spacing: 12) {
             Image(systemName: "brain.head.profile")
                 .font(.system(size: 32))
-                .foregroundColor(DS.borderActive)
+                .foregroundStyle(DS.borderActive)
 
             Text("No intelligence model generated")
                 .font(DS.sectionDesc)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text("Edit this profile and upload documents to generate a model.")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -249,15 +249,15 @@ struct ProfileDetailView: View {
         VStack(spacing: 12) {
             Image(systemName: "doc.text.fill")
                 .font(.system(size: 32))
-                .foregroundColor(DS.borderActive)
+                .foregroundStyle(DS.borderActive)
 
             Text("No documents uploaded")
                 .font(DS.sectionDesc)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Text("Edit this profile to add brand story, top performers, and voice guides.")
                 .font(DS.timestamp)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -270,16 +270,16 @@ struct ProfileDetailView: View {
             HStack(spacing: 6) {
                 Image(systemName: category.iconName)
                     .font(.system(size: 10))
-                    .foregroundColor(DS.accent.opacity(0.7))
+                    .foregroundStyle(DS.accent.opacity(0.7))
 
                 Text(category.displayName.uppercased())
                     .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .tracking(1.0)
 
                 Text("\(docs.count)")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Capsule().fill(DS.border))
@@ -297,7 +297,7 @@ struct ProfileDetailView: View {
             HStack {
                 Text(doc.title.isEmpty ? "Untitled" : doc.title)
                     .font(DS.buttonText)
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
@@ -307,12 +307,12 @@ struct ProfileDetailView: View {
 
                 Text("\(doc.content.count) chars")
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             Text(String(doc.content.prefix(200)) + (doc.content.count > 200 ? "..." : ""))
                 .font(DS.timestamp)
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(4)
         }
         .padding(10)
@@ -349,7 +349,7 @@ struct ProfileDetailView: View {
             Text(value)
                 .font(.system(size: 8, weight: .medium))
         }
-        .foregroundColor(DS.textMuted)
+        .foregroundStyle(DS.textMuted)
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
         .background(DS.borderSubtle, in: Capsule())
@@ -361,7 +361,7 @@ struct ProfileDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("RAW METADATA")
                 .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .tracking(1.0)
 
             let jsonText = atom.metadata ?? "{}"
@@ -369,7 +369,7 @@ struct ProfileDetailView: View {
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(prettyPrintJSON(jsonText))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .textSelection(.enabled)
                     .padding(12)
             }

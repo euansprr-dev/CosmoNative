@@ -976,7 +976,7 @@ struct CanvasDrawingsLayer: View {
                 Text("Remove")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.white)
+            .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(

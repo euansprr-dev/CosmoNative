@@ -72,9 +72,15 @@ struct CreatorListView: View {
             }
         }
         .animation(ProMotionSprings.snappy, value: showingImport)
+        .onChange(of: showingImport) { _, newValue in
+            if !newValue { loadCreators() }
+        }
         .onAppear {
             loadCreators()
             withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.creatorDataChanged)) { _ in
+            loadCreators()
         }
         .onChange(of: creators) { _, _ in recomputeDerivedState() }
         .onChange(of: searchText) { recomputeFilteredCreators() }
@@ -106,7 +112,7 @@ struct CreatorListView: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
                 Text("Back")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(DS.textSecondary)
             .commandKToolbarChip()
@@ -125,7 +131,7 @@ struct CreatorListView: View {
             .foregroundStyle(DS.text)
 
         Text("\(creators.count)")
-            .font(.system(size: 12, weight: .semibold))
+            .font(DS.buttonText)
             .foregroundStyle(DS.entitySwipe.opacity(0.8))
             .commandKToolbarChip(
                 isActive: true,
@@ -137,18 +143,18 @@ struct CreatorListView: View {
     private var headerSearchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(DS.subheadline)
                 .foregroundStyle(DS.textMuted)
             TextField("Search creators...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.text)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
@@ -167,9 +173,9 @@ struct CreatorListView: View {
         Button { showingImport = true } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Import")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
@@ -185,9 +191,9 @@ struct CreatorListView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                 Text("Compare")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
             }
             .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, 12)
@@ -259,9 +265,9 @@ struct CreatorListView: View {
     private var sortMenuLabel: some View {
         HStack(spacing: 4) {
             Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(sortMode.displayName)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
@@ -288,9 +294,9 @@ struct CreatorListView: View {
     private var nicheMenuLabel: some View {
         HStack(spacing: 4) {
             Image(systemName: "tag.fill")
-                .font(.system(size: 10))
+                .font(DS.caption2)
             Text(nicheFilter ?? "Niche")
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
             Image(systemName: "chevron.down")
                 .font(.system(size: 8, weight: .bold))
         }
@@ -314,10 +320,10 @@ struct CreatorListView: View {
         HStack(spacing: 4) {
             if let icon = icon {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
             }
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.buttonText)
         }
         .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
         .commandKToolbarChip(
@@ -410,7 +416,7 @@ struct CreatorListView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(DS.text)
             Text("Import your first creator to start tracking")
-                .font(.system(size: 13))
+                .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
             Spacer()
         }
@@ -507,7 +513,7 @@ private struct CreatorCard: View {
                     .lineLimit(1)
                 if let handle = meta?.handle {
                     Text(handle)
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundStyle(DS.textSecondary)
                         .lineLimit(1)
                 }
@@ -526,7 +532,7 @@ private struct CreatorCard: View {
             }
             if let niche = meta?.niche, !niche.isEmpty {
                 Text(niche)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
             }
@@ -578,7 +584,7 @@ private struct CreatorCard: View {
             Image(systemName: platformIconFor(platform))
                 .font(.system(size: 9))
             Text(platformNameFor(platform))
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
         .foregroundStyle(DS.textSecondary)
         .padding(.horizontal, 8)
@@ -592,7 +598,7 @@ private struct CreatorCard: View {
                 .font(.system(size: 14, weight: .bold).monospacedDigit())
                 .foregroundStyle(valueColor)
             Text(label)
-                .font(.system(size: 10))
+                .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }
     }

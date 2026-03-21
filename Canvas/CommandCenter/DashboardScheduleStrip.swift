@@ -153,11 +153,11 @@ struct DashboardScheduleStrip: View {
         HStack(spacing: 6) {
             Image(systemName: session.intent.iconName)
                 .font(.system(size: 8))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
 
             Text(session.title)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .lineLimit(1)
 
             Spacer(minLength: 2)
@@ -165,7 +165,7 @@ struct DashboardScheduleStrip: View {
             // Duration
             Text(sessionDuration(session))
                 .font(.system(size: 8, weight: .medium))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundStyle(DS.textOnAccent.opacity(0.8))
 
             // Focus score dot
             Circle()
@@ -194,19 +194,19 @@ struct DashboardScheduleStrip: View {
                 // Pulse ring — fades outward
                 if !reduceMotion {
                     Circle()
-                        .stroke(PlannerumColors.nowMarker.opacity(nowPulse ? 0 : 0.4), lineWidth: 1.5)
+                        .stroke(DS.accent.opacity(nowPulse ? 0 : 0.4), lineWidth: 1.5)
                         .frame(width: 8, height: 8)
                         .scaleEffect(nowPulse ? 2.2 : 1.0)
                         .animation(.easeOut(duration: 2.0).repeatForever(autoreverses: false), value: nowPulse)
                 }
 
                 Circle()
-                    .fill(PlannerumColors.nowMarker)
+                    .fill(DS.accent)
                     .frame(width: 8, height: 8)
             }
 
             Rectangle()
-                .fill(PlannerumColors.nowMarker)
+                .fill(DS.accent)
                 .frame(height: 1.5)
         }
         .offset(x: 28, y: yOffset)

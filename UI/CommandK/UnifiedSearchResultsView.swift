@@ -104,8 +104,8 @@ struct UnifiedSearchResultsView: View {
                     DS.entityReadwise.opacity(0.08)
 
                     Image(systemName: result.icon)
-                        .font(.system(size: 30))
-                        .foregroundColor(DS.entityReadwise.opacity(0.6))
+                        .font(DS.pageTitle)
+                        .foregroundStyle(DS.entityReadwise.opacity(0.6))
                 }
                 .frame(height: 100)
 
@@ -115,25 +115,25 @@ struct UnifiedSearchResultsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(result.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .font(DS.headline)
+                        .foregroundStyle(DS.text)
                         .lineLimit(2)
 
                     if let snippet = result.snippet, !snippet.isEmpty {
                         Text(snippet)
-                            .font(.system(size: 12))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.cardMeta)
+                            .foregroundStyle(DS.textMuted)
                             .lineLimit(2)
                     }
 
                     HStack {
                         HStack(spacing: 4) {
                             Image(systemName: "books.vertical.fill")
-                                .font(.system(size: 10))
+                                .font(DS.caption2)
                             Text("Readwise")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(DS.caption2)
                         }
-                        .foregroundColor(DS.entityReadwise)
+                        .foregroundStyle(DS.entityReadwise)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(DS.entityReadwise.opacity(0.10))
@@ -143,8 +143,8 @@ struct UnifiedSearchResultsView: View {
 
                         if let subtitle = result.subtitle {
                             Text(subtitle)
-                                .font(.system(size: 11))
-                                .foregroundColor(DS.textMuted)
+                                .font(DS.footnote)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                 }
@@ -167,17 +167,17 @@ struct UnifiedSearchResultsView: View {
         HStack(spacing: 8) {
             let total = viewModel.unifiedFlatResults.count
             Text("\(total) result\(total == 1 ? "" : "s") across all libraries")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.buttonText)
+                .foregroundStyle(DS.textSecondary)
 
             if viewModel.isAIRanked {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                        .font(DS.caption2)
                     Text("AI ranked")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(DS.caption2)
                 }
-                .foregroundColor(DS.accent)
+                .foregroundStyle(DS.accent)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(DS.accentSoft)
@@ -196,17 +196,17 @@ struct UnifiedSearchResultsView: View {
             Spacer()
 
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 36, weight: .light))
-                .foregroundColor(DS.textMuted)
+                .font(DS.display)
+                .foregroundStyle(DS.textMuted)
 
             Text("No results found")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.headline)
+                .foregroundStyle(DS.textSecondary)
 
             VStack(spacing: 6) {
                 Text("Try different keywords or use prefixes:")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.cardMeta)
+                    .foregroundStyle(DS.textMuted)
 
                 HStack(spacing: 8) {
                     prefixHint("#idea")
@@ -224,8 +224,8 @@ struct UnifiedSearchResultsView: View {
     @ViewBuilder
     private func prefixHint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundColor(DS.textSecondary)
+            .font(DS.footnote)
+            .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(DS.surface)

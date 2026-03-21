@@ -172,7 +172,7 @@ public struct LevelUpCelebrationView: View {
             // Level label
             Text(levelUp.isCosmosIndexLevel ? "COSMO INDEX" : levelUp.dimension.uppercased())
                 .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.7))
                 .tracking(3)
 
             // Level number with rings
@@ -201,11 +201,11 @@ public struct LevelUpCelebrationView: View {
                 VStack(spacing: 4) {
                     Text("Level")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundStyle(.white.opacity(0.8))
 
                     Text("\(levelUp.newLevel)")
                         .font(.system(size: 80, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .shadow(color: .white.opacity(0.5), radius: 20)
                         .drawingGroup()
                 }
@@ -215,7 +215,7 @@ public struct LevelUpCelebrationView: View {
             HStack(spacing: 12) {
                 Text("\(levelUp.previousLevel)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.5))
 
                 Image(systemName: "arrow.right")
                     .font(.system(size: 16, weight: .bold))
@@ -223,7 +223,7 @@ public struct LevelUpCelebrationView: View {
 
                 Text("\(levelUp.newLevel)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
@@ -241,7 +241,7 @@ public struct LevelUpCelebrationView: View {
 
                     Text(milestone.description)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundStyle(.white.opacity(0.7))
                 }
                 .padding(.top, 8)
             }
@@ -256,12 +256,12 @@ public struct LevelUpCelebrationView: View {
             VStack(spacing: 4) {
                 Text("TOTAL XP")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.5))
                     .tracking(1)
 
                 Text("\(formatNumber(levelUp.totalXP))")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -274,12 +274,12 @@ public struct LevelUpCelebrationView: View {
             VStack(spacing: 4) {
                 Text("NEXT LEVEL")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.5))
                     .tracking(1)
 
                 Text("\(formatNumber(levelUp.xpToNextLevel)) XP")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -296,7 +296,7 @@ public struct LevelUpCelebrationView: View {
         VStack(spacing: 16) {
             Text("UNLOCKED")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(.white.opacity(0.5))
                 .tracking(2)
 
             // Features
@@ -430,11 +430,11 @@ struct FeatureUnlockRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(feature.name)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
 
                 Text(feature.description)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundStyle(.white.opacity(0.6))
             }
 
             Spacer()
@@ -470,7 +470,7 @@ struct BadgeUnlockItem: View {
 
             Text(badge.name)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
 

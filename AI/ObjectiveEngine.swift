@@ -37,7 +37,7 @@ enum PaceStatus: String, CaseIterable {
         case .atRisk: return Color(red: 234/255, green: 179/255, blue: 8/255)
         case .behind: return Color(red: 239/255, green: 68/255, blue: 68/255)
         case .completed: return Color(red: 59/255, green: 130/255, blue: 246/255)
-        case .justStarted: return PlannerumColors.primary
+        case .justStarted: return DS.accent
         }
     }
 
@@ -152,7 +152,7 @@ class ObjectiveEngine: ObservableObject {
                 }
             }
 
-            withAnimation(PlannerumSprings.select) {
+            withAnimation(ProMotionSprings.snappy) {
                 self.objectives = newStates
             }
         } catch {

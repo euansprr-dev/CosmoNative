@@ -80,12 +80,12 @@ struct ContentOutlineSidebarContent: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "link.circle.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(accentColor)
+                    .font(DS.caption2)
+                    .foregroundStyle(accentColor)
                 Text("CONTEXT")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 Spacer()
 
                 if isLoadingContext {
@@ -127,12 +127,12 @@ struct ContentOutlineSidebarContent: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("CORE IDEA")
                 .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .tracking(0.88)
 
             TextEditor(text: $state.coreIdea)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(DS.text)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
                 .lineSpacing(4)
                 .scrollContentBackground(.hidden)
                 .focused($coreIdeaFocused)
@@ -163,15 +163,15 @@ struct ContentOutlineSidebarContent: View {
             HStack(spacing: 6) {
                 Text("HOOKS")
                     .font(DS.sectionLabel)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .tracking(0.88)
 
                 Spacer()
 
                 if !state.hooks.isEmpty {
                     Text("\(state.hooks.count)")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(DS.accent)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.accent)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(DS.accent.opacity(0.15), in: Capsule())
@@ -201,13 +201,13 @@ struct ContentOutlineSidebarContent: View {
             // Add new hook
             HStack(spacing: 6) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.accent.opacity(0.5))
+                    .font(DS.callout)
+                    .foregroundStyle(DS.accent.opacity(0.5))
 
                 TextField("Add a hook...", text: $newHookText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.text)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.text)
                     .onSubmit { addHook() }
             }
             .padding(.horizontal, 8)
@@ -244,11 +244,11 @@ struct ContentOutlineSidebarContent: View {
             if state.isAISuggestedOutline && !state.outline.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                        .font(DS.caption2)
                     Text("AI-suggested")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2)
                 }
-                .foregroundColor(DS.accent.opacity(0.7))
+                .foregroundStyle(DS.accent.opacity(0.7))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(DS.accent.opacity(0.1), in: Capsule())
@@ -286,13 +286,13 @@ struct ContentOutlineSidebarContent: View {
             // Add new outline item
             HStack(spacing: 6) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.accent.opacity(0.5))
+                    .font(DS.callout)
+                    .foregroundStyle(DS.accent.opacity(0.5))
 
                 TextField("Add outline point...", text: $newOutlineText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.text)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.text)
                     .onSubmit { addOutlineItem() }
             }
             .padding(.horizontal, 8)
@@ -313,7 +313,7 @@ struct ContentOutlineSidebarContent: View {
         HStack(spacing: 6) {
             Text("OUTLINE")
                 .font(DS.sectionLabel)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .tracking(0.88)
 
             if state.outline.isEmpty {
@@ -324,8 +324,8 @@ struct ContentOutlineSidebarContent: View {
 
             if !state.outline.isEmpty {
                 Text("\(state.completedOutlineCount)/\(state.outline.count)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(DS.accent.opacity(0.15), in: Capsule())
@@ -341,19 +341,19 @@ struct ContentOutlineSidebarContent: View {
                     .scaleEffect(0.5)
                     .tint(DS.accent)
                 Text("Generating...")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
             }
         } else {
             VStack(alignment: .leading, spacing: 2) {
                 Button(action: generateOpusOutline) {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(DS.caption2)
                         Text("Generate")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(DS.caption2)
                     }
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(DS.accentSoft, in: Capsule())
@@ -362,8 +362,8 @@ struct ContentOutlineSidebarContent: View {
 
                 if let error = opusOutlineError {
                     Text(error)
-                        .font(.system(size: 9))
-                        .foregroundColor(.orange.opacity(0.8))
+                        .font(DS.caption2)
+                        .foregroundStyle(.orange.opacity(0.8))
                 }
             }
         }
@@ -427,19 +427,19 @@ struct ContentOutlineSidebarContent: View {
     private func sourceIdeaCardLabel(_ idea: Atom) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "lightbulb.fill")
-                .font(.system(size: 11))
-                .foregroundColor(CosmoMentionColors.idea)
+                .font(DS.footnote)
+                .foregroundStyle(CosmoMentionColors.idea)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(idea.title ?? "Untitled Idea")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.text)
                     .lineLimit(2)
 
                 if let body = idea.body, !body.isEmpty {
                     Text(String(body.prefix(60)))
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
                 }
 
@@ -452,8 +452,8 @@ struct ContentOutlineSidebarContent: View {
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(10)
         .background(
@@ -472,8 +472,8 @@ struct ContentOutlineSidebarContent: View {
                 .fill(status.color)
                 .frame(width: 5, height: 5)
             Text(status.displayName)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundColor(status.color)
+                .font(DS.caption2)
+                .foregroundStyle(status.color)
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
@@ -524,11 +524,11 @@ struct ContentOutlineSidebarContent: View {
     private var showAllSwipesLabel: some View {
         HStack(spacing: 4) {
             Text(showAllSwipes ? "Show less" : "Show all \(matchedSwipeAtoms.count)")
-                .font(.system(size: 9, weight: .medium))
+                .font(DS.caption2)
             Image(systemName: showAllSwipes ? "chevron.up" : "chevron.down")
-                .font(.system(size: 8, weight: .bold))
+                .font(DS.caption2)
         }
-        .foregroundColor(DS.textMuted)
+        .foregroundStyle(DS.textMuted)
         .frame(maxWidth: .infinity)
         .padding(.top, 2)
     }
@@ -558,8 +558,8 @@ struct ContentOutlineSidebarContent: View {
                 .frame(width: 4, height: 4)
 
             Text(swipe.title ?? "Untitled Swipe")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             Spacer()
@@ -567,16 +567,16 @@ struct ContentOutlineSidebarContent: View {
             if let swipeAnalysis = swipe.swipeAnalysis,
                let hookType = swipeAnalysis.hookType {
                 Text(hookType.displayName)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(DS.entitySwipe)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.entitySwipe)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .background(DS.entitySwipe.opacity(0.12), in: Capsule())
             }
 
             Image(systemName: "rectangle.split.2x1")
-                .font(.system(size: 8))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
@@ -628,8 +628,8 @@ struct ContentOutlineSidebarContent: View {
     private func connectionCardLabel(_ conn: Atom, maturity: String) -> some View {
         HStack(spacing: 6) {
             Text(conn.title ?? "Connection")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             Spacer()
@@ -644,16 +644,16 @@ struct ContentOutlineSidebarContent: View {
     private func connectionMaturityBadge(_ maturity: String) -> some View {
         let color: Color = {
             switch maturity.lowercased() {
-            case "mature", "deep": return Color(hex: "22C55E")
-            case "developing": return Color(hex: "3B82F6")
-            case "emerging": return Color(hex: "FBBF24")
-            default: return Color(hex: "64748B")
+            case "mature", "deep": return DS.green
+            case "developing": return DS.info
+            case "emerging": return DS.orange
+            default: return DS.textSecondary
             }
         }()
 
         Text(maturity.capitalized)
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(color)
+            .font(DS.caption2)
+            .foregroundStyle(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(color.opacity(0.12), in: Capsule())
@@ -667,8 +667,8 @@ struct ContentOutlineSidebarContent: View {
             contextSectionHeader(title: "FRAMEWORK", icon: "rectangle.3.group.fill")
 
             Text(framework)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(accentColor)
+                .font(DS.caption)
+                .foregroundStyle(accentColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(accentColor.opacity(0.12), in: Capsule())
@@ -706,13 +706,13 @@ struct ContentOutlineSidebarContent: View {
     private func inheritedHookCard(_ hook: String, index: Int) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(index + 1)")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundColor(accentColor)
+                .font(DS.caption2)
+                .foregroundStyle(accentColor)
                 .frame(width: 14)
 
             Text(hook)
-                .font(.system(size: 10))
-                .foregroundColor(DS.textSecondary)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textSecondary)
                 .lineLimit(3)
 
             Spacer(minLength: 2)
@@ -722,8 +722,8 @@ struct ContentOutlineSidebarContent: View {
                 NSPasteboard.general.setString(hook, forType: .string)
             } label: {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 8))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 20, height: 20)
                     .background(DS.surface, in: Circle())
             }
@@ -755,26 +755,26 @@ struct ContentOutlineSidebarContent: View {
     private var intelligenceHeaderLabel: some View {
         HStack(spacing: 6) {
             Image(systemName: showIntelligence ? "chevron.down" : "chevron.right")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 10)
 
             Image(systemName: "brain.head.profile")
-                .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
 
             Text("INTELLIGENCE")
-                .font(.system(size: 9, weight: .bold))
+                .font(DS.caption2)
                 .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Spacer()
 
             let count = intelligenceItemCount
             if count > 0 {
                 Text("\(count)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(accentColor)
+                    .font(DS.caption2)
+                    .foregroundStyle(accentColor)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(accentColor.opacity(0.12), in: Capsule())
@@ -812,8 +812,8 @@ struct ContentOutlineSidebarContent: View {
                 ProgressView()
                     .controlSize(.mini)
                 Text("Analyzing patterns...")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(8)
         }
@@ -824,12 +824,12 @@ struct ContentOutlineSidebarContent: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 8))
-                    .foregroundColor(Color(hex: "#34D399"))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.green)
                 Text("WHAT'S WORKING")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             whatsWorkingScopeRow(report)
@@ -852,7 +852,7 @@ struct ContentOutlineSidebarContent: View {
                 .fill(DS.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(Color(hex: "#34D399").opacity(0.2), lineWidth: 1)
+                        .stroke(DS.green.opacity(0.2), lineWidth: 1)
                 )
         )
     }
@@ -861,16 +861,16 @@ struct ContentOutlineSidebarContent: View {
     private func whatsWorkingScopeRow(_ report: MetaPatternReport) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "sparkle")
-                .font(.system(size: 8))
-                .foregroundColor(Color(hex: "#34D399"))
+                .font(DS.caption2)
+                .foregroundStyle(DS.green)
             Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(Color(hex: "#34D399"))
+                .font(DS.caption2)
+                .foregroundStyle(DS.green)
                 .lineLimit(1)
             Spacer()
             Text("\(report.sampleSize)")
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -878,16 +878,16 @@ struct ContentOutlineSidebarContent: View {
     private func whatsWorkingHookRow(_ topHook: HookPattern) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "text.quote")
-                .font(.system(size: 9))
-                .foregroundColor(DS.entityIdea)
+                .font(DS.caption2)
+                .foregroundStyle(DS.entityIdea)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(topHook.hookType)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.text)
                 Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content")
-                    .font(.system(size: 8))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }
@@ -896,16 +896,16 @@ struct ContentOutlineSidebarContent: View {
     private func whatsWorkingFrameworkRow(_ topFw: StructurePattern) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "rectangle.3.group.fill")
-                .font(.system(size: 9))
-                .foregroundColor(Color(hex: "#FBBF24"))
+                .font(DS.caption2)
+                .foregroundStyle(DS.orange)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(topFw.framework)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.text)
                 Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption")
-                    .font(.system(size: 8))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }
@@ -914,16 +914,16 @@ struct ContentOutlineSidebarContent: View {
     private func whatsWorkingTrendingRow(_ topics: [String]) -> some View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.up.right")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(Color(hex: "#34D399"))
+                .font(DS.caption2)
+                .foregroundStyle(DS.green)
                 .frame(width: 14)
             ForEach(topics.prefix(3), id: \.self) { item in
                 Text(item)
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(Color(hex: "#34D399"))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.green)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color(hex: "#34D399").opacity(0.12), in: Capsule())
+                    .background(DS.green.opacity(0.12), in: Capsule())
             }
         }
     }
@@ -945,21 +945,21 @@ struct ContentOutlineSidebarContent: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 8))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                 Text("DRAFT INTELLIGENCE")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.8)
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
 
             HStack(spacing: 6) {
                 Image(systemName: "doc.on.doc.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.entitySwipe)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.entitySwipe)
                 Text("\(swipeUUIDs.count) matched swipe\(swipeUUIDs.count == 1 ? "" : "s")")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             if let draftPackageData = atom.structured,
@@ -967,11 +967,11 @@ struct ContentOutlineSidebarContent: View {
                let draftPackage = try? JSONDecoder().decode(ContentDraftPackage.self, from: data) {
                 HStack(spacing: 6) {
                     Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.accent)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.accent)
                     Text("Confidence: \(String(format: "%.0f%%", draftPackage.confidence * 100))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
         }
@@ -995,20 +995,20 @@ struct ContentOutlineSidebarContent: View {
                 ProgressView()
                     .controlSize(.mini)
                 Text("Finding related...")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(8)
         } else if !relatedContent.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
-                        .font(.system(size: 8))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                     Text("RELATED")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(DS.caption2)
                         .tracking(0.8)
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 VStack(spacing: 3) {
@@ -1041,20 +1041,20 @@ struct ContentOutlineSidebarContent: View {
                 .frame(width: 2, height: 24)
 
             Image(systemName: iconForAtomType(ref.type))
-                .font(.system(size: 9))
-                .foregroundColor(colorForAtomType(ref.type))
+                .font(DS.caption2)
+                .foregroundStyle(colorForAtomType(ref.type))
                 .frame(width: 12)
 
             Text(ref.title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.text)
+                .font(DS.caption2)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             Spacer()
 
             Text(String(format: "%.0f%%", ref.relevanceScore * 100))
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
         .padding(6)
         .background(
@@ -1081,8 +1081,8 @@ struct ContentOutlineSidebarContent: View {
                             .controlSize(.mini)
                             .tint(DS.accent)
                         Text("Searching...")
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
@@ -1109,19 +1109,19 @@ struct ContentOutlineSidebarContent: View {
     private var ambientHeaderRow: some View {
         HStack(spacing: 4) {
             Image(systemName: "sparkles")
-                .font(.system(size: 8))
-                .foregroundColor(DS.accent)
+                .font(DS.caption2)
+                .foregroundStyle(DS.accent)
             Text("AMBIENT")
-                .font(.system(size: 8, weight: .bold))
+                .font(DS.caption2)
                 .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Spacer()
 
             if !ambientEngine.ambientResults.isEmpty {
                 Text("\(ambientEngine.ambientResults.count)")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(DS.accent)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .background(DS.accent.opacity(0.15), in: Capsule())
@@ -1134,12 +1134,12 @@ struct ContentOutlineSidebarContent: View {
     private func contextSectionHeader(title: String, icon: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 8))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
             Text(title)
-                .font(.system(size: 9, weight: .bold))
+                .font(DS.caption2)
                 .tracking(0.8)
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
         }
     }
 
@@ -1328,8 +1328,8 @@ private struct SidebarHookRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(index + 1).")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 16, alignment: .trailing)
                 .padding(.top, isEditing ? 4 : 0)
 
@@ -1342,8 +1342,8 @@ private struct SidebarHookRow: View {
                 )
             } else {
                 Text(hook)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .font(DS.buttonText)
+                    .foregroundStyle(DS.text)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         editText = hook
@@ -1357,8 +1357,8 @@ private struct SidebarHookRow: View {
             if isHovered {
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)
@@ -1405,8 +1405,8 @@ private struct SidebarOutlineRow: View {
             // Checkbox
             Button(action: onToggle) {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13))
-                    .foregroundColor(item.isCompleted ? DS.accent : DS.textMuted)
+                    .font(DS.callout)
+                    .foregroundStyle(item.isCompleted ? DS.accent : DS.textMuted)
             }
             .buttonStyle(.plain)
 
@@ -1414,8 +1414,8 @@ private struct SidebarOutlineRow: View {
             if isEditing {
                 TextField("", text: $editTitle)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.text)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.text)
                     .focused($isFocused)
                     .onSubmit { commitEdit() }
                     .onChange(of: isFocused) { _, focused in
@@ -1423,8 +1423,8 @@ private struct SidebarOutlineRow: View {
                     }
             } else {
                 Text(item.title)
-                    .font(.system(size: 12))
-                    .foregroundColor(item.isCompleted ? DS.textMuted : DS.textSecondary)
+                    .font(DS.subheadline)
+                    .foregroundStyle(item.isCompleted ? DS.textMuted : DS.textSecondary)
                     .strikethrough(item.isCompleted, color: DS.textMuted)
                     .lineLimit(2)
                     .onTapGesture(count: 2) {
@@ -1439,8 +1439,8 @@ private struct SidebarOutlineRow: View {
             if isHovered {
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.plain)

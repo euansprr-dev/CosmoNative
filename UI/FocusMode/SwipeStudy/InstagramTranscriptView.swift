@@ -183,7 +183,7 @@ struct InstagramTranscriptView: View {
                                             Text("Open in Instagram")
                                                 .font(.system(size: 12, weight: .medium))
                                         }
-                                        .foregroundColor(.white)
+                                        .foregroundStyle(DS.textOnAccent)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
                                         .background(DS.red, in: Capsule())

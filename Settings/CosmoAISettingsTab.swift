@@ -20,15 +20,15 @@ struct CosmoAISettingsTab: View {
     @State private var selectedSection: AISection = .agent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SanctuaryLayout.Spacing.lg) {
+        VStack(alignment: .leading, spacing: DS.space24) {
             // Header
             Text("Cosmo AI")
-                .font(SanctuaryTypography.titleMedium)
-                .foregroundColor(SanctuaryColors.Text.primary)
+                .font(DS.title2)
+                .foregroundColor(DS.text)
 
             Text("Configure AI provider, agent behavior, writing prompts, and skills")
-                .font(SanctuaryTypography.bodyMedium)
-                .foregroundColor(SanctuaryColors.Text.tertiary)
+                .font(DS.callout)
+                .foregroundColor(DS.textMuted)
 
             // Section picker
             HStack(spacing: 0) {
@@ -38,17 +38,17 @@ struct CosmoAISettingsTab: View {
                             selectedSection = section
                         }
                     } label: {
-                        HStack(spacing: SanctuaryLayout.Spacing.xs) {
+                        HStack(spacing: DS.space4) {
                             Image(systemName: section.icon)
                                 .font(.system(size: 11, weight: .medium))
                             Text(section.rawValue)
                                 .font(.system(size: 13, weight: selectedSection == section ? .semibold : .regular))
                         }
-                        .foregroundColor(selectedSection == section ? SanctuaryColors.Text.primary : SanctuaryColors.Text.tertiary)
-                        .padding(.horizontal, SanctuaryLayout.Spacing.md)
-                        .padding(.vertical, SanctuaryLayout.Spacing.sm + 2)
+                        .foregroundColor(selectedSection == section ? DS.text : DS.textMuted)
+                        .padding(.horizontal, DS.space12)
+                        .padding(.vertical, DS.space8 + 2)
                         .background(
-                            RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm)
+                            RoundedRectangle(cornerRadius: DS.radiusSmall)
                                 .fill(selectedSection == section ? CosmoColors.lavender.opacity(0.2) : Color.clear)
                         )
                     }
@@ -59,11 +59,11 @@ struct CosmoAISettingsTab: View {
             }
             .padding(3)
             .background(
-                RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm + 2)
-                    .fill(SanctuaryColors.Glass.primary)
+                RoundedRectangle(cornerRadius: DS.radiusSmall + 2)
+                    .fill(DS.surfaceHover)
                     .overlay(
-                        RoundedRectangle(cornerRadius: SanctuaryLayout.CornerRadius.sm + 2)
-                            .stroke(SanctuaryColors.Glass.borderSubtle, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DS.radiusSmall + 2)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
                     )
             )
 

@@ -124,7 +124,7 @@ struct FloatingPanelView: View {
 
                 Text(content.title)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
             }
 
@@ -153,7 +153,7 @@ struct FloatingPanelView: View {
 
                     Text(content.title)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.text)
                         .lineLimit(2)
                 }
 
@@ -238,7 +238,7 @@ struct FloatingPanelView: View {
 
                     Text(content.title)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.text)
                         .lineLimit(2)
 
                     // Metadata

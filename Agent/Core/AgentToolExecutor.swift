@@ -164,7 +164,7 @@ class AgentToolExecutor {
         case "create_content": return try await createContent(arguments)
         case "get_content": return try await getContent(arguments)
         case "create_thinkspace": return try await createThinkspace(arguments)
-        // Plannerum
+        // Calendar / Schedule Blocks
         case "get_calendar_blocks": return try await getCalendarBlocks(arguments)
         case "create_block": return try await createBlock(arguments)
         case "update_block": return try await updateBlock(arguments)
@@ -172,9 +172,6 @@ class AgentToolExecutor {
         case "complete_block": return try await completeBlock(arguments)
         case "get_unscheduled_tasks": return try await getUnscheduledTasks(arguments)
         case "create_task": return try await createTask(arguments)
-        // Quests
-        case "get_quest_status": return try await getQuestStatus(arguments)
-        case "complete_quest": return try await completeQuest(arguments)
         // Analytics
         case "get_dimension_xp": return try await getDimensionXP(arguments)
         case "get_streak_data": return try await getStreakData(arguments)
@@ -1572,7 +1569,7 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Plannerum
+    // MARK: - Calendar / Schedule Blocks
 
     private func getCalendarBlocks(_ args: [String: Any]) async throws -> String {
         let dateStr = args["date"] as? String
@@ -1820,85 +1817,14 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Quests
-
-    private func getQuestStatus(_ args: [String: Any]) async throws -> String {
-        let questEngine = QuestEngine()
-        await questEngine.evaluate()
-
-        let quests: [[String: Any]] = questEngine.quests.map { quest in
-            [
-                "id": quest.id,
-                "title": quest.title,
-                "description": quest.description,
-                "progress": quest.progress,
-                "isComplete": quest.isComplete,
-                "streak": quest.streak,
-                "xpReward": quest.xpReward,
-                "allowManualComplete": quest.allowManualComplete
-            ] as [String: Any]
-        }
-
-        return jsonEncode(["quests": quests, "count": quests.count])
-    }
-
-    private func completeQuest(_ args: [String: Any]) async throws -> String {
-        guard let questId = args["questId"] as? String else {
-            return jsonError("Missing required parameter: questId")
-        }
-
-        let questEngine = QuestEngine()
-        await questEngine.evaluate()
-
-        guard let quest = questEngine.quests.first(where: { $0.id == questId }) else {
-            return jsonError("Quest not found: \(questId)")
-        }
-
-        guard quest.allowManualComplete else {
-            return jsonError("Quest '\(quest.title)' does not allow manual completion")
-        }
-
-        if quest.isComplete {
-            return jsonEncode([
-                "success": false,
-                "message": "Quest '\(quest.title)' is already completed"
-            ] as [String: Any])
-        }
-
-        await questEngine.manualComplete(questId: questId)
-
-        return jsonEncode([
-            "success": true,
-            "questId": questId,
-            "title": quest.title,
-            "xpAwarded": quest.xpReward,
-            "message": "Quest completed: \(quest.title) (+\(quest.xpReward) XP)"
-        ] as [String: Any])
-    }
-
     // MARK: - Analytics
 
     private func getDimensionXP(_ args: [String: Any]) async throws -> String {
-        let engine = DimensionIndexEngine.shared
-
-        let dimensionFilter = args["dimension"] as? String
-
-        var dimensions: [[String: Any]] = []
-        for (dimension, index) in engine.dimensionIndices {
-            if let filter = dimensionFilter, dimension.rawValue != filter {
-                continue
-            }
-            dimensions.append([
-                "dimension": dimension.rawValue,
-                "displayName": dimension.displayName,
-                "trend": index.trend.rawValue
-            ] as [String: Any])
-        }
-
+        // Legacy dimension system removed
         return jsonEncode([
-            "dimensions": dimensions,
-            "sanctuaryLevel": engine.sanctuaryLevel,
-            "overallTrend": engine.overallTrend.rawValue
+            "dimensions": [] as [[String: Any]],
+            "overallLevel": 1,
+            "overallTrend": "stable"
         ] as [String: Any])
     }
 
@@ -2131,12 +2057,15 @@ class AgentToolExecutor {
                 }
                 if let format = contentFormat, !format.isEmpty {
                     meta["explicitFormat"] = format
+                    meta["contentFormat"] = format   // Persist in Codable ContentAtomMetadata
                 }
                 if let data = try? JSONSerialization.data(withJSONObject: meta),
                    let str = String(data: data, encoding: .utf8) {
                     atom.metadata = str
                 }
             }
+            // Evict cached engine so it reinitializes with updated metadata (blueprint/format change)
+            engineCache.removeValue(forKey: contentUUID)
         }
 
         guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
@@ -2207,11 +2136,12 @@ class AgentToolExecutor {
             outlineDetail.append(line)
         }
 
-        // Surface swipe titles from the inner writing engine for context trace visibility
+        // Surface swipe titles and intelligence from the inner writing engine
         let swipeTitles = await engine.loadedContext.swipeTitles
         let swipeCount = await engine.loadedContext.swipeCount
+        let swipeIntel = await engine.swipeIntelligenceSummary()
 
-        return jsonEncode([
+        var result: [String: Any] = [
             "success": true,
             "contentUUID": contentUUID,
             "message": "Outline generated via unified writing engine. IMPORTANT: Present the hooks and outline to the user for review before proceeding to draft.",
@@ -2223,7 +2153,11 @@ class AgentToolExecutor {
             "blueprintUsed": blueprintReference.isEmpty ? "Auto-selected from swipe library" : "User-specified primary blueprint",
             "swipesUsed": swipeTitles,
             "swipeCount": swipeCount
-        ] as [String: Any])
+        ]
+        // Merge swipe intelligence into result
+        for (key, value) in swipeIntel { result[key] = value }
+
+        return jsonEncode(result)
     }
 
     private func generateDraft(_ args: [String: Any]) async throws -> String {
@@ -2239,6 +2173,7 @@ class AgentToolExecutor {
             _ = try? await atomRepo.update(uuid: contentUUID) { atom in
                 var meta = atom.metadataDict ?? [:]
                 meta["explicitFormat"] = format
+                meta["contentFormat"] = format   // Persist in Codable ContentAtomMetadata
                 if let data = try? JSONSerialization.data(withJSONObject: meta),
                    let str = String(data: data, encoding: .utf8) {
                     atom.metadata = str
@@ -2285,19 +2220,45 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let draftBody = updatedAtom?.body ?? ""
 
-        // Surface swipe info from the inner writing engine for context trace visibility
+        // Surface swipe info and intelligence from the inner writing engine
         let swipeCount = await engine.loadedContext.swipeCount
         let swipeTitles = await engine.loadedContext.swipeTitles
+        let swipeIntel = await engine.swipeIntelligenceSummary()
 
-        return jsonEncode([
+        // Detect draft format from body structure
+        let detectedFormat = Self.detectDraftFormat(draftBody)
+
+        var result: [String: Any] = [
             "success": true,
             "contentUUID": contentUUID,
             "message": "Here is the draft. Display the text below to the user exactly as-is:",
             "formattedDraft": Self.renderDraftForDisplay(draftBody),
+            "format": detectedFormat,
             "engineNotes": String(engineNotes.prefix(300)),
             "swipeCount": swipeCount,
             "swipesUsed": swipeTitles
-        ] as [String: Any])
+        ]
+        for (key, value) in swipeIntel { result[key] = value }
+
+        return jsonEncode(result)
+    }
+
+    /// Detect the structural format of a draft body (carousel JSON, thread JSON, or plaintext).
+    private static func detectDraftFormat(_ body: String) -> String {
+        guard !body.isEmpty,
+              let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) else {
+            return "plaintext"
+        }
+        if let dict = json as? [String: Any] {
+            if dict["slides"] != nil { return "carousel" }
+            if dict["tweets"] != nil { return "thread" }
+        }
+        if let arr = json as? [[String: Any]], let first = arr.first {
+            if first["number"] != nil, first["text"] != nil { return "carousel" }
+            if first["tweet"] != nil { return "thread" }
+        }
+        return "json"
     }
 
     // MARK: - Read Draft
@@ -2467,20 +2428,25 @@ class AgentToolExecutor {
         let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
         let revisedDraft = updatedAtom?.body ?? ""
 
-        // Surface swipe info from the inner writing engine for context trace visibility
+        // Surface swipe info and intelligence from the inner writing engine
         let swipeCount = await engine.loadedContext.swipeCount
         let swipeTitles = await engine.loadedContext.swipeTitles
+        let swipeIntel = await engine.swipeIntelligenceSummary()
 
         let revisedFormatted = Self.renderDraftForDisplay(revisedDraft)
-        return jsonEncode([
+        var result: [String: Any] = [
             "success": true,
             "contentUUID": contentUUID,
             "message": "Here is the revised draft. Display the text below to the user exactly as-is:",
             "formattedDraft": revisedFormatted,
+            "format": Self.detectDraftFormat(revisedDraft),
             "engineNotes": String(engineNotes.prefix(300)),
             "swipeCount": swipeCount,
             "swipesUsed": swipeTitles
-        ] as [String: Any])
+        ]
+        for (key, value) in swipeIntel { result[key] = value }
+
+        return jsonEncode(result)
     }
 
     private func generateHooks(_ args: [String: Any]) async throws -> String {

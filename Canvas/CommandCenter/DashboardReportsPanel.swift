@@ -245,7 +245,7 @@ struct DashboardReportsPanel: View {
     private func focusColor(_ score: Double) -> Color {
         if score >= 80 { return DS.green }
         if score >= 50 { return DS.orange }
-        return PlannerumColors.overdue
+        return DS.red
     }
 
     private func sortedIntents(_ report: WeeklyReportData) -> [(key: TaskIntent, value: Int)] {

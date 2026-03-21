@@ -32,14 +32,14 @@ struct ProjectSidebarRow: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.space8) {
                 // Progress ring
                 progressRing
-                    .frame(width: 16, height: 16)
+                    .frame(width: DS.space16, height: DS.space16)
 
                 // Project name
                 Text(project.title ?? "Untitled")
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(isSelected ? DS.headline : DS.callout)
                     .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
                     .lineLimit(1)
 
@@ -49,16 +49,16 @@ struct ProjectSidebarRow: View {
                 let taskCount = taskCountForProject
                 if taskCount > 0 {
                     Text("\(taskCount)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                         .monospacedDigit()
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space4)
             .background(
                 isSelected
-                    ? RoundedRectangle(cornerRadius: 8).fill(DS.surfaceElevated)
+                    ? RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceElevated)
                     : nil
             )
             .contentShape(Rectangle())

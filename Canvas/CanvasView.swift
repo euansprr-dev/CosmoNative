@@ -17,7 +17,6 @@ struct CanvasView: View {
     @State private var canvasIsActive = true
 
     @StateObject private var spatialEngine = SpatialEngine()
-    @StateObject private var expansionManager = BlockExpansionManager()
     @StateObject private var connectManager = DragToConnectManager()
     @StateObject private var drawingState = DrawingStateManager()
     @StateObject private var clusterEngine = CanvasClusterEngine()
@@ -66,6 +65,13 @@ struct CanvasView: View {
 
     // Zoom/pan persistence
     @State private var zoomPanSaveTask: Task<Void, Never>?
+
+    // Thinkspace switch transition
+    @State private var thinkspaceSwitchTask: Task<Void, Never>?
+    @State private var canvasContentOpacity: Double = 1.0
+    @State private var canvasContentScale: CGFloat = 1.0
+    @State private var canvasContentBlur: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // PERF: Debounced frame tracker update — only needed for right-click hit testing
     @State private var frameUpdateTask: Task<Void, Never>?
@@ -138,9 +144,6 @@ struct CanvasView: View {
             ZStack {
                 // Background always fills the screen (infinite canvas)
                 canvasBackground
-
-                // Scrim for expansion
-                ExpansionScrim()
 
                 // Blocks container - scaled as a unit around screen center
                 // This keeps blocks at their relative positions while zooming
@@ -236,6 +239,9 @@ struct CanvasView: View {
                         effectiveScale: effectiveScale
                     )
                 }
+                .opacity(canvasContentOpacity)
+                .scaleEffect(canvasContentScale)
+                .blur(radius: canvasContentBlur)
                 .scaleEffect(effectiveScale, anchor: UnitPoint(
                     x: screenCenter.x / geo.size.width,
                     y: screenCenter.y / geo.size.height
@@ -289,7 +295,13 @@ struct CanvasView: View {
                         }
                 }
             }
-            .environmentObject(expansionManager)
+            // Accept blocks dragged out of cluster grid/list/board views
+            .onDrop(of: [.text], delegate: ClusterToCanvasDropDelegate(
+                screenToCanvas: { [self] screenPos in screenToCanvasPosition(screenPos) },
+                onDrop: { [self] blockUUID, canvasPosition in
+                    handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
+                }
+            ))
             .overlay(alignment: .bottomTrailing) {
                 // Zoom indicator
                 zoomIndicator
@@ -315,20 +327,7 @@ struct CanvasView: View {
                 .animation(ProMotionSprings.snappy, value: selectedBlockId)
                 .animation(ProMotionSprings.snappy, value: clusterEngine.selectedClusterId)
             }
-            // Thinkspace sidebar trigger zone (left edge)
-            .overlay(alignment: .leading) {
-                ThinkspaceSidebarTrigger(isVisible: $isSidebarVisible)
-                    .frame(maxHeight: .infinity)
-            }
-            // Thinkspace sidebar
-            .overlay(alignment: .leading) {
-                ThinkspaceSidebar(
-                    manager: thinkspaceManager,
-                    isVisible: $isSidebarVisible
-                )
-                .padding(.leading, 16)
-                .padding(.top, 60)  // Below command bar
-            }
+            // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // Ambient knowledge panel (right edge)
             .overlay(alignment: .trailing) {
                 if showAmbientPanel, let selectedId = selectedBlockId {
@@ -373,7 +372,7 @@ struct CanvasView: View {
                     // Zoom level display
                     Text("\(Int(effectiveScale * 100))%")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
 
                     // Reset zoom button
                     Button {
@@ -383,7 +382,7 @@ struct CanvasView: View {
                     } label: {
                         Image(systemName: "1.magnifyingglass")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
+                            .foregroundStyle(DS.textSecondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -623,8 +622,6 @@ struct CanvasView: View {
                 isClusterMember: selectedClusterMemberUUIDs.contains(block.entityUuid),
                 isDraggingClusterMember: draggingClusterMemberUUIDs.contains(block.entityUuid),
                 heatmapOpacity: heatmapOpacity(for: block),
-                expansionOpacity: expansionManager.opacity(for: block.id),
-                expansionZIndex: expansionManager.zIndex(for: block.id),
                 isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
                 staticContent: CanvasBlockStaticView(
                     block: block,
@@ -1052,29 +1049,6 @@ struct CanvasView: View {
                     handleCreateResearchBlock(notification: notification)
                 }
 
-                // Listen for block expansion voice commands
-                addCanvasObserver(
-                    forName: .expandSelectedBlock,
-                    object: nil,
-                    queue: .main,
-                    activeOnly: true
-                ) { [self] _ in
-                    handleExpandSelectedBlock()
-                }
-
-                addCanvasObserver(
-                    forName: .collapseExpandedBlock,
-                    object: nil,
-                    queue: .main,
-                    activeOnly: true
-                ) { [self] _ in
-                    Task { @MainActor in
-                        withAnimation(BlockAnimations.collapse) {
-                            expansionManager.collapse()
-                        }
-                    }
-                }
-
                 addCanvasObserver(
                     forName: .closeSelectedBlock,
                     object: nil,
@@ -1137,16 +1111,6 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handleDeleteBlockByContent(notification: notification)
-                }
-
-                addCanvasObserver(
-                    forName: .expandBlockByContent,
-                    object: nil,
-                    queue: .main,
-                    activeOnly: true
-                ) { [self] notification in
-                    nonisolated(unsafe) let notification = notification
-                    handleExpandBlockByContent(notification: notification)
                 }
 
                 addCanvasObserver(
@@ -1378,6 +1342,8 @@ struct CanvasView: View {
                 }
                 isSpaceHeld = false
                 removeCanvasObservers()
+                thinkspaceSwitchTask?.cancel()
+                thinkspaceSwitchTask = nil
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
@@ -1386,10 +1352,28 @@ struct CanvasView: View {
                 }
             }
             .onChange(of: thinkspaceId) { _, newId in
-                // Reload canvas content when switching between Command Center ↔ thinkspaces
-                Task { @MainActor in
-                    // Restore zoom/pan BEFORE loading blocks so the viewport is correct
-                    // when blocks appear (prevents position snap jank)
+                thinkspaceSwitchTask?.cancel()
+                guard newId != spatialEngine.currentThinkspaceId else { return }
+
+                // 1. Animate old content OUT (blocks still visible, receding into background)
+                withAnimation(reduceMotion ? .easeOut(duration: 0.1) : ProMotionSprings.worldExit) {
+                    canvasContentOpacity = 0
+                    canvasContentScale = 0.97
+                    canvasContentBlur = 6
+                }
+
+                // 2. After exit animation completes → clear, load, enter
+                thinkspaceSwitchTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
+                    guard !Task.isCancelled else { return }
+
+                    // Clear old content (now invisible — no flash)
+                    spatialEngine.blocks = []
+                    clusterEngine.clusters = []
+                    clusterEngine.userClusters = []
+                    drawingState.drawings = []
+
+                    // Set new viewport (invisible, safe to change)
                     if let tsId = newId,
                        let ts = thinkspaceManager.thinkspaces.first(where: { $0.id == tsId }) {
                         canvasScale = CGFloat(ts.zoomLevel)
@@ -1399,16 +1383,31 @@ struct CanvasView: View {
                         canvasOffset = .zero
                     }
 
+                    // Load new content
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: newId)
+                    guard !Task.isCancelled else { return }
+
                     drawingState.loadDrawings(thinkspaceId: newId)
                     CosmoUndoManager.shared.clearHistory()
 
-                    // Reload clusters
                     await clusterEngine.loadUserClusters(
                         thinkspaceId: newId,
                         blocks: spatialEngine.blocks
                     )
+                    guard !Task.isCancelled else { return }
+
                     rebuildMediaContentCache()
+
+                    // Set entry starting position (small/far — behind the background)
+                    canvasContentScale = 0.97
+                    canvasContentBlur = 6
+
+                    // 3. Animate new content IN (emerging from background)
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.worldEnter) {
+                        canvasContentOpacity = 1.0
+                        canvasContentScale = 1.0
+                        canvasContentBlur = 0
+                    }
                 }
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
@@ -1422,12 +1421,6 @@ struct CanvasView: View {
                 if showClusterPopover {
                     withAnimation(ProMotionSprings.snappy) {
                         showClusterPopover = false
-                    }
-                    return .handled
-                }
-                if expansionManager.isAnyBlockExpanded {
-                    withAnimation(BlockAnimations.collapse) {
-                        expansionManager.collapse()
                     }
                     return .handled
                 }
@@ -1876,9 +1869,9 @@ struct CanvasView: View {
 
         let block = spatialEngine.blocks[blockIndex]
 
-        // For note and content blocks, save content to metadata and persist
-        // Both use metadata-based storage (not atoms table)
-        if block.entityType == .note || block.entityType == .content {
+        // For note, stickyNote, and content blocks, save content to metadata and persist
+        // These use metadata-based storage (not atoms table)
+        if block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content {
             spatialEngine.blocks[blockIndex].metadata["content"] = content
             if let title = title {
                 spatialEngine.blocks[blockIndex].metadata["title"] = title
@@ -2038,6 +2031,30 @@ struct CanvasView: View {
         }
     }
 
+    // MARK: - Cluster-to-Canvas Drop
+
+    private func handleClusterToCanvasDrop(blockUUID: String, canvasPosition: CGPoint) {
+        // Find the source cluster containing this block
+        guard let sourceCluster = clusterEngine.allClusters.first(where: { $0.blockUUIDs.contains(blockUUID) }) else { return }
+
+        // Remove from source cluster
+        clusterEngine.removeBlockFromCluster(blockUUID: blockUUID, clusterId: sourceCluster.id, blocks: spatialEngine.blocks)
+
+        // Restore block's position and default size on the canvas
+        if let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == blockUUID }) {
+            spatialEngine.blocks[blockIndex].position = canvasPosition
+            spatialEngine.blocks[blockIndex].size = spatialEngine.blocks[blockIndex].defaultSize
+
+            Task {
+                await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+            }
+        }
+
+        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        clusterEngine.persistAfterMove()
+        ClusterViewDragSession.sourceClusterId = nil
+    }
+
     private func createDatabaseEntryForBlock(block: CanvasBlock, content: String) async {
         // Create database entry based on entity type
         // This makes the block searchable in Cmd+K
@@ -2128,7 +2145,10 @@ struct CanvasView: View {
 
         var screenPosition = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
         if let pos = userInfo["position"] as? CGPoint {
-            screenPosition = pos
+            // Convert from window coordinates to canvas-local coordinates
+            // by subtracting the sidebar width from X
+            let sidebarWidth = crossDragManager.sidebarWidth
+            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 
         // Convert screen position to canvas position (accounting for zoom)
@@ -2237,7 +2257,15 @@ struct CanvasView: View {
 
         // Convert screen coords to window coords
         let windowPoint = window.convertPoint(fromScreen: mouseLocation)
-        let sidebarWidth = crossDragManager.sidebarWidth
+        let sidebarWidth = crossDragManager.sidebarTotalWidth
+
+        // Skip cross-thinkspace drag when sidebar is hidden (width == 0)
+        guard sidebarWidth > 0 else {
+            if !crossDragManager.isDragging {
+                crossDragManager.beginDrag(block: block, sourceThinkspaceId: thinkspaceId)
+            }
+            return
+        }
 
         if windowPoint.x < sidebarWidth {
             // Cursor is over the sidebar
@@ -2693,7 +2721,8 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            screenPosition = pos
+            let sidebarWidth = crossDragManager.sidebarWidth
+            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 
         // Convert screen position to canvas position (accounting for zoom)
@@ -2722,7 +2751,8 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            screenPosition = pos
+            let sidebarWidth = crossDragManager.sidebarWidth
+            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 
         // Convert screen position to canvas position (accounting for zoom)
@@ -2866,19 +2896,6 @@ struct CanvasView: View {
         }
     }
 
-    // MARK: - Block Expansion Voice Command Handlers
-
-    private func handleExpandSelectedBlock() {
-        guard let blockId = selectedBlockId else {
-            print("⚠️ No block selected to expand")
-            return
-        }
-
-        withAnimation(BlockAnimations.expand) {
-            expansionManager.expand(blockId)
-        }
-    }
-
     private func handleOpenSelectedBlockInFocusMode() {
         guard let blockId = selectedBlockId,
               let block = spatialEngine.blocks.first(where: { $0.id == blockId }) else {
@@ -2962,25 +2979,6 @@ struct CanvasView: View {
                 await spatialEngine.removeBlock(matchingBlock.id)
             }
             print("🗑️ Deleted block matching '\(searchQuery)'")
-        } else {
-            print("⚠️ No block found matching '\(searchQuery)'")
-        }
-    }
-
-    private func handleExpandBlockByContent(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let searchQuery = userInfo["searchQuery"] as? String else {
-            return
-        }
-
-        let entityType = userInfo["entityType"] as? String
-
-        // Find and expand block matching search query
-        if let matchingBlock = findBlockByContent(searchQuery, entityType: entityType) {
-            withAnimation(BlockAnimations.expand) {
-                expansionManager.expand(matchingBlock.id)
-            }
-            print("📐 Expanded block matching '\(searchQuery)'")
         } else {
             print("⚠️ No block found matching '\(searchQuery)'")
         }
@@ -3651,7 +3649,7 @@ struct CanvasView: View {
             // SwipeProcessingService runs asynchronously — wait for it to finish
             // Poll briefly to detect completion for notification
             for _ in 0..<120 {
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                try? await Task.sleep(for: .milliseconds(500))
                 if !SwipeProcessingService.shared.isProcessing(uuid: uuid) { break }
             }
         }
@@ -3820,7 +3818,7 @@ struct FloatingBlockView: View {
                 if let subtitle = block.subtitle {
                     Text(subtitle)
                         .font(.system(size: 13))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                         .lineLimit(4)
                 }
 
@@ -3831,11 +3829,11 @@ struct FloatingBlockView: View {
                     ForEach(Array(block.metadata.prefix(2)), id: \.key) { key, value in
                         Text("\(key): \(value)")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(DS.borderSubtle.opacity(0.4))
-                            .cornerRadius(4)
+                            .clipShape(.rect(cornerRadius: DS.radiusXSmall))
                     }
 
                     Spacer()
@@ -3843,7 +3841,7 @@ struct FloatingBlockView: View {
                     if block.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
             }
@@ -3924,10 +3922,10 @@ struct CanvasControls: View {
         Button(action: { spatialEngine.clearCanvas() }) {
             Image(systemName: "trash")
                 .font(.system(size: 16))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
                 .frame(width: 40, height: 40)
                 .background(DS.surfaceElevated)
-                .cornerRadius(10)
+                .clipShape(.rect(cornerRadius: DS.radiusMedium - 2))
                 .shadow(color: Color.black.opacity(0.08), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
@@ -3941,7 +3939,7 @@ struct GridPatternView: View {
     var body: some View {
         let baseSpacing: CGFloat = 40
         let spacing = max(baseSpacing * transform.effectiveScale, 1)
-        let dotSize = max(1.5, 2.5 * transform.effectiveScale)
+        let dotSize = max(2.5 * transform.effectiveScale, 0.75)
         let tileMultiplier = CanvasGridPatternCache.shared.tileMultiplier(for: spacing)
         let tileSize = spacing * CGFloat(tileMultiplier)
         let tileImage = CanvasGridPatternCache.shared.image(
@@ -3952,8 +3950,9 @@ struct GridPatternView: View {
 
         Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
             let resolved = context.resolve(Image(nsImage: tileImage))
-            let offsetX = transform.contentOffset.width.truncatingRemainder(dividingBy: tileSize)
-            let offsetY = transform.contentOffset.height.truncatingRemainder(dividingBy: tileSize)
+            let gridOrigin = transform.canvasToScreen(.zero)
+            let offsetX = gridOrigin.x.truncatingRemainder(dividingBy: tileSize)
+            let offsetY = gridOrigin.y.truncatingRemainder(dividingBy: tileSize)
             let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("grid-pattern")
 
             for x in stride(from: offsetX - tileSize, through: size.width + tileSize, by: tileSize) {
@@ -3988,7 +3987,7 @@ struct ThinkspaceAuroraView: View {
             // Bottom-right green aurora
             RadialGradient(
                 colors: [
-                    Color(hex: "10B981").opacity(0.02),
+                    DS.green.opacity(0.02),
                     Color.clear
                 ],
                 center: UnitPoint(x: 0.9, y: 0.85),
@@ -3999,7 +3998,7 @@ struct ThinkspaceAuroraView: View {
             // Center subtle blue
             RadialGradient(
                 colors: [
-                    Color(hex: "3B82F6").opacity(0.015),
+                    CosmoColors.skyBlue.opacity(0.015),
                     Color.clear
                 ],
                 center: UnitPoint(x: 0.5, y: 0.5),
@@ -4028,7 +4027,10 @@ struct CanvasBlockStaticView: View {
         case .note:
             NoteBlockView(block: block)
         case .calendar:
-            CalendarWindowView(block: block)
+            Text("Calendar")
+                .font(DS.body)
+                .foregroundStyle(DS.textSecondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .research:
             if isMediaContent {
                 MediaBlockView(block: block, isViewportActive: isViewportActive)
@@ -4062,8 +4064,6 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
     let isClusterMember: Bool
     let isDraggingClusterMember: Bool
     let heatmapOpacity: CGFloat
-    let expansionOpacity: Double
-    let expansionZIndex: Double
     let isCrossThinkspaceDragging: Bool
     let staticContent: StaticContent
 
@@ -4074,15 +4074,14 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
 
     var body: some View {
         staticContent
-            .expansionAware(blockId: block.id)
             .position(
                 x: block.position.x + transform.contentOffset.width + dragOffset.width,
                 y: block.position.y + transform.contentOffset.height + dragOffset.height
             )
             .scaleEffect(block.scale)
             .rotationEffect(.degrees(block.rotation))
-            .opacity(isCrossThinkspaceDragging ? 0 : block.opacity * expansionOpacity * heatmapOpacity)
-            .zIndex(isDragTarget ? 1000 : (expansionZIndex + Double(block.zIndex)))
+            .opacity(isCrossThinkspaceDragging ? 0 : block.opacity * heatmapOpacity)
+            .zIndex(isDragTarget ? 1000 : Double(block.zIndex))
             .allowsHitTesting(!isClusterMember)
             .gesture(
                 DragGesture(minimumDistance: 2)
@@ -4122,6 +4121,36 @@ private struct ActiveClusterResizeSession {
     let memberGeometries: [String: CanvasBlockGeometry]
 }
 
+// MARK: - Cluster-to-Canvas Drop Delegate
+
+/// Accepts blocks dragged from cluster grid/list/board views onto the canvas background.
+/// Removes the block from its source cluster and places it as a free-floating canvas block.
+private struct ClusterToCanvasDropDelegate: DropDelegate {
+    let screenToCanvas: (CGPoint) -> CGPoint
+    let onDrop: (String, CGPoint) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        // Only accept drops that originated from a cluster view
+        ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text])
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard ClusterViewDragSession.sourceClusterId != nil else { return false }
+
+        let canvasPosition = screenToCanvas(info.location)
+
+        for provider in info.itemProviders(for: [.text]) {
+            _ = provider.loadObject(ofClass: NSString.self) { item, _ in
+                guard let blockUUID = item as? String else { return }
+                DispatchQueue.main.async {
+                    onDrop(blockUUID, canvasPosition)
+                }
+            }
+        }
+        return true
+    }
+}
+
 private struct CanvasClusterDropPreviewView: View {
     let block: CanvasBlock
     let clusterColor: Color
@@ -4142,11 +4171,11 @@ private struct CanvasClusterDropPreviewView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(block.title)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .lineLimit(2)
                     Text("Drop preview")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(clusterColor.opacity(0.85))
+                        .foregroundStyle(clusterColor.opacity(0.85))
                 }
                 .padding(14)
             }
@@ -4179,7 +4208,7 @@ struct MetalCanvasViewRepresentable: NSViewRepresentable {
 
 // MARK: - Notifications
 extension Notification.Name {
-    // Note: placeBlocksOnCanvas, moveCanvasBlocks, expandSelectedBlock, closeSelectedBlock, and resizeSelectedBlock are defined in VoiceNotifications.swift
+    // Note: placeBlocksOnCanvas, moveCanvasBlocks, closeSelectedBlock, and resizeSelectedBlock are defined in VoiceNotifications.swift
     // Unified with CosmoNotification.Navigation to prevent mismatched notification names
     static let enterFocusMode = CosmoNotification.Navigation.enterFocusMode
     static let openBlockInFocusMode = CosmoNotification.Navigation.openBlockInFocusMode
@@ -4192,7 +4221,6 @@ extension Notification.Name {
     static let removeBlock = Notification.Name("removeBlock")
     static let arrangeCanvasBlocks = Notification.Name("arrangeCanvasBlocks")
     static let createNoteBlock = Notification.Name("createNoteBlock")
-    static let collapseExpandedBlock = Notification.Name("collapseExpandedBlock")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")
     static let canvasAtomProcessed = Notification.Name("canvasAtomProcessed")
 }

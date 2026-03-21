@@ -199,48 +199,10 @@ class AgentProactiveScheduler: ObservableObject {
         logDeliveryAttempt(type: "weekly_review", success: true)
     }
 
-    // MARK: - Streak Check
+    // MARK: - Streak Check (Legacy — quest system removed)
 
     private func scheduleStreakCheck() {
-        guard streakAlertsEnabled else { return }
-
-        // Check every hour for at-risk streaks
-        streakTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkStreaks()
-            }
-        }
-    }
-
-    private func checkStreaks() async {
-        guard let chatId = await resolveChatId() else { return }
-
-        // Query quest atoms for active streaks
-        let snapshots = (try? await AtomRepository.shared.fetchAll(type: .dimensionSnapshot)) ?? []
-        guard let latestSnapshot = snapshots.first else { return }
-
-        // Parse streak data from the latest snapshot
-        guard let structured = latestSnapshot.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let quests = json["quests"] as? [[String: Any]] else { return }
-
-        let calendar = Calendar.current
-        let currentHour = calendar.component(.hour, from: Date())
-
-        // Only alert in the evening (after 6 PM) for incomplete streaks
-        guard currentHour >= 18 else { return }
-
-        for quest in quests {
-            guard let title = quest["title"] as? String,
-                  let streak = quest["streak"] as? Int,
-                  streak > 0,
-                  let completedToday = quest["completedToday"] as? Bool,
-                  !completedToday else { continue }
-
-            let alert = AgentBriefGenerator.shared.generateStreakAlert(questTitle: title, currentStreak: streak)
-            await TelegramBridgeService.shared.sendMessage(chatId: chatId, text: alert)
-        }
+        // Legacy quest streak alerts removed
     }
 
     // MARK: - Intelligent Alerts

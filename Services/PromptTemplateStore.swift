@@ -806,12 +806,13 @@ class PromptTemplateStore: ObservableObject {
 
     static let DEFAULT_PLATFORM_CONSTRAINTS: String = """
     INSTAGRAM CAROUSEL:
-    - Slide count: 5-15 slides (optimal: 8-10)
-    - Slide 1: Hook ONLY. Maximum 80 characters. Must stop the scroll.
-    - Slides 2-N: Body content. Aim for 1-3 concise sentences per slide. Keep each slide focused on one point.
+    - Slide count: 5-15 slides (optimal: 8-12)
+    - ALL slides (including hook): Maximum 300 characters. 3-4 sentences per slide.
+      Each sentence on its OWN LINE with a blank line between sentences.
+      Never stack sentences into a single paragraph.
     - Final slide: CTA. Clear action + benefit.
     - Design direction: Include [VISUAL: ...] markers for each slide.
-    - Total word count: 200-600 words across all slides.
+    - Total word count: 200-800 words across all slides.
 
     INSTAGRAM REEL SCRIPT:
     - Duration: 15-90 seconds (optimal: 30-60 for educational, 15-30 for hooks)
@@ -829,11 +830,11 @@ class PromptTemplateStore: ObservableObject {
 
     TWITTER/X THREAD:
     - Thread length: 4-12 tweets (optimal: 6-8)
-    - Tweet 1 (hook): Maximum 200 characters. Must earn the "read more."
-    - Tweets 2-N: Maximum 280 characters each. Each tweet standalone-readable.
+    - ALL tweets: Maximum 300 characters. 3-4 sentences per tweet.
+      Each sentence on its own line with a blank line between sentences.
     - Final tweet: CTA with clear next step.
     - Total word count: 300-800 words.
-    - Formatting: No hashtags in thread body. Optional 1-2 hashtags in final tweet.
+    - Formatting: No hashtags in thread body.
 
     TWITTER/X SINGLE POST:
     - Maximum 280 characters.

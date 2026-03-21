@@ -42,12 +42,17 @@ struct NoteFocusModeView: View {
     // Animation states
     @State private var contentAppeared = false
     @State private var titleUnderlineProgress: CGFloat = 0
+    @State private var titleEditorHeight: CGFloat = 58
 
     // Save state
     @State private var saveState: SaveState = .idle
 
+    // Writing mode
+    @AppStorage("typewriterMode") private var typewriterMode = false
+
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 1.5
+    private let titleFontSize: CGFloat = 34
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -56,6 +61,17 @@ struct NoteFocusModeView: View {
         case idle
         case saving
         case saved
+    }
+
+    private var titleMinHeight: CGFloat {
+        max(
+            58,
+            EditorLayoutMetrics.singleLineHeight(
+                fontSize: titleFontSize,
+                compact: false,
+                baseFontWeight: .semibold
+            )
+        )
     }
 
     // MARK: - Body
@@ -77,12 +93,12 @@ struct NoteFocusModeView: View {
                         VStack(spacing: 0) {
                             // Title field
                             titleSection
-                                .padding(.top, 32)
+                                .padding(.top, DS.space32)
 
                             // Date + tags row
                             dateTagsRow
-                                .padding(.top, 12)
-                                .padding(.bottom, 24)
+                                .padding(.top, DS.space12)
+                                .padding(.bottom, DS.space24)
 
                             // Divider
                             Rectangle()
@@ -93,12 +109,14 @@ struct NoteFocusModeView: View {
                             // Rich text editor — use remaining height so it fills the page
                             CosmoDocumentEditor(
                                 document: $bodyDocument,
+                                fontSize: 17,
                                 placeholder: "Start writing...",
                                 darkMode: false,
                                 allowSlashCommands: true,
                                 allowMentions: true,
                                 allowSelectionMenu: true,
                                 allowImages: true,
+                                typewriterMode: typewriterMode,
                                 onDocumentChange: { _, plainText in
                                     plainContent = plainText
                                     if !isInitialLoad { triggerAutoSave() }
@@ -106,11 +124,11 @@ struct NoteFocusModeView: View {
                             )
                             .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
                             .frame(minHeight: max(400, geometry.size.height - 200))
-                            .padding(.top, 24)
+                            .padding(.top, DS.space24)
                             .padding(.bottom, 60)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 40)
+                        .padding(.horizontal, DS.space40)
                     }
                 }
             }
@@ -141,7 +159,7 @@ struct NoteFocusModeView: View {
             ) {
                 noteSidebarContent
             }
-            .padding(.leading, 8)
+            .padding(.leading, DS.space8)
             .padding(.top, 56)
         }
         .focusBlockContextMenu(
@@ -200,36 +218,36 @@ struct NoteFocusModeView: View {
     // MARK: - Top Bar
 
     private var topBar: some View {
-        HStack(spacing: 16) {
-            // Back button (hidden in pane mode — X button handles close)
+        HStack(spacing: DS.space16) {
+            // Back button (hidden in pane mode -- X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DS.space6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DS.buttonText)
                         Text("Back")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DS.callout)
                     }
-                    .foregroundColor(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, DS.space12)
+                    .padding(.vertical, DS.space8)
                     .background(DS.border, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
 
             // Type badge
-            HStack(spacing: 4) {
+            HStack(spacing: DS.space4) {
                 Image(systemName: "note.text")
-                    .font(.system(size: 10))
+                    .font(DS.caption2)
                 Text("NOTE")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(DS.caption2)
                     .tracking(0.8)
             }
-            .foregroundColor(CosmoColors.blockNote)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(CosmoColors.blockNote.opacity(0.15), in: Capsule())
+            .foregroundStyle(DS.entityNote)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(DS.entityNote.opacity(DS.opacitySubtle), in: Capsule())
 
             // Save indicator
             if saveState != .idle {
@@ -239,20 +257,33 @@ struct NoteFocusModeView: View {
 
             Spacer()
 
+            // Typewriter mode toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) { typewriterMode.toggle() }
+            } label: {
+                Image(systemName: typewriterMode ? "line.3.horizontal.circle.fill" : "line.3.horizontal.circle")
+                    .font(DS.callout)
+                    .foregroundStyle(typewriterMode ? DS.accent : DS.textMuted)
+                    .frame(width: 28, height: 28)
+                    .background(typewriterMode ? DS.accent.opacity(0.12) : DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Typewriter mode — cursor stays centered")
+
             // Pane close button
             if isPaneContext {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.textMuted)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.textMuted)
                         .frame(width: 28, height: 28)
                         .background(DS.border, in: Circle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DS.space20)
+        .padding(.vertical, DS.space12)
         .background(
             LinearGradient(
                 colors: [
@@ -272,7 +303,7 @@ struct NoteFocusModeView: View {
         VStack(alignment: .leading, spacing: 4) {
             CosmoDocumentEditor(
                 document: $titleDocument,
-                fontSize: 34,
+                fontSize: titleFontSize,
                 placeholder: "Untitled Note",
                 darkMode: false,
                 allowSlashCommands: false,
@@ -281,6 +312,9 @@ struct NoteFocusModeView: View {
                 allowImages: false,
                 singleLine: true,
                 baseFontWeight: .semibold,
+                onContentHeightChange: { newHeight in
+                    titleEditorHeight = max(titleMinHeight, newHeight)
+                },
                 onDocumentChange: { document, _ in
                     titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
                     withAnimation(ProMotionSprings.bouncy) {
@@ -289,7 +323,7 @@ struct NoteFocusModeView: View {
                     if !isInitialLoad { triggerAutoSave() }
                 }
             )
-            .frame(height: 60)
+            .frame(height: max(titleMinHeight, titleEditorHeight))
 
             // Animated underline
             GeometryReader { geo in
@@ -297,9 +331,9 @@ struct NoteFocusModeView: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                CosmoColors.blockNote.opacity(titleUnderlineProgress * 0.8),
-                                CosmoColors.blockNote.opacity(titleUnderlineProgress * 0.4),
-                                CosmoColors.blockNote.opacity(0)
+                                DS.entityNote.opacity(titleUnderlineProgress * 0.8),
+                                DS.entityNote.opacity(titleUnderlineProgress * 0.4),
+                                DS.entityNote.opacity(0)
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -307,7 +341,7 @@ struct NoteFocusModeView: View {
                     )
                     .frame(width: geo.size.width * max(0.16, titleUnderlineProgress), height: 2)
                     .shadow(
-                        color: CosmoColors.blockNote.opacity(titleUnderlineProgress * 0.4),
+                        color: DS.entityNote.opacity(titleUnderlineProgress * 0.4),
                         radius: 4,
                         y: 2
                     )
@@ -326,24 +360,24 @@ struct NoteFocusModeView: View {
         HStack(spacing: 16) {
             // Date
             Text(createdAt, format: .dateTime.month(.wide).day().year())
-                .font(CosmoTypography.body)
-                .foregroundColor(DS.textSecondary)
+                .font(DS.body)
+                .foregroundStyle(DS.textSecondary)
 
             // Tags
             if !tags.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(tags.prefix(3), id: \.self) { tag in
                         Text(tag)
-                            .font(CosmoTypography.caption)
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(DS.border, in: Capsule())
                     }
                     if tags.count > 3 {
                         Text("+\(tags.count - 3)")
-                            .font(CosmoTypography.caption)
-                            .foregroundColor(DS.textMuted)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.textMuted)
                     }
                 }
             }
@@ -351,16 +385,16 @@ struct NoteFocusModeView: View {
             Button(action: {
                 showTagEditor = true
             }) {
-                HStack(spacing: 4) {
+                HStack(spacing: DS.space4) {
                     Image(systemName: "tag")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .symbolEffect(.bounce, value: showTagEditor)
                     Text(tags.isEmpty ? "Add tags" : "Edit")
-                        .font(CosmoTypography.caption)
+                        .font(DS.caption)
                 }
-                .foregroundColor(DS.textMuted)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, DS.space4)
                 .background(DS.border, in: Capsule())
             }
             .buttonStyle(.plain)
@@ -379,24 +413,24 @@ struct NoteFocusModeView: View {
         HStack {
             Spacer()
             Text("\(wordCount) words")
-                .font(CosmoTypography.caption)
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
             Text("·")
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
             Text("\(plainContent.count) chars")
-                .font(CosmoTypography.caption)
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
             Spacer()
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, DS.space12)
         .background(
             LinearGradient(
                 colors: [.clear, DS.bg],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 40)
-            .offset(y: -20)
+            .frame(height: DS.space40)
+            .offset(y: -DS.space20)
         )
     }
 
@@ -413,23 +447,23 @@ struct NoteFocusModeView: View {
                         .symbolEffect(.rotate, isActive: true)
                 case .saved:
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(CosmoColors.blockNote)
+                        .foregroundStyle(DS.entityNote)
                         .symbolEffect(.bounce, value: saveState == .saved)
                 }
             }
-            .font(.system(size: 11, weight: .medium))
+            .font(DS.caption)
 
             Text(saveState == .saving ? "Saving..." : "Saved")
-                .font(CosmoTypography.caption)
+                .font(DS.caption)
         }
-        .foregroundColor(saveState == .saved ? CosmoColors.blockNote : DS.textSecondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .foregroundStyle(saveState == .saved ? DS.entityNote : DS.textSecondary)
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space4)
         .background(
             Capsule()
                 .fill(
                     saveState == .saved
-                        ? CosmoColors.blockNote.opacity(0.15)
+                        ? DS.entityNote.opacity(0.15)
                         : DS.border
                 )
         )
@@ -444,33 +478,31 @@ struct NoteFocusModeView: View {
     // MARK: - Sidebar Content
 
     private var noteSidebarContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.space16) {
             if linkedAtoms.isEmpty {
                 Text("No linked items")
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textMuted)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 20)
+                    .padding(.top, DS.space20)
             } else {
                 Text("LINKED ITEMS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.textMuted)
-                    .tracking(0.8)
+                    .dsSectionLabel()
 
                 ForEach(linkedAtoms, id: \.uuid) { linked in
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.space8) {
                         Image(systemName: linked.type.iconName)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.textSecondary)
+                            .font(DS.footnote)
+                            .foregroundStyle(DS.textSecondary)
 
                         Text(linked.title ?? "Untitled")
-                            .font(.system(size: 12))
-                            .foregroundColor(DS.text)
+                            .font(DS.subheadline)
+                            .foregroundStyle(DS.text)
                             .lineLimit(1)
 
                         Spacer()
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, DS.space4)
                 }
             }
         }

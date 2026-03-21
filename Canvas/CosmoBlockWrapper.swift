@@ -13,7 +13,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     let accentColor: Color
     let icon: String
     let title: String
-    @Binding var isExpanded: Bool
     @ViewBuilder let content: () -> Content
 
     // Crystallization
@@ -28,8 +27,6 @@ struct CosmoBlockWrapper<Content: View>: View {
     var onDuplicate: (() -> Void)? = nil
     var onAIAssist: (() -> Void)? = nil
 
-    // Environment
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
     // State
     @State private var isHovered = false
     @State private var blockSize: CGSize
@@ -40,18 +37,16 @@ struct CosmoBlockWrapper<Content: View>: View {
     private var isSelected: Bool { block.isSelected }
 
     // Constants
-    private let expandedScale: CGFloat = 1.5
     private let minWidth: CGFloat = 200
     private let minHeight: CGFloat = 150
     private let maxWidth: CGFloat = 1200
-    private let maxHeight: CGFloat = 1000
+    private let maxHeight: CGFloat = 5000
 
     init(
         block: CanvasBlock,
         accentColor: Color,
         icon: String,
         title: String,
-        isExpanded: Binding<Bool>,
         autoHeight: Bool = false,
         onClose: (() -> Void)? = nil,
         onFocusMode: (() -> Void)? = nil,
@@ -63,7 +58,6 @@ struct CosmoBlockWrapper<Content: View>: View {
         self.accentColor = accentColor
         self.icon = icon
         self.title = title
-        self._isExpanded = isExpanded
         self.autoHeight = autoHeight
         self.onClose = onClose
         self.onFocusMode = onFocusMode
@@ -76,11 +70,11 @@ struct CosmoBlockWrapper<Content: View>: View {
     // MARK: - Computed Properties
 
     private var effectiveWidth: CGFloat {
-        isExpanded ? min(blockSize.width * expandedScale, maxWidth) : blockSize.width
+        blockSize.width
     }
 
     private var effectiveHeight: CGFloat {
-        isExpanded ? min(blockSize.height * expandedScale, maxHeight) : blockSize.height
+        blockSize.height
     }
 
     // MARK: - Body
@@ -125,7 +119,7 @@ struct CosmoBlockWrapper<Content: View>: View {
                 }
             )
             .background(blockBackground)
-            .clipShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .overlay(blockBorder)
             // Top-edge highlight — removed for light mode (no-op)
             // Simple edge resize overlay (safe implementation)
@@ -147,7 +141,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             )
             .animation(isDragging ? nil : ProMotionSprings.hover, value: isDragging)
             // Per design language: card hover is depth change, not scale.
-            .contentShape(RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
             .onTapGesture {
                 // Single tap to select - post notification to CanvasView
                 NotificationCenter.default.post(
@@ -176,7 +170,6 @@ struct CosmoBlockWrapper<Content: View>: View {
         // ProMotion-optimized animations
         // NOTE: Removed animation on isSelected to avoid conflicts with toolbar transition
         .animation(ProMotionSprings.hover, value: isHovered)
-        .animation(ProMotionSprings.snappy, value: isExpanded)
         .onChange(of: block.size) { _, newSize in
             guard !isResizing, blockSize != newSize else { return }
             blockSize = newSize
@@ -193,13 +186,13 @@ struct CosmoBlockWrapper<Content: View>: View {
         // Greenhouse: clean white card surface with optional accent tint when selected
         if isSelected {
             ZStack {
-                RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .fill(DS.surfaceElevated)
-                RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
                     .fill(accentColor.opacity(0.03))
             }
         } else {
-            RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .fill(DS.surfaceElevated)
         }
     }
@@ -207,7 +200,7 @@ struct CosmoBlockWrapper<Content: View>: View {
     // MARK: - Border
 
     private var blockBorder: some View {
-        let shape = RoundedRectangle(cornerRadius: OnyxLayout.cardCornerRadius)
+        let shape = RoundedRectangle(cornerRadius: DS.radiusMedium)
         return ZStack {
             // Base border — solid 1px for light mode
             if isSelected {
@@ -827,8 +820,6 @@ struct BlockResizeHandle: View {
 
 #if DEBUG
 struct CosmoBlockWrapper_Previews: PreviewProvider {
-    @State static var isExpanded = false
-
     static var previews: some View {
         ZStack {
             DS.canvas
@@ -852,8 +843,7 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
                 block: previewBlock,
                 accentColor: DS.entityContent,
                 icon: "doc.text.fill",
-                title: "Sample Idea",
-                isExpanded: $isExpanded
+                title: "Sample Idea"
             ) {
                 VStack(alignment: .leading, spacing: 16) {
                     // Placeholder heading
@@ -872,7 +862,6 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
                 .padding(20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .environmentObject(BlockExpansionManager())
         }
         .frame(width: 600, height: 500)
     }

@@ -416,7 +416,7 @@ struct SynthesisWorkspaceView: View {
                     Text("Create Connection")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .background(DS.accent)

@@ -18,14 +18,14 @@ struct TaskChecklistEditor: View {
             if !items.isEmpty {
                 HStack {
                     Text("Checklist")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.caption)
                         .foregroundStyle(DS.textSecondary)
 
                     Spacer()
 
                     let completed = items.filter(\.isCompleted).count
                     Text("\(completed)/\(items.count)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.caption)
                         .foregroundStyle(completed == items.count ? DS.green : DS.textMuted)
                 }
                 .padding(.bottom, 6)
@@ -39,13 +39,13 @@ struct TaskChecklistEditor: View {
             // Add new item
             HStack(spacing: 8) {
                 Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 16)
 
                 TextField("Add item...", text: $newItemTitle)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .font(DS.cardMeta)
                     .foregroundStyle(DS.text)
                     .focused($isNewItemFocused)
                     .onSubmit {
@@ -64,7 +64,7 @@ struct TaskChecklistEditor: View {
                 toggleItem(item)
             } label: {
                 Image(systemName: item.isCompleted ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 13))
+                    .font(DS.callout)
                     .foregroundStyle(item.isCompleted ? DS.green : DS.borderSubtle)
             }
             .buttonStyle(.plain)
@@ -72,7 +72,7 @@ struct TaskChecklistEditor: View {
 
             // Title
             Text(item.title)
-                .font(.system(size: 12))
+                .font(DS.cardMeta)
                 .foregroundStyle(item.isCompleted ? DS.textMuted : DS.text)
                 .strikethrough(item.isCompleted)
                 .lineLimit(1)
@@ -84,7 +84,7 @@ struct TaskChecklistEditor: View {
                 removeItem(item)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
             }
             .buttonStyle(.plain)

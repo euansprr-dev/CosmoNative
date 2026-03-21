@@ -77,7 +77,7 @@ struct CosmoAIConversationPanel: View {
 
             Text("Cosmo AI")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundStyle(DS.text)
 
             Text("Full agent access — search, create, analyze, write.\nUse @ to reference any atom as context.")
                 .font(.system(size: 13))

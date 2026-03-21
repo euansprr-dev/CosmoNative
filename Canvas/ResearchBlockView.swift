@@ -9,15 +9,12 @@ struct ResearchBlockView: View {
     let block: CanvasBlock
     let isViewportActive: Bool
 
-    @State private var isExpanded = false
     @State private var atom: Atom?
     @State private var isLoading = true
     @State private var isProcessing = false
     @State private var isPlayerActive = false
     @State private var currentTimestamp: TimeInterval = 0
     @State private var isDropdownOpen = false
-    @EnvironmentObject private var expansionManager: BlockExpansionManager
-
     // PERF: Cached parsed metadata — computed once in loadAtom(), not on every render
     @State private var platform: String?
     @State private var author: String?
@@ -41,6 +38,16 @@ struct ResearchBlockView: View {
     init(block: CanvasBlock, isViewportActive: Bool = true) {
         self.block = block
         self.isViewportActive = isViewportActive
+        // Seed from block metadata for instant thumbnail rendering (before async loadAtom)
+        let url = (block.metadata["url"] ?? "").lowercased()
+        let isYT = url.contains("youtube") || url.contains("youtu.be")
+        self._isYouTubeContent = State(initialValue: isYT)
+        if isYT, let vid = Self.extractYouTubeVideoIdStatic(from: block.metadata["url"]) {
+            self._videoId = State(initialValue: vid)
+            self._resolvedThumbnailURL = State(initialValue: block.metadata["thumbnail"] ?? "https://img.youtube.com/vi/\(vid)/hqdefault.jpg")
+        } else {
+            self._resolvedThumbnailURL = State(initialValue: block.metadata["thumbnail"])
+        }
     }
 
     // MARK: - Body
@@ -51,7 +58,6 @@ struct ResearchBlockView: View {
             accentColor: accentColor,
             icon: "magnifyingglass",
             title: atom?.title ?? block.title,
-            isExpanded: $isExpanded,
             onFocusMode: openFocusMode
         ) {
             researchContent
@@ -75,7 +81,7 @@ struct ResearchBlockView: View {
     // MARK: - Research Content
 
     private var researchContent: some View {
-        ScrollView(.vertical, showsIndicators: true) {
+        ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 // Entity identity strip
                 Capsule()
@@ -118,13 +124,13 @@ struct ResearchBlockView: View {
             // Content type badge
             Text(isSwipeFile ? "SWIPE FILE" : contentType.uppercased())
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(accentColor)
+                .foregroundStyle(accentColor)
                 .tracking(0.8)
 
             // Title
             Text((atom?.title ?? block.title).isEmpty ? "Untitled Research" : (atom?.title ?? block.title))
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(DS.text)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
                 .lineLimit(2)
 
             // Metadata row
@@ -182,15 +188,13 @@ struct ResearchBlockView: View {
             ZStack {
                 // Thumbnail image
                 if let thumbURL = thumbURL {
-                    AsyncImage(url: thumbURL) { phase in
+                    CachedAsyncImage(url: thumbURL) { phase in
                         switch phase {
                         case .success(let image):
                             image
                                 .resizable()
                                 .aspectRatio(16/9, contentMode: .fill)
                         case .failure, .empty:
-                            thumbnailPlaceholderBackground
-                        @unknown default:
                             thumbnailPlaceholderBackground
                         }
                     }
@@ -209,7 +213,7 @@ struct ResearchBlockView: View {
 
                     Image(systemName: "play.fill")
                         .font(.system(size: 20))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .offset(x: 2) // Optical center
                 }
             }
@@ -222,15 +226,13 @@ struct ResearchBlockView: View {
     /// Non-YouTube content: show thumbnail with an "Open" button
     private func nonYouTubeThumbnail(url: URL) -> some View {
         ZStack {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image
                         .resizable()
                         .aspectRatio(16/9, contentMode: .fill)
                 case .failure, .empty:
-                    thumbnailPlaceholderBackground
-                @unknown default:
                     thumbnailPlaceholderBackground
                 }
             }
@@ -251,11 +253,11 @@ struct ResearchBlockView: View {
 
                         Image(systemName: "arrow.up.right.square")
                             .font(.system(size: 18))
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                     }
                     Text("Open")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.text)
                 }
             }
             .buttonStyle(.plain)
@@ -273,11 +275,11 @@ struct ResearchBlockView: View {
             VStack(spacing: 8) {
                 Image(systemName: contentTypeIcon)
                     .font(.system(size: 28, weight: .medium))
-                    .foregroundColor(accentColor.opacity(0.6))
+                    .foregroundStyle(accentColor.opacity(0.6))
 
                 Text(contentType)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
             }
         }
         .frame(height: 158)
@@ -297,7 +299,7 @@ struct ResearchBlockView: View {
 
             Image(systemName: contentTypeIcon)
                 .font(.system(size: 28))
-                .foregroundColor(accentColor.opacity(0.4))
+                .foregroundStyle(accentColor.opacity(0.4))
         }
     }
 
@@ -314,11 +316,11 @@ struct ResearchBlockView: View {
                 HStack(spacing: 6) {
                     Image(systemName: isDropdownOpen ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(accentColor)
+                        .foregroundStyle(accentColor)
 
                     Text("Transcript & Notes")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
 
                     Spacer()
 
@@ -328,7 +330,7 @@ struct ResearchBlockView: View {
                                 .controlSize(.mini)
                             Text("Processing...")
                                 .font(.system(size: 9))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                 }
@@ -348,7 +350,7 @@ struct ResearchBlockView: View {
                                 .controlSize(.mini)
                             Text("AI is processing...")
                                 .font(.system(size: 9))
-                                .foregroundColor(DS.textMuted)
+                                .foregroundStyle(DS.textMuted)
                         }
                     }
                     .padding(.vertical, 8)
@@ -371,27 +373,27 @@ struct ResearchBlockView: View {
         HStack(spacing: 6) {
             if let author = author {
                 Text(author)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
             }
 
             if let platform = platform {
                 if author != nil {
                     Text("\u{00B7}")
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                 }
                 Text(platform)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             if let duration = duration {
                 Text("\u{00B7}")
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 Text(duration)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.textSecondary)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             // Swipe: hook type pill
@@ -404,7 +406,7 @@ struct ResearchBlockView: View {
                     Text(hookType.displayName)
                         .font(.system(size: 10, weight: .medium))
                 }
-                .foregroundColor(hookType.color)
+                .foregroundStyle(hookType.color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(hookType.color.opacity(0.12), in: Capsule())
@@ -425,7 +427,7 @@ struct ResearchBlockView: View {
                         .font(.system(size: 10))
                         .lineLimit(1)
                 }
-                .foregroundColor(accentColor.opacity(0.7))
+                .foregroundStyle(accentColor.opacity(0.7))
             }
 
             // Swipe: hook score
@@ -438,7 +440,7 @@ struct ResearchBlockView: View {
                     Text(String(format: "%.0f", score))
                         .font(.system(size: 10, weight: .semibold))
                 }
-                .foregroundColor(hookScoreColor(score))
+                .foregroundStyle(hookScoreColor(score))
             }
 
             // Engagement badge (from creator import)
@@ -460,7 +462,7 @@ struct ResearchBlockView: View {
                         .frame(width: 4, height: 4)
                     Text("Processing")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(DS.orange)
+                        .foregroundStyle(DS.orange)
                 }
             }
 
@@ -470,7 +472,7 @@ struct ResearchBlockView: View {
             if let created = block.metadata["created"] {
                 Text(formatTimestamp(created))
                     .font(.system(size: 10))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
         }
     }
@@ -660,6 +662,10 @@ struct ResearchBlockView: View {
     // MARK: - YouTube Video ID Extraction
 
     private func extractYouTubeVideoId(from urlString: String?) -> String? {
+        Self.extractYouTubeVideoIdStatic(from: urlString)
+    }
+
+    private static func extractYouTubeVideoIdStatic(from urlString: String?) -> String? {
         guard let urlString = urlString else { return nil }
 
         // Pattern 1: youtube.com/watch?v=VIDEO_ID
@@ -733,7 +739,6 @@ struct ResearchBlockView_Previews: PreviewProvider {
                     ]
                 )
             )
-            .environmentObject(BlockExpansionManager())
         }
         .frame(width: 500, height: 400)
     }

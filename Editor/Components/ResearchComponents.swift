@@ -194,17 +194,17 @@ struct ResearchHeroSection: View {
             
             // Play button
             Circle()
-                .fill(.white.opacity(0.95))
+                .fill(DS.surfaceElevated)
                 .frame(width: 72, height: 72)
                 .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
                 .overlay(
                     Image(systemName: "play.fill")
                         .font(.system(size: 28))
-                        .foregroundColor(CosmoColors.softRed)
+                        .foregroundStyle(CosmoColors.softRed)
                         .offset(x: 3)
                 )
                 .scaleEffect(isHovered ? 1.1 : 1.0)
-            
+
             // YouTube badge
             VStack {
                 HStack {
@@ -214,7 +214,7 @@ struct ResearchHeroSection: View {
                         Text("YouTube")
                             .font(CosmoTypography.labelSmall)
                     }
-                    .foregroundColor(.white)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(.black.opacity(0.6), in: Capsule())
@@ -283,13 +283,13 @@ struct ResearchHeroSection: View {
 
             // Play button
             Circle()
-                .fill(.white.opacity(0.95))
+                .fill(DS.surfaceElevated)
                 .frame(width: 72, height: 72)
                 .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
                 .overlay(
                     Image(systemName: "play.fill")
                         .font(.system(size: 28))
-                        .foregroundColor(Color(hex: "#625DF5"))
+                        .foregroundStyle(Color(hex: "#625DF5"))
                         .offset(x: 3)
                 )
                 .scaleEffect(isHovered ? 1.1 : 1.0)
@@ -303,7 +303,7 @@ struct ResearchHeroSection: View {
                         Text("Loom")
                             .font(CosmoTypography.labelSmall)
                     }
-                    .foregroundColor(.white)
+                    .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Color(hex: "#625DF5").opacity(0.8), in: Capsule())
@@ -417,7 +417,7 @@ struct ResearchHeroSection: View {
                 VStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(.white)
+                            .fill(DS.surfaceElevated)
                             .frame(width: 80, height: 100)
                             .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
                         

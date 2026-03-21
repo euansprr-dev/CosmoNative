@@ -286,7 +286,6 @@ struct FocusCanvasBlockView: View {
 /// with a compact placeholder while atom data is being fetched.
 struct FocusFloatingBlocksLayer: View {
     @ObservedObject var manager: FocusFloatingBlocksManager
-    @StateObject private var expansionManager = BlockExpansionManager()
 
     var body: some View {
         ZStack {
@@ -331,6 +330,5 @@ struct FocusFloatingBlocksLayer: View {
                 }
             }
         }
-        .environmentObject(expansionManager)
     }
 }

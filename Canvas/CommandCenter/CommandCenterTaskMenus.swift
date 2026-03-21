@@ -19,7 +19,7 @@ struct CommandCenterReschedulePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             // Title
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.buttonText)
                 .foregroundStyle(DS.text)
 
             // Quick date chips
@@ -33,7 +33,7 @@ struct CommandCenterReschedulePanel: View {
             // Manual input (fallback, at bottom)
             TextField("Type a date...", text: $manualInput)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(DS.cardMeta)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -51,8 +51,7 @@ struct CommandCenterReschedulePanel: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
-        .shadow(color: .black.opacity(0.04), radius: 24, y: 12)
+        .dsFloatingShadow()
         .environment(\.colorScheme, .light)
     }
 
@@ -72,7 +71,7 @@ struct CommandCenterReschedulePanel: View {
                 if includeNoDate {
                     dateChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil, onSelect: onSelect)
                 }
-                dateChip("Someday", icon: "archivebox", tint: Color(hex: "8B5CF6"), date: nil, onSelect: { _ in
+                dateChip("Someday", icon: "archivebox", tint: DS.entityIdea, date: nil, onSelect: { _ in
                     // Someday = no date but with scheduling state
                     onSelect(nil)
                 })
@@ -88,9 +87,9 @@ struct CommandCenterReschedulePanel: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(DS.caption2)
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
@@ -254,8 +253,7 @@ struct CommandCenterTaskActionPopover: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
-        .shadow(color: .black.opacity(0.04), radius: 24, y: 12)
+        .dsFloatingShadow()
         .environment(\.colorScheme, .light)
         .animation(nil, value: activeTab)
         .task {
@@ -271,7 +269,7 @@ struct CommandCenterTaskActionPopover: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(task.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
 
@@ -281,7 +279,7 @@ struct CommandCenterTaskActionPopover: View {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                         .frame(width: 18, height: 18)
                         .background(DS.surface, in: Circle())
@@ -291,7 +289,7 @@ struct CommandCenterTaskActionPopover: View {
 
             HStack(spacing: 6) {
                 if let dueInfo = task.dueInfo {
-                    metaBadge(dueInfo, icon: "calendar", color: task.isOverdue ? PlannerumColors.overdue : DS.textMuted)
+                    metaBadge(dueInfo, icon: "calendar", color: task.isOverdue ? DS.red : DS.textMuted)
                 }
                 if recurrenceRule != nil || task.isRecurring {
                     metaBadge(recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent)
@@ -307,9 +305,9 @@ struct CommandCenterTaskActionPopover: View {
     private func metaBadge(_ text: String, icon: String, color: Color) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(DS.caption2)
             Text(text)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.caption2)
         }
         .foregroundStyle(color)
     }
@@ -324,7 +322,7 @@ struct CommandCenterTaskActionPopover: View {
                 onDismiss()
             } label: {
                 Image(systemName: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(DS.caption2)
                     .foregroundStyle(task.isCompleted ? DS.textSecondary : DS.green)
                     .frame(width: 28, height: 28)
                     .background((task.isCompleted ? DS.surface : DS.green.opacity(0.1)), in: RoundedRectangle(cornerRadius: 7))
@@ -349,7 +347,7 @@ struct CommandCenterTaskActionPopover: View {
                 onDismiss()
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.red.opacity(0.7))
                     .frame(width: 28, height: 28)
                     .background(DS.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
@@ -370,9 +368,9 @@ struct CommandCenterTaskActionPopover: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
                 Text(label)
-                    .font(.system(size: 10, weight: isActive ? .semibold : .medium))
+                    .font(DS.caption2)
             }
             .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
             .padding(.horizontal, 8)
@@ -414,7 +412,7 @@ struct CommandCenterTaskActionPopover: View {
                 }
 
                 HStack(spacing: 5) {
-                    quickChip("Someday", icon: "archivebox", tint: Color(hex: "8B5CF6"), date: nil)
+                    quickChip("Someday", icon: "archivebox", tint: DS.entityIdea, date: nil)
                     quickChip("No date", icon: "slash.circle", tint: DS.textMuted, date: nil)
                     Spacer()
                 }
@@ -434,7 +432,7 @@ struct CommandCenterTaskActionPopover: View {
             // Manual input
             TextField("Type a date...", text: $manualDateInput)
                 .textFieldStyle(.plain)
-                .font(.system(size: 11))
+                .font(DS.footnote)
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -456,9 +454,9 @@ struct CommandCenterTaskActionPopover: View {
         } label: {
             HStack(spacing: 2) {
                 Image(systemName: icon)
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(DS.caption2)
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DS.caption2)
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 7)
@@ -491,7 +489,7 @@ struct CommandCenterTaskActionPopover: View {
                             }
                         } label: {
                             Text(preset.label)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(DS.caption2)
                                 .foregroundStyle(recurrencePreset == preset ? DS.textOnAccent : DS.textSecondary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
@@ -520,7 +518,7 @@ struct CommandCenterTaskActionPopover: View {
                                 }
                             } label: {
                                 Text(day.shortName)
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(DS.caption2)
                                     .foregroundStyle(selectedDays.contains(day) ? DS.textOnAccent : DS.textSecondary)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 6)
@@ -541,7 +539,7 @@ struct CommandCenterTaskActionPopover: View {
                             onApplyRecurrence(nil)
                             onDismiss()
                         }
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.red)
                         .buttonStyle(.plain)
                     }
@@ -552,7 +550,7 @@ struct CommandCenterTaskActionPopover: View {
                         onApplyRecurrence(buildRule())
                         onDismiss()
                     }
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textOnAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
@@ -586,19 +584,19 @@ struct CommandCenterTaskActionPopover: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DS.caption)
                     .foregroundStyle(tint)
                     .frame(width: 18)
 
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.text)
 
                 Spacer()
 
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DS.caption2)
                         .foregroundStyle(tint)
                 }
             }

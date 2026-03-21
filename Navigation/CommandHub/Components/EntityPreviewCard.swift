@@ -377,7 +377,7 @@ struct ResearchCard: View {
                             Text(sourceLabel)
                                 .font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(sourceColor.opacity(0.9), in: Capsule())
@@ -904,7 +904,7 @@ struct SwipeFileCard: View {
                     Text(sourceLabel)
                         .font(.system(size: 11, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }

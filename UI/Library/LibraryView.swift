@@ -248,7 +248,7 @@ struct LibraryView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white) // White on accent bg — exception
+                    .foregroundStyle(DS.textOnAccent)
                     .frame(width: 32, height: 32)
                     .background(
                         RoundedRectangle(cornerRadius: 8)

@@ -61,9 +61,9 @@ struct CompareCreatorsView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.buttonText)
                     Text("Back")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
                 }
                 .foregroundStyle(DS.textSecondary)
                 .padding(.horizontal, 12)
@@ -89,9 +89,9 @@ struct CompareCreatorsView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "plus")
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                         Text("Add Creator")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DS.buttonText)
                     }
                     .foregroundStyle(gold)
                     .padding(.horizontal, 12)
@@ -149,11 +149,11 @@ struct CompareCreatorsView: View {
                         .foregroundStyle(gold)
                 }
                 Text(atom.title ?? "Unknown")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.text)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(DS.subheadline)
                         .foregroundStyle(gold)
                 }
             }
@@ -236,7 +236,7 @@ struct CompareCreatorsView: View {
                         .lineLimit(1)
                     if let handle = meta?.handle {
                         Text(handle)
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                             .foregroundStyle(DS.textMuted)
                     }
                     // Remove button
@@ -244,7 +244,7 @@ struct CompareCreatorsView: View {
                         selectedCreators.removeAll { $0.uuid == atom.uuid }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(DS.subheadline)
                             .foregroundStyle(DS.textMuted)
                     }
                     .buttonStyle(.plain)
@@ -266,10 +266,10 @@ struct CompareCreatorsView: View {
             // Label
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(gold)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.buttonText)
                     .foregroundStyle(DS.textSecondary)
             }
             .frame(width: 120, alignment: .leading)
@@ -327,7 +327,7 @@ struct CompareCreatorsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "text.book.closed.fill")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(gold)
                 Text("NARRATIVE STYLES")
                     .font(.system(size: 11, weight: .bold))
@@ -352,7 +352,7 @@ struct CompareCreatorsView: View {
                                     .fill(style.color)
                                     .frame(width: 6, height: 6)
                                 Text(style.displayName)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(DS.caption)
                                     .foregroundStyle(DS.text)
                                 Spacer()
                                 Text("\(count)")
@@ -362,7 +362,7 @@ struct CompareCreatorsView: View {
                         }
                         if narrativeCounts.isEmpty {
                             Text("No data")
-                                .font(.system(size: 11))
+                                .font(DS.footnote)
                                 .foregroundStyle(DS.textMuted)
                         }
                     }
@@ -380,7 +380,7 @@ struct CompareCreatorsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(gold)
                 Text("FRAMEWORKS")
                     .font(.system(size: 11, weight: .bold))
@@ -415,7 +415,7 @@ struct CompareCreatorsView: View {
                         }
                         if fwCounts.isEmpty {
                             Text("No data")
-                                .font(.system(size: 11))
+                                .font(DS.footnote)
                                 .foregroundStyle(DS.textMuted)
                         }
                     }
@@ -433,7 +433,7 @@ struct CompareCreatorsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "heart.fill")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(gold)
                 Text("EMOTIONAL PATTERNS")
                     .font(.system(size: 11, weight: .bold))
@@ -458,7 +458,7 @@ struct CompareCreatorsView: View {
                                     .font(.system(size: 9))
                                     .foregroundStyle(emotion.color)
                                 Text(emotion.displayName)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(DS.caption)
                                     .foregroundStyle(DS.text)
                                 Spacer()
                                 Text("\(count)")
@@ -468,7 +468,7 @@ struct CompareCreatorsView: View {
                         }
                         if emotionCounts.isEmpty {
                             Text("No data")
-                                .font(.system(size: 11))
+                                .font(DS.footnote)
                                 .foregroundStyle(DS.textMuted)
                         }
                     }
@@ -486,7 +486,7 @@ struct CompareCreatorsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 11))
+                    .font(DS.footnote)
                     .foregroundStyle(gold)
                 Text("PERSUASION TECHNIQUES")
                     .font(.system(size: 11, weight: .bold))
@@ -512,7 +512,7 @@ struct CompareCreatorsView: View {
                                     .font(.system(size: 9))
                                     .foregroundStyle(pType.color)
                                 Text(pType.displayName)
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(DS.caption2)
                                     .foregroundStyle(DS.text)
                                     .lineLimit(1)
                                 Spacer()
@@ -523,7 +523,7 @@ struct CompareCreatorsView: View {
                         }
                         if typeCounts.isEmpty {
                             Text("No data")
-                                .font(.system(size: 11))
+                                .font(DS.footnote)
                                 .foregroundStyle(DS.textMuted)
                         }
                     }
@@ -581,11 +581,11 @@ struct CompareCreatorsView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(atom.title ?? "Unknown")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DS.callout)
                         .foregroundStyle(DS.text)
                     if let handle = meta?.handle {
                         Text(handle)
-                            .font(.system(size: 11))
+                            .font(DS.footnote)
                             .foregroundStyle(DS.textMuted)
                     }
                 }
@@ -594,7 +594,7 @@ struct CompareCreatorsView: View {
 
                 if let count = meta?.swipeCount, count > 0 {
                     Text("\(count) swipes")
-                        .font(.system(size: 11))
+                        .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                 }
 

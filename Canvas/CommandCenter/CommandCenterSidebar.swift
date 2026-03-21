@@ -10,7 +10,7 @@ struct CommandCenterSidebar: View {
 
     var body: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DS.space16) {
                 smartListsSection
 
                 gradientDivider
@@ -50,30 +50,30 @@ struct CommandCenterSidebar: View {
                 viewModel.viewMode = mode
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: DS.space10) {
                 Image(systemName: mode.icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DS.callout)
                     .foregroundStyle(iconColor(for: mode))
-                    .frame(width: 20)
+                    .frame(width: DS.space20)
 
                 Text(mode.label)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(isSelected ? DS.headline : DS.callout)
                     .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
 
                 Spacer()
 
                 if count > 0 {
                     Text("\(count)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.footnote)
                         .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
                         .monospacedDigit()
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
             .background(
                 isSelected
-                    ? RoundedRectangle(cornerRadius: 8).fill(DS.surfaceElevated)
+                    ? RoundedRectangle(cornerRadius: DS.radiusSmall).fill(DS.surfaceElevated)
                     : nil
             )
             .contentShape(Rectangle())
@@ -87,10 +87,10 @@ struct CommandCenterSidebar: View {
 
     private func iconColor(for mode: DashboardViewMode) -> Color {
         switch mode {
-        case .today: return Color(hex: "F59E0B")    // Amber
-        case .upcoming: return Color(hex: "EF4444")  // Red
-        case .anytime: return Color(hex: "6366F1")   // Indigo
-        case .someday: return Color(hex: "8B5CF6")   // Purple
+        case .today: return DS.orange
+        case .upcoming: return DS.red
+        case .anytime: return DS.entityIdea
+        case .someday: return DS.entityIdea
         case .logbook: return DS.green
         default: return DS.textMuted
         }
@@ -142,18 +142,17 @@ struct CommandCenterSidebar: View {
 
             // Add project button
             Button {
-                // Will trigger project creation modal
                 NotificationCenter.default.post(name: .init("com.cosmo.createProject"), object: nil)
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: DS.space6) {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(DS.caption2)
                     Text("New Project")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.buttonText)
                 }
                 .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
             }
             .buttonStyle(.plain)
         }
@@ -195,11 +194,11 @@ struct CommandCenterSidebar: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .font(DS.caption2)
             .foregroundStyle(DS.textMuted)
             .tracking(0.8)
-            .padding(.horizontal, 10)
-            .padding(.bottom, 4)
+            .padding(.horizontal, DS.space10)
+            .padding(.bottom, DS.space4)
     }
 
     private var gradientDivider: some View {

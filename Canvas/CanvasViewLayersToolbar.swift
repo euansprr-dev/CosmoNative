@@ -107,7 +107,7 @@ struct CanvasViewLayersToolbar: View {
                 if item == .provocation && badgeCount > 0 && !provocationEngine.isScanning {
                     Text("\(badgeCount)")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(DS.textOnAccent)
                         .frame(width: 14, height: 14)
                         .background(item.activeColor)
                         .clipShape(Circle())

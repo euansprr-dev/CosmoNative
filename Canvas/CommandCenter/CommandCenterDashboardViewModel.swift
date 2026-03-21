@@ -5,6 +5,67 @@
 import SwiftUI
 import Combine
 
+// MARK: - Stub Types (Plannerum directory deleted)
+
+/// Minimal stub for XP progress display (Plannerum deleted)
+struct XPProgressState {
+    var level: Int = 1
+    var currentXP: Int = 0
+    var nextLevelXP: Int = 100
+    var progress: Double { Double(currentXP) / Double(max(1, nextLevelXP)) }
+}
+
+/// Minimal stub for PlannerumViewModel (Plannerum deleted)
+/// Provides today-task loading, completion, and quick-add that the dashboard depends on.
+@MainActor
+class PlannerumViewModel: ObservableObject {
+    static let shared = PlannerumViewModel()
+
+    @Published var todayTasks: [TaskViewModel] = []
+    @Published var xpProgress: XPProgressState = XPProgressState()
+
+    let liveQuestEngine = QuestEngine()
+
+    func loadTodayTasks() async {
+        do {
+            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let calendar = Calendar.current
+            todayTasks = atoms.compactMap { atom -> TaskViewModel? in
+                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
+                if vm.isCompleted { return nil }
+                if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
+                let isDue = vm.dueDate.map { calendar.isDateInToday($0) } ?? false
+                let isScheduled = vm.scheduledDate.map { calendar.isDateInToday($0) } ?? false
+                let isWhen = vm.whenDate.map { calendar.isDateInToday($0) } ?? false
+                if isDue || isScheduled || isWhen || vm.isOverdue { return vm }
+                return nil
+            }
+        } catch {
+            print("[PlannerumViewModel stub] Failed to load today tasks: \(error)")
+        }
+    }
+
+    func completeTask(taskId: String) async {
+        do {
+            _ = try await AtomRepository.shared.update(uuid: taskId) { atom in
+                var metadata = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                metadata.isCompleted = true
+                metadata.completedAt = ISO8601DateFormatter().string(from: Date())
+                atom = atom.withMetadata(metadata)
+            }
+            await loadTodayTasks()
+        } catch {
+            print("[PlannerumViewModel stub] Failed to complete task: \(error)")
+        }
+    }
+
+    func quickAddTask(title: String) async {
+        let atom = Atom.new(type: .task, title: title)
+        _ = try? await AtomRepository.shared.create(atom)
+        await loadTodayTasks()
+    }
+}
+
 // MARK: - Habit State
 
 struct HabitState: Identifiable, Equatable {

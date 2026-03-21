@@ -166,6 +166,12 @@ export async function executeTool(
         return await intelligence.getAudienceInsights(args);
       case 'review_draft_persuasion':
         return await intelligence.reviewDraftPersuasion(args);
+      case 'suggest_persuasion_stack':
+        return await intelligence.suggestPersuasionStack(args);
+      case 'compare_to_swipe':
+        return await intelligence.compareToSwipe(args);
+      case 'suggest_module_addition':
+        return await intelligence.suggestModuleAddition(args);
       case 'get_weekly_content_plan':
         return await intelligence.getWeeklyContentPlan(args);
       case 'suggest_next_content':

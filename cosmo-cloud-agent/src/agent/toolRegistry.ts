@@ -97,6 +97,13 @@ const ALL_TOOLS: ToolDefinition[] = [
   { name: 'save_analysis', description: 'Save a deep pattern analysis', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, clientName: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['title', 'content'] } },
   { name: 'get_saved_analyses', description: 'Get saved analyses', parameters: { type: 'object', properties: { clientName: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, limit: { type: 'integer' } } } },
 
+  // === PERSUASION / COMPARISON ===
+  { name: 'suggest_persuasion_stack', description: 'Suggest persuasion techniques for a topic and platform', parameters: { type: 'object', properties: { topic: { type: 'string' }, platform: { type: 'string' } }, required: ['topic', 'platform'] } },
+  { name: 'compare_to_swipe', description: 'Compare draft text against a reference swipe', parameters: { type: 'object', properties: { text: { type: 'string' }, swipeUUID: { type: 'string' } }, required: ['text', 'swipeUUID'] } },
+
+  // === MODULE MANAGEMENT ===
+  { name: 'suggest_module_addition', description: 'Suggest adding content to a skill module or creating a new module', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add_to_module', 'create_module'] }, moduleId: { type: 'string' }, content: { type: 'string' }, reason: { type: 'string' }, newModuleTitle: { type: 'string' }, newModuleId: { type: 'string' } }, required: ['action', 'content', 'reason'] } },
+
   // === WEB SEARCH ===
   { name: 'web_search', description: 'Search the web for current information', parameters: { type: 'object', properties: { query: { type: 'string' }, maxResults: { type: 'integer' } }, required: ['query'] } },
 
@@ -119,7 +126,8 @@ const TOOL_GROUPS: Record<string, string[]> = {
   standing: ['add_standing_instruction', 'list_standing_instructions', 'remove_standing_instruction', 'update_standing_instruction', 'get_instruction_history'],
   writing: ['generate_outline', 'generate_draft', 'read_draft', 'revise_draft', 'generate_hooks', 'update_content'],
   scoring: ['get_beat_patterns', 'score_draft'],
-  intelligence: ['get_weekly_content_plan', 'suggest_next_content', 'analyze_content_gap', 'predict_performance', 'get_swipe_study_plan', 'get_creator_profile', 'get_audience_insights', 'review_draft_persuasion'],
+  intelligence: ['get_weekly_content_plan', 'suggest_next_content', 'analyze_content_gap', 'predict_performance', 'get_swipe_study_plan', 'get_creator_profile', 'get_audience_insights', 'review_draft_persuasion', 'suggest_persuasion_stack', 'compare_to_swipe'],
+  moduleManagement: ['suggest_module_addition'],
   insightMemory: ['save_analysis', 'get_saved_analyses'],
   webSearch: ['web_search'],
   ux: ['send_telegram_buttons'],
@@ -127,18 +135,18 @@ const TOOL_GROUPS: Record<string, string[]> = {
 
 // Intent → tool groups mapping (matches Swift toolsForIntent exactly)
 const INTENT_TOOL_GROUPS: Record<AgentIntent, string[]> = {
-  capture: ['idea', 'swipe', 'capture', 'schedule', 'client', 'clientProfile', 'lesson'],
-  brainstorm: ['idea', 'swipe', 'capture', 'client', 'clientProfile', 'intelligence', 'writing', 'preference', 'scoring', 'lesson', 'webSearch'],
-  plan: ['schedule', 'content', 'intelligence', 'clientProfile', 'lesson'],
+  capture: ['idea', 'swipe', 'capture', 'schedule', 'client', 'clientProfile', 'lesson', 'moduleManagement'],
+  brainstorm: ['idea', 'swipe', 'capture', 'client', 'clientProfile', 'intelligence', 'writing', 'preference', 'scoring', 'lesson', 'moduleManagement', 'webSearch'],
+  plan: ['schedule', 'content', 'intelligence', 'clientProfile', 'lesson', 'moduleManagement'],
   query: Object.keys(TOOL_GROUPS), // All tools
-  correct: ['idea', 'content', 'schedule', 'client', 'clientProfile'],
-  execute: ['content', 'schedule', 'writing', 'clientProfile', 'ux', 'lesson'],
-  debrief: ['analytics', 'lesson'],
-  reflect: ['analytics', 'lesson'],
-  meta: ['preference', 'standing', 'client', 'lesson', 'ux'],
-  strategy: ['intelligence', 'swipe', 'content', 'analytics', 'writing', 'clientProfile', 'client', 'insightMemory', 'ux', 'lesson', 'webSearch'],
-  draft: ['content', 'swipe', 'idea', 'intelligence', 'writing', 'clientProfile', 'client', 'preference', 'capture', 'scoring', 'insightMemory', 'lesson', 'ux', 'webSearch'],
-  analyze: ['intelligence', 'swipe', 'analytics', 'content', 'clientProfile', 'insightMemory', 'lesson', 'webSearch'],
+  correct: ['idea', 'content', 'schedule', 'client', 'clientProfile', 'moduleManagement'],
+  execute: ['content', 'schedule', 'writing', 'clientProfile', 'ux', 'lesson', 'moduleManagement'],
+  debrief: ['analytics', 'lesson', 'moduleManagement'],
+  reflect: ['analytics', 'lesson', 'moduleManagement'],
+  meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement'],
+  strategy: ['intelligence', 'swipe', 'content', 'analytics', 'writing', 'clientProfile', 'client', 'insightMemory', 'ux', 'lesson', 'moduleManagement', 'webSearch'],
+  draft: ['content', 'swipe', 'idea', 'intelligence', 'writing', 'clientProfile', 'client', 'preference', 'capture', 'scoring', 'insightMemory', 'lesson', 'ux', 'moduleManagement', 'webSearch'],
+  analyze: ['intelligence', 'swipe', 'analytics', 'content', 'clientProfile', 'insightMemory', 'lesson', 'moduleManagement', 'webSearch'],
 };
 
 /**

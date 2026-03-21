@@ -52,22 +52,22 @@ export function classifyIntent(text: string): AgentIntent {
   }
 
   // Quick task capture (before plan — short task creation)
-  if (/^(add task|new task|remind me to|todo:?|to.do:?)\s/i.test(lower)) {
+  if (/^(add task|new task|remind me to|todo:?|to.do:?|task:)\s/i.test(lower)) {
     return 'capture';
   }
 
-  // Plan/Schedule/Tasks
-  if (/schedule|plan my|calendar|time block|add a block|show.*today|show.*upcoming|show.*someday|what.?s (overdue|due|on my plate)|my tasks|task list|recurring task|complete task|check off|done with|show.*project/i.test(lower)) {
+  // Plan/Schedule/Tasks — MUST be before execute/correct (catches "complete task", "delete task")
+  if (/schedule|plan my|calendar|time block|add a block|show.*(today|upcoming|someday|anytime|logbook|project|tasks)|what.?s (overdue|due|on my plate|next)|my tasks|task list|recurring|complete task|check off|done with|mark.*done|finish(ed)? task|how many tasks|move task|reschedule|postpone|set.*(priority|recurrence|repeat)|change priority|create.*project|new project|what projects|assign.*project|put.*project|logbook|completed tasks|what did i (do|finish|complete)|make.*recurring|set.*repeat|uncheck|undo complete|deadline|due date|morning tasks|evening tasks|how.?s my day|clear.*schedule|next task|delete task|remove task/i.test(lower)) {
     return 'plan';
   }
 
-  // Correct
+  // Correct (non-task corrections — task delete/remove handled by plan above)
   if (/delete|remove|rename|fix the/i.test(lower)) {
     return 'correct';
   }
 
-  // Execute
-  if (/advance|complete|publish|activate/i.test(lower)) {
+  // Execute (non-task completions — "complete task" handled by plan above)
+  if (/advance|publish|activate/i.test(lower)) {
     return 'execute';
   }
 

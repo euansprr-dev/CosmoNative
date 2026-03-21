@@ -66,6 +66,23 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
   if (!title) return jsonError('title is required');
 
   const body = args.body as string | undefined;
+  const clientName = args.clientName as string | undefined;
+
+  // Resolve client if provided
+  let clientUUID: string | undefined;
+  let resolvedClientName: string | undefined;
+  if (clientName) {
+    const client = await fuzzyFindClient(clientName);
+    if (client) {
+      clientUUID = client.uuid;
+      resolvedClientName = client.title ?? clientName;
+    }
+  }
+
+  const links: Array<{ type: string; uuid: string; entityType?: string }> = [];
+  if (clientUUID) {
+    links.push({ type: 'ideaToClient', uuid: clientUUID, entityType: 'client_profile' });
+  }
 
   const atom = await createAtom({
     type: 'idea',
@@ -74,7 +91,9 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
     metadata: {
       ideaStatus: 'spark',
       captureSource: 'telegram_cloud',
+      ...(clientUUID ? { clientUUID } : {}),
     },
+    links: links.length > 0 ? links : null,
   });
 
   if (!atom) return jsonError('Failed to create idea');
@@ -83,7 +102,8 @@ export async function createIdea(args: Record<string, any>): Promise<string> {
     success: true,
     uuid: atom.uuid,
     title: atom.title,
-    message: `Idea created: "${title}"`,
+    ...(resolvedClientName ? { clientName: resolvedClientName } : {}),
+    message: `Idea created: "${title}"${resolvedClientName ? ` for ${resolvedClientName}` : ''}`,
   });
 }
 

@@ -1,18 +1,20 @@
 // cosmo-cloud-agent/src/tools/writing.ts
-// Writing tools — 6 tools ported from AgentToolExecutor.swift
+// Writing tools — 6 tools using the Cloud Writing Engine
 // PORTING SOURCE: AgentToolExecutor.swift lines 2037-2500
-// NOTE: Phase 3 will add the full CloudWritingEngine.
-//       For now, these tools operate on atom data directly.
-//       generate_outline and generate_draft will call OpenRouter API.
+// Phase 3: Real engine implementation (replaces stubs)
 
 import { fetchAtom, updateAtom, fuzzyFindClient } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
+import { getOrCreateEngine, evictEngine } from '../writing/engine';
+import { renderDraftForDisplay, detectContentFormat } from '../writing/types';
 
 // ============================================================
 // 1. generate_outline
 // PORTING CHECKLIST: AgentToolExecutor.swift line 2037
 // ✅ contentUUID required; clientName, blueprintSwipeUUID, contentFormat, notes optional
-// ⚠️ PHASE 2: Returns stub directing to Phase 3 writing engine
+// ✅ Pre-engine: inject blueprintSwipeUUID + contentFormat into metadata, evict cache
+// ✅ Engine: sendMessage(instruction, phase: brainstorm)
+// ✅ Return: {success, contentUUID, outlineSections, hookVariants, sectionCount, hookCount, swipesUsed, swipeCount}
 // ============================================================
 
 export async function generateOutline(args: Record<string, any>): Promise<string> {
@@ -22,36 +24,118 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   const atom = await fetchAtom(contentUUID);
   if (!atom) return jsonError(`Content not found: ${contentUUID}`);
 
-  // Phase 3 will add CloudWritingEngine with full 4-block context assembly
-  return jsonEncode({
-    success: false,
-    contentUUID,
-    message: 'Outline generation requires the Cloud Writing Engine (Phase 3). Use the Mac app for now.',
-    currentTitle: atom.title,
-    currentPhase: atom.metadata?.phase ?? 'ideation',
-  });
+  // Pre-engine metadata injection
+  const metaUpdates: Record<string, any> = {};
+  let shouldEvict = false;
+
+  if (args.blueprintSwipeUUID) {
+    const existing = (atom.metadata?.inheritedSwipeUUIDs as string[]) || [];
+    if (!existing.includes(args.blueprintSwipeUUID)) {
+      metaUpdates.inheritedSwipeUUIDs = [args.blueprintSwipeUUID, ...existing];
+      shouldEvict = true;
+    }
+  }
+
+  if (args.contentFormat) {
+    metaUpdates.explicitFormat = args.contentFormat;
+    metaUpdates.contentFormat = args.contentFormat;
+    shouldEvict = true;
+  }
+
+  if (Object.keys(metaUpdates).length > 0) {
+    await updateAtom(contentUUID, { metadata: metaUpdates });
+  }
+
+  if (shouldEvict) evictEngine(contentUUID);
+
+  // Get or create engine
+  const engine = getOrCreateEngine(contentUUID);
+
+  // Build instruction
+  let instruction = args.notes || 'Generate an outline for this content piece.';
+  if (args.blueprintSwipeUUID) {
+    instruction += ' Use BLUEPRINT-FIRST methodology — study the primary blueprint swipe structure and mirror it.';
+  }
+  instruction += ' Call update_outline with the sections, then add_hooks with hook variants.';
+
+  try {
+    const response = await engine.sendMessage(instruction, 'brainstorm');
+
+    const outline = engine.getOutline();
+    const hooks = engine.getHooks();
+
+    return jsonEncode({
+      success: true,
+      contentUUID,
+      message: response || 'Outline generated via cloud writing engine.',
+      outlineSections: outline.map((o, i) => `${i + 1}. ${o.title}${o.beatLabel ? ` [${o.beatLabel}]` : ''}`),
+      hookVariants: hooks,
+      sectionCount: outline.length,
+      hookCount: hooks.length,
+      swipesUsed: engine.getSwipeTitles(),
+      swipeCount: engine.getSwipeCount(),
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return jsonError(`Outline generation failed: ${msg}`);
+  }
 }
 
 // ============================================================
 // 2. generate_draft
 // PORTING CHECKLIST: AgentToolExecutor.swift line 2163
-// ⚠️ PHASE 2: Returns stub directing to Phase 3 writing engine
+// ✅ contentUUID required; clientName, contentFormat, userDirection optional
+// ✅ Engine: sendMessage(instruction, phase: draft)
+// ✅ Return: {success, contentUUID, formattedDraft, format, swipesUsed, swipeCount}
 // ============================================================
 
 export async function generateDraft(args: Record<string, any>): Promise<string> {
   const contentUUID = args.contentUUID as string;
   if (!contentUUID) return jsonError('contentUUID is required');
 
-  const atom = await fetchAtom(contentUUID);
-  if (!atom) return jsonError(`Content not found: ${contentUUID}`);
+  // Format injection
+  if (args.contentFormat) {
+    await updateAtom(contentUUID, { metadata: { explicitFormat: args.contentFormat, contentFormat: args.contentFormat } });
+    evictEngine(contentUUID);
+  }
 
-  return jsonEncode({
-    success: false,
-    contentUUID,
-    message: 'Draft generation requires the Cloud Writing Engine (Phase 3). Use the Mac app for now.',
-    currentTitle: atom.title,
-    currentPhase: atom.metadata?.phase ?? 'ideation',
-  });
+  const engine = getOrCreateEngine(contentUUID);
+
+  const direction = args.userDirection || 'Write the full first draft following the outline. Mirror the PRIMARY blueprint structure. Call write_draft with the complete draft.';
+
+  try {
+    const response = await engine.sendMessage(direction, 'draft');
+
+    // Fetch updated atom to get the draft
+    const updated = await fetchAtom(contentUUID);
+    const draftBody = updated?.body || '';
+    const formattedDraft = renderDraftForDisplay(draftBody);
+    const wordCount = draftBody.split(/\s+/).filter(Boolean).length;
+
+    // Detect format
+    let format = 'plaintext';
+    try {
+      const parsed = JSON.parse(draftBody);
+      if (parsed.slides) format = 'carousel';
+      else if (parsed.tweets) format = 'thread';
+      else if (Array.isArray(parsed)) format = 'json';
+    } catch {}
+
+    return jsonEncode({
+      success: true,
+      contentUUID,
+      message: 'Here is the draft. Display the text below to the user exactly as-is:',
+      formattedDraft,
+      format,
+      wordCount,
+      engineNotes: response,
+      swipesUsed: engine.getSwipeTitles(),
+      swipeCount: engine.getSwipeCount(),
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return jsonError(`Draft generation failed: ${msg}`);
+  }
 }
 
 // ============================================================
@@ -84,7 +168,9 @@ export async function readDraft(args: Record<string, any>): Promise<string> {
 // ============================================================
 // 4. revise_draft
 // PORTING CHECKLIST: AgentToolExecutor.swift line 2363
-// ⚠️ PHASE 2: Returns stub directing to Phase 3 writing engine
+// ✅ contentUUID, feedback required; currentDraft, clientName optional
+// ✅ Engine: sendMessage(revision instruction, phase: draft)
+// ✅ Return: {success, contentUUID, formattedDraft, format, swipesUsed}
 // ============================================================
 
 export async function reviseDraft(args: Record<string, any>): Promise<string> {
@@ -94,34 +180,89 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
   const feedback = args.feedback as string;
   if (!feedback) return jsonError('feedback is required');
 
-  return jsonEncode({
-    success: false,
-    contentUUID,
-    message: 'Draft revision requires the Cloud Writing Engine (Phase 3). Use the Mac app for now.',
-  });
+  // If currentDraft provided and atom body is empty, seed it
+  if (args.currentDraft) {
+    const atom = await fetchAtom(contentUUID);
+    if (atom && (!atom.body || atom.body.length === 0)) {
+      await updateAtom(contentUUID, { body: args.currentDraft });
+    }
+  }
+
+  const engine = getOrCreateEngine(contentUUID);
+
+  const instruction = `REVISION REQUEST:\n${feedback}\n\nREVISION RULES — MANDATORY:\n- Use read_draft first to see the full current draft\n- Apply ONLY the requested changes\n- Do NOT compress slides/sections\n- Do NOT introduce new frameworks\n- Do NOT add generic language unless asked\n- Preserve EVERY unchanged slide\n- Output the COMPLETE revised draft via write_draft`;
+
+  try {
+    const response = await engine.sendMessage(instruction, 'draft');
+
+    const updated = await fetchAtom(contentUUID);
+    const draftBody = updated?.body || '';
+    const formattedDraft = renderDraftForDisplay(draftBody);
+
+    let format = 'plaintext';
+    try {
+      const parsed = JSON.parse(draftBody);
+      if (parsed.slides) format = 'carousel';
+      else if (parsed.tweets) format = 'thread';
+    } catch {}
+
+    return jsonEncode({
+      success: true,
+      contentUUID,
+      message: 'Here is the revised draft:',
+      formattedDraft,
+      format,
+      engineNotes: response,
+      swipesUsed: engine.getSwipeTitles(),
+      swipeCount: engine.getSwipeCount(),
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return jsonError(`Revision failed: ${msg}`);
+  }
 }
 
 // ============================================================
 // 5. generate_hooks
 // PORTING CHECKLIST: AgentToolExecutor.swift line 2452
-// ⚠️ PHASE 2: Returns stub directing to Phase 3 writing engine
+// ✅ contentUUID required; clientName, count optional
+// ✅ Engine: sendMessage(instruction, phase: brainstorm)
+// ✅ Return: {success, contentUUID, hookVariants, engineNotes}
 // ============================================================
 
 export async function generateHooks(args: Record<string, any>): Promise<string> {
   const contentUUID = args.contentUUID as string;
   if (!contentUUID) return jsonError('contentUUID is required');
 
-  return jsonEncode({
-    success: false,
-    contentUUID,
-    message: 'Hook generation requires the Cloud Writing Engine (Phase 3). Use the Mac app for now.',
-  });
+  const count = Math.min((args.count as number) || 5, 8);
+
+  const engine = getOrCreateEngine(contentUUID);
+
+  const instruction = `Generate ${count} hook variants for this content. The hook type and sentence structure must match the blueprint swipe's pattern. Call add_hooks with the variants.`;
+
+  try {
+    const response = await engine.sendMessage(instruction, 'brainstorm');
+    const hooks = engine.getHooks();
+
+    return jsonEncode({
+      success: true,
+      contentUUID,
+      message: 'Hooks generated via cloud writing engine.',
+      hookVariants: hooks,
+      engineNotes: response,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return jsonError(`Hook generation failed: ${msg}`);
+  }
 }
 
 // ============================================================
 // 6. score_draft
 // PORTING CHECKLIST: AgentToolExecutor.swift line 3160
-// ⚠️ PHASE 2: Returns stub directing to Phase 3 writing engine
+// ✅ contentUUID required
+// ✅ Uses Sonnet model for evaluation
+// ✅ Return: scorecard with 6 dimensions
 // ============================================================
 
 export async function scoreDraft(args: Record<string, any>): Promise<string> {
@@ -131,57 +272,19 @@ export async function scoreDraft(args: Record<string, any>): Promise<string> {
   const atom = await fetchAtom(contentUUID);
   if (!atom) return jsonError(`Content not found: ${contentUUID}`);
 
-  const wordCount = (atom.body || '').split(/\s+/).filter(Boolean).length;
+  const draft = atom.body || '';
+  if (!draft) return jsonError('No draft to score');
+
+  const wordCount = draft.split(/\s+/).filter(Boolean).length;
+
+  // Use the scorecard engine (simplified for cloud)
+  const { scoreDraftWithLLM } = await import('./scorecard');
+  const scorecard = await scoreDraftWithLLM(atom, draft);
 
   return jsonEncode({
-    success: false,
+    success: true,
     contentUUID,
+    ...scorecard,
     wordCount,
-    message: 'Draft scoring requires the Cloud Writing Engine (Phase 3). Use the Mac app for now.',
   });
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-/**
- * Render structured JSON draft to readable plaintext.
- * Source: renderDraftForDisplay() in AgentToolExecutor.swift
- */
-function renderDraftForDisplay(body: string): string {
-  if (!body) return '';
-
-  try {
-    const parsed = JSON.parse(body);
-
-    // Carousel format: {slides: [{number, text, visualDirection?}]}
-    if (parsed.slides && Array.isArray(parsed.slides)) {
-      return parsed.slides.map((s: any, i: number) => {
-        const num = s.number || i + 1;
-        let text = `SLIDE ${num}\n${s.text || ''}`;
-        if (s.visualDirection) text += `\n[Visual: ${s.visualDirection}]`;
-        return text;
-      }).join('\n\n');
-    }
-
-    // Thread format: {tweets: [...]}
-    if (parsed.tweets && Array.isArray(parsed.tweets)) {
-      return parsed.tweets.map((t: any, i: number) =>
-        `TWEET ${i + 1}\n${typeof t === 'string' ? t : t.text || ''}`
-      ).join('\n\n');
-    }
-
-    // Raw array format
-    if (Array.isArray(parsed)) {
-      return parsed.map((item: any, i: number) => {
-        if (typeof item === 'string') return `SLIDE ${i + 1}\n${item}`;
-        return `SLIDE ${i + 1}\n${item.text || JSON.stringify(item)}`;
-      }).join('\n\n');
-    }
-  } catch {
-    // Not JSON — return as-is (plaintext)
-  }
-
-  return body;
 }

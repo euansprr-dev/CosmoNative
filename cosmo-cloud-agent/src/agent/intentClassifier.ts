@@ -51,8 +51,13 @@ export function classifyIntent(text: string): AgentIntent {
     return 'brainstorm';
   }
 
-  // Plan/Schedule
-  if (/schedule|plan my|calendar|time block|add a block/i.test(lower)) {
+  // Quick task capture (before plan — short task creation)
+  if (/^(add task|new task|remind me to|todo:?|to.do:?)\s/i.test(lower)) {
+    return 'capture';
+  }
+
+  // Plan/Schedule/Tasks
+  if (/schedule|plan my|calendar|time block|add a block|show.*today|show.*upcoming|show.*someday|what.?s (overdue|due|on my plate)|my tasks|task list|recurring task|complete task|check off|done with|show.*project/i.test(lower)) {
     return 'plan';
   }
 

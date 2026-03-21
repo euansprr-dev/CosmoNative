@@ -20,6 +20,8 @@ import * as beats from '../tools/beats';
 import * as intelligence from '../tools/intelligence';
 import * as writing from '../tools/writing';
 import * as search from '../tools/search';
+import * as tasks from '../tools/tasks';
+import * as projects from '../tools/projects';
 
 export type ToolResult = string; // JSON-encoded string, matching Swift jsonEncode()
 
@@ -97,9 +99,37 @@ export async function executeTool(
       case 'complete_block':
         return await calendar.completeBlock(args);
       case 'get_unscheduled_tasks':
-        return await calendar.getUnscheduledTasks(args);
+        return await tasks.getTasks({ ...args, list: 'anytime' }); // Backward compat alias
       case 'create_task':
-        return await calendar.createTask(args);
+        return await tasks.smartTaskCreate(args); // Backward compat alias
+
+      // === ENHANCED TASKS (Phase 4) ===
+      case 'smart_task_create':
+        return await tasks.smartTaskCreate(args);
+      case 'get_tasks':
+        return await tasks.getTasks(args);
+      case 'complete_task':
+        return await tasks.completeTask(args);
+      case 'uncomplete_task':
+        return await tasks.uncompleteTask(args);
+      case 'reschedule_task':
+        return await tasks.rescheduleTask(args);
+      case 'update_task':
+        return await tasks.updateTask(args);
+      case 'set_task_recurrence':
+        return await tasks.setTaskRecurrence(args);
+      case 'get_recurring_tasks':
+        return await tasks.getRecurringTasks(args);
+
+      // === PROJECTS ===
+      case 'get_projects':
+        return await projects.getProjects(args);
+      case 'get_project_tasks':
+        return await projects.getProjectTasks(args);
+      case 'create_project':
+        return await projects.createProject(args);
+      case 'move_task_to_project':
+        return await projects.moveTaskToProject(args);
 
       // === ANALYTICS ===
       case 'get_dimension_xp':

@@ -90,6 +90,22 @@ const ALL_TOOLS: ToolDefinition[] = [
   { name: 'generate_hooks', description: 'Generate hook variants', parameters: { type: 'object', properties: { contentUUID: { type: 'string' }, count: { type: 'integer' }, clientName: { type: 'string' } }, required: ['contentUUID'] } },
   { name: 'score_draft', description: 'Score a draft on 6 dimensions', parameters: { type: 'object', properties: { contentUUID: { type: 'string' } }, required: ['contentUUID'] } },
 
+  // === ENHANCED TASKS (Phase 4) ===
+  { name: 'smart_task_create', description: 'Create a task with natural language parsing — supports priority (p1-p4, !), dates (tomorrow, next monday), times (at 2pm), recurrence (every weekday), projects (#name), intents (write, research)', parameters: { type: 'object', properties: { input: { type: 'string', description: 'Natural language task string to parse' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, intent: { type: 'string', enum: ['writeContent', 'research', 'studySwipes', 'deepThink', 'review', 'general'] }, dueDate: { type: 'string' }, timeOfDay: { type: 'string', enum: ['morning', 'evening'] }, schedulingState: { type: 'string', enum: ['anytime', 'someday'] }, projectName: { type: 'string' }, checklist: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } } } },
+  { name: 'get_tasks', description: 'Get tasks by smart list (today/upcoming/anytime/someday/logbook/overdue/all) with optional filters', parameters: { type: 'object', properties: { list: { type: 'string', enum: ['today', 'upcoming', 'anytime', 'someday', 'logbook', 'overdue', 'all'] }, projectUUID: { type: 'string' }, priority: { type: 'string' }, intent: { type: 'string' }, search: { type: 'string' }, limit: { type: 'integer' } }, required: ['list'] } },
+  { name: 'complete_task', description: 'Mark a task as complete (handles recurring tasks automatically)', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
+  { name: 'uncomplete_task', description: 'Unmark a task as complete', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
+  { name: 'reschedule_task', description: 'Move a task to a new date/time using natural language (tomorrow, next monday at 3pm, someday, anytime)', parameters: { type: 'object', properties: { uuid: { type: 'string' }, when: { type: 'string', description: 'Natural language date/time expression' } }, required: ['uuid', 'when'] } },
+  { name: 'update_task', description: 'Update any task field (priority, intent, body, checklist, timeOfDay, etc.)', parameters: { type: 'object', properties: { uuid: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, intent: { type: 'string' }, timeOfDay: { type: 'string' }, schedulingState: { type: 'string' }, checklist: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, isCompleted: { type: 'boolean' } } } } }, required: ['uuid'] } },
+  { name: 'set_task_recurrence', description: 'Add, modify, or remove recurring schedule (every day, weekdays, every mon wed fri, none)', parameters: { type: 'object', properties: { uuid: { type: 'string' }, recurrence: { type: 'string', description: 'NLP recurrence expression or "none" to remove' } }, required: ['uuid', 'recurrence'] } },
+  { name: 'get_recurring_tasks', description: 'List all recurring task templates with their schedules', parameters: { type: 'object', properties: { limit: { type: 'integer' } } } },
+
+  // === PROJECTS ===
+  { name: 'get_projects', description: 'List all projects with task counts, headings, and deadlines', parameters: { type: 'object', properties: {} } },
+  { name: 'get_project_tasks', description: 'Get tasks within a project grouped by heading sections', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
+  { name: 'create_project', description: 'Create a new project with optional headings, color, and deadline', parameters: { type: 'object', properties: { title: { type: 'string' }, color: { type: 'string' }, deadline: { type: 'string' }, notes: { type: 'string' }, headings: { type: 'array', items: { type: 'string' } } }, required: ['title'] } },
+  { name: 'move_task_to_project', description: 'Assign a task to a project and optional heading section', parameters: { type: 'object', properties: { taskUUID: { type: 'string' }, projectUUID: { type: 'string' }, headingUUID: { type: 'string' } }, required: ['taskUUID', 'projectUUID'] } },
+
   // === SCORING / BEATS ===
   { name: 'get_beat_patterns', description: 'Get top beat patterns from swipe library', parameters: { type: 'object', properties: { format: { type: 'string' }, niche: { type: 'string' }, limit: { type: 'integer' } } } },
 
@@ -118,6 +134,8 @@ const TOOL_GROUPS: Record<string, string[]> = {
   content: ['get_content_pipeline', 'advance_pipeline_phase', 'create_content', 'get_content', 'update_content', 'create_thinkspace'],
   capture: ['capture_swipe', 'capture_swipe_with_idea', 'capture_research'],
   schedule: ['get_calendar_blocks', 'create_block', 'update_block', 'delete_block', 'complete_block', 'get_unscheduled_tasks', 'create_task'],
+  task: ['smart_task_create', 'get_tasks', 'complete_task', 'uncomplete_task', 'reschedule_task', 'update_task', 'set_task_recurrence', 'get_recurring_tasks'],
+  project: ['get_projects', 'get_project_tasks', 'create_project', 'move_task_to_project'],
   analytics: ['get_dimension_xp', 'get_streak_data'],
   preference: ['get_preferences', 'store_preference', 'delete_preference'],
   client: ['search_by_client', 'update_client_memory', 'list_client_memory'],
@@ -135,12 +153,12 @@ const TOOL_GROUPS: Record<string, string[]> = {
 
 // Intent → tool groups mapping (matches Swift toolsForIntent exactly)
 const INTENT_TOOL_GROUPS: Record<AgentIntent, string[]> = {
-  capture: ['idea', 'swipe', 'capture', 'schedule', 'client', 'clientProfile', 'lesson', 'moduleManagement'],
+  capture: ['idea', 'swipe', 'capture', 'schedule', 'task', 'client', 'clientProfile', 'lesson', 'moduleManagement'],
   brainstorm: ['idea', 'swipe', 'capture', 'client', 'clientProfile', 'intelligence', 'writing', 'preference', 'scoring', 'lesson', 'moduleManagement', 'webSearch'],
-  plan: ['schedule', 'content', 'intelligence', 'clientProfile', 'lesson', 'moduleManagement'],
+  plan: ['schedule', 'task', 'project', 'content', 'intelligence', 'clientProfile', 'lesson', 'moduleManagement'],
   query: Object.keys(TOOL_GROUPS), // All tools
-  correct: ['idea', 'content', 'schedule', 'client', 'clientProfile', 'moduleManagement'],
-  execute: ['content', 'schedule', 'writing', 'clientProfile', 'ux', 'lesson', 'moduleManagement'],
+  correct: ['idea', 'content', 'schedule', 'task', 'project', 'client', 'clientProfile', 'moduleManagement'],
+  execute: ['content', 'schedule', 'task', 'project', 'writing', 'clientProfile', 'ux', 'lesson', 'moduleManagement'],
   debrief: ['analytics', 'lesson', 'moduleManagement'],
   reflect: ['analytics', 'lesson', 'moduleManagement'],
   meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement'],

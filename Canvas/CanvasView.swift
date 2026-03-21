@@ -2146,8 +2146,8 @@ struct CanvasView: View {
         var screenPosition = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
         if let pos = userInfo["position"] as? CGPoint {
             // Convert from window coordinates to canvas-local coordinates
-            // by subtracting the sidebar width from X
-            let sidebarWidth = crossDragManager.sidebarWidth
+            // by subtracting the full sidebar footprint (includes floating margins)
+            let sidebarWidth = crossDragManager.sidebarTotalWidth
             screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 
@@ -2721,7 +2721,7 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            let sidebarWidth = crossDragManager.sidebarWidth
+            let sidebarWidth = crossDragManager.sidebarTotalWidth
             screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 
@@ -2751,7 +2751,7 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            let sidebarWidth = crossDragManager.sidebarWidth
+            let sidebarWidth = crossDragManager.sidebarTotalWidth
             screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
         }
 

@@ -437,6 +437,14 @@ struct MainView: View {
             }
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
+            // Dismiss peek sidebar when entering focus mode
+            if newValue != nil {
+                isPeeking = false
+                peekTimer?.invalidate()
+                peekTimer = nil
+                peekDismissTimer?.invalidate()
+                peekDismissTimer = nil
+            }
             // When focus mode closes, reveal Command-K if it was kept alive behind focus mode
             if newValue == nil, commandKBehindFocusMode {
                 // CMD+K view is still in the tree — just reveal it (no delay, no recreation)
@@ -661,21 +669,21 @@ struct MainView: View {
                 .zIndex(200)
             }
 
-            // Toggle button (when hidden)
-            if isSidebarHidden && !isPeeking {
+            // Toggle button (when hidden and not in focus mode)
+            if isSidebarHidden && !isPeeking && appState.focusedEntity == nil {
                 sidebarToggleButton
                     .zIndex(201)
             }
 
-            // Peek rail overlay (when hovering left edge)
-            if isPeeking && isSidebarHidden {
+            // Peek rail overlay (when hovering left edge, not in focus mode)
+            if isPeeking && isSidebarHidden && appState.focusedEntity == nil {
                 peekSidebarRail
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(202)
             }
 
-            // Left-edge hover trigger (when hidden and not peeking)
-            if isSidebarHidden && !isPeeking {
+            // Left-edge hover trigger (when hidden and not peeking, not in focus mode)
+            if isSidebarHidden && !isPeeking && appState.focusedEntity == nil {
                 sidebarEdgeTrigger
                     .zIndex(199)
             }
@@ -694,7 +702,7 @@ struct MainView: View {
         .onAppear {
             setupCrossThinkspaceDragCallbacks()
         }
-        .onChange(of: isSidebarHidden) { _, hidden in
+        .onChange(of: isSidebarHidden, initial: true) { _, hidden in
             crossDragManager.sidebarWidth = hidden ? 0 : UnifiedSidebarMetrics.defaultExpandedWidth
         }
     }
@@ -748,7 +756,13 @@ struct MainView: View {
         VStack(spacing: 0) {
             PeekSidebarContent(
                 currentDestination: $currentDestination,
-                thinkspaceManager: thinkspaceManager
+                thinkspaceManager: thinkspaceManager,
+                onExpandSidebar: {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isPeeking = false
+                        isSidebarHidden = false
+                    }
+                }
             )
         }
         .frame(width: UnifiedSidebarMetrics.collapsedWidth)

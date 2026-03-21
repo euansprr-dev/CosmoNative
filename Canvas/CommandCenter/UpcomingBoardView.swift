@@ -37,7 +37,7 @@ struct UpcomingBoardView: View {
         HStack {
             Text(monthYearLabel)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(DS.textSecondary)
+                .foregroundStyle(DS.textSecondary)
 
             Spacer()
 
@@ -60,7 +60,7 @@ struct UpcomingBoardView: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
@@ -72,7 +72,7 @@ struct UpcomingBoardView: View {
             } label: {
                 Text("Today")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(DS.surface, in: RoundedRectangle(cornerRadius: 6))
@@ -90,7 +90,7 @@ struct UpcomingBoardView: View {
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
@@ -124,11 +124,11 @@ struct UpcomingBoardView: View {
             HStack(spacing: 6) {
                 Text("Overdue")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(DS.red)
+                    .foregroundStyle(DS.red)
 
                 Text("\(viewModel.overdueTasks.count)")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.red.opacity(0.7))
+                    .foregroundStyle(DS.red.opacity(0.7))
 
                 Spacer()
 
@@ -141,7 +141,7 @@ struct UpcomingBoardView: View {
                         Text("Reschedule")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(DS.red)
+                    .foregroundStyle(DS.red)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
@@ -225,11 +225,11 @@ struct UpcomingBoardView: View {
         HStack(spacing: 6) {
             Text(dayHeaderLabel(day))
                 .font(.system(size: 14, weight: .bold))
-                .foregroundColor(day.isToday ? DS.text : DS.textSecondary)
+                .foregroundStyle(day.isToday ? DS.text : DS.textSecondary)
 
             Text("\(day.taskCount)")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
 
             Spacer()
         }
@@ -307,47 +307,40 @@ struct UpcomingBoardView: View {
 
     @ViewBuilder
     private func boardTaskMetaRow(_ task: TaskViewModel, resolvedHabit: HabitDefinition?) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if let dueInfo = task.dueInfo {
-                HStack(spacing: 3) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 9))
-                    Text(dueInfo)
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(task.isOverdue ? DS.red : DS.textMuted)
+                metaBadge(icon: "calendar", text: dueInfo, color: task.isOverdue ? DS.red : DS.textMuted)
             }
 
             if task.intent != .general {
-                HStack(spacing: 3) {
-                    Image(systemName: task.intent.iconName)
-                        .font(.system(size: 9))
-                    Text(task.intent.displayName)
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(task.intent.color.opacity(0.8))
+                metaBadge(icon: task.intent.iconName, text: task.intent.displayName, color: task.intent.color.opacity(0.8))
             }
 
             if let resolvedHabit {
-                HStack(spacing: 3) {
-                    Image(systemName: resolvedHabit.icon)
-                        .font(.system(size: 9))
-                    Text(resolvedHabit.title)
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(resolvedHabit.accent.opacity(0.9))
+                metaBadge(icon: resolvedHabit.icon, text: resolvedHabit.title, color: resolvedHabit.accent.opacity(0.9))
             }
 
             if task.isRecurring {
-                HStack(spacing: 3) {
-                    Image(systemName: "repeat")
-                        .font(.system(size: 9))
-                    Text("Repeats")
-                        .font(.system(size: 10))
-                }
-                .foregroundColor(DS.accent.opacity(0.85))
+                Image(systemName: "repeat")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(DS.accent.opacity(0.85))
             }
+
+            Spacer(minLength: 0)
         }
+        .lineLimit(1)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func metaBadge(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+            Text(text)
+                .font(.system(size: 9, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(color)
     }
 
     private func boardTaskCard(_ task: TaskViewModel) -> some View {
@@ -433,7 +426,7 @@ struct UpcomingBoardView: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
+                .foregroundStyle(activeTaskMenuUUID == task.uuid ? DS.text : DS.textMuted)
                 .frame(width: 24, height: 24)
                 .background(
                     Circle()
@@ -484,7 +477,7 @@ struct UpcomingBoardView: View {
         HStack(spacing: 12) {
             Text("\(selectedTaskUUIDs.count) selected")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
 
             Spacer()
 
@@ -499,7 +492,7 @@ struct UpcomingBoardView: View {
                     Text("Delete")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(DS.red)
+                .foregroundStyle(DS.red)
             }
             .buttonStyle(.plain)
 
@@ -508,7 +501,7 @@ struct UpcomingBoardView: View {
             } label: {
                 Text("Cancel")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -540,11 +533,11 @@ struct UpcomingBoardView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.red)
+                        .foregroundStyle(DS.red)
 
                     Text("Add task")
                         .font(.system(size: 13))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 8)
@@ -560,13 +553,13 @@ struct UpcomingBoardView: View {
                 if newTaskText.isEmpty {
                     Text("Task name")
                         .font(.system(size: 13))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $newTaskText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .focused($addTaskFocused)
                     .onSubmit {
                         submitInlineTask(date: date)
@@ -600,7 +593,7 @@ struct UpcomingBoardView: View {
                 } label: {
                     Text("Cancel")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -737,7 +730,7 @@ private struct CalendarEventsCard: View {
                         }
                         Text("\(hiddenCount) more")
                             .font(.system(size: 10))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -756,7 +749,7 @@ private struct CalendarEventsCard: View {
                     } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(DS.textMuted)
+                            .foregroundStyle(DS.textMuted)
                             .frame(width: 24, height: 20)
                     }
                     .buttonStyle(.plain)
@@ -783,12 +776,12 @@ private struct CalendarEventsCard: View {
             if let timeStr = eventTimeString(event) {
                 Text(timeStr)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
+                    .foregroundStyle(DS.textSecondary)
             }
 
             Text(event.title)
                 .font(.system(size: 11))
-                .foregroundColor(DS.text)
+                .foregroundStyle(DS.text)
                 .lineLimit(1)
 
             Spacer(minLength: 0)

@@ -144,9 +144,13 @@ struct ProjectDetailView: View {
                     compactTaskRow(task)
                 }
 
-                SmartTaskCaptureRow(viewModel: viewModel)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 4)
+                SmartTaskCaptureRow(
+                    viewModel: viewModel,
+                    contextProjectUUID: project.uuid,
+                    placeholderText: "Add task to project..."
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
             }
         }
     }
@@ -195,6 +199,15 @@ struct ProjectDetailView: View {
             ForEach(tasks) { task in
                 compactTaskRow(task)
             }
+
+            SmartTaskCaptureRow(
+                viewModel: viewModel,
+                contextProjectUUID: project.uuid,
+                contextHeadingUUID: heading.id,
+                placeholderText: "Add task to \(heading.title)..."
+            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
         }
     }
 
@@ -216,11 +229,25 @@ struct ProjectDetailView: View {
             .buttonStyle(.plain)
 
             // Title
-            Text(task.title)
-                .font(DS.callout)
-                .foregroundStyle(task.isCompleted ? DS.textMuted : DS.text)
-                .strikethrough(task.isCompleted)
-                .lineLimit(1)
+            if !task.titleMentions.isEmpty && !task.isCompleted {
+                TaskTitleWithMentions(
+                    title: task.title,
+                    mentions: task.titleMentions,
+                    font: DS.callout
+                ) { mention in
+                    NotificationCenter.default.post(
+                        name: .init("com.cosmo.navigateToAtom"),
+                        object: nil,
+                        userInfo: ["uuid": mention.entityUUID, "intent": "general"]
+                    )
+                }
+            } else {
+                Text(task.title)
+                    .font(DS.callout)
+                    .foregroundStyle(task.isCompleted ? DS.textMuted : DS.text)
+                    .strikethrough(task.isCompleted)
+                    .lineLimit(1)
+            }
 
             Spacer()
 

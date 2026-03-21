@@ -103,6 +103,7 @@ struct SwipeStudyFocusModeView: View {
 
     private let gold = DS.entitySwipe
 
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
@@ -255,6 +256,23 @@ struct SwipeStudyFocusModeView: View {
 
     private func topBar(atom: Atom) -> some View {
         HStack(spacing: 12) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             if !isPaneContext {
                 Button {
                     onClose()

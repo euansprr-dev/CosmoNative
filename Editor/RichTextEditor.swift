@@ -29,6 +29,7 @@ struct RichTextEditor: View {
     var allowSelectionMenu: Bool = true
     var allowImages: Bool = true
     var singleLine: Bool = false
+    var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
     var typewriterMode: Bool = false
     var isEditable: Bool = true
@@ -39,6 +40,10 @@ struct RichTextEditor: View {
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
+    var onActivate: (() -> Void)? = nil
+    var onDeactivate: (() -> Void)? = nil
+    var onCommit: (() -> Void)? = nil
+    var autoFocus: Bool = false
 
     // Geometry for menu clamping
     @State private var containerSize: CGSize = .zero
@@ -66,6 +71,7 @@ struct RichTextEditor: View {
         allowSelectionMenu: Bool = true,
         allowImages: Bool = true,
         singleLine: Bool = false,
+        titleConfiguration: TitleEditorConfiguration? = nil,
         baseFontWeight: NSFont.Weight = .regular,
         typewriterMode: Bool = false,
         isEditable: Bool = true,
@@ -76,6 +82,10 @@ struct RichTextEditor: View {
         onContentHeightChange: ((CGFloat) -> Void)? = nil,
         onAIAction: ((AIWritingAction) -> Void)? = nil,
         onCustomPrompt: ((String) -> Void)? = nil,
+        onActivate: (() -> Void)? = nil,
+        onDeactivate: (() -> Void)? = nil,
+        onCommit: (() -> Void)? = nil,
+        autoFocus: Bool = false,
         onSave: ((NSAttributedString) -> Void)? = nil
     ) {
         self._text = text
@@ -89,6 +99,7 @@ struct RichTextEditor: View {
         self.allowSelectionMenu = allowSelectionMenu
         self.allowImages = allowImages
         self.singleLine = singleLine
+        self.titleConfiguration = titleConfiguration
         self.baseFontWeight = baseFontWeight
         self.typewriterMode = typewriterMode
         self.isEditable = isEditable
@@ -99,6 +110,10 @@ struct RichTextEditor: View {
         self.onContentHeightChange = onContentHeightChange
         self.onAIAction = onAIAction
         self.onCustomPrompt = onCustomPrompt
+        self.onActivate = onActivate
+        self.onDeactivate = onDeactivate
+        self.onCommit = onCommit
+        self.autoFocus = autoFocus
         self.onSave = onSave
     }
 
@@ -119,6 +134,7 @@ struct RichTextEditor: View {
                     allowImages: allowImages,
                     allowSelectionMenu: allowSelectionMenu,
                     singleLine: singleLine,
+                    titleConfiguration: titleConfiguration,
                     baseFontWeight: baseFontWeight,
                     polishHighlights: polishHighlights,
                     textAlignment: textAlignment,
@@ -156,7 +172,10 @@ struct RichTextEditor: View {
                     onDismissMenus: {
                         dismissAllOverlays()
                     },
-                    onContentHeightChange: onContentHeightChange
+                    onContentHeightChange: onContentHeightChange,
+                    onActivate: onActivate,
+                    onDeactivate: onDeactivate,
+                    onCommit: onCommit
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Ensure the entire editor area is clickable, even when empty
@@ -265,8 +284,18 @@ struct RichTextEditor: View {
                     .transition(.opacity)
                 }
             }
-            .onAppear { containerSize = geometry.size }
+            .onAppear {
+                containerSize = geometry.size
+                if autoFocus {
+                    shouldRefocusEditor = true
+                }
+            }
             .onChange(of: geometry.size) { _, newSize in containerSize = newSize }
+            .onChange(of: autoFocus) { _, shouldFocus in
+                if shouldFocus {
+                    shouldRefocusEditor = true
+                }
+            }
             .onChange(of: isOverlayVisible) { _, visible in
                 if visible {
                     installOutsideClickDismissMonitor()
@@ -382,6 +411,16 @@ struct RichTextEditor: View {
                               leading: compact ? 0 : 2,
                               bottom: compact ? 4 : max(4, floor(fontSize * 0.12)),
                               trailing: 2)
+        }
+
+        if titleConfiguration != nil {
+            let verticalInset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
+            return EdgeInsets(
+                top: verticalInset,
+                leading: compact ? 0 : 2,
+                bottom: verticalInset,
+                trailing: 2
+            )
         }
 
         if compact {

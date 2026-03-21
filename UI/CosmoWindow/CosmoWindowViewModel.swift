@@ -53,7 +53,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
     // MARK: - Conversation Persistence
 
-    private var conversationId: String = "cosmo-global-window"
+    private var conversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var linkedAtomUUIDs: Set<String> = []
     private let messageArchiveKeyPrefix = "cosmoWindow.messageArchive."
 
@@ -196,7 +196,13 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         // 4. FlashLiteRouter for quick single-shot operations
-        let bypassFlash = await shouldBypassFlashRouter(text: text)
+        // Skip flash router when mentions are present — mentions signal contextual reasoning
+        let bypassFlash: Bool
+        if !mentionedAtoms.isEmpty {
+            bypassFlash = true
+        } else {
+            bypassFlash = await shouldBypassFlashRouter(text: text)
+        }
         if !bypassFlash, let (flashResponse, toolName) = await FlashLiteRouter.shared.tryRoute(text) {
             await saveFlashRouterResult(text: text, response: flashResponse, toolName: toolName)
             return flashResponse
@@ -506,6 +512,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Generate a new conversation ID
         conversationId = "cosmo-window-\(UUID().uuidString.prefix(8).lowercased())"
+        UserDefaults.standard.set(conversationId, forKey: "cosmoWindow.lastConversationId")
 
         // Clear all state
         messages.removeAll()
@@ -561,6 +568,7 @@ final class CosmoWindowViewModel: ObservableObject {
 
         // Switch to the selected conversation
         conversationId = id
+        UserDefaults.standard.set(conversationId, forKey: "cosmoWindow.lastConversationId")
         await loadConversation()
         await loadChatHistory()
     }
@@ -580,10 +588,12 @@ final class CosmoWindowViewModel: ObservableObject {
             enrichedText = text
         }
 
-        // Inject @-mentioned atom context into the message
+        // Inject @-mentioned atom context inline at mention positions
         if !mentionedAtoms.isEmpty {
-            let mentionBlock = MentionContextHelper.buildMentionBlock(atoms: mentionedAtoms)
-            enrichedText = mentionBlock + "\n---\n" + enrichedText
+            enrichedText = MentionContextHelper.expandMentionsInline(
+                text: enrichedText,
+                atoms: mentionedAtoms
+            )
             clearMentions()
         }
 

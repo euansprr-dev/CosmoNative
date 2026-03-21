@@ -48,6 +48,43 @@ final class EditorLayoutMetricsTests: XCTestCase {
         )
     }
 
+    func testTitleHeightMatchesConfiguredLineCount() {
+        let expected = expectedTitleHeight(
+            fontSize: 28,
+            compact: true,
+            baseFontWeight: .semibold,
+            lineCount: 2
+        )
+
+        XCTAssertEqual(
+            EditorLayoutMetrics.titleHeight(
+                fontSize: 28,
+                compact: true,
+                baseFontWeight: .semibold,
+                lineCount: 2
+            ),
+            expected,
+            accuracy: 0.001
+        )
+    }
+
+    func testTitleHeightIncreasesWithAdditionalLines() {
+        let singleLine = EditorLayoutMetrics.titleHeight(
+            fontSize: 32,
+            compact: false,
+            baseFontWeight: .bold,
+            lineCount: 1
+        )
+        let tripleLine = EditorLayoutMetrics.titleHeight(
+            fontSize: 32,
+            compact: false,
+            baseFontWeight: .bold,
+            lineCount: 3
+        )
+
+        XCTAssertGreaterThan(tripleLine, singleLine)
+    }
+
     private func expectedSingleLineHeight(
         fontSize: CGFloat,
         compact: Bool,
@@ -77,5 +114,16 @@ final class EditorLayoutMetricsTests: XCTestCase {
         let inset = EditorLayoutMetrics.singleLineVerticalInset(fontSize: fontSize, compact: compact)
         let usedRect = layoutManager.usedRect(for: textContainer)
         return ceil(usedRect.height + inset * 2)
+    }
+
+    private func expectedTitleHeight(
+        fontSize: CGFloat,
+        compact: Bool,
+        baseFontWeight: NSFont.Weight,
+        lineCount: Int
+    ) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+        let inset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
+        return ceil((font.ascender - font.descender + font.leading) * CGFloat(max(1, lineCount)) + inset * 2 + 2)
     }
 }

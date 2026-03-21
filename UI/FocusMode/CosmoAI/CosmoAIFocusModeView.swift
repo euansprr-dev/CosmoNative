@@ -14,6 +14,7 @@ struct CosmoAIFocusModeView: View {
     @State private var inputText = ""
     @State private var sidebarVisible = false
 
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
@@ -87,6 +88,23 @@ struct CosmoAIFocusModeView: View {
     // MARK: - Header
     private var header: some View {
         HStack(spacing: 12) {
+            // Main sidebar toggle
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 14, weight: .medium))
@@ -106,6 +124,23 @@ struct CosmoAIFocusModeView: View {
             }
 
             Spacer()
+
+            // Focus mode sidebar toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    sidebarVisible.toggle()
+                }
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(sidebarVisible ? DS.accent : DS.textSecondary)
+                    .padding(8)
+                    .background(
+                        sidebarVisible ? DS.accent.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
+            }
+            .buttonStyle(.plain)
 
             // Connected context count
             if !viewModel.connectedAtomUUIDs.isEmpty {

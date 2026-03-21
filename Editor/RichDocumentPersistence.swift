@@ -90,29 +90,139 @@ enum RichDocumentPersistence {
     }
 
     static func titlePlainText(from document: RichDocument) -> String {
-        document.blocks
-            .compactMap { block in
-                switch block.kind {
-                case .divider, .image:
-                    return nil
-                default:
-                    let text = block.inlines.map(\.plainText).joined()
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmed.isEmpty ? nil : trimmed
-                }
-            }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        normalizedTitleString(
+            normalizedTitleInlines(from: document)
+                .map(\.plainText)
+                .joined()
+        )
     }
 
     static func normalizedTitleDocument(_ document: RichDocument) -> RichDocument {
-        let title = titlePlainText(from: document)
-        return title.isEmpty ? .empty : RichDocument(blocks: [.paragraph(title)])
+        let inlines = normalizedTitleInlines(from: document)
+        return inlines.isEmpty ? .empty : RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: inlines)
+        ])
+    }
+
+    static func normalizedTitleString(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func nilIfEmpty(_ string: String) -> String? {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedTitleInlines(from document: RichDocument) -> [RichInlineNode] {
+        var result: [RichInlineNode] = []
+
+        for block in document.blocks {
+            guard block.kind != .divider else { continue }
+            let blockInlines = normalizedTitleBlockInlines(from: block)
+            guard !blockInlines.isEmpty else { continue }
+
+            if !result.isEmpty {
+                appendTitleNode(.text(" "), to: &result)
+            }
+
+            blockInlines.forEach { appendTitleNode($0, to: &result) }
+        }
+
+        return trimmedTitleBoundaryWhitespace(in: result)
+    }
+
+    private static func normalizedTitleBlockInlines(from block: RichBlock) -> [RichInlineNode] {
+        let nodes = block.inlines.compactMap { node -> RichInlineNode? in
+            switch node.kind {
+            case .text:
+                let normalized = normalizedTitleStringFragment(node.text ?? "")
+                guard !normalized.isEmpty else { return nil }
+                var updated = node
+                updated.text = normalized
+                return updated
+            case .mention:
+                return node
+            case .imageRef:
+                return nil
+            }
+        }
+
+        return trimmedTitleBoundaryWhitespace(in: nodes)
+    }
+
+    private static func normalizedTitleStringFragment(_ string: String) -> String {
+        string.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    }
+
+    private static func appendTitleNode(_ node: RichInlineNode, to nodes: inout [RichInlineNode]) {
+        guard node.kind != .imageRef else { return }
+
+        if case let .some(last) = nodes.last,
+           last.kind == .text,
+           node.kind == .text,
+           last.marks == node.marks {
+            var merged = last
+            merged.text = (last.text ?? "") + (node.text ?? "")
+            nodes[nodes.count - 1] = merged
+        } else {
+            nodes.append(node)
+        }
+    }
+
+    private static func trimmedTitleBoundaryWhitespace(in nodes: [RichInlineNode]) -> [RichInlineNode] {
+        trimTrailingTitleWhitespace(from: trimLeadingTitleWhitespace(from: nodes))
+    }
+
+    private static func trimLeadingTitleWhitespace(from nodes: [RichInlineNode]) -> [RichInlineNode] {
+        var trimmed = nodes
+
+        while let first = trimmed.first, first.kind == .text {
+            let normalized = (first.text ?? "").replacingOccurrences(
+                of: #"^\s+"#,
+                with: "",
+                options: .regularExpression
+            )
+            if normalized.isEmpty {
+                trimmed.removeFirst()
+                continue
+            }
+
+            if normalized != first.text {
+                var updated = first
+                updated.text = normalized
+                trimmed[0] = updated
+            }
+            break
+        }
+
+        return trimmed
+    }
+
+    private static func trimTrailingTitleWhitespace(from nodes: [RichInlineNode]) -> [RichInlineNode] {
+        var trimmed = nodes
+
+        while let last = trimmed.last, last.kind == .text {
+            let normalized = (last.text ?? "").replacingOccurrences(
+                of: #"\s+$"#,
+                with: "",
+                options: .regularExpression
+            )
+            if normalized.isEmpty {
+                trimmed.removeLast()
+                continue
+            }
+
+            if normalized != last.text {
+                var updated = last
+                updated.text = normalized
+                trimmed[trimmed.count - 1] = updated
+            }
+            break
+        }
+
+        return trimmed
     }
 }
 

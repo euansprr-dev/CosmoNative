@@ -21,6 +21,7 @@ struct CosmoDocumentEditor: View {
     @State private var isApplyingExternalUpdate = false
     @State private var isSyncingFromEditor = false
     @State private var documentSyncWorkItem: DispatchWorkItem?
+    @State private var lastEmittedPlainText = ""
 
     var fontSize: CGFloat = 16
     var compact: Bool = false
@@ -31,6 +32,7 @@ struct CosmoDocumentEditor: View {
     var allowSelectionMenu: Bool = true
     var allowImages: Bool = true
     var singleLine: Bool = false
+    var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
     var typewriterMode: Bool = false
     var isEditable: Bool = true
@@ -41,7 +43,13 @@ struct CosmoDocumentEditor: View {
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
+    var onPlainTextChange: ((String) -> Void)? = nil
+    var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var onDocumentChange: ((RichDocument, String) -> Void)? = nil
+    var onActivate: (() -> Void)? = nil
+    var onDeactivate: (() -> Void)? = nil
+    var onCommit: (() -> Void)? = nil
+    var autoFocus: Bool = false
 
     var body: some View {
         RichTextEditor(
@@ -56,6 +64,7 @@ struct CosmoDocumentEditor: View {
             allowSelectionMenu: allowSelectionMenu,
             allowImages: allowImages,
             singleLine: singleLine,
+            titleConfiguration: titleConfiguration,
             baseFontWeight: baseFontWeight,
             typewriterMode: typewriterMode,
             isEditable: isEditable,
@@ -66,6 +75,10 @@ struct CosmoDocumentEditor: View {
             onContentHeightChange: onContentHeightChange,
             onAIAction: onAIAction,
             onCustomPrompt: onCustomPrompt,
+            onActivate: onActivate,
+            onDeactivate: onDeactivate,
+            onCommit: onCommit,
+            autoFocus: autoFocus,
             onSave: { _ in syncDocumentFromEditor() }
         )
         .onAppear {
@@ -74,6 +87,9 @@ struct CosmoDocumentEditor: View {
         .onChange(of: document) { _, _ in
             guard !isApplyingExternalUpdate, !isSyncingFromEditor else { return }
             syncEditorFromDocument()
+        }
+        .onChange(of: plainTextMirror) { _, newValue in
+            handlePlainTextMirrorChange(newValue)
         }
         .onChange(of: attributedText) { _, _ in
             syncDocumentFromEditor()
@@ -85,24 +101,38 @@ struct CosmoDocumentEditor: View {
 
     private func syncEditorFromDocument() {
         isApplyingExternalUpdate = true
-        let resolved = document.isEmpty && !plainTextMirror.isEmpty
-            ? RichDocument.migrateLegacy(plainTextMirror)
-            : document
+        let resolved = resolvedDocumentForEditor()
         attributedText = RichDocumentSerializer.attributedString(
             from: resolved,
             fontSize: fontSize,
             darkMode: darkMode,
             singleLine: singleLine,
-            baseFontWeight: baseFontWeight
+            baseFontWeight: baseFontWeight,
+            titleMode: titleConfiguration != nil
         )
-        plainTextMirror = resolved.plainText
+        let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
+        plainTextMirror = resolvedPlainText
+        lastEmittedPlainText = resolvedPlainText
         DispatchQueue.main.async {
             isApplyingExternalUpdate = false
         }
     }
 
+    private func handlePlainTextMirrorChange(_ plainText: String) {
+        guard !isApplyingExternalUpdate else { return }
+        let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
+        guard resolvedPlainText != lastEmittedPlainText else { return }
+        lastEmittedPlainText = resolvedPlainText
+        onPlainTextChange?(resolvedPlainText)
+    }
+
     private func syncDocumentFromEditor() {
         guard !isApplyingExternalUpdate else { return }
+
+        if titleConfiguration != nil {
+            syncTitleDocumentFromEditor()
+            return
+        }
 
         // Immediately update plain text (cheap) for downstream consumers
         let currentPlain = attributedText.string
@@ -119,6 +149,7 @@ struct CosmoDocumentEditor: View {
             guard updated != document else { return }
             isSyncingFromEditor = true
             document = updated
+            onStructuredDocumentChange?(updated, updated.plainText)
             onDocumentChange?(updated, updated.plainText)
             DispatchQueue.main.async { isSyncingFromEditor = false }
         }
@@ -126,16 +157,101 @@ struct CosmoDocumentEditor: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
+    private func syncTitleDocumentFromEditor() {
+        documentSyncWorkItem?.cancel()
+
+        let payload = TitleDocumentChangePayloadFactory.payload(from: attributedText)
+        let normalizedAttributedText = RichDocumentSerializer.attributedString(
+            from: payload.document,
+            fontSize: fontSize,
+            darkMode: darkMode,
+            baseFontWeight: baseFontWeight,
+            titleMode: true
+        )
+
+        if !normalizedAttributedText.isEqual(to: attributedText) {
+            isApplyingExternalUpdate = true
+            attributedText = normalizedAttributedText
+            plainTextMirror = payload.plainText
+            lastEmittedPlainText = payload.plainText
+            DispatchQueue.main.async {
+                isApplyingExternalUpdate = false
+            }
+        }
+
+        guard payload.document != document else { return }
+
+        isSyncingFromEditor = true
+        document = payload.document
+        onStructuredDocumentChange?(payload.document, payload.plainText)
+        onDocumentChange?(payload.document, payload.plainText)
+        DispatchQueue.main.async {
+            isSyncingFromEditor = false
+        }
+    }
+
     /// Force-sync any pending document changes immediately (called before view disappears)
     private func flushPendingSync() {
         documentSyncWorkItem?.cancel()
         guard !isApplyingExternalUpdate else { return }
+
+        if titleConfiguration != nil {
+            let payload = TitleDocumentChangePayloadFactory.payload(from: attributedText)
+            guard payload.document != document else { return }
+            isSyncingFromEditor = true
+            document = payload.document
+            plainTextMirror = payload.plainText
+            onStructuredDocumentChange?(payload.document, payload.plainText)
+            onDocumentChange?(payload.document, payload.plainText)
+            isSyncingFromEditor = false
+            return
+        }
+
         let updated = RichDocumentSerializer.document(from: attributedText)
         guard updated != document else { return }
         isSyncingFromEditor = true
         document = updated
         plainTextMirror = updated.plainText
+        onStructuredDocumentChange?(updated, updated.plainText)
         onDocumentChange?(updated, updated.plainText)
         isSyncingFromEditor = false
+    }
+
+    private func resolvedDocumentForEditor() -> RichDocument {
+        let resolved = document.isEmpty && !plainTextMirror.isEmpty
+            ? RichDocument.migrateLegacy(plainTextMirror)
+            : document
+        return titleConfiguration == nil
+            ? resolved
+            : RichDocumentPersistence.normalizedTitleDocument(resolved)
+    }
+
+    private func resolvedPlainTextForCallbacks(from document: RichDocument) -> String {
+        titleConfiguration == nil
+            ? document.plainText
+            : RichDocumentPersistence.titlePlainText(from: document)
+    }
+
+    private func resolvedPlainTextForCallbacks(from plainText: String) -> String {
+        titleConfiguration == nil
+            ? plainText
+            : RichDocumentPersistence.normalizedTitleString(plainText)
+    }
+}
+
+struct TitleDocumentChangePayload: Equatable {
+    let document: RichDocument
+    let plainText: String
+}
+
+enum TitleDocumentChangePayloadFactory {
+    static func payload(from attributedText: NSAttributedString) -> TitleDocumentChangePayload {
+        let normalizedDocument = RichDocumentPersistence.normalizedTitleDocument(
+            RichDocumentSerializer.document(from: attributedText)
+        )
+        return TitleDocumentChangePayload(
+            document: normalizedDocument,
+            plainText: RichDocumentPersistence.titlePlainText(from: normalizedDocument)
+        )
     }
 }

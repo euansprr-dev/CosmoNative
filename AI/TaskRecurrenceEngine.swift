@@ -251,7 +251,22 @@ class TaskRecurrenceEngine {
         instanceMetadata.cognitiveLoad = metadata.cognitiveLoad
         instanceMetadata.taskType = metadata.taskType
         instanceMetadata.estimatedFocusMinutes = metadata.estimatedFocusMinutes
+        instanceMetadata.headingUUID = metadata.headingUUID
+        instanceMetadata.titleMentions = metadata.titleMentions
         // Do NOT copy linkedIdeaUUID -- each instance starts fresh for .writeContent
+
+        // Copy checklist from template with all items unchecked
+        if let checklistJSON = metadata.checklist,
+           let data = checklistJSON.data(using: .utf8),
+           var items = try? JSONDecoder().decode([ChecklistItem].self, from: data) {
+            items = items.map { item in
+                ChecklistItem(id: UUID().uuidString, title: item.title, isCompleted: false, sortOrder: item.sortOrder)
+            }
+            if let encoded = try? JSONEncoder().encode(items),
+               let json = String(data: encoded, encoding: .utf8) {
+                instanceMetadata.checklist = json
+            }
+        }
 
         guard let metadataData = try? JSONEncoder().encode(instanceMetadata),
               let metadataString = String(data: metadataData, encoding: .utf8) else {

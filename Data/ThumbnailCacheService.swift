@@ -55,7 +55,8 @@ actor ThumbnailCacheService {
     // MARK: - Lookup
 
     /// Fast synchronous check — memory cache only.
-    func cachedImage(for key: String) -> NSImage? {
+    /// `nonisolated` is safe because NSCache is thread-safe.
+    nonisolated func cachedImage(for key: String) -> NSImage? {
         memoryCache.object(forKey: key as NSString)
     }
 
@@ -120,6 +121,14 @@ struct CachedAsyncImage<Content: View>: View {
         self.url = url
         self.stableKey = stableKey
         self.content = content
+        // Synchronous memory cache check on first frame — eliminates flicker for cached images
+        if let url = url {
+            let cache = ThumbnailCacheService.shared
+            let key = cache.cacheKey(for: url, stableKey: stableKey)
+            if let cached = cache.cachedImage(for: key) {
+                self._phase = State(initialValue: .success(Image(nsImage: cached)))
+            }
+        }
     }
 
     var body: some View {

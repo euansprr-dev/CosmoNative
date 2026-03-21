@@ -306,6 +306,7 @@
 		A72A958A8C91A45D56B7847B /* DaemonInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96F44D8CD25BB380B1ADD967 /* DaemonInstaller.swift */; };
 		A770EC005AB7895EE3C95AB6 /* CosmoWindowMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07B2F3A49F84FE15F7E9E3F4 /* CosmoWindowMessage.swift */; };
 		A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */; };
+		8FC6105C26EC46250204C516 /* MentionComposerTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFF4BA0C1013A8A302BEBF8C /* MentionComposerTextView.swift */; };
 		A7EF76E9F56B5CA015FCD2A4 /* DailyQuestEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE7FC6A9504C0B2AA307B0C /* DailyQuestEngine.swift */; };
 		A7F3B8C9D0E1F26384A5B6C8 /* WritingEngineSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F3B8C9D0E1F26384A5B6C7 /* WritingEngineSettingsTab.swift */; };
 		A8B3C4D5E6F7081929304152 /* TaskDetailInlineEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7C3D4E5F6A70819293041B3 /* TaskDetailInlineEditor.swift */; };
@@ -1068,6 +1069,7 @@
 		F5743BEC091F185425763112 /* InlinePredictionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePredictionEngine.swift; sourceTree = "<group>"; };
 		F590BD4B19B9E6EF3417DA9E /* CosmoBlockWrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoBlockWrapper.swift; sourceTree = "<group>"; };
 		F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMentionOverlay.swift; sourceTree = "<group>"; };
+		DFF4BA0C1013A8A302BEBF8C /* MentionComposerTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionComposerTextView.swift; sourceTree = "<group>"; };
 		F70112233445566778899AAB /* VoiceToContentPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceToContentPipeline.swift; sourceTree = "<group>"; };
 		F71122334455667788990ABB /* IdeaActivationPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaActivationPipeline.swift; sourceTree = "<group>"; };
 		F72132435465768798A0B1CB /* DraftRefinementPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftRefinementPipeline.swift; sourceTree = "<group>"; };
@@ -2262,6 +2264,7 @@
 				8B52A26BDAD0CF62D6A062C5 /* CosmoWindowPanelController.swift */,
 				D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */,
 				F6A4D3EA0B914F7324CE8F93 /* CosmoMentionOverlay.swift */,
+				DFF4BA0C1013A8A302BEBF8C /* MentionComposerTextView.swift */,
 			);
 			path = CosmoWindow;
 			sourceTree = "<group>";
@@ -2954,6 +2957,7 @@
 				F501CD5AB756E263FD1EC972 /* CosmoWindowSettingsSection.swift in Sources */,
 				E5F3C2D9AB803E6213BD7E82 /* ToolActivityStreamView.swift in Sources */,
 				A7B5E4FB1CA25084350DF0A4 /* CosmoMentionOverlay.swift in Sources */,
+				8FC6105C26EC46250204C516 /* MentionComposerTextView.swift in Sources */,
 				5A1B2C3D4E5F6A7B8C9D0E02 /* LassoGestureDetector.swift in Sources */,
 				5A2B3C4D5E6F7A8B9C0D1E02 /* SynthesisEngine.swift in Sources */,
 				5A3B4C5D6E7F8A9B0C1D2E02 /* SynthesisResult.swift in Sources */,

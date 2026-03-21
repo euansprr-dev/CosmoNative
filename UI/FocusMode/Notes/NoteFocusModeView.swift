@@ -42,17 +42,21 @@ struct NoteFocusModeView: View {
     // Animation states
     @State private var contentAppeared = false
     @State private var titleUnderlineProgress: CGFloat = 0
-    @State private var titleEditorHeight: CGFloat = 58
+    @State private var titleEditorHeight: CGFloat = 76
+    @State private var pendingObservedTitleDocument: RichDocument?
+    @State private var titleDocumentAtEditStart: RichDocument = .empty
+    @State private var isEditingTitle = false
 
     // Save state
     @State private var saveState: SaveState = .idle
 
     // Writing mode
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("typewriterMode") private var typewriterMode = false
 
     private let database = CosmoDatabase.shared
     private let autoSaveDelay: TimeInterval = 1.5
-    private let titleFontSize: CGFloat = 34
+    private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
@@ -63,16 +67,13 @@ struct NoteFocusModeView: View {
         case saved
     }
 
-    private var titleMinHeight: CGFloat {
-        max(
-            58,
-            EditorLayoutMetrics.singleLineHeight(
-                fontSize: titleFontSize,
-                compact: false,
-                baseFontWeight: .semibold
-            )
-        )
-    }
+    private var titleFontSize: CGFloat { titleStyle.fontSize }
+
+    private var titleMinHeight: CGFloat { titleStyle.minimumHeight }
+
+    private var titlePreviewMaxHeight: CGFloat { titleStyle.previewMaxHeight }
+
+    private var titleEditingMaxHeight: CGFloat { titleStyle.editingMaxHeight }
 
     // MARK: - Body
 
@@ -171,6 +172,7 @@ struct NoteFocusModeView: View {
             startObservingAtom()
             loadLinkedAtoms()
             listenForAtomPicker()
+            titleEditorHeight = titleMinHeight
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(ProMotionSprings.cardEntrance) {
                     contentAppeared = true
@@ -213,12 +215,41 @@ struct NoteFocusModeView: View {
         .sheet(isPresented: $showTagEditor) {
             TagEditorSheet(tags: $tags)
         }
+        .onChange(of: isEditingTitle) { _, isEditing in
+            if isEditing {
+                titleDocumentAtEditStart = titleDocument
+                pendingObservedTitleDocument = nil
+                titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight))
+            } else {
+                if let pendingObservedTitleDocument, titleDocument == titleDocumentAtEditStart {
+                    applyObservedTitleDocument(pendingObservedTitleDocument)
+                }
+                pendingObservedTitleDocument = nil
+            }
+        }
     }
 
     // MARK: - Top Bar
 
     private var topBar: some View {
         HStack(spacing: DS.space16) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             // Back button (hidden in pane mode -- X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
@@ -256,6 +287,23 @@ struct NoteFocusModeView: View {
             }
 
             Spacer()
+
+            // Focus mode sidebar toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    sidebarVisible.toggle()
+                }
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(DS.callout)
+                    .foregroundStyle(sidebarVisible ? DS.accent : DS.textSecondary)
+                    .padding(DS.space8)
+                    .background(
+                        sidebarVisible ? DS.accent.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
+            }
+            .buttonStyle(.plain)
 
             // Typewriter mode toggle
             Button {
@@ -301,29 +349,59 @@ struct NoteFocusModeView: View {
 
     private var titleSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            CosmoDocumentEditor(
-                document: $titleDocument,
-                fontSize: titleFontSize,
-                placeholder: "Untitled Note",
-                darkMode: false,
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                singleLine: true,
-                baseFontWeight: .semibold,
-                onContentHeightChange: { newHeight in
-                    titleEditorHeight = max(titleMinHeight, newHeight)
-                },
-                onDocumentChange: { document, _ in
-                    titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
-                    withAnimation(ProMotionSprings.bouncy) {
-                        titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
-                    }
-                    if !isInitialLoad { triggerAutoSave() }
+            Group {
+                if isEditingTitle {
+                    CosmoDocumentEditor(
+                        document: $titleDocument,
+                        fontSize: titleFontSize,
+                        compact: titleStyle.compact,
+                        placeholder: "Untitled Note",
+                        darkMode: false,
+                        allowSlashCommands: false,
+                        allowMentions: true,
+                        allowSelectionMenu: false,
+                        allowImages: false,
+                        titleConfiguration: titleStyle.titleConfiguration,
+                        baseFontWeight: titleStyle.baseFontWeight,
+                        scrollsInternally: true,
+                        onContentHeightChange: { newHeight in
+                            titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                        },
+                        onPlainTextChange: { plainText in
+                            titlePlainText = plainText
+                            withAnimation(ProMotionSprings.bouncy) {
+                                titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
+                            }
+                        },
+                        onStructuredDocumentChange: { document, plainText in
+                            titleDocument = document
+                            titlePlainText = plainText
+                            withAnimation(ProMotionSprings.bouncy) {
+                                titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
+                            }
+                            if !isInitialLoad { triggerAutoSave() }
+                        },
+                        onActivate: { isEditingTitle = true },
+                        onDeactivate: { isEditingTitle = false },
+                        onCommit: { isEditingTitle = false },
+                        autoFocus: true
+                    )
+                    .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
+                } else {
+                    Text(titlePlainText.isEmpty ? "Untitled Note" : titlePlainText)
+                        .font(titleStyle.swiftUIFont)
+                        .foregroundStyle(titlePlainText.isEmpty ? DS.textMuted : DS.text)
+                        .lineLimit(titleStyle.previewLineLimit)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(titleStyle.swiftUITextAlignment)
+                        .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            titleDocumentAtEditStart = titleDocument
+                            isEditingTitle = true
+                        }
                 }
-            )
-            .frame(height: max(titleMinHeight, titleEditorHeight))
+            }
 
             // Animated underline
             GeometryReader { geo in
@@ -587,16 +665,22 @@ struct NoteFocusModeView: View {
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
 
-                    if nextBodyPlainText != plainContent || nextTitlePlainText != titlePlainText || nextBodyDocument != bodyDocument || nextTitleDocument != titleDocument {
-                        titleDocument = nextTitleDocument
+                    if !isEditingTitle,
+                       (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
+                        applyObservedTitleDocument(nextTitleDocument)
+                    } else if isEditingTitle,
+                              (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
+                        pendingObservedTitleDocument = nextTitleDocument
+                    }
+
+                    if nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
                         bodyDocument = nextBodyDocument
-                        titlePlainText = nextTitlePlainText
                         plainContent = nextBodyPlainText
-                        titleUnderlineProgress = nextTitlePlainText.isEmpty ? 0.28 : 1
-                        tags = fetchedAtom.tagsList
-                        if let date = ISO8601DateFormatter().date(from: fetchedAtom.createdAt) {
-                            createdAt = date
-                        }
+                    }
+
+                    tags = fetchedAtom.tagsList
+                    if let date = ISO8601DateFormatter().date(from: fetchedAtom.createdAt) {
+                        createdAt = date
                     }
 
                     if isInitialLoad {
@@ -808,6 +892,12 @@ struct NoteFocusModeView: View {
                 }
             }
         }
+    }
+
+    private func applyObservedTitleDocument(_ document: RichDocument) {
+        titleDocument = document
+        titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
+        titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
     }
 }
 

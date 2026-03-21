@@ -2341,6 +2341,9 @@ struct ProjectMetadata: Codable, Sendable {
 
     /// JSON array of task UUIDs in display order
     var taskSortOrder: String?
+
+    /// Whether this is a temporary (task-list-only) project with no ThinkSpace
+    var isTemporary: Bool?
 }
 
 /// Metadata for content atoms

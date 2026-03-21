@@ -35,6 +35,7 @@ struct ResearchFocusModeView: View {
     @State private var canvasFrameSize: CGSize = CGSize(width: 1440, height: 900)
     @State private var viewFrameInWindow: CGRect = .zero
 
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
@@ -435,6 +436,23 @@ struct ResearchFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             // Back button (hidden in pane mode — X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
@@ -473,24 +491,22 @@ struct ResearchFocusModeView: View {
 
             Spacer()
 
-            // Sidebar toggle (pane mode)
-            if isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        sidebarVisible.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(DS.callout)
-                        .foregroundStyle(sidebarVisible ? DS.entityResearch : DS.textSecondary)
-                        .padding(8)
-                        .background(
-                            sidebarVisible ? DS.entityResearch.opacity(0.15) : DS.border,
-                            in: Circle()
-                        )
+            // Focus mode sidebar toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    sidebarVisible.toggle()
                 }
-                .buttonStyle(.plain)
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(DS.callout)
+                    .foregroundStyle(sidebarVisible ? DS.entityResearch : DS.textSecondary)
+                    .padding(8)
+                    .background(
+                        sidebarVisible ? DS.entityResearch.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
             }
+            .buttonStyle(.plain)
 
             // Annotation count
             HStack(spacing: 4) {

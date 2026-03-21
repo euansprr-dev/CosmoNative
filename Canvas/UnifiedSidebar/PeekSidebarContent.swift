@@ -7,6 +7,7 @@ import SwiftUI
 struct PeekSidebarContent: View {
     @Binding var currentDestination: SidebarDestination
     @ObservedObject var thinkspaceManager: ThinkspaceManager
+    var onExpandSidebar: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,11 +42,16 @@ struct PeekSidebarContent: View {
     }
 
     private var peekHeader: some View {
-        Image("CosmoLogo")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-            .frame(maxWidth: .infinity)
+        Button("Show sidebar", systemImage: "sidebar.left") {
+            onExpandSidebar()
+        }
+        .labelStyle(.iconOnly)
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(DS.textSecondary)
+        .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .help("Open sidebar (Cmd+\\)")
     }
 
     private var peekFooter: some View {

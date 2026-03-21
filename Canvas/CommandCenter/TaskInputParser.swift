@@ -27,6 +27,9 @@ struct ParsedTaskInput {
     // MARK: - Context (set by view, not parsed)
     var contextProjectUUID: String?  // Auto-set when adding from project view
     var contextHeadingUUID: String?  // Auto-set when adding under a heading
+
+    // MARK: - Mentions (set by capture row, not parsed)
+    var mentions: [RichMention] = []
 }
 
 @MainActor

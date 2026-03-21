@@ -625,15 +625,29 @@ struct DashboardTaskList: View {
                         .foregroundStyle(task.intent.color.opacity(0.7))
                 }
 
-                CommandCenterAnimatedTaskTitle(
-                    title: task.title,
-                    isCompleted: task.isCompleted,
-                    completionState: completionState,
-                    font: DS.callout,
-                    activeColor: DS.text,
-                    completedColor: DS.textMuted
-                )
-                .lineLimit(1)
+                if !task.titleMentions.isEmpty && completionState == nil && !task.isCompleted {
+                    TaskTitleWithMentions(
+                        title: task.title,
+                        mentions: task.titleMentions,
+                        font: DS.callout
+                    ) { mention in
+                        NotificationCenter.default.post(
+                            name: .init("com.cosmo.navigateToAtom"),
+                            object: nil,
+                            userInfo: ["uuid": mention.entityUUID, "intent": "general"]
+                        )
+                    }
+                } else {
+                    CommandCenterAnimatedTaskTitle(
+                        title: task.title,
+                        isCompleted: task.isCompleted,
+                        completionState: completionState,
+                        font: DS.callout,
+                        activeColor: DS.text,
+                        completedColor: DS.textMuted
+                    )
+                    .lineLimit(1)
+                }
             }
 
             HStack(spacing: DS.space6) {

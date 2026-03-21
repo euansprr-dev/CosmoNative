@@ -263,19 +263,33 @@ enum RichDocumentSerializer {
         fontSize: CGFloat = 16,
         darkMode: Bool = false,
         singleLine: Bool = false,
-        baseFontWeight: NSFont.Weight = .regular
+        baseFontWeight: NSFont.Weight = .regular,
+        titleMode: Bool = false
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let textColor = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
 
         for (index, block) in document.blocks.enumerated() {
             if index > 0 {
-                result.append(NSAttributedString(string: "\n", attributes: baseAttributes(fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)))
+                result.append(NSAttributedString(string: "\n", attributes: baseAttributes(
+                    fontSize: fontSize,
+                    darkMode: darkMode,
+                    singleLine: singleLine,
+                    baseFontWeight: baseFontWeight,
+                    titleMode: titleMode
+                )))
             }
 
             let prefix = blockPrefix(for: block, listIndex: index)
             if !prefix.isEmpty {
-                result.append(NSAttributedString(string: prefix, attributes: blockPrefixAttributes(for: block, fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)))
+                result.append(NSAttributedString(string: prefix, attributes: blockPrefixAttributes(
+                    for: block,
+                    fontSize: fontSize,
+                    darkMode: darkMode,
+                    singleLine: singleLine,
+                    baseFontWeight: baseFontWeight,
+                    titleMode: titleMode
+                )))
             }
 
             if block.kind == .divider {
@@ -295,10 +309,26 @@ enum RichDocumentSerializer {
                 switch node.kind {
                 case .text:
                     let string = node.text ?? ""
-                    result.append(NSAttributedString(string: string, attributes: inlineAttributes(marks: node.marks, block: block, fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)))
+                    result.append(NSAttributedString(string: string, attributes: inlineAttributes(
+                        marks: node.marks,
+                        block: block,
+                        fontSize: fontSize,
+                        darkMode: darkMode,
+                        singleLine: singleLine,
+                        baseFontWeight: baseFontWeight,
+                        titleMode: titleMode
+                    )))
                 case .mention:
                     guard let mention = node.mention else { continue }
-                    var attrs = inlineAttributes(marks: node.marks, block: block, fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)
+                    var attrs = inlineAttributes(
+                        marks: node.marks,
+                        block: block,
+                        fontSize: fontSize,
+                        darkMode: darkMode,
+                        singleLine: singleLine,
+                        baseFontWeight: baseFontWeight,
+                        titleMode: titleMode
+                    )
                     let color = CosmoMentionColors.nsColor(for: mention.entityType)
                     attrs[.foregroundColor] = color
                     attrs[.backgroundColor] = color.withAlphaComponent(0.1)
@@ -323,7 +353,13 @@ enum RichDocumentSerializer {
         }
 
         if result.length == 0 {
-            return NSAttributedString(string: "", attributes: baseAttributes(fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight))
+            return NSAttributedString(string: "", attributes: baseAttributes(
+                fontSize: fontSize,
+                darkMode: darkMode,
+                singleLine: singleLine,
+                baseFontWeight: baseFontWeight,
+                titleMode: titleMode
+            ))
         }
 
         return result
@@ -557,7 +593,8 @@ enum RichDocumentSerializer {
         fontSize: CGFloat,
         darkMode: Bool,
         singleLine: Bool,
-        baseFontWeight: NSFont.Weight
+        baseFontWeight: NSFont.Weight,
+        titleMode: Bool
     ) -> [NSAttributedString.Key: Any] {
         let color = darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)
         switch block.kind {
@@ -567,7 +604,13 @@ enum RichDocumentSerializer {
                 .foregroundColor: color.withAlphaComponent(0.7)
             ]
         default:
-            return baseAttributes(fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)
+            return baseAttributes(
+                fontSize: fontSize,
+                darkMode: darkMode,
+                singleLine: singleLine,
+                baseFontWeight: baseFontWeight,
+                titleMode: titleMode
+            )
         }
     }
 
@@ -575,11 +618,17 @@ enum RichDocumentSerializer {
         fontSize: CGFloat,
         darkMode: Bool,
         singleLine: Bool,
-        baseFontWeight: NSFont.Weight
+        baseFontWeight: NSFont.Weight,
+        titleMode: Bool
     ) -> [NSAttributedString.Key: Any] {
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = singleLine ? 0 : 6
-        paragraphStyle.paragraphSpacing = singleLine ? 0 : 12
+        if singleLine || titleMode {
+            paragraphStyle.lineSpacing = 0
+            paragraphStyle.paragraphSpacing = 0
+        } else {
+            paragraphStyle.lineSpacing = 6
+            paragraphStyle.paragraphSpacing = 12
+        }
         return [
             .font: NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight),
             .foregroundColor: darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
@@ -593,10 +642,22 @@ enum RichDocumentSerializer {
         fontSize: CGFloat,
         darkMode: Bool,
         singleLine: Bool,
-        baseFontWeight: NSFont.Weight
+        baseFontWeight: NSFont.Weight,
+        titleMode: Bool
     ) -> [NSAttributedString.Key: Any] {
-        var attributes = baseAttributes(fontSize: fontSize, darkMode: darkMode, singleLine: singleLine, baseFontWeight: baseFontWeight)
-        var font = blockFont(for: block, fontSize: fontSize, baseFontWeight: baseFontWeight)
+        var attributes = baseAttributes(
+            fontSize: fontSize,
+            darkMode: darkMode,
+            singleLine: singleLine,
+            baseFontWeight: baseFontWeight,
+            titleMode: titleMode
+        )
+        var font = blockFont(
+            for: block,
+            fontSize: fontSize,
+            baseFontWeight: baseFontWeight,
+            titleMode: titleMode
+        )
 
         if marks.contains(.bold) {
             font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
@@ -619,7 +680,7 @@ enum RichDocumentSerializer {
         }
 
         // Headings: embed level attribute + paragraph spacing for round-trip detection
-        if let headingLevel = block.kind.headingLevelInt {
+        if let headingLevel = block.kind.headingLevelInt, !titleMode {
             attributes[RichDocumentAttributeKeys.headingLevel] = headingLevel
             let headingParagraph = NSMutableParagraphStyle()
             headingParagraph.lineSpacing = 4
@@ -636,7 +697,15 @@ enum RichDocumentSerializer {
         return attributes
     }
 
-    private static func blockFont(for block: RichBlock, fontSize: CGFloat, baseFontWeight: NSFont.Weight) -> NSFont {
+    private static func blockFont(
+        for block: RichBlock,
+        fontSize: CGFloat,
+        baseFontWeight: NSFont.Weight,
+        titleMode: Bool
+    ) -> NSFont {
+        guard !titleMode else {
+            return NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+        }
         switch block.kind {
         case .heading1:
             return NSFont.systemFont(ofSize: max(32, fontSize + 16), weight: .bold)

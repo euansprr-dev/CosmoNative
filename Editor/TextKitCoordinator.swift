@@ -20,6 +20,12 @@ final class CosmoTextView: NSTextView {
     /// instead of being forwarded up the responder chain (canvas zoom).
     var scrollsInternally: Bool = false
 
+    /// Called when the user clicks while the editor is read-only (isEditable == false).
+    /// Used by canvas blocks to enter edit mode from a single click.
+    var onTapWhileReadOnly: (() -> Void)?
+    var onBecomeFirstResponder: (() -> Void)?
+    var onResignFirstResponder: (() -> Void)?
+
     override func paste(_ sender: Any?) {
         let selectedRange = self.selectedRange()
 
@@ -60,6 +66,29 @@ final class CosmoTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// Trampoline for calling super.mouseDown from a closure (Swift doesn't allow super in closures).
+    private func superMouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEditable else {
+            // Notify the canvas block to enter edit mode.
+            // After SwiftUI re-renders with isEditable=true, we become
+            // first responder and replay the click so the cursor lands
+            // at the correct position — single-click-to-edit.
+            let savedEvent = event
+            onTapWhileReadOnly?()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isEditable else { return }
+                self.window?.makeFirstResponder(self)
+                self.superMouseDown(with: savedEvent)
+            }
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
     override func scrollWheel(with event: NSEvent) {
         if scrollsInternally {
             // Let the enclosing NSScrollView handle scrolling within the block
@@ -94,6 +123,22 @@ final class CosmoTextView: NSTextView {
         default:
             return super.performKeyEquivalent(with: event)
         }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became {
+            onBecomeFirstResponder?()
+        }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned {
+            onResignFirstResponder?()
+        }
+        return resigned
     }
 }
 
@@ -137,6 +182,21 @@ enum EditorLayoutMetrics {
         let inset = singleLineVerticalInset(fontSize: fontSize, compact: compact)
         return ceil(font.ascender - font.descender + font.leading + inset * 2 + 2)
     }
+
+    static func titleVerticalInset(fontSize: CGFloat, compact: Bool) -> CGFloat {
+        max(compact ? 4 : 6, ceil(fontSize * (compact ? 0.10 : 0.12)))
+    }
+
+    static func titleHeight(
+        fontSize: CGFloat,
+        compact: Bool,
+        baseFontWeight: NSFont.Weight = .regular,
+        lineCount: Int
+    ) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
+        let inset = titleVerticalInset(fontSize: fontSize, compact: compact)
+        return ceil((font.ascender - font.descender + font.leading) * CGFloat(max(1, lineCount)) + inset * 2 + 2)
+    }
 }
 
 // MARK: - Representable
@@ -155,6 +215,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var allowImages: Bool = true
     var allowSelectionMenu: Bool = true
     var singleLine: Bool = false
+    var titleConfiguration: TitleEditorConfiguration? = nil
     var baseFontWeight: NSFont.Weight = .regular
     var polishHighlights: WritingAnalysis? = nil
     var textAlignment: NSTextAlignment = .natural
@@ -169,6 +230,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onSelectionChange: ((EditorSelectionSnapshot) -> Void)?
     var onDismissMenus: (() -> Void)?
     var onContentHeightChange: ((CGFloat) -> Void)?
+    var onActivate: (() -> Void)?
+    var onDeactivate: (() -> Void)?
+    var onCommit: (() -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = CosmoTextView.scrollableCosmoTextView()
@@ -232,7 +296,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.isRichText = true
         textView.allowsUndo = true
         textView.isEditable = isEditable
-        textView.isSelectable = true
+        textView.isSelectable = isEditable
+
+        // Wire tap-to-edit callback for canvas blocks (read-only → editable on click)
+        textView.onTapWhileReadOnly = isEditable ? nil : { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onActivate?()
+        }
+        textView.onBecomeFirstResponder = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onActivate?()
+        }
+        textView.onResignFirstResponder = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onDeactivate?()
+        }
         textView.scrollsInternally = scrollsInternally
         textView.usesFontPanel = false
         textView.usesRuler = false
@@ -255,9 +330,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.insertionPointColor = darkMode ? .white : NSColor(CosmoColors.textPrimary)
         textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
-        textView.isVerticallyResizable = !singleLine
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: singleLine ? resolvedSingleLineHeight() : CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: singleLine ? resolvedSingleLineHeight() : 0)
+        let isTitleMode = titleConfiguration != nil
+        textView.isVerticallyResizable = !singleLine || isTitleMode
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: singleLine ? resolvedSingleLineHeight() : CGFloat.greatestFiniteMagnitude
+        )
+        textView.minSize = NSSize(
+            width: 0,
+            height: singleLine ? resolvedSingleLineHeight() : (isTitleMode ? resolvedTitleMinimumHeight() : 0)
+        )
         // For multi-line mode, preserve the current container width (tracked from the text view)
         // so word-wrapping works correctly. Only override height.
         let currentContainerWidth = textView.textContainer?.containerSize.width ?? textView.frame.width
@@ -281,7 +363,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
     private func baseParagraphStyle() -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        if singleLine {
+        if singleLine || titleConfiguration != nil {
             style.lineSpacing = 0
             style.paragraphSpacing = 0
         } else if compact {
@@ -311,6 +393,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let verticalInset = EditorLayoutMetrics.singleLineVerticalInset(fontSize: fontSize, compact: compact)
             return NSSize(width: compact ? 0 : 2, height: verticalInset)
         }
+        if titleConfiguration != nil {
+            let verticalInset = EditorLayoutMetrics.titleVerticalInset(fontSize: fontSize, compact: compact)
+            return NSSize(width: compact ? 0 : 2, height: verticalInset)
+        }
         if compact {
             return NSSize(width: 10, height: 8)
         }
@@ -322,6 +408,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             fontSize: fontSize,
             compact: compact,
             baseFontWeight: baseFontWeight
+        )
+    }
+
+    private func resolvedTitleMinimumHeight() -> CGFloat {
+        EditorLayoutMetrics.titleHeight(
+            fontSize: fontSize,
+            compact: compact,
+            baseFontWeight: baseFontWeight,
+            lineCount: 1
         )
     }
 
@@ -356,6 +451,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private var deferredSyncWorkItem: DispatchWorkItem?
         private var lastReportedHeight: CGFloat = 0
         private var selectionChangeWorkItem: DispatchWorkItem?
+        /// Grace period after opening a menu — ignores auto-scroll dismiss
+        private var menuOpenedAt: CFAbsoluteTime = 0
 
         init(_ parent: TextKitEditorRepresentable) {
             self.parent = parent
@@ -690,8 +787,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                if parent.singleLine {
+                if parent.singleLine || parent.titleConfiguration?.commitsOnReturn == true {
                     dismissMenus()
+                    parent.onCommit?()
                     return true
                 }
 
@@ -756,7 +854,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return true
             }
 
-            if commandSelector == #selector(NSResponder.insertTab(_:)) && parent.singleLine {
+            if commandSelector == #selector(NSResponder.insertTab(_:)) &&
+                (parent.singleLine || parent.titleConfiguration != nil) {
                 return true
             }
 
@@ -852,6 +951,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let char = (text as NSString).substring(with: NSRange(location: cursorLocation - 1, length: 1))
             if char == "@" {
                 mentionStartIndex = cursorLocation - 1
+                menuOpenedAt = CFAbsoluteTimeGetCurrent()
                 parent.onMention?(caretPosition(for: cursorLocation - 1, in: textView), "")
             }
         }
@@ -870,6 +970,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }()
 
             if isStartOfDocument || precededByWhitespace {
+                menuOpenedAt = CFAbsoluteTimeGetCurrent()
                 parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView))
             }
         }
@@ -896,6 +997,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // MARK: - Commands
 
         @objc private func handleEditorScroll(_ notification: Notification) {
+            // Skip dismiss if a menu just opened — the scroll is auto-scroll
+            // from the text insertion, not a user-initiated scroll.
+            let elapsed = CFAbsoluteTimeGetCurrent() - menuOpenedAt
+            guard elapsed > 0.3 else { return }
             dismissMenus()
         }
 
@@ -1360,7 +1465,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func defaultParagraphStyle() -> NSParagraphStyle {
             let style = NSMutableParagraphStyle()
-            if parent.singleLine {
+            if parent.singleLine || parent.titleConfiguration != nil {
                 style.lineSpacing = 0
                 style.paragraphSpacing = 0
             } else if parent.compact {
@@ -1538,7 +1643,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             layoutManager.ensureLayout(for: textContainer)
             let measuredHeight = measuredSingleLineContentHeight(for: textView)
                 ?? ceil(layoutManager.usedRect(for: textContainer).height + (textView.textContainerInset.height * 2))
-            let minimum = parent.singleLine ? parent.resolvedSingleLineHeight() : 0
+            let minimum: CGFloat
+            if parent.singleLine {
+                minimum = parent.resolvedSingleLineHeight()
+            } else if parent.titleConfiguration != nil {
+                minimum = parent.resolvedTitleMinimumHeight()
+            } else {
+                minimum = 0
+            }
             let newHeight = max(minimum, measuredHeight)
             // Only notify when height changes by >1pt to prevent sub-pixel jitter
             guard abs(newHeight - lastReportedHeight) > 1.0 else { return }

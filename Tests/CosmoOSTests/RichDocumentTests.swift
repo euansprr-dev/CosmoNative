@@ -116,4 +116,75 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(normalized.blocks.first?.kind, .paragraph)
         XCTAssertEqual(normalized.plainText, "Burger King")
     }
+
+    func testTitleNormalizationPreservesInlineMarksAndMentions() {
+        let mention = RichMention(
+            entityUUID: "connection-uuid",
+            entityID: 7,
+            entityType: .connection,
+            titleSnapshot: "System"
+        )
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [
+                .text("  Alpha", marks: [.bold]),
+                .text(" "),
+                .mention(mention)
+            ]),
+            RichBlock(kind: .bulletList, inlines: [
+                .text("Beta\nGamma", marks: [.italic])
+            ]),
+            RichBlock(kind: .image, inlines: [
+                .image(RichImageReference(path: "images/title.png", width: 128, height: 96))
+            ])
+        ])
+
+        let normalized = RichDocumentPersistence.normalizedTitleDocument(document)
+
+        XCTAssertEqual(normalized.blocks.count, 1)
+        XCTAssertEqual(normalized.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(RichDocumentPersistence.titlePlainText(from: normalized), "Alpha @System Beta Gamma")
+        XCTAssertEqual(normalized.blocks.first?.inlines.first?.marks, [.bold])
+        XCTAssertEqual(normalized.blocks.first?.inlines[2].mention, mention)
+        XCTAssertEqual(normalized.blocks.first?.inlines.last?.marks, [.italic])
+    }
+
+    func testTitleNormalizationCollapsesWhitespaceAcrossBlocks() {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("  First\nLine  ")]),
+            RichBlock(kind: .checklist, inlines: [.text("Second\n\nLine")], checked: true),
+            RichBlock(kind: .divider),
+            RichBlock(kind: .quote, inlines: [.text(" Third ")])
+        ])
+
+        let normalized = RichDocumentPersistence.normalizedTitleDocument(document)
+
+        XCTAssertEqual(normalized.blocks.count, 1)
+        XCTAssertEqual(normalized.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(normalized.plainText, "First Line Second Line Third")
+        XCTAssertEqual(RichDocumentPersistence.titlePlainText(from: normalized), "First Line Second Line Third")
+    }
+
+    func testTitlePayloadFactoryReturnsNormalizedDocumentAndMatchingPlainText() {
+        let sourceDocument = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [
+                .text("Burger", marks: [.bold])
+            ]),
+            RichBlock(kind: .paragraph, inlines: [
+                .text(" King")
+            ])
+        ])
+        let attributed = RichDocumentSerializer.attributedString(
+            from: sourceDocument,
+            fontSize: 32,
+            darkMode: false,
+            baseFontWeight: .bold
+        )
+
+        let payload = TitleDocumentChangePayloadFactory.payload(from: attributed)
+
+        XCTAssertEqual(payload.plainText, "Burger King")
+        XCTAssertEqual(payload.document.blocks.count, 1)
+        XCTAssertEqual(payload.document.blocks.first?.kind, .paragraph)
+        XCTAssertEqual(payload.document.plainText, "Burger King")
+    }
 }

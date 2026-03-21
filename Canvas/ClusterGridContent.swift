@@ -1,6 +1,7 @@
 // CosmoOS/Canvas/ClusterGridContent.swift
-// Grid mode rendering for clusters — 3-column layout of full block views
+// Grid mode rendering for clusters — masonry layout with fixed-width columns
 // March 2026: Added drag-and-drop between clusters
+// March 2026: Masonry layout with type-specific cell heights
 
 import SwiftUI
 
@@ -10,6 +11,54 @@ import SwiftUI
 struct ClusterTransferEvent {
     let blockUUID: String
     let targetClusterId: UUID
+}
+
+// MARK: - Masonry Layout
+
+/// Pinterest-style masonry layout: fixed column width, variable cell heights.
+/// Columns are computed dynamically from available width.
+struct ClusterMasonryLayout: Layout {
+    let columnWidth: CGFloat
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let availableWidth = proposal.width ?? 600
+        let columns = max(1, Int(availableWidth / (columnWidth + spacing)))
+        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+
+        for subview in subviews {
+            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
+            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
+            columnHeights[minCol] += size.height + spacing
+        }
+
+        let totalWidth = CGFloat(columns) * columnWidth + CGFloat(max(columns - 1, 0)) * spacing
+        let maxHeight = (columnHeights.max() ?? 0) - (columnHeights.isEmpty ? 0 : spacing)
+        return CGSize(width: totalWidth, height: max(0, maxHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = max(1, Int(bounds.width / (columnWidth + spacing)))
+        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+
+        // Center the grid horizontally within the bounds
+        let totalGridWidth = CGFloat(columns) * columnWidth + CGFloat(max(columns - 1, 0)) * spacing
+        let offsetX = (bounds.width - totalGridWidth) / 2
+
+        for subview in subviews {
+            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
+            let x = bounds.minX + offsetX + CGFloat(minCol) * (columnWidth + spacing)
+            let y = bounds.minY + columnHeights[minCol]
+            let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
+
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: .init(width: columnWidth, height: size.height)
+            )
+            columnHeights[minCol] += size.height + spacing
+        }
+    }
 }
 
 // MARK: - Grid Content
@@ -22,17 +71,16 @@ struct ClusterGridContent: View {
     let isDropTargeted: Bool
     let onOpenFocusMode: (String) -> Void
 
-    private let columnCount = 3
-    private let gridSpacing: CGFloat = 10
-    private let gridPadding: CGFloat = 10
+    /// Fixed column width for all grid cells
+    private static let masonryColumnWidth: CGFloat = 220
+    private static let masonrySpacing: CGFloat = 10
 
-    private var gridColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columnCount)
-    }
+    /// Minimum cell height to ensure readability
+    private static let minCellHeight: CGFloat = 120
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            LazyVGrid(columns: gridColumns, alignment: .center, spacing: gridSpacing) {
+            ClusterMasonryLayout(columnWidth: Self.masonryColumnWidth, spacing: Self.masonrySpacing) {
                 ForEach(memberBlocks, id: \.id) { block in
                     gridBlockView(for: block)
                         .onTapGesture(count: 2) {
@@ -46,7 +94,7 @@ struct ClusterGridContent: View {
                     dropPlaceholder
                 }
             }
-            .padding(gridPadding)
+            .padding(Self.masonrySpacing)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -63,15 +111,15 @@ struct ClusterGridContent: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(clusterColor.opacity(0.06))
             )
-            .aspectRatio(Self.gridAspectRatio, contentMode: .fit)
+            .frame(width: Self.masonryColumnWidth, height: 200)
             .overlay(
                 VStack(spacing: 6) {
                     Image(systemName: "plus.circle")
                         .font(.system(size: 18, weight: .light))
-                        .foregroundColor(clusterColor.opacity(0.5))
+                        .foregroundStyle(clusterColor.opacity(0.5))
                     Text("Drop here")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(clusterColor.opacity(0.5))
+                        .foregroundStyle(clusterColor.opacity(0.5))
                 }
             )
             .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -80,30 +128,30 @@ struct ClusterGridContent: View {
 
     // MARK: - Block View Dispatch
 
-    /// Uniform aspect ratio used for every cell so the grid looks consistent.
-    private static let gridAspectRatio: CGFloat = 4.0 / 3.5
+    /// Compute grid cell height by scaling block's canvas aspect ratio to the fixed column width.
+    private func gridCellHeight(for block: CanvasBlock) -> CGFloat {
+        guard block.size.width > 0 else { return Self.minCellHeight }
+        let scale = Self.masonryColumnWidth / block.size.width
+        return max(Self.minCellHeight, block.size.height * scale)
+    }
 
     @ViewBuilder
     private func gridBlockView(for block: CanvasBlock) -> some View {
-        GeometryReader { geo in
-            let cellWidth = geo.size.width
-            let cellHeight = geo.size.height
+        let cellHeight = gridCellHeight(for: block)
 
-            // Pass a block copy whose size matches the cell so
-            // CosmoBlockWrapper lays content out at the cell dimensions
-            // instead of pixel-scaling from the original size.
-            let gridBlock: CanvasBlock = {
-                var b = block
-                b.size = CGSize(width: cellWidth, height: cellHeight)
-                b.isSelected = false
-                return b
-            }()
+        // Pass a block copy whose size matches the cell so
+        // CosmoBlockWrapper lays content out at the cell dimensions
+        // instead of pixel-scaling from the original size.
+        let gridBlock: CanvasBlock = {
+            var b = block
+            b.size = CGSize(width: Self.masonryColumnWidth, height: cellHeight)
+            b.isSelected = false
+            return b
+        }()
 
-            blockContent(for: gridBlock)
-                .frame(width: cellWidth, height: cellHeight)
-                .clipShape(.rect(cornerRadius: DS.radiusMedium))
-        }
-        .aspectRatio(Self.gridAspectRatio, contentMode: .fit)
+        blockContent(for: gridBlock)
+            .frame(width: Self.masonryColumnWidth, height: cellHeight)
+            .clipShape(.rect(cornerRadius: DS.radiusMedium))
     }
 
     @ViewBuilder

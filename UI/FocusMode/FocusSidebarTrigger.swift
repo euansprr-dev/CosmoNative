@@ -15,36 +15,8 @@ struct FocusSidebarTrigger: View {
         if isPaneContext {
             // Visible toggle button for pane contexts
             paneToggleButton
-        } else {
-            // 3px edge trigger with 250ms dwell — only activates when sidebar is closed
-            Color.clear
-                .frame(width: 3)
-                .contentShape(Rectangle())
-                .onHover { hovering in
-                    // Don't re-trigger if sidebar is already open
-                    guard !isVisible else {
-                        dwellTimer?.invalidate()
-                        dwellTimer = nil
-                        return
-                    }
-                    if hovering {
-                        dwellTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { _ in
-                            DispatchQueue.main.async {
-                                withAnimation(ProMotionSprings.snappy) {
-                                    isVisible = true
-                                }
-                            }
-                        }
-                    } else {
-                        dwellTimer?.invalidate()
-                        dwellTimer = nil
-                    }
-                }
-                .onDisappear {
-                    dwellTimer?.invalidate()
-                    dwellTimer = nil
-                }
         }
+        // Standalone mode: sidebar toggle lives in the focus mode's top bar
     }
 
     // MARK: - Pane Toggle Button

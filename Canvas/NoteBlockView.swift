@@ -16,6 +16,8 @@ struct NoteBlockView: View {
     @State private var noteText: String = ""
     @State private var noteWordCount: Int = 0
     @State private var titleEditorHeight: CGFloat = 50
+    @State private var pendingObservedTitleDocument: RichDocument?
+    @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
     @State private var isEditingBody = false
 
@@ -34,17 +36,20 @@ struct NoteBlockView: View {
 
     // Orange accent for notes
     private let accentColor = CosmoColors.blockNote
-    private let titleFontSize: CGFloat = 28
+    private let titleStyle = SharedTitleSurfaceStyle.noteCanvas
+
+    private var titleFontSize: CGFloat { titleStyle.fontSize }
 
     private var titleMinHeight: CGFloat {
-        max(
-            50,
-            EditorLayoutMetrics.singleLineHeight(
-                fontSize: titleFontSize,
-                compact: true,
-                baseFontWeight: .semibold
-            )
-        )
+        titleStyle.minimumHeight
+    }
+
+    private var titlePreviewMaxHeight: CGFloat {
+        titleStyle.previewMaxHeight
+    }
+
+    private var titleEditingMaxHeight: CGFloat {
+        titleStyle.editingMaxHeight
     }
 
     var body: some View {
@@ -68,18 +73,40 @@ struct NoteBlockView: View {
             saveNoteSync()
             observationCancellable?.cancel()
         }
+        .onChange(of: isEditingTitle) { _, isEditing in
+            if isEditing {
+                titleDocumentAtEditStart = noteTitleDocument
+                pendingObservedTitleDocument = nil
+                titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight))
+            } else {
+                if let pendingObservedTitleDocument, noteTitleDocument == titleDocumentAtEditStart {
+                    applyObservedTitleDocument(pendingObservedTitleDocument)
+                }
+                pendingObservedTitleDocument = nil
+            }
+        }
         // Listen for direct state change notifications from focus mode
         .onReceive(NotificationCenter.default.publisher(for: .noteFocusStateDidChange)) { notification in
             if let uuid = notification.userInfo?["atomUUID"] as? String,
                uuid == trackedEntityUuid {
                 if let title = notification.userInfo?["title"] as? String {
-                    noteTitleText = title
+                    let titleDocument: RichDocument
                     if let json = notification.userInfo?["titleDocumentJSON"] as? String,
                        let data = json.data(using: .utf8),
                        let doc = try? JSONDecoder().decode(RichDocument.self, from: data) {
-                        noteTitleDocument = doc
+                        titleDocument = RichDocumentPersistence.normalizedTitleDocument(doc)
                     } else {
-                        noteTitleDocument = RichDocument.migrateLegacy(title)
+                        titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+                            RichDocument.migrateLegacy(title)
+                        )
+                    }
+
+                    if isEditingTitle {
+                        if titleDocument != noteTitleDocument {
+                            pendingObservedTitleDocument = titleDocument
+                        }
+                    } else {
+                        applyObservedTitleDocument(titleDocument)
                     }
                 }
                 if let body = notification.userInfo?["body"] as? String {
@@ -133,30 +160,7 @@ struct NoteBlockView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, -8)
 
-            // Title — always-on editor, toggle isEditable (no view swap = no shift)
-            CosmoDocumentEditor(
-                document: $noteTitleDocument,
-                fontSize: titleFontSize,
-                compact: true,
-                placeholder: "Heading",
-                allowSlashCommands: false,
-                allowMentions: isEditingTitle,
-                allowSelectionMenu: false,
-                allowImages: false,
-                singleLine: true,
-                baseFontWeight: .semibold,
-                isEditable: isEditingTitle,
-                onContentHeightChange: { newHeight in
-                    titleEditorHeight = max(titleMinHeight, newHeight)
-                },
-                onDocumentChange: { document, _ in
-                    noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
-                    if !isSyncingFromDB { scheduleAutoSave() }
-                }
-            )
-            .frame(height: max(titleMinHeight, titleEditorHeight))
-            .contentShape(Rectangle())
-            .onTapGesture { isEditingTitle = true }
+            titleView
 
             // Body — always-on editor with in-block scrolling via NSScrollView
             CosmoDocumentEditor(
@@ -174,11 +178,10 @@ struct NoteBlockView: View {
                     noteText = plainText
                     noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
                     if !isSyncingFromDB { scheduleAutoSave() }
-                }
+                },
+                onActivate: { isEditingBody = true }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .contentShape(Rectangle())
-            .onTapGesture { isEditingBody = true }
 
             // Footer: word count + timestamp
             HStack(spacing: 6) {
@@ -202,6 +205,54 @@ struct NoteBlockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingTitle = false
             isEditingBody = false
+        }
+    }
+
+    private var titleView: some View {
+        Group {
+            if isEditingTitle {
+                CosmoDocumentEditor(
+                    document: $noteTitleDocument,
+                    fontSize: titleFontSize,
+                    compact: titleStyle.compact,
+                    placeholder: "Heading",
+                    allowSlashCommands: false,
+                    allowMentions: true,
+                    allowSelectionMenu: false,
+                    allowImages: false,
+                    titleConfiguration: titleStyle.titleConfiguration,
+                    baseFontWeight: titleStyle.baseFontWeight,
+                    scrollsInternally: true,
+                    onContentHeightChange: { newHeight in
+                        titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                    },
+                    onPlainTextChange: { plainText in
+                        noteTitleText = plainText
+                    },
+                    onStructuredDocumentChange: { document, plainText in
+                        noteTitleDocument = document
+                        noteTitleText = plainText
+                        if !isSyncingFromDB { scheduleAutoSave() }
+                    },
+                    onCommit: { isEditingTitle = false },
+                    onDeactivate: { isEditingTitle = false },
+                    autoFocus: true
+                )
+                .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
+            } else {
+                Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
+                    .font(titleStyle.swiftUIFont)
+                    .foregroundStyle(noteTitleText.isEmpty ? DS.textTertiary : DS.text)
+                    .lineLimit(titleStyle.previewLineLimit)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(titleStyle.swiftUITextAlignment)
+                    .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        titleDocumentAtEditStart = noteTitleDocument
+                        isEditingTitle = true
+                    }
+            }
         }
     }
 
@@ -296,19 +347,35 @@ struct NoteBlockView: View {
                     )
                     let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
                     let newBody = newBodyDocument.plainText
-                    // Only update state if values actually changed (nil-safe)
-                    guard newTitle != noteTitleText || newBody != noteText || newTitleDocument != noteTitleDocument || newBodyDocument != noteBodyDocument else { return }
+                    var didApplyDatabaseState = false
+
+                    if !isEditingTitle,
+                       newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                        didApplyDatabaseState = true
+                        applyObservedTitleDocument(newTitleDocument)
+                    } else if isEditingTitle,
+                              newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                        pendingObservedTitleDocument = newTitleDocument
+                    }
+
+                    if newBody != noteText || newBodyDocument != noteBodyDocument {
+                        didApplyDatabaseState = true
+                        noteBodyDocument = newBodyDocument
+                        noteText = newBody
+                    }
+
+                    guard didApplyDatabaseState else { return }
                     isSyncingFromDB = true
-                    noteTitleDocument = newTitleDocument
-                    noteBodyDocument = newBodyDocument
-                    noteTitleText = newTitle
-                    noteText = newBody
-                    // Defer clearing the flag so onChange handlers see it
                     DispatchQueue.main.async {
                         isSyncingFromDB = false
                     }
                 }
             )
+    }
+
+    private func applyObservedTitleDocument(_ document: RichDocument) {
+        noteTitleDocument = document
+        noteTitleText = RichDocumentPersistence.titlePlainText(from: document)
     }
 
     // MARK: - Auto-save

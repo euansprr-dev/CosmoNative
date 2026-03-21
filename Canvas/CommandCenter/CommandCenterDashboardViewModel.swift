@@ -566,9 +566,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
                 metadata.dueDate = dateString
                 metadata.focusDate = dateString
+                metadata.whenDate = dateString
+                metadata.schedulingState = nil
                 atom = atom.withMetadata(metadata)
             }
-            await refreshTasks()
+            await refreshTaskCollectionsAfterMutation()
         } catch {
             print("❌ Dashboard: Failed to reschedule task: \(error)")
         }
@@ -582,13 +584,15 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     let dateString = toDate.map { PlannerumFormatters.iso8601.string(from: $0) }
                     metadata.dueDate = dateString
                     metadata.focusDate = dateString
+                    metadata.whenDate = dateString
+                    metadata.schedulingState = nil
                     atom = atom.withMetadata(metadata)
                 }
             } catch {
                 print("❌ Dashboard: Failed to reschedule task: \(error)")
             }
         }
-        await refreshTasks()
+        await refreshTaskCollectionsAfterMutation()
     }
 
     func shiftUpcomingWeek(by offset: Int) {
@@ -850,6 +854,24 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
     }
 
+    func createProject(title: String, color: String = "#8B5CF6", isTemporary: Bool = false) async {
+        do {
+            if isTemporary {
+                var meta = ProjectMetadata(color: color, status: "active", priority: "Medium")
+                meta.isTemporary = true
+                let metaJSON = try JSONEncoder().encode(meta)
+                let metaString = String(data: metaJSON, encoding: .utf8)
+                let atom = Atom.new(type: .project, title: title, metadata: metaString)
+                _ = try await AtomRepository.shared.create(atom)
+            } else {
+                _ = try await AtomRepository.shared.createProject(title: title, color: color)
+            }
+            await loadProjects()
+        } catch {
+            print("❌ Dashboard: Failed to create project: \(error)")
+        }
+    }
+
     func createHeading(projectUUID: String, title: String) async {
         do {
             guard var projectAtom = try await AtomRepository.shared.fetch(uuid: projectUUID) else { return }
@@ -1023,11 +1045,130 @@ class CommandCenterDashboardViewModel: ObservableObject {
     }
 
     func completeTask(uuid: String) async -> Bool {
+        // Check if this is a recurring task before completing it
+        var isRecurringInstance = false
+        var templateUUID: String?
+        if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+            let meta = atom.metadataValue(as: TaskMetadata.self)
+            if let parentUUID = meta?.recurrenceParentUUID {
+                isRecurringInstance = true
+                templateUUID = parentUUID
+            }
+        }
+
         await plannerum.completeTask(taskId: uuid)
         await habitEngine.recordTaskCompletion(taskUUID: uuid)
+
+        // For recurring tasks: generate next instance immediately
+        if isRecurringInstance, let parentUUID = templateUUID {
+            await generateNextRecurringInstance(templateUUID: parentUUID)
+        }
+
         await refreshTaskCollectionsAfterMutation()
         await loadHabits()
         return true
+    }
+
+    /// Generate the next instance for a recurring template after completion
+    private func generateNextRecurringInstance(templateUUID: String) async {
+        do {
+            guard let template = try await AtomRepository.shared.fetch(uuid: templateUUID),
+                  let metadata = template.metadataValue(as: TaskMetadata.self),
+                  let recurrenceJSON = metadata.recurrence,
+                  let rule = RecurrenceRule.fromJSON(recurrenceJSON) else { return }
+
+            let calendar = Calendar.current
+            let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+
+            // Find the next valid occurrence starting from tomorrow
+            var candidate = tomorrow
+            var attempts = 0
+            while attempts < 365 {
+                if isValidOccurrence(rule: rule, date: candidate) {
+                    let exists = try await TaskRecurrenceEngine.shared.instanceExists(
+                        templateUUID: templateUUID, date: candidate
+                    )
+                    if !exists { break }
+                }
+                candidate = calendar.date(byAdding: .day, value: 1, to: candidate)!
+                attempts += 1
+            }
+
+            guard attempts < 365 else { return }
+
+            // Build instance metadata — copy from template + reset completion state
+            var instanceMetadata = TaskMetadata()
+            instanceMetadata.status = metadata.status ?? "todo"
+            instanceMetadata.priority = metadata.priority
+            instanceMetadata.color = metadata.color
+            instanceMetadata.durationMinutes = metadata.durationMinutes
+            instanceMetadata.focusDate = PlannerumFormatters.iso8601.string(from: candidate)
+            instanceMetadata.dueDate = PlannerumFormatters.iso8601.string(from: candidate)
+            instanceMetadata.whenDate = PlannerumFormatters.iso8601.string(from: candidate)
+            instanceMetadata.isCompleted = false
+            instanceMetadata.recurrenceParentUUID = templateUUID
+            instanceMetadata.description = metadata.description
+            instanceMetadata.intent = metadata.intent
+            instanceMetadata.habitUUID = metadata.habitUUID
+            instanceMetadata.habitAssignmentSource = metadata.habitAssignmentSource
+            instanceMetadata.linkedAtomUUID = metadata.linkedAtomUUID
+            instanceMetadata.startTime = metadata.startTime
+            instanceMetadata.energyLevel = metadata.energyLevel
+            instanceMetadata.cognitiveLoad = metadata.cognitiveLoad
+            instanceMetadata.taskType = metadata.taskType
+            instanceMetadata.estimatedFocusMinutes = metadata.estimatedFocusMinutes
+            instanceMetadata.headingUUID = metadata.headingUUID
+            instanceMetadata.titleMentions = metadata.titleMentions
+
+            // Copy checklist from template with all items unchecked
+            if let checklistJSON = metadata.checklist,
+               let data = checklistJSON.data(using: .utf8),
+               var items = try? JSONDecoder().decode([ChecklistItem].self, from: data) {
+                items = items.map { item in
+                    ChecklistItem(id: UUID().uuidString, title: item.title, isCompleted: false, sortOrder: item.sortOrder)
+                }
+                if let encoded = try? JSONEncoder().encode(items),
+                   let json = String(data: encoded, encoding: .utf8) {
+                    instanceMetadata.checklist = json
+                }
+            }
+
+            guard let metaData = try? JSONEncoder().encode(instanceMetadata),
+                  let metaString = String(data: metaData, encoding: .utf8) else { return }
+
+            let templateLinks = template.linksList.filter { $0.type == "project" }
+            let instance = Atom.new(
+                type: .task,
+                title: template.title,
+                body: template.body,
+                metadata: metaString,
+                links: templateLinks.isEmpty ? nil : templateLinks
+            )
+            try await AtomRepository.shared.create(instance)
+        } catch {
+            print("❌ Dashboard: Failed to generate next recurring instance: \(error)")
+        }
+    }
+
+    private func isValidOccurrence(rule: RecurrenceRule, date: Date) -> Bool {
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: date)
+
+        switch rule.frequency {
+        case .daily: return true
+        case .weekdays: return weekday >= 2 && weekday <= 6
+        case .weekly, .biweekly, .custom:
+            if let days = rule.daysOfWeek, !days.isEmpty {
+                return days.contains { $0.rawValue == weekday }
+            }
+            return true
+        case .monthly:
+            if let day = rule.dayOfMonth {
+                return calendar.component(.day, from: date) == day
+            }
+            return true
+        case .yearly: return true
+        }
     }
 
     func uncompleteTask(uuid: String) async -> Bool {
@@ -1138,6 +1279,15 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     if let headingUUID = parsed.contextHeadingUUID {
                         metadata.headingUUID = headingUUID
                         a = a.withMetadata(metadata)
+                    }
+
+                    // Title mentions from @ picker
+                    if !parsed.mentions.isEmpty {
+                        if let encoded = try? JSONEncoder().encode(parsed.mentions),
+                           let json = String(data: encoded, encoding: .utf8) {
+                            metadata.titleMentions = json
+                            a = a.withMetadata(metadata)
+                        }
                     }
                 }
 

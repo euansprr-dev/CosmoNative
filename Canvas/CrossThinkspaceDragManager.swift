@@ -42,7 +42,8 @@ class CrossThinkspaceDragManager: ObservableObject {
 
     /// Total sidebar footprint including floating margins
     var sidebarTotalWidth: CGFloat {
-        sidebarWidth + UnifiedSidebarMetrics.floatingMargin * 2
+        guard sidebarWidth > 0 else { return 0 }
+        return sidebarWidth + UnifiedSidebarMetrics.floatingMargin * 2
     }
 
     // Timing

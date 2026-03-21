@@ -122,11 +122,10 @@ struct StickyNoteBlockView: View {
             onDocumentChange: { _, plainText in
                 noteText = plainText
                 if !isSyncingFromDB { scheduleAutoSave() }
-            }
+            },
+            onActivate: { isEditingBody = true }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .contentShape(Rectangle())
-        .onTapGesture { isEditingBody = true }
         .padding(16)
         .frame(
             width: block.defaultSize.width,

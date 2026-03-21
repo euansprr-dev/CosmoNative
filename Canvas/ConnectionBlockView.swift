@@ -15,9 +15,21 @@ struct ConnectionBlockView: View {
     @State private var observationCancellable: AnyCancellable?
     @State private var editableTitle: String = ""
     @State private var titleDocument: RichDocument = .empty
+    @State private var titleEditorHeight: CGFloat = 50
+    @State private var pendingObservedTitleDocument: RichDocument?
+    @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
     // Purple accent for connections
     private let accentColor = DS.entityConnection
+    private let titleStyle = SharedTitleSurfaceStyle.connectionCanvas
+
+    private var titleFontSize: CGFloat { titleStyle.fontSize }
+
+    private var titleMinHeight: CGFloat { titleStyle.minimumHeight }
+
+    private var titlePreviewMaxHeight: CGFloat { titleStyle.previewMaxHeight }
+
+    private var titleEditingMaxHeight: CGFloat { titleStyle.editingMaxHeight }
 
     private var totalItemCount: Int {
         sections.reduce(0) { $0 + $1.items.count }
@@ -32,7 +44,7 @@ struct ConnectionBlockView: View {
             block: block,
             accentColor: accentColor,
             icon: "link.circle.fill",
-            title: atom?.title ?? block.title,
+            title: displayTitle,
             autoHeight: true,
             onFocusMode: openFocusMode
         ) {
@@ -41,8 +53,12 @@ struct ConnectionBlockView: View {
         .onAppear {
             loadInitialData()
             startObservingAtom()
+            titleEditorHeight = titleMinHeight
         }
         .onDisappear {
+            if isEditingTitle {
+                commitTitleEdit(document: titleDocument)
+            }
             observationCancellable?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
@@ -54,6 +70,25 @@ struct ConnectionBlockView: View {
                 startObservingAtom()
             }
         }
+        .onChange(of: isEditingTitle) { _, isEditing in
+            if isEditing {
+                titleDocumentAtEditStart = titleDocument
+                pendingObservedTitleDocument = nil
+                titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight))
+            } else {
+                if titleDocument != titleDocumentAtEditStart {
+                    commitTitleEdit(document: titleDocument)
+                } else if let pendingObservedTitleDocument {
+                    applyObservedTitleDocument(pendingObservedTitleDocument)
+                }
+                pendingObservedTitleDocument = nil
+            }
+        }
+    }
+
+    private var displayTitle: String {
+        let trimmed = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Connection" : trimmed
     }
 
     // MARK: - Connection Content
@@ -103,7 +138,7 @@ struct ConnectionBlockView: View {
     // MARK: - Compact Header
 
     private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 6) {
             // Entity identity strip
             Capsule()
                 .fill(accentColor.opacity(0.35))
@@ -114,30 +149,43 @@ struct ConnectionBlockView: View {
             if isEditingTitle {
                 CosmoDocumentEditor(
                     document: $titleDocument,
-                    fontSize: 14,
-                    compact: true,
+                    fontSize: titleFontSize,
+                    compact: titleStyle.compact,
                     placeholder: "Untitled Connection",
                     allowSlashCommands: false,
                     allowMentions: true,
                     allowSelectionMenu: false,
                     allowImages: false,
-                    singleLine: true,
-                    baseFontWeight: .medium,
-                    onDocumentChange: { document, _ in
-                        editableTitle = RichDocumentPersistence.titlePlainText(from: document)
-                        commitTitleEdit(document: document)
-                    }
+                    titleConfiguration: titleStyle.titleConfiguration,
+                    baseFontWeight: titleStyle.baseFontWeight,
+                    scrollsInternally: true,
+                    onContentHeightChange: { newHeight in
+                        titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                    },
+                    onPlainTextChange: { plainText in
+                        editableTitle = plainText
+                    },
+                    onStructuredDocumentChange: { document, plainText in
+                        titleDocument = document
+                        editableTitle = plainText
+                    },
+                    onActivate: { isEditingTitle = true },
+                    onDeactivate: { isEditingTitle = false },
+                    onCommit: { isEditingTitle = false },
+                    autoFocus: true
                 )
-                .frame(height: 32)
+                .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
             } else {
-                Text(editableTitle.isEmpty ? "Untitled Connection" : editableTitle)
-                    .font(DS.navTitle)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                    .frame(height: 32, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(displayTitle)
+                    .font(titleStyle.swiftUIFont)
+                    .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.text)
+                    .lineLimit(titleStyle.previewLineLimit)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(titleStyle.swiftUITextAlignment)
+                    .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        titleDocumentAtEditStart = titleDocument
                         isEditingTitle = true
                     }
             }
@@ -186,12 +234,18 @@ struct ConnectionBlockView: View {
                 receiveValue: { atom in
                     guard let atom else { return }
                     self.atom = atom
-                    self.titleDocument = RichDocumentPersistence.loadAtomDocument(
+                    let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: atom.metadata,
                         fallbackPlainText: atom.title
                     )
-                    self.editableTitle = RichDocumentPersistence.titlePlainText(from: self.titleDocument)
+                    if self.isEditingTitle {
+                        if newTitleDocument != self.titleDocument {
+                            self.pendingObservedTitleDocument = newTitleDocument
+                        }
+                    } else {
+                        self.applyObservedTitleDocument(newTitleDocument)
+                    }
                     self.parseSections(from: atom)
                 }
             )
@@ -366,6 +420,7 @@ struct ConnectionBlockView: View {
 
     private func commitTitleEdit(document: RichDocument) {
         let newTitle = RichDocumentPersistence.titlePlainText(from: document)
+        applyObservedTitleDocument(document)
         persistBlockSnapshot(
             structuredJSON: ConnectionStructuredData(sections: sections).toJSON(),
             flattenedBodyText: flattenedSectionBodyText(),
@@ -390,6 +445,11 @@ struct ConnectionBlockView: View {
                 )
             }
         }
+    }
+
+    private func applyObservedTitleDocument(_ document: RichDocument) {
+        titleDocument = document
+        editableTitle = RichDocumentPersistence.titlePlainText(from: document)
     }
 
     // MARK: - Focus Mode

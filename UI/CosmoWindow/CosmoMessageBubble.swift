@@ -39,14 +39,6 @@ struct CosmoMessageBubble: View {
             Spacer(minLength: 72)
 
             VStack(alignment: .trailing, spacing: 10) {
-                if let mentions = message.mentionedAtomInfo, !mentions.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(mentions, id: \.stableID) { mention in
-                            mentionPill(mention)
-                        }
-                    }
-                }
-
                 inlineContentText(message.content, mentions: message.mentionedAtomInfo)
                     .font(DS.body)
                     .foregroundColor(DS.text)
@@ -322,26 +314,6 @@ struct CosmoMessageBubble: View {
                 .frame(height: 1)
         }
         .padding(.horizontal, CosmoWindowMetrics.contentPadding)
-    }
-
-    @ViewBuilder
-    private func mentionPill(_ mention: MentionedAtomInfo) -> some View {
-        let entityType = EntityType(rawValue: mention.type) ?? .note
-
-        HStack(spacing: 4) {
-            Circle()
-                .fill(CosmoMentionColors.color(for: entityType))
-                .frame(width: 6, height: 6)
-
-            Text(mention.title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(CosmoMentionColors.color(for: entityType))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(CosmoMentionColors.pillBackground(for: entityType))
-        .clipShape(Capsule())
     }
 
     private func inlineContentText(_ content: String, mentions: [MentionedAtomInfo]?) -> Text {

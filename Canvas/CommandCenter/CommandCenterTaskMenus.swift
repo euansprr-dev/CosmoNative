@@ -45,7 +45,7 @@ struct CommandCenterReschedulePanel: View {
                 }
         }
         .padding(12)
-        .frame(width: 280)
+        .frame(width: 340)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -90,6 +90,8 @@ struct CommandCenterReschedulePanel: View {
                     .font(DS.caption2)
                 Text(label)
                     .font(DS.caption2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
@@ -457,6 +459,8 @@ struct CommandCenterTaskActionPopover: View {
                     .font(DS.caption2)
                 Text(label)
                     .font(DS.caption2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 7)

@@ -9,7 +9,7 @@ struct CosmoWindowView: View {
     @Binding var isVisible: Bool
     @AppStorage("cosmoWindowAnchor") private var anchor: CosmoWindowAnchor = .right
     @Environment(\.cosmoWindowIsFloating) private var isFloating
-    @FocusState private var isInputFocused: Bool
+    @State private var isComposerFocused = false
 
     @State private var inputText = ""
     @State private var bottomAnchorID = "bottom"
@@ -59,12 +59,9 @@ struct CosmoWindowView: View {
                         onSelect: { atom in
                             viewModel.addMention(atom)
                             if let atIndex = inputText.lastIndex(of: "@") {
-                                inputText = String(inputText[inputText.startIndex..<atIndex])
-                                if !inputText.isEmpty && !inputText.hasSuffix(" ") {
-                                    inputText += " "
-                                }
-                            } else {
-                                inputText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let beforeAt = String(inputText[inputText.startIndex..<atIndex])
+                                let title = atom.title ?? "Untitled"
+                                inputText = beforeAt + "@\(title) "
                             }
                         },
                         onDismiss: {
@@ -170,7 +167,7 @@ struct CosmoWindowView: View {
                                 onEdit: message.type == .user ? { msg in
                                     viewModel.editAndResend(messageId: msg.id)
                                     inputText = msg.content
-                                    isInputFocused = true
+                                    focusComposer()
                                 } : nil
                             )
                         }
@@ -234,73 +231,59 @@ struct CosmoWindowView: View {
                 .cosmoWindowSectionChrome(cornerRadius: 14, shadow: false)
             }
 
-            VStack(spacing: 10) {
-                if !viewModel.mentionedAtoms.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(viewModel.mentionedAtoms, id: \.uuid) { atom in
-                                mentionChip(atom)
-                            }
-                        }
-                        .padding(.horizontal, 2)
-                    }
-                }
-
-                HStack(alignment: .center, spacing: 10) {
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            if viewModel.showMentionOverlay {
-                                dismissMentionOverlay(trimMentionQuery: true)
-                            } else {
-                                openMentionOverlayFromComposer()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "at")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(viewModel.showMentionOverlay ? DS.accent : DS.textSecondary)
-                            .frame(width: 32, height: 32)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(viewModel.showMentionOverlay ? DS.accentSoft : DS.bg)
-                            )
-                    }
-                    .buttonStyle(.plain)
-
-                    TextField("Ask Cosmo anything...", text: $inputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(DS.body)
-                        .foregroundColor(DS.text)
-                        .lineLimit(1...6)
-                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .center)
-                        .padding(.vertical, 6)
-                        .focused($isInputFocused)
-                        .onSubmit(sendCurrentMessage)
-                        .onChange(of: inputText) { _ in
-                            syncMentionSearch()
-                        }
-
-                    modelSelector
-
-                    Button {
-                        if viewModel.isProcessing {
-                            viewModel.cancelCurrentOperation()
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) {
+                        if viewModel.showMentionOverlay {
+                            dismissMentionOverlay(trimMentionQuery: true)
                         } else {
-                            sendCurrentMessage()
+                            openMentionOverlayFromComposer()
                         }
-                    } label: {
-                        Image(systemName: viewModel.isProcessing ? "stop.fill" : "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(sendButtonForeground)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                Circle()
-                                    .fill(sendButtonBackground)
-                            )
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!viewModel.isProcessing && !canSend)
+                } label: {
+                    Image(systemName: "at")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(viewModel.showMentionOverlay ? DS.accent : DS.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(viewModel.showMentionOverlay ? DS.accentSoft : DS.bg)
+                        )
                 }
+                .buttonStyle(.plain)
+
+                MentionComposerTextView(
+                    text: $inputText,
+                    mentionedAtoms: viewModel.mentionedAtoms,
+                    placeholder: "Ask Cosmo anything...",
+                    isFocused: $isComposerFocused,
+                    onSubmit: sendCurrentMessage,
+                    onTextChange: { syncMentionSearch() }
+                )
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+                .onChange(of: inputText) { syncMentionSearch() }
+
+                modelSelector
+
+                Button {
+                    if viewModel.isProcessing {
+                        viewModel.cancelCurrentOperation()
+                    } else {
+                        sendCurrentMessage()
+                    }
+                } label: {
+                    Image(systemName: viewModel.isProcessing ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(sendButtonForeground)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle()
+                                .fill(sendButtonBackground)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!viewModel.isProcessing && !canSend)
             }
             .padding(12)
             .background(
@@ -309,7 +292,7 @@ struct CosmoWindowView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: CosmoWindowMetrics.composerCornerRadius, style: .continuous)
-                    .stroke(isInputFocused ? DS.accent.opacity(0.22) : DS.border, lineWidth: 1)
+                    .stroke(isComposerFocused ? DS.accent.opacity(0.22) : DS.border, lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.03), radius: 6, x: 0, y: 2)
         }
@@ -339,38 +322,6 @@ struct CosmoWindowView: View {
             .cosmoWindowChip()
         }
         .menuStyle(.borderlessButton)
-    }
-
-    private func mentionChip(_ atom: Atom) -> some View {
-        let entityType = EntityType(rawValue: atom.type.rawValue) ?? .note
-
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(CosmoMentionColors.color(for: entityType))
-                .frame(width: 6, height: 6)
-
-            Text(atom.title ?? "Untitled")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(CosmoMentionColors.color(for: entityType))
-                .lineLimit(1)
-
-            Button {
-                viewModel.removeMention(atom)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(CosmoMentionColors.color(for: entityType).opacity(0.65))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(CosmoMentionColors.pillBackground(for: entityType))
-        .clipShape(Capsule())
-        .overlay(
-            Capsule()
-                .stroke(CosmoMentionColors.color(for: entityType).opacity(0.22), lineWidth: 1)
-        )
     }
 
     private var chatHistoryPopover: some View {
@@ -585,9 +536,14 @@ struct CosmoWindowView: View {
         return canSend ? DS.textOnAccent : DS.textMuted
     }
 
+    private func focusComposer() {
+        isComposerFocused = true
+        NotificationCenter.default.post(name: .focusCosmoComposer, object: nil)
+    }
+
     private func queuePrompt(_ prompt: String) {
         inputText = prompt
-        isInputFocused = true
+        focusComposer()
     }
 
     private func sendCurrentMessage() {
@@ -631,9 +587,9 @@ struct CosmoWindowView: View {
     }
 
     private func handleAppear() {
-        isInputFocused = true
         inputText = viewModel.inputText
         Task { await viewModel.loadConversation() }
+        DispatchQueue.main.async { focusComposer() }
     }
 
     private func openMentionOverlayFromComposer() {
@@ -645,15 +601,12 @@ struct CosmoWindowView: View {
         }
         viewModel.mentionSearchText = ""
         viewModel.showMentionOverlay = true
-        isInputFocused = true
+        focusComposer()
     }
 
     private func dismissMentionOverlay(trimMentionQuery: Bool) {
         if trimMentionQuery, let atIndex = inputText.lastIndex(of: "@") {
-            let suffix = String(inputText[atIndex...])
-            if !suffix.contains(" ") {
-                inputText = String(inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            inputText = String(inputText[..<atIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         viewModel.showMentionOverlay = false
         viewModel.mentionSearchText = ""
@@ -675,11 +628,6 @@ struct CosmoWindowView: View {
         }
 
         let afterAt = String(inputText[inputText.index(after: atIndex)...])
-        if afterAt.contains(" ") {
-            dismissMentionOverlay(trimMentionQuery: false)
-            return
-        }
-
         viewModel.mentionSearchText = afterAt
     }
 

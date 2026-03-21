@@ -142,7 +142,7 @@ struct SanctuarySettingsView: View {
             Spacer()
         }
         .padding(DS.space8)
-        .frame(width: 160)
+        .frame(width: 200)
     }
 
     private func sidebarTabButton(_ tab: SettingsTab) -> some View {

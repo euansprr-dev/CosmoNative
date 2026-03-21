@@ -37,8 +37,21 @@ struct ConnectionFocusModeView: View {
     @State private var viewFrameInWindow: CGRect = .zero
     @State private var editableTitle: String
     @State private var titleDocument: RichDocument = .empty
+    @State private var titleEditorHeight: CGFloat = 76
+    @State private var isEditingTitle = false
     @StateObject private var coDevEngine = ConnectionCoDevEngine()
 
+    private let titleStyle = SharedTitleSurfaceStyle.connectionFocus
+
+    private var titleFontSize: CGFloat { titleStyle.fontSize }
+
+    private var titleMinHeight: CGFloat { titleStyle.minimumHeight }
+
+    private var titlePreviewMaxHeight: CGFloat { titleStyle.previewMaxHeight }
+
+    private var titleEditingMaxHeight: CGFloat { titleStyle.editingMaxHeight }
+
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
@@ -47,12 +60,13 @@ struct ConnectionFocusModeView: View {
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
         self.onClose = onClose
-        self._editableTitle = State(initialValue: atom.title ?? "New Connection")
-        self._titleDocument = State(initialValue: RichDocumentPersistence.loadAtomDocument(
+        let initialTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
             fallbackPlainText: atom.title ?? "New Connection"
-        ))
+        )
+        self._editableTitle = State(initialValue: RichDocumentPersistence.titlePlainText(from: initialTitleDocument))
+        self._titleDocument = State(initialValue: initialTitleDocument)
         self._viewModel = StateObject(wrappedValue: ConnectionFocusModeViewModel(atom: atom))
         self._panelManager = StateObject(wrappedValue: FloatingPanelManager(focusAtomUUID: atom.uuid))
         self._floatingBlocksManager = StateObject(wrappedValue: FocusFloatingBlocksManager(ownerAtomUUID: atom.uuid))
@@ -163,6 +177,7 @@ struct ConnectionFocusModeView: View {
             loadState()
             listenForAtomPicker()
             setupRightClickMonitor()
+            titleEditorHeight = titleMinHeight
             Task {
                 await viewModel.generateGhostSuggestions()
             }
@@ -187,7 +202,7 @@ struct ConnectionFocusModeView: View {
         )
         .onDisappear {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
-            viewModel.flushTitleSave(editableTitle)
+            viewModel.flushTitleSave(titleDocument, plainTitle: editableTitle)
             viewModel.saveToAtom()
             saveState()
             floatingBlocksManager.saveImmediately()
@@ -307,26 +322,53 @@ struct ConnectionFocusModeView: View {
     /// Floating title with stats - no container background
     private var connectionTitleHeader: some View {
         VStack(spacing: 8) {
-            // Title (centered)
-            CosmoDocumentEditor(
-                document: $titleDocument,
-                fontSize: 22,
-                compact: true,
-                placeholder: "New Connection",
-                allowSlashCommands: false,
-                allowMentions: true,
-                allowSelectionMenu: false,
-                allowImages: false,
-                singleLine: true,
-                baseFontWeight: .semibold,
-                textAlignment: .center,
-                onDocumentChange: { document, _ in
-                    editableTitle = RichDocumentPersistence.titlePlainText(from: document)
-                    viewModel.updateTitleDocument(document, plainTitle: editableTitle)
+            Group {
+                if isEditingTitle {
+                    CosmoDocumentEditor(
+                        document: $titleDocument,
+                        fontSize: titleFontSize,
+                        compact: titleStyle.compact,
+                        placeholder: "New Connection",
+                        allowSlashCommands: false,
+                        allowMentions: true,
+                        allowSelectionMenu: false,
+                        allowImages: false,
+                        titleConfiguration: titleStyle.titleConfiguration,
+                        baseFontWeight: titleStyle.baseFontWeight,
+                        textAlignment: titleStyle.textAlignment,
+                        scrollsInternally: true,
+                        onContentHeightChange: { newHeight in
+                            titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
+                        },
+                        onPlainTextChange: { plainText in
+                            editableTitle = plainText
+                        },
+                        onStructuredDocumentChange: { document, plainText in
+                            titleDocument = document
+                            editableTitle = plainText
+                            viewModel.updateTitleDocument(document, plainTitle: plainText)
+                        },
+                        onActivate: { isEditingTitle = true },
+                        onDeactivate: { isEditingTitle = false },
+                        onCommit: { isEditingTitle = false },
+                        autoFocus: true
+                    )
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
+                } else {
+                    Text(editableTitle.isEmpty ? "New Connection" : editableTitle)
+                        .font(titleStyle.swiftUIFont)
+                        .foregroundStyle(editableTitle.isEmpty ? DS.textMuted : DS.text)
+                        .lineLimit(titleStyle.previewLineLimit)
+                        .truncationMode(.tail)
+                        .multilineTextAlignment(titleStyle.swiftUITextAlignment)
+                        .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .center)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isEditingTitle = true
+                        }
                 }
-            )
-            .frame(maxWidth: .infinity, alignment: .center)
-            .frame(height: 44)
+            }
 
             // Stats (centered)
             HStack(spacing: DS.space12) {
@@ -379,6 +421,23 @@ struct ConnectionFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             // Back button (hidden in pane mode — X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
@@ -411,24 +470,22 @@ struct ConnectionFocusModeView: View {
 
             Spacer()
 
-            // Sidebar toggle (pane mode)
-            if isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        sidebarVisible.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(DS.callout)
-                        .foregroundStyle(sidebarVisible ? DS.entityConnection : DS.textSecondary)
-                        .padding(DS.space8)
-                        .background(
-                            sidebarVisible ? DS.entityConnection.opacity(0.15) : DS.border,
-                            in: Circle()
-                        )
+            // Focus mode sidebar toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    sidebarVisible.toggle()
                 }
-                .buttonStyle(.plain)
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(DS.callout)
+                    .foregroundStyle(sidebarVisible ? DS.entityConnection : DS.textSecondary)
+                    .padding(DS.space8)
+                    .background(
+                        sidebarVisible ? DS.entityConnection.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
@@ -1034,12 +1091,14 @@ class ConnectionFocusModeViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
             guard !Task.isCancelled else { return }
             do {
+                let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+                    document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+                )
                 try await CosmoDatabase.shared.asyncWrite { db in
                     var existingMetadata: String?
                     if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {
                         existingMetadata = row["metadata"]
                     }
-                    let titleDocument = document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
                     let fields = RichDocumentPersistence.writeAtomDocuments(
                         existingMetadata: existingMetadata,
                         titleDocument: titleDocument
@@ -1057,9 +1116,11 @@ class ConnectionFocusModeViewModel: ObservableObject {
     }
 
     /// Force immediate synchronous title save (called on view disappear) — blocks until DB write completes.
-    func flushTitleSave(_ title: String) {
+    func flushTitleSave(_ document: RichDocument, plainTitle: String) {
         titleSaveTask?.cancel()
-        let titleDocument = RichDocument.migrateLegacy(title)
+        let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+            document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+        )
         let atomUUID = atom.uuid
         do {
             try CosmoDatabase.shared.write { db in

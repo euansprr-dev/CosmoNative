@@ -31,6 +31,7 @@ struct ContentFocusModeView: View {
     @State private var localDraftContent: String = ""
 
     /// Typewriter mode — cursor stays vertically centered while typing
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("typewriterMode") private var typewriterMode = false
 
     /// Tracks the last AI-generated draft content so we can detect user edits for lesson extraction
@@ -507,9 +508,13 @@ struct ContentFocusModeView: View {
                             allowImages: false,
                             singleLine: true,
                             baseFontWeight: .semibold,
-                            onDocumentChange: { document, _ in
-                                editableTitle = RichDocumentPersistence.titlePlainText(from: document)
-                                viewModel.updateTitleDocument(document, plainTitle: editableTitle)
+                            onPlainTextChange: { plainText in
+                                editableTitle = plainText
+                            },
+                            onStructuredDocumentChange: { document, plainText in
+                                titleDocument = document
+                                editableTitle = plainText
+                                viewModel.updateTitleDocument(document, plainTitle: plainText)
                             }
                         )
                         .frame(minHeight: titleMinHeight)
@@ -1099,6 +1104,23 @@ struct ContentFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             // Back button (hidden in pane mode — X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
@@ -1153,24 +1175,22 @@ struct ContentFocusModeView: View {
                     .background(DS.border, in: Capsule())
             }
 
-            // Sidebar toggle (pane mode)
-            if isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        sidebarVisible.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(DS.callout)
-                        .foregroundStyle(sidebarVisible ? DS.entityContent : DS.textSecondary)
-                        .padding(8)
-                        .background(
-                            sidebarVisible ? DS.entityContent.opacity(0.15) : DS.border,
-                            in: Circle()
-                        )
+            // Focus mode sidebar toggle
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    sidebarVisible.toggle()
                 }
-                .buttonStyle(.plain)
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(DS.callout)
+                    .foregroundStyle(sidebarVisible ? DS.entityContent : DS.textSecondary)
+                    .padding(8)
+                    .background(
+                        sidebarVisible ? DS.entityContent.opacity(0.15) : DS.border,
+                        in: Circle()
+                    )
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, layoutMode == .compact ? 12 : 20)
         .padding(.vertical, 12)
@@ -1691,7 +1711,10 @@ class ContentFocusModeViewModel: ObservableObject {
         titleUpdateTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s debounce
             guard !Task.isCancelled else { return }
-            let trimmed = RichDocumentPersistence.titlePlainText(from: document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document)
+            let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+                document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+            )
+            let trimmed = RichDocumentPersistence.titlePlainText(from: titleDocument)
             let uuid = atom.uuid
             do {
                 try await CosmoDatabase.shared.asyncWrite { db in
@@ -1701,7 +1724,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     }
                     let fields = RichDocumentPersistence.writeAtomDocuments(
                         existingMetadata: existingMetadata,
-                        titleDocument: document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
+                        titleDocument: titleDocument
                     )
                     try db.execute(
                         sql: """

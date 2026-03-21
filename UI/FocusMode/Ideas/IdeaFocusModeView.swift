@@ -45,6 +45,7 @@ struct IdeaFocusModeView: View {
     private let cardBackground = DS.glassCardFill
     private let ideaGold = DS.entityIdea
 
+    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneActive) private var isPaneActive
 
@@ -155,6 +156,23 @@ struct IdeaFocusModeView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
+            // Main sidebar toggle (standalone only)
+            if !isPaneContext {
+                Button {
+                    withAnimation(ProMotionSprings.sidebar) {
+                        isSidebarHidden.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DS.border, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
+            }
+
             // Back button (hidden in pane mode — X button handles close)
             if !isPaneContext {
                 Button(action: onClose) {
@@ -239,13 +257,13 @@ struct IdeaFocusModeView: View {
                 .buttonStyle(.plain)
             }
 
-            // Toggle intelligence sidebar
+            // Focus mode sidebar toggle
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     sidebarVisible.toggle()
                 }
             } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: "sidebar.right")
                     .font(DS.callout)
                     .foregroundStyle(sidebarVisible ? DS.entityIdea : DS.textSecondary)
                     .padding(8)

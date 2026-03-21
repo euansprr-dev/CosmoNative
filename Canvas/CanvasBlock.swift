@@ -38,7 +38,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     init(
         id: String = UUID().uuidString,
         position: CGPoint,
-        size: CGSize = CGSize(width: 280, height: 200),
+        size: CGSize = CGSize(width: 220, height: 310),
         scale: Double = 1.0,
         rotation: Double = 0.0,
         isPinned: Bool = false,
@@ -78,15 +78,15 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .task:       return CGSize(width: 280, height: 120)
         case .project:    return CGSize(width: 320, height: 240)
         case .research:   return CGSize(width: 320, height: 340)
-        case .content:    return CGSize(width: 320, height: 340)
-        case .connection: return CGSize(width: 340, height: 400)
+        case .content:    return CGSize(width: 220, height: 310)
+        case .connection: return CGSize(width: 220, height: 310)
         case .idea:       return CGSize(width: 280, height: 180)
         case .cosmoAI:    return CGSize(width: 320, height: 280)
-        case .note:       return CGSize(width: 320, height: 280)
+        case .note:       return CGSize(width: 220, height: 310)
         case .calendar:   return CGSize(width: 400, height: 500)
         case .image:      return CGSize(width: 320, height: 240)
         case .stickyNote: return CGSize(width: 220, height: 220)
-        default:          return CGSize(width: 280, height: 200)
+        default:          return CGSize(width: 220, height: 310)
         }
     }
 
@@ -140,9 +140,9 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
                 }
             }
         case .content:
-            size = CGSize(width: 320, height: 340)
+            size = CGSize(width: 220, height: 310)
         case .connection:
-            size = CGSize(width: 340, height: 400)
+            size = CGSize(width: 220, height: 310)
         case .image:
             // Use stored dimensions to compute aspect-ratio-correct size
             if let meta = atom.imageMetadata,
@@ -154,7 +154,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
                 size = CGSize(width: 320, height: 240)
             }
         default:
-            size = CGSize(width: 280, height: 180)
+            size = CGSize(width: 220, height: 310)
         }
 
         // Build subtitle from body or metadata
@@ -323,7 +323,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     static func noteBlock(position: CGPoint, content: String = "") -> CanvasBlock {
         return CanvasBlock(
             position: position,
-            size: CGSize(width: 320, height: 280),  // Full card size for proper editing
+            size: CGSize(width: 220, height: 310),
             entityType: .note,
             entityId: -1,
             entityUuid: UUID().uuidString,

@@ -81,7 +81,7 @@ class SpatialEngine: ObservableObject {
                 let block = CanvasBlock(
                     id: record.id,
                     position: CGPoint(x: CGFloat(record.positionX), y: CGFloat(record.positionY)),
-                    size: CGSize(width: CGFloat(record.width ?? 280), height: CGFloat(record.height ?? 180)),
+                    size: CGSize(width: CGFloat(record.width ?? 220), height: CGFloat(record.height ?? 310)),
                     isPinned: record.isPinned ?? false,  // Read pin state from database
                     zIndex: record.zIndex ?? 0,
                     entityType: EntityType(rawValue: record.entityType) ?? .idea,

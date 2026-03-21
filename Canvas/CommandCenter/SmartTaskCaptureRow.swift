@@ -15,48 +15,23 @@ struct SmartTaskCaptureRow: View {
     @State private var parseDebounce: AnyCancellable?
     @FocusState private var isFocused: Bool
 
+    // Mention state
+    @State private var capturedMentions: [RichMention] = []
+    @State private var showMentionSearch = false
+    @State private var mentionQuery = ""
+    @State private var mentionResults: [MentionSearchResult] = []
+    @State private var mentionInsertionPoint: String.Index?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Input row
-            HStack(spacing: DS.space8) {
-                Image(systemName: "plus")
-                    .font(DS.cardMeta)
-                    .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
+            inputRow
 
-                ZStack(alignment: .leading) {
-                    if viewModel.newTaskTitle.isEmpty {
-                        Text(placeholderText)
-                            .font(DS.callout)
-                            .foregroundStyle(DS.textMuted)
-                            .allowsHitTesting(false)
-                    }
-                    TextField("", text: $viewModel.newTaskTitle)
-                        .textFieldStyle(.plain)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .focused($isFocused)
-                        .onSubmit {
-                            Task { await submitTask() }
-                        }
-                        .onChange(of: viewModel.newTaskTitle) { _, newValue in
-                            debounceParseInput(newValue)
-                        }
-                }
-
-                if !viewModel.newTaskTitle.isEmpty {
-                    Button {
-                        viewModel.newTaskTitle = ""
-                        parsedInput = ParsedTaskInput(title: "")
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(DS.cardMeta)
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
+            // Mention search overlay
+            if showMentionSearch {
+                mentionSearchOverlay
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space8)
 
             // Parsed metadata chips (only when typing)
             if !viewModel.newTaskTitle.isEmpty && hasAnyMetadata {
@@ -65,9 +40,197 @@ struct SmartTaskCaptureRow: View {
             }
         }
         .animation(ProMotionSprings.snappy, value: hasAnyMetadata)
+        .animation(.easeInOut(duration: 0.15), value: showMentionSearch)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.quickAddTask"))) { _ in
             isFocused = true
         }
+    }
+
+    // MARK: - Input Row
+
+    private var inputRow: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "plus")
+                .font(DS.cardMeta)
+                .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
+
+            ZStack(alignment: .leading) {
+                if viewModel.newTaskTitle.isEmpty {
+                    Text(placeholderText)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textMuted)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $viewModel.newTaskTitle)
+                    .textFieldStyle(.plain)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .focused($isFocused)
+                    .onSubmit {
+                        Task { await submitTask() }
+                    }
+                    .onChange(of: viewModel.newTaskTitle) { _, newValue in
+                        debounceParseInput(newValue)
+                        detectMentionTrigger(in: newValue)
+                    }
+            }
+
+            if !viewModel.newTaskTitle.isEmpty {
+                Button {
+                    viewModel.newTaskTitle = ""
+                    parsedInput = ParsedTaskInput(title: "")
+                    capturedMentions = []
+                    cancelMention()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(DS.cardMeta)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
+    }
+
+    // MARK: - Mention Search Overlay
+
+    private var mentionSearchOverlay: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "at")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent)
+
+                Text("Link an item")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+
+                Spacer()
+
+                if !mentionResults.isEmpty {
+                    Text("\(mentionResults.prefix(5).count) results")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+
+                Button {
+                    cancelMention()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if mentionResults.isEmpty && !mentionQuery.isEmpty {
+                Text("No results for \"\(mentionQuery)\"")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(mentionResults.prefix(5)) { result in
+                    mentionResultRow(result)
+                }
+            }
+        }
+        .padding(8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
+        .padding(.horizontal, DS.space10)
+    }
+
+    @ViewBuilder
+    private func mentionResultRow(_ result: MentionSearchResult) -> some View {
+        let color = CosmoMentionColors.color(for: result.entityType)
+
+        Button {
+            insertMention(result)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: result.entityType.icon)
+                    .font(DS.caption2)
+                    .foregroundStyle(color)
+                    .frame(width: 14)
+
+                Text(result.title)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(result.typeLabel)
+                    .font(DS.caption2)
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(CosmoMentionColors.pillBackground(for: result.entityType), in: Capsule())
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
+            .contentShape(.rect(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Mention Logic
+
+    private func detectMentionTrigger(in text: String) {
+        guard let atIndex = text.lastIndex(of: "@") else {
+            if showMentionSearch { cancelMention() }
+            return
+        }
+
+        // Check if this "@" is part of an existing mention
+        let afterAt = text[text.index(after: atIndex)...]
+        for mention in capturedMentions {
+            if afterAt.hasPrefix(mention.titleSnapshot) {
+                return
+            }
+        }
+
+        let query = String(afterAt)
+
+        if query.count > 30 {
+            cancelMention()
+            return
+        }
+
+        mentionInsertionPoint = atIndex
+        mentionQuery = query
+        showMentionSearch = true
+
+        Task {
+            let results = await MentionSearchProvider.shared.search(query: query, limit: 5)
+            await MainActor.run {
+                mentionResults = results
+            }
+        }
+    }
+
+    private func insertMention(_ result: MentionSearchResult) {
+        guard let atIndex = mentionInsertionPoint else { return }
+
+        let mentionText = "@\(result.title)"
+        let endOfQuery = viewModel.newTaskTitle.endIndex
+        let rangeToReplace = atIndex..<endOfQuery
+        viewModel.newTaskTitle.replaceSubrange(rangeToReplace, with: "\(mentionText) ")
+
+        let mention = result.mention
+        if !capturedMentions.contains(where: { $0.entityUUID == mention.entityUUID }) {
+            capturedMentions.append(mention)
+        }
+
+        cancelMention()
+    }
+
+    private func cancelMention() {
+        showMentionSearch = false
+        mentionQuery = ""
+        mentionResults = []
+        mentionInsertionPoint = nil
     }
 
     // MARK: - Metadata Chips
@@ -221,8 +384,10 @@ struct SmartTaskCaptureRow: View {
         // Inject context from the current view (project/heading)
         parsed.contextProjectUUID = contextProjectUUID
         parsed.contextHeadingUUID = contextHeadingUUID
+        parsed.mentions = capturedMentions
         viewModel.newTaskTitle = ""
         parsedInput = ParsedTaskInput(title: "")
+        capturedMentions = []
 
         // Create task with parsed metadata
         await viewModel.smartAddTask(parsed)

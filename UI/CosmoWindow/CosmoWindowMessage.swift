@@ -239,6 +239,45 @@ enum MentionContextHelper {
         return parts.joined(separator: " | ")
     }
 
+    /// Expands `@Title` mentions inline in the message text with the atom's full context.
+    /// Each mention is expanded with XML-style tags so the AI sees context at the mention's position.
+    /// Any atoms whose `@Title` was not found inline are appended as a trailing context block.
+    static func expandMentionsInline(text: String, atoms: [Atom], bodyLimit: Int = 2000) -> String {
+        var result = text
+        var usedUUIDs: Set<String> = []
+
+        for atom in atoms {
+            let title = atom.title ?? "Untitled"
+            let pattern = "@\(title)"
+
+            if let range = result.range(of: pattern) {
+                let typeLabel = atom.type.rawValue.lowercased()
+                let body = String((atom.body ?? "").prefix(bodyLimit))
+
+                var contextBlock = "@\(title)\n<referenced_\(typeLabel) title=\"\(title)\" uuid=\"\(atom.uuid)\">\n\(body)"
+
+                if atom.isSwipeFileAtom, let analysis = atom.swipeAnalysis {
+                    let summary = swipeAnalysisSummary(analysis)
+                    if !summary.isEmpty {
+                        contextBlock += "\nSwipe Analysis: \(summary)"
+                    }
+                }
+                contextBlock += "\n</referenced_\(typeLabel)>"
+
+                result = result.replacingCharacters(in: range, with: contextBlock)
+                usedUUIDs.insert(atom.uuid)
+            }
+        }
+
+        // Append any atoms whose @Title was not found inline
+        let unusedAtoms = atoms.filter { !usedUUIDs.contains($0.uuid) }
+        if !unusedAtoms.isEmpty {
+            result += "\n\n" + buildMentionBlock(atoms: unusedAtoms, bodyLimit: bodyLimit)
+        }
+
+        return result
+    }
+
     /// Builds a full `## Referenced Context` block from mentioned atoms,
     /// including UUIDs, extended body text, and swipe analysis summaries.
     static func buildMentionBlock(atoms: [Atom], bodyLimit: Int = 2000) -> String {

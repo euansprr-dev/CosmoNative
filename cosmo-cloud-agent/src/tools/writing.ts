@@ -49,7 +49,7 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   if (shouldEvict) evictEngine(contentUUID);
 
   // Get or create engine
-  const engine = getOrCreateEngine(contentUUID);
+  const engine = await getOrCreateEngine(contentUUID);
 
   // Build instruction
   let instruction = args.notes || 'Generate an outline for this content piece.';
@@ -99,7 +99,7 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
     evictEngine(contentUUID);
   }
 
-  const engine = getOrCreateEngine(contentUUID);
+  const engine = await getOrCreateEngine(contentUUID);
 
   const direction = args.userDirection || 'Write the full first draft following the outline. Mirror the PRIMARY blueprint structure. Call write_draft with the complete draft.';
 
@@ -188,7 +188,7 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
     }
   }
 
-  const engine = getOrCreateEngine(contentUUID);
+  const engine = await getOrCreateEngine(contentUUID);
 
   const instruction = `REVISION REQUEST:\n${feedback}\n\nREVISION RULES — MANDATORY:\n- Use read_draft first to see the full current draft\n- Apply ONLY the requested changes\n- Do NOT compress slides/sections\n- Do NOT introduce new frameworks\n- Do NOT add generic language unless asked\n- Preserve EVERY unchanged slide\n- Output the COMPLETE revised draft via write_draft`;
 
@@ -236,7 +236,7 @@ export async function generateHooks(args: Record<string, any>): Promise<string> 
 
   const count = Math.min((args.count as number) || 5, 8);
 
-  const engine = getOrCreateEngine(contentUUID);
+  const engine = await getOrCreateEngine(contentUUID);
 
   const instruction = `Generate ${count} hook variants for this content. The hook type and sentence structure must match the blueprint swipe's pattern. Call add_hooks with the variants.`;
 

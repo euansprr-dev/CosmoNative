@@ -28,7 +28,7 @@ interface CachedEngine {
 
 const engineCache = new Map<string, CachedEngine>();
 
-export function getOrCreateEngine(contentUUID: string): CloudWritingEngine {
+export async function getOrCreateEngine(contentUUID: string): Promise<CloudWritingEngine> {
   // Evict stale engines
   const now = Date.now();
   for (const [key, cached] of engineCache) {
@@ -50,10 +50,18 @@ export function getOrCreateEngine(contentUUID: string): CloudWritingEngine {
     if (oldestKey) engineCache.delete(oldestKey);
   }
 
+  // Check existing engine — evict if client changed (Gap #1 fix)
   const existing = engineCache.get(contentUUID);
   if (existing) {
-    existing.lastUsed = now;
-    return existing.engine;
+    const atom = await fetchAtom(contentUUID);
+    const currentClient = atom?.metadata?.clientProfileUUID as string | undefined;
+    if (currentClient && existing.engine.getClientUUID() !== currentClient) {
+      console.log(`🔄 Engine evicted: client changed for ${contentUUID}`);
+      engineCache.delete(contentUUID);
+    } else {
+      existing.lastUsed = now;
+      return existing.engine;
+    }
   }
 
   const engine = new CloudWritingEngine(contentUUID);
@@ -81,6 +89,11 @@ export class CloudWritingEngine {
   private conversationSummary: string | null = null;
   private initialized = false;
   private targetFormat: ContentFormat = 'unknown';
+
+  // Reference material cache (Gap #11 fix) — persists across turns, 25K char budget
+  private referenceMaterial: Map<string, string> = new Map();
+  private referenceMaterialChars = 0;
+  private static readonly REFERENCE_MATERIAL_MAX_CHARS = 25_000;
 
   constructor(contentUUID: string) {
     this.contentUUID = contentUUID;
@@ -360,13 +373,28 @@ export class CloudWritingEngine {
 
       case 'read_swipe_body': {
         const swipeId = args.swipe_id as string;
-        const swipe = this.selectedSwipes.find(s => s.uuid === swipeId);
-        if (!swipe) {
-          const atom = await fetchAtom(swipeId);
-          if (!atom) return `Swipe ${swipeId} not found.`;
-          return `Loaded swipe "${atom.title}" (${(atom.body || '').length} chars) into REFERENCE MATERIAL:\n\n${atom.body || ''}`;
+
+        // Check reference material cache first (Gap #11 fix)
+        if (this.referenceMaterial.has(swipeId)) {
+          return `Swipe "${swipeId}" already loaded in REFERENCE MATERIAL (${this.referenceMaterial.get(swipeId)!.length} chars).`;
         }
-        return `Loaded swipe "${swipe.title}" (${swipe.fullBody.length} chars) into REFERENCE MATERIAL:\n\n${swipe.fullBody}`;
+
+        // Check budget
+        if (this.referenceMaterialChars >= CloudWritingEngine.REFERENCE_MATERIAL_MAX_CHARS) {
+          return `Reference material budget exhausted (${this.referenceMaterialChars}/${CloudWritingEngine.REFERENCE_MATERIAL_MAX_CHARS} chars). Cannot load more.`;
+        }
+
+        const swipe = this.selectedSwipes.find(s => s.uuid === swipeId);
+        const body = swipe?.fullBody || (await fetchAtom(swipeId))?.body || '';
+        const title = swipe?.title || 'Swipe';
+
+        if (!body) return `Swipe ${swipeId} not found.`;
+
+        // Cache and track budget
+        this.referenceMaterial.set(swipeId, body);
+        this.referenceMaterialChars += body.length;
+
+        return `Loaded swipe "${title}" (${body.length} chars) into REFERENCE MATERIAL:\n\n${body}`;
       }
 
       case 'list_client_posts':
@@ -416,8 +444,19 @@ export class CloudWritingEngine {
     const apiKey = config.openRouterApiKey;
     const model = config.models.writer;
 
+    // Gap #12 fix: Use structured content blocks with cache_control for Anthropic prompt caching
+    // Blocks 1, 2, 3A get ephemeral cache (reused across turns). Block 3B is dynamic (no cache).
+    const isAnthropicModel = model.includes('anthropic') || model.includes('claude');
+    const systemContent = isAnthropicModel
+      ? this.blocks.map(block => ({
+          type: 'text' as const,
+          text: block.content,
+          ...(block.cacheControl ? { cache_control: { type: 'ephemeral' } } : {}),
+        }))
+      : systemPrompt; // Non-Anthropic: plain text
+
     const apiMessages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: systemContent },
       ...messages,
     ];
 
@@ -586,4 +625,5 @@ export class CloudWritingEngine {
   getHooks(): string[] { return this.hooks; }
   getSwipeCount(): number { return this.selectedSwipes.length; }
   getSwipeTitles(): string[] { return this.selectedSwipes.map(s => s.title); }
+  getClientUUID(): string | undefined { return this.clientAtom?.uuid; }
 }

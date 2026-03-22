@@ -66,13 +66,17 @@ struct CosmoApp: App {
         // Migrate Supabase credentials from hardcoded to Keychain (one-time)
         APIKeys.seedSupabaseIfNeeded()
 
-        // Check for existing Supabase Auth session and start Realtime sync
+        // Check for existing Supabase Auth session BEFORE starting Telegram bridge.
+        // This ensures isSignedIn is set before the bridge decides whether to poll or skip.
         Task {
             await SupabaseAuthService.shared.checkExistingSession()
             if SupabaseAuthService.shared.isSignedIn {
                 RealtimeSyncService.shared.startListening()
-                // Sync prompt templates to cloud for the TG agent
                 PromptTemplateStore.shared.syncAllTemplatesToCloud()
+            }
+            // NOW start the Telegram bridge — it checks isSignedIn to skip polling when cloud agent is active
+            if APIKeys.hasTelegramBot {
+                await TelegramBridgeService.shared.start()
             }
         }
 
@@ -214,12 +218,8 @@ struct CosmoApp: App {
             // State auto-saves on change, but this ensures periodic saves
         }
 
-        // Initialize Cosmo Agent — Telegram bridge + proactive scheduler
-        if APIKeys.hasTelegramBot {
-            Task {
-                await TelegramBridgeService.shared.start()
-            }
-        }
+        // Telegram bridge is started in the auth Task above (after checkExistingSession)
+        // to prevent race condition where polling starts before isSignedIn is set.
         AgentProactiveScheduler.shared.scheduleAll()
 
         print("✅ CosmoOS initialized")

@@ -20,7 +20,14 @@ const PRIORITY_ORDER: Record<string, number> = {
 };
 
 function todayDateString(): string {
-  return new Date().toISOString().split('T')[0];
+  // Use TIMEZONE env var for correct "today" in user's timezone (server runs UTC)
+  const tz = process.env.TIMEZONE || 'UTC';
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    return formatter.format(new Date()); // Returns yyyy-MM-dd
+  } catch {
+    return new Date().toISOString().split('T')[0]; // Fallback to UTC
+  }
 }
 
 function getTaskDate(meta: Record<string, any>): string | null {

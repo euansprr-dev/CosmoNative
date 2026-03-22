@@ -80,6 +80,9 @@ final class SupabaseAuthService: NSObject {
     private var signInContinuation: CheckedContinuation<ASAuthorization, Error>?
 
     private override init() {
+        // Ensure Keychain has the correct credentials BEFORE reading them
+        APIKeys.seedSupabaseIfNeeded()
+
         let url = APIKeys.supabaseUrl ?? "https://cskxozkzpzxyefqmgsgg.supabase.co"
         let key = APIKeys.supabaseAnonKey ?? ""
 

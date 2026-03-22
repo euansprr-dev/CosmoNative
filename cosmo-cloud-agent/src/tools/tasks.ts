@@ -31,7 +31,11 @@ function todayDateString(): string {
 }
 
 function getTaskDate(meta: Record<string, any>): string | null {
-  return meta.dueDate ?? meta.whenDate ?? meta.focusDate ?? null;
+  const raw = (meta.dueDate ?? meta.whenDate ?? meta.focusDate ?? null) as string | null;
+  if (!raw) return null;
+  // Strip ISO8601 timestamp to date-only (yyyy-MM-dd) for comparison
+  // Handles "2026-03-22T14:30:00Z", "2026-03-22T00:00:00.000Z", and "2026-03-22"
+  return raw.split('T')[0];
 }
 
 function isRecurringTemplate(meta: Record<string, any>): boolean {
@@ -367,10 +371,12 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
 
         if (taskDate && taskDate < today) {
           overdue.push(task);
-        } else if (taskDate === today || (!taskDate && meta.schedulingState == null)) {
-          if (meta.startTime && meta.startTime.startsWith(today)) {
+        } else if (taskDate === today) {
+          const startTime = meta.startTime as string | undefined;
+          const startDate = startTime?.split('T')[0];
+          if (startTime && startDate === today) {
             scheduled.push(task);
-          } else if (taskDate === today) {
+          } else {
             unscheduled.push(task);
           }
         }

@@ -10,21 +10,22 @@
 // - Learned preferences
 // - Lesson skills
 // - Conversation history
+// - Linked knowledge context (client profiles, swipes, content)
 
 import { AgentIntent } from './intentClassifier';
-import { fetchAllByType, loadPromptTemplate, loadConversation } from '../db/queries';
+import { fetchAllByType, fetchAtom, loadPromptTemplate, loadConversation } from '../db/queries';
 
 interface SystemPrompt {
   cached: string;
   dynamic: string;
 }
 
-// Cache for dynamic context (2 minute TTL, matching Swift)
-let contextCache: {
+// Cache for dynamic context (2 minute TTL, matching Swift) — scoped per chatId
+let contextCache: Map<string, {
   intent: AgentIntent | null;
   context: string;
   timestamp: number;
-} | null = null;
+}> = new Map();
 
 const CACHE_TTL_MS = 120_000;
 
@@ -35,12 +36,14 @@ const CACHE_TTL_MS = 120_000;
 export async function assembleSystemPrompt(
   intent: AgentIntent,
   chatId: string,
+  conversationSummary?: string,
+  activeItemsContext?: string,
 ): Promise<SystemPrompt> {
   // Layer 1: Cached (identity + methodology + tool guidelines)
   const cached = await buildCachedPrompt(intent);
 
   // Layer 2: Dynamic (GRDB context, preferences, lessons, conversation)
-  const dynamic = await buildDynamicPrompt(intent, chatId);
+  const dynamic = await buildDynamicPrompt(intent, chatId, conversationSummary, activeItemsContext);
 
   return { cached, dynamic };
 }
@@ -77,11 +80,17 @@ async function buildCachedPrompt(intent: AgentIntent): Promise<string> {
 // DYNAMIC PROMPT (Live Data)
 // ============================================================
 
-async function buildDynamicPrompt(intent: AgentIntent, chatId: string): Promise<string> {
-  // Check cache
+async function buildDynamicPrompt(
+  intent: AgentIntent,
+  chatId: string,
+  conversationSummary?: string,
+  activeItemsContext?: string,
+): Promise<string> {
+  // Check per-chatId cache
   const now = Date.now();
-  if (contextCache && contextCache.intent === intent && (now - contextCache.timestamp) < CACHE_TTL_MS) {
-    return contextCache.context;
+  const cached = contextCache.get(chatId);
+  if (cached && cached.intent === intent && (now - cached.timestamp) < CACHE_TTL_MS) {
+    return cached.context;
   }
 
   const sections: string[] = [];
@@ -115,13 +124,24 @@ async function buildDynamicPrompt(intent: AgentIntent, chatId: string): Promise<
   }
 
   // Conversation history
-  const convHistory = await buildConversationHistory(chatId);
+  const convHistory = await buildConversationHistory(chatId, conversationSummary);
   if (convHistory) sections.push(convHistory);
+
+  // Active items context (numbered reference resolution)
+  if (activeItemsContext) {
+    sections.push(activeItemsContext);
+  }
+
+  // Linked knowledge context (client profiles, swipes, content from conversation)
+  if (!['capture', 'correct', 'plan'].includes(intent)) {
+    const linked = await buildLinkedContext(chatId);
+    if (linked) sections.push(linked);
+  }
 
   const dynamic = sections.join('\n\n');
 
-  // Cache
-  contextCache = { intent, context: dynamic, timestamp: now };
+  // Cache per chatId
+  contextCache.set(chatId, { intent, context: dynamic, timestamp: now });
 
   return dynamic;
 }
@@ -338,26 +358,84 @@ async function buildSkills(intent: AgentIntent): Promise<string | null> {
   return lines.join('\n');
 }
 
-async function buildConversationHistory(chatId: string): Promise<string | null> {
+async function buildConversationHistory(chatId: string, conversationSummary?: string): Promise<string | null> {
   const conv = await loadConversation(chatId);
-  if (!conv || !conv.messages || conv.messages.length === 0) return null;
+  const sections: string[] = [];
 
-  // Show summary if available, otherwise last few messages
-  if (conv.summary) {
-    return `[CONVERSATION CONTEXT]\n${conv.summary}`;
+  // Inject accumulated summary
+  const summary = conversationSummary || conv?.summary;
+  if (summary) {
+    sections.push(`[CONVERSATION SUMMARY]\n${summary}`);
   }
 
-  const recent = conv.messages.slice(-6);
-  const lines = ['[RECENT CONVERSATION]'];
-  for (const msg of recent) {
-    const role = msg.role === 'user' ? 'User' : 'Cosmo';
-    const content = typeof msg.content === 'string'
-      ? msg.content.substring(0, 150)
-      : JSON.stringify(msg.content).substring(0, 150);
-    lines.push(`  ${role}: ${content}`);
+  if (!conv?.messages || conv.messages.length === 0) {
+    return sections.length > 0 ? sections.join('\n\n') : null;
   }
 
-  return lines.join('\n');
+  // Take up to 20 messages
+  const window = conv.messages.slice(-20);
+
+  // Collapse old tool pairs (keep last 3 pairs intact)
+  const lines: string[] = ['[RECENT CONVERSATION]'];
+  let toolPairCount = 0;
+
+  for (let i = window.length - 1; i >= 0; i--) {
+    if (window[i].role === 'tool') toolPairCount++;
+  }
+
+  let currentToolPair = 0;
+  for (const msg of window) {
+    if (msg.role === 'tool') {
+      currentToolPair++;
+      // Collapse older tool results to one line
+      if (currentToolPair <= toolPairCount - 3) {
+        try {
+          const parsed = JSON.parse(msg.content as string);
+          lines.push(`  [Tool result: ${parsed.success ? 'success' : 'error'}${parsed.title ? ` "${parsed.title}"` : ''}${parsed.count !== undefined ? ` (${parsed.count} results)` : ''}]`);
+        } catch {
+          lines.push(`  [Tool result]`);
+        }
+        continue;
+      }
+    }
+
+    if (msg.role === 'user') {
+      const content = typeof msg.content === 'string' ? msg.content.substring(0, 300) : '';
+      lines.push(`  User: ${content}`);
+    } else if (msg.role === 'assistant' && !msg.toolCalls) {
+      const content = typeof msg.content === 'string' ? msg.content.substring(0, 300) : '';
+      lines.push(`  Cosmo: ${content}`);
+    }
+  }
+
+  sections.push(lines.join('\n'));
+  return sections.join('\n\n');
+}
+
+/**
+ * Build linked knowledge context from atoms referenced in the conversation.
+ * Loads the last 5 linked atom UUIDs and formats them by type.
+ */
+async function buildLinkedContext(chatId: string): Promise<string | null> {
+  const conv = await loadConversation(chatId);
+  if (!conv?.linked_atom_uuids || conv.linked_atom_uuids.length === 0) return null;
+
+  const lines: string[] = ['[LINKED CONTEXT]'];
+  for (const uuid of conv.linked_atom_uuids.slice(-5)) {
+    const atom = await fetchAtom(uuid);
+    if (!atom) continue;
+    if (atom.type === 'client_profile') {
+      lines.push(`  Client: ${atom.title} (${atom.metadata?.niche || 'no niche'})`);
+    } else if (atom.type === 'content') {
+      lines.push(`  Content: "${atom.title}" (${atom.metadata?.phase || 'ideation'})`);
+    } else if (atom.type === 'research') {
+      const hook = atom.structured?.hookType || atom.structured?.swipeAnalysis?.hookType;
+      lines.push(`  Swipe: "${atom.title}"${hook ? ` [${hook}]` : ''}`);
+    } else if (atom.type === 'idea') {
+      lines.push(`  Idea: "${atom.title}" (${atom.metadata?.ideaStatus || 'spark'})`);
+    }
+  }
+  return lines.length > 1 ? lines.join('\n') : null;
 }
 
 // ============================================================

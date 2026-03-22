@@ -182,12 +182,43 @@ async function handleCommand(compositeId: string, text: string, chatId: string, 
     case '/start':
       await sendMessage(chatId, 'Welcome to CosmoOS Cloud Agent. I work even when your Mac is closed. Send me a message to get started.', threadId);
       break;
-    case '/clear':
-      // Clear conversation by saving empty messages
-      const { saveConversation } = await import('../db/queries');
-      await saveConversation(compositeId, []);
-      await sendMessage(chatId, 'Conversation cleared.', threadId);
+    case '/clear': {
+      const { loadConversation, saveConversation } = await import('../db/queries');
+      const existing = await loadConversation(compositeId);
+
+      // Summarize before clearing (preserve context)
+      let summary = existing?.summary || '';
+      if (existing?.messages && existing.messages.length > 0) {
+        try {
+          const msgText = existing.messages
+            .filter((m: any) => m.role === 'user' || (m.role === 'assistant' && !m.toolCalls))
+            .map((m: any) => `${m.role}: ${typeof m.content === 'string' ? m.content.substring(0, 150) : ''}`)
+            .join('\n');
+
+          const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.openRouterApiKey}` },
+            body: JSON.stringify({
+              model: config.models.sensor,
+              messages: [
+                { role: 'system', content: 'Summarize in 2 sentences. Preserve: client names, content created, key decisions.' },
+                { role: 'user', content: msgText },
+              ],
+              max_tokens: 128,
+            }),
+          });
+          const data = await response.json() as any;
+          const newSummary = data.choices?.[0]?.message?.content || '';
+          if (newSummary) {
+            summary = summary ? `${summary} | ${newSummary}` : newSummary;
+          }
+        } catch {}
+      }
+
+      await saveConversation(compositeId, [], { summary: summary || undefined });
+      await sendMessage(chatId, 'Context cleared ✓\nStarting fresh — previous context summarized for continuity.', threadId);
       break;
+    }
     default:
       await sendMessage(chatId, `Unknown command: ${command}`, threadId);
   }

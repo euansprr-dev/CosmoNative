@@ -391,82 +391,122 @@ class AgentProactiveScheduler: ObservableObject {
         logDeliveryAttempt(type: "heartbeat", success: true)
     }
 
-    /// Evaluate noteworthy events since last heartbeat. Returns nil if nothing to report (silent).
+    /// Task-focused heartbeat: shows remaining tasks for today with proper formatting.
     private func evaluateHeartbeatPulse() async -> String? {
-        let since = lastHeartbeatAt ?? Date().addingTimeInterval(-Double(heartbeatIntervalMinutes) * 60.0)
-        let isoFormatter = ISO8601DateFormatter()
-        let sinceStr = isoFormatter.string(from: since)
-        var findings: [String] = []
+        let allTasks = (try? await AtomRepository.shared.fetchAll(type: .task)) ?? []
 
-        // 1. Count new swipes since last heartbeat
-        let allSwipes = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
-        let newSwipes = allSwipes.filter { atom in
+        // Get today's date string (yyyy-MM-dd)
+        let todayStr: String = {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: Date())
+        }()
+
+        // Filter to today's incomplete tasks (using whenDate/focusDate priority, matching cloud agent)
+        let todayTasks = allTasks.filter { atom in
             let meta = atom.metadataDict ?? [:]
-            guard meta["subtype"] as? String == "swipe_file" else { return false }
-            return atom.createdAt > sinceStr
-        }
-        if !newSwipes.isEmpty {
-            findings.append("\(newSwipes.count) new swipe\(newSwipes.count == 1 ? "" : "s") captured")
+            let isCompleted = meta["isCompleted"] as? Bool ?? false
+            if isCompleted { return false }
+
+            // Skip recurring templates
+            if meta["recurrence"] != nil && meta["recurrenceParentUUID"] == nil { return false }
+
+            let whenDate = (meta["whenDate"] as? String)?.prefix(10) ?? ""
+            let focusDate = (meta["focusDate"] as? String)?.prefix(10) ?? ""
+            let dueDate = (meta["dueDate"] as? String)?.prefix(10) ?? ""
+            let taskDate = !whenDate.isEmpty ? String(whenDate) : (!focusDate.isEmpty ? String(focusDate) : String(dueDate))
+
+            return taskDate == todayStr
         }
 
-        // 2. Count standing instructions that executed since last heartbeat
-        let instructions = (try? await StandingInstructionEngine.shared.fetchAll()) ?? []
-        var executedCount = 0
-        for atom in instructions {
+        // Count completed today
+        let completedToday = allTasks.filter { atom in
             let meta = atom.metadataDict ?? [:]
-            let history = meta["executionHistory"] as? [[String: Any]] ?? []
-            for entry in history {
-                if let ts = entry["timestamp"] as? String, ts > sinceStr {
-                    executedCount += 1
-                }
+            let isCompleted = meta["isCompleted"] as? Bool ?? false
+            guard isCompleted else { return false }
+            let completedAt = (meta["completedAt"] as? String)?.prefix(10) ?? ""
+            return String(completedAt) == todayStr
+        }.count
+
+        // If no tasks today, stay silent
+        guard !todayTasks.isEmpty else { return nil }
+
+        // Separate into scheduled (has startTime) and unscheduled
+        var scheduled: [(title: String, priority: String, time: String)] = []
+        var unscheduled: [(title: String, priority: String)] = []
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "h:mm a"
+        let isoParser = ISO8601DateFormatter()
+
+        for atom in todayTasks {
+            let meta = atom.metadataDict ?? [:]
+            let title = atom.title ?? "Untitled"
+            let priority = meta["priority"] as? String ?? "medium"
+            let emoji = priorityEmoji(priority)
+
+            if let startTime = meta["startTime"] as? String,
+               let date = isoParser.date(from: startTime) {
+                let timeStr = timeFormatter.string(from: date)
+                scheduled.append((title: title, priority: emoji, time: timeStr))
+            } else {
+                unscheduled.append((title: title, priority: emoji))
             }
         }
-        if executedCount > 0 {
-            findings.append("\(executedCount) standing instruction\(executedCount == 1 ? "" : "s") executed")
+
+        // Sort scheduled by time
+        scheduled.sort { $0.time < $1.time }
+
+        // Sort unscheduled by priority
+        let priorityOrder = ["🔴": 0, "🟠": 1, "🟡": 2, "⚪": 3]
+        unscheduled.sort { (priorityOrder[$0.priority] ?? 4) < (priorityOrder[$1.priority] ?? 4) }
+
+        // Format time-based greeting
+        let hour = Calendar.current.component(.hour, from: Date())
+        let greeting = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening"
+
+        let totalRemaining = todayTasks.count
+        var lines: [String] = []
+        lines.append("📋 \(greeting) check-in")
+        lines.append("")
+        lines.append("\(totalRemaining) task\(totalRemaining == 1 ? "" : "s") remaining today:")
+
+        var itemNumber = 1
+
+        if !scheduled.isEmpty {
+            lines.append("")
+            lines.append("⏰ SCHEDULED")
+            for task in scheduled {
+                lines.append("\(itemNumber). \(task.priority) \(task.title) — \(task.time)")
+                itemNumber += 1
+            }
         }
 
-        // 3. Count content pieces updated since last heartbeat
-        let allContent = (try? await AtomRepository.shared.fetchAll(type: .content)) ?? []
-        let updatedContent = allContent.filter { $0.updatedAt > sinceStr }
-        if !updatedContent.isEmpty {
-            findings.append("\(updatedContent.count) content piece\(updatedContent.count == 1 ? "" : "s") updated")
+        if !unscheduled.isEmpty {
+            lines.append("")
+            lines.append("📝 UNSCHEDULED")
+            for task in unscheduled {
+                lines.append("\(itemNumber). \(task.priority) \(task.title)")
+                itemNumber += 1
+            }
         }
 
-        // 4. Count overdue tasks (tasks with dueDate in the past that aren't completed)
-        let allTasks = (try? await AtomRepository.shared.fetchAll(type: .task)) ?? []
-        let nowStr = isoFormatter.string(from: Date())
-        let overdueTasks = allTasks.filter { atom in
-            let meta = atom.metadataDict ?? [:]
-            guard let dueDate = meta["dueDate"] as? String, !dueDate.isEmpty else { return false }
-            guard dueDate < nowStr else { return false }
-            let status = meta["status"] as? String ?? ""
-            return status != "completed" && status != "archived"
-        }
-        if !overdueTasks.isEmpty {
-            findings.append("\(overdueTasks.count) overdue task\(overdueTasks.count == 1 ? "" : "s")")
-        }
+        lines.append("")
+        lines.append("✅ \(completedToday)/\(totalRemaining + completedToday) completed")
+        lines.append("")
+        lines.append("Want me to help with any of these?")
 
-        // 5. Count content in draft phase (stale drafts)
-        let staleDrafts = allContent.filter { atom in
-            let meta = atom.metadataDict ?? [:]
-            let phase = meta["phase"] as? String ?? ""
-            return phase == "draft" || phase == "brainstorm"
-        }
-        if staleDrafts.count > 2 {
-            findings.append("\(staleDrafts.count) drafts waiting for attention")
-        }
+        return lines.joined(separator: "\n")
+    }
 
-        // If nothing noteworthy, return nil (stay silent)
-        guard !findings.isEmpty else { return nil }
-
-        // Format the summary
-        var summary = "Pulse check:\n"
-        for finding in findings {
-            summary += "- \(finding)\n"
+    private func priorityEmoji(_ priority: String) -> String {
+        switch priority {
+        case "critical": return "🔴"
+        case "high": return "🟠"
+        case "medium": return "🟡"
+        case "low": return "⚪"
+        default: return "🟡"
         }
-        summary += "\nAnything you'd like me to look into?"
-
-        return summary
     }
 
     // MARK: - DND Check

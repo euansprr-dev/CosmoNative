@@ -72,12 +72,9 @@ class IntelligentAlertEngine {
         if let alert = await checkCreativeMomentum() {
             alerts.append(alert)
         }
-        if let alert = await checkStaleContent() {
-            alerts.append(alert)
-        }
-        if let alert = await checkSwipeInsight() {
-            alerts.append(alert)
-        }
+        // Stale content + swipe insight alerts disabled — replaced by task-focused heartbeat
+        // if let alert = await checkStaleContent() { alerts.append(alert) }
+        // if let alert = await checkSwipeInsight() { alerts.append(alert) }
 
         return alerts
     }

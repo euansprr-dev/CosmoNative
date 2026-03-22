@@ -30,11 +30,20 @@ function todayDateString(): string {
   }
 }
 
+/**
+ * Get the task's scheduled date for Today view filtering.
+ * Priority: whenDate > focusDate > dueDate
+ *
+ * CRITICAL: whenDate/focusDate = "when you plan to DO it" (schedule date)
+ *           dueDate = "when it's due BY" (deadline)
+ *
+ * A task with dueDate=March 20 (overdue deadline) but whenDate=March 22
+ * (rescheduled to today) should show as TODAY, not OVERDUE.
+ * This matches the Mac's CommandCenterDashboardViewModel behavior.
+ */
 function getTaskDate(meta: Record<string, any>): string | null {
-  const raw = (meta.dueDate ?? meta.whenDate ?? meta.focusDate ?? null) as string | null;
+  const raw = (meta.whenDate ?? meta.focusDate ?? meta.dueDate ?? null) as string | null;
   if (!raw) return null;
-  // Strip ISO8601 timestamp to date-only (yyyy-MM-dd) for comparison
-  // Handles "2026-03-22T14:30:00Z", "2026-03-22T00:00:00.000Z", and "2026-03-22"
   return raw.split('T')[0];
 }
 

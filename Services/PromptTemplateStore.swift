@@ -996,10 +996,16 @@ class PromptTemplateStore: ObservableObject {
     }
 
     /// Sync all current templates to Supabase. Called on app launch after auth.
-    /// Syncs the ASSEMBLED methodology (including skill modules) so the cloud
-    /// engine gets the full craft instructions, not just raw methodology.
+    /// Syncs the ASSEMBLED methodology (including ALL skill modules) so the cloud
+    /// engine gets the full craft instructions.
     func syncAllTemplatesToCloud() {
+        let enabledModules = modules.filter(\.isEnabled)
         let assembledMethodology = assemblePrompt(for: "general")
+        print("📤 Cloud sync: methodology \(methodology.count) chars + \(enabledModules.count)/\(modules.count) modules enabled → assembled \(assembledMethodology.count) chars")
+        if enabledModules.count < modules.count {
+            let disabled = modules.filter { !$0.isEnabled }.map(\.id)
+            print("   ⚠️ Disabled modules (not synced): \(disabled)")
+        }
         syncTemplateToCloud(key: "methodology", content: assembledMethodology)
         syncTemplateToCloud(key: "unified_system_prompt", content: unifiedSystemPrompt)
         syncTemplateToCloud(key: "platform_constraints", content: platformConstraints)

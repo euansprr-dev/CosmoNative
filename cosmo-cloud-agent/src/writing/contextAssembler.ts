@@ -61,6 +61,9 @@ export async function assembleBlock2(
   const structured = clientAtom.structured || {};
   const intel = structured.intelligenceModel || {};
   const voice = intel.voiceFingerprint || {};
+  const performance = intel.performanceFingerprint || {};
+  const audience = intel.audienceModel || {};
+  const positioning = intel.nicheAndPositioning || {};
 
   const sections: string[] = [];
 
@@ -84,6 +87,72 @@ export async function assembleBlock2(
     }
     if (voice.blacklistedPhrases && (voice.blacklistedPhrases as string[]).length > 0) {
       sections.push(`BANNED Phrases: ${(voice.blacklistedPhrases as string[]).join(', ')}`);
+    }
+    if (voice.formattingQuirks && (voice.formattingQuirks as string[]).length > 0) {
+      sections.push(`Formatting Quirks: ${(voice.formattingQuirks as string[]).join(', ')}`);
+    }
+    if (voice.emotionalTone) {
+      const tones = voice.emotionalTone as Record<string, number>;
+      const sorted = Object.entries(tones).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      if (sorted.length > 0) {
+        sections.push(`Emotional Tone: ${sorted.map(([t, p]) => `${t}: ${Math.round(p as number * 100)}%`).join(', ')}`);
+      }
+    }
+  }
+
+  // Performance patterns
+  if (performance.bestTopics || performance.optimalLength || performance.hookTypePerformance) {
+    sections.push('\n--- PERFORMANCE PATTERNS ---');
+    if (performance.bestTopics && (performance.bestTopics as string[]).length > 0) {
+      sections.push(`Best Topics: ${(performance.bestTopics as string[]).join(', ')}`);
+    }
+    if (performance.optimalLength) {
+      sections.push(`Optimal Length: ${performance.optimalLength}`);
+    }
+    if (performance.bestBeatPatterns && (performance.bestBeatPatterns as string[]).length > 0) {
+      sections.push(`Best Beat Patterns: ${(performance.bestBeatPatterns as string[]).join('; ')}`);
+    }
+    if (performance.engagementTriggers && (performance.engagementTriggers as string[]).length > 0) {
+      sections.push(`Engagement Triggers: ${(performance.engagementTriggers as string[]).join(', ')}`);
+    }
+    if (performance.hookTypePerformance) {
+      const hookPerf = performance.hookTypePerformance as Record<string, number>;
+      const sorted = Object.entries(hookPerf).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      if (sorted.length > 0) {
+        sections.push(`Top Hook Types: ${sorted.map(([t, f]) => `${t}: ${f}`).join(', ')}`);
+      }
+    }
+  }
+
+  // Audience model
+  if (audience.primaryAudience || audience.topPainPoints || audience.aspirationalOutcomes) {
+    sections.push('\n--- AUDIENCE MODEL ---');
+    if (audience.primaryAudience) sections.push(`Primary Audience: ${audience.primaryAudience}`);
+    if (audience.topPainPoints && (audience.topPainPoints as string[]).length > 0) {
+      sections.push(`Pain Points: ${(audience.topPainPoints as string[]).join('; ')}`);
+    }
+    if (audience.aspirationalOutcomes && (audience.aspirationalOutcomes as string[]).length > 0) {
+      sections.push(`Aspirational Outcomes: ${(audience.aspirationalOutcomes as string[]).join('; ')}`);
+    }
+    if (audience.commonObjections && (audience.commonObjections as string[]).length > 0) {
+      sections.push(`Common Objections: ${(audience.commonObjections as string[]).join('; ')}`);
+    }
+    if (audience.audienceLanguage && (audience.audienceLanguage as string[]).length > 0) {
+      sections.push(`Audience Language: ${(audience.audienceLanguage as string[]).join(', ')}`);
+    }
+  }
+
+  // Positioning
+  if (positioning.specificNiche || positioning.uniqueAngle || positioning.coreBeliefs) {
+    sections.push('\n--- POSITIONING ---');
+    if (positioning.specificNiche) sections.push(`Niche: ${positioning.specificNiche}`);
+    if (positioning.uniqueAngle) sections.push(`Unique Angle: ${positioning.uniqueAngle}`);
+    if (positioning.uniqueMechanism) sections.push(`Unique Mechanism: ${positioning.uniqueMechanism}`);
+    if (positioning.coreBeliefs && (positioning.coreBeliefs as string[]).length > 0) {
+      sections.push(`Core Beliefs: ${(positioning.coreBeliefs as string[]).join('; ')}`);
+    }
+    if (positioning.enemies && (positioning.enemies as string[]).length > 0) {
+      sections.push(`Enemies (what they stand against): ${(positioning.enemies as string[]).join('; ')}`);
     }
   }
 

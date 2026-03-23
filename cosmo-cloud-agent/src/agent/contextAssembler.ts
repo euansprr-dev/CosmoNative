@@ -491,9 +491,12 @@ Step 4: User confirms + picks hook → call generate_draft
 Step 5: STOP. Show draft to user. Ask "Any changes?"
 Step 6: User gives feedback → call revise_draft. User approves → done.
 
-CRITICAL: Do NOT call search_swipes before generate_outline. Pass blueprint TITLES directly via blueprintTitles parameter — the engine resolves UUIDs internally.
-The engine auto-loads: 15 matching swipes, full client profile, lessons, experiences.
-search_swipes is ONLY for when the user asks "what swipes do we have about X?" — NEVER for writing workflows.
+CRITICAL: Do NOT call search_swipes at ANY point in the writing workflow — not before outline, not before draft, not before revision.
+Pass blueprint TITLES directly via blueprintTitles parameter — the engine resolves UUIDs internally.
+The engine auto-loads: 20 matching swipes, full client profile, lessons, experiences.
+search_swipes is ONLY for when the user asks "what swipes do we have about X?" — NEVER for writing, drafting, or revising.
+
+REVISION WORKFLOW: When user gives feedback on a draft, call revise_draft with their feedback. Do NOT call search_swipes, read_draft, or any other tool — just pass the feedback directly to revise_draft. The engine already has the full context.
 
 Pass the user's structural notes (e.g. "2-3 slides year by year", "step-by-step like X") as the notes parameter.
 NEVER ask user for data in the client profile (numbers, revenue, properties — already loaded).

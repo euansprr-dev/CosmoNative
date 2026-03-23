@@ -85,10 +85,16 @@ export class CloudWritingEngine {
   private initialized = false;
   private targetFormat: ContentFormat = 'unknown';
 
-  // Reference material cache (Gap #11 fix) — persists across turns, 25K char budget
+  // Reference material cache — persists across turns, 25K char budget
   private referenceMaterial: Map<string, string> = new Map();
   private referenceMaterialChars = 0;
   private static readonly REFERENCE_MATERIAL_MAX_CHARS = 25_000;
+
+  // Lessons (cached for deterministic validation)
+  private lessons: Array<{ rule: string; enforcement: string; evidence?: string; category?: string; clientUUID?: string }> = [];
+
+  // Auto-refinement counter (max 2 passes)
+  private refinementCount = 0;
 
   constructor(contentUUID: string) {
     this.contentUUID = contentUUID;
@@ -146,8 +152,9 @@ export class CloudWritingEngine {
       await updateAtom(this.contentUUID, { metadata: { selectedSwipeUUIDs: selectedUUIDs } });
     }
 
-    // Load lessons for this client
+    // Load lessons for this client (also cached for deterministic validation in write_draft)
     const lessons = await this.loadLessons();
+    this.lessons = lessons;
 
     // Load experience buffer (past edit examples) for few-shot learning
     const experiences = await this.loadExperiences();
@@ -322,7 +329,7 @@ export class CloudWritingEngine {
         // Persist draft to atom body
         await updateAtom(this.contentUUID, { body: content });
 
-        // Validate
+        // Validate format
         const validation = validateDraft(content, this.targetFormat);
         const wordCount = content.split(/\s+/).filter(Boolean).length;
 
@@ -331,12 +338,38 @@ export class CloudWritingEngine {
           result += `\nValidation issues:\n${validation.violations.map(v => `  - ${v}`).join('\n')}`;
         }
 
+        // Deterministic validation (ported from Swift DeterministicWritingValidators)
+        const deterministicViolations = runDeterministicValidators(content, this.lessons);
+        if (deterministicViolations.length > 0) {
+          result += `\n\n⚠️ DETERMINISTIC RULE VIOLATIONS (fix before presenting):`;
+          for (const v of deterministicViolations) {
+            result += `\n  - [${v.type}] ${v.message}`;
+          }
+        }
+
+        // Voice compliance check
+        const voiceViolations = checkVoiceCompliance(content, this.clientAtom);
+        if (voiceViolations.length > 0) {
+          result += `\n\n⚠️ VOICE COMPLIANCE:`;
+          for (const v of voiceViolations) {
+            result += `\n  - ${v}`;
+          }
+        }
+
         // Self-evaluation
         const selfEval = args.selfEvaluation;
         if (selfEval) {
           result += `\nSelf-evaluation: confidence=${selfEval.confidenceScore}%, voice=${selfEval.voiceMatchScore}%`;
           if (selfEval.weakAreas?.length > 0) {
             result += `, weak areas: ${selfEval.weakAreas.join(', ')}`;
+          }
+        }
+
+        // Auto-refine prompt if violations found
+        if (deterministicViolations.length > 0 || voiceViolations.length > 0) {
+          this.refinementCount = (this.refinementCount || 0) + 1;
+          if (this.refinementCount <= 2) {
+            result += `\n\nAUTO-REFINEMENT PASS ${this.refinementCount}/2: Fix the violations above, then call write_draft again with the corrected content.`;
           }
         }
 
@@ -466,7 +499,7 @@ export class CloudWritingEngine {
       ? this.blocks.map(block => ({
           type: 'text' as const,
           text: block.content,
-          ...(block.cacheControl ? { cache_control: { type: 'ephemeral' } } : {}),
+          ...(block.cacheControl ? { cache_control: { type: 'ephemeral', ttl: '1h' } } : {}),
         }))
       : systemPrompt; // Non-Anthropic: plain text
 
@@ -732,6 +765,8 @@ export class CloudWritingEngine {
   getClientUUID(): string | undefined { return this.clientAtom?.uuid; }
 
   /** Get loaded swipes as a numbered list with hooks — for context transparency */
+  getRefinementCount(): number { return this.refinementCount; }
+
   getSwipesSummary(): string[] {
     return this.selectedSwipes.map((s, i) => {
       const hook = s.hookText.length > 80 ? s.hookText.substring(0, 80) + '...' : s.hookText;
@@ -739,4 +774,120 @@ export class CloudWritingEngine {
       return `${i + 1}.${badge} "${hook}"`;  // Clean format, no scores
     });
   }
+}
+
+// ============================================================
+// Deterministic Writing Validators
+// Ported from Swift: DeterministicWritingValidators.swift
+// These run WITHOUT an API call — pure string pattern matching.
+// ============================================================
+
+interface ValidationViolation {
+  type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned';
+  message: string;
+}
+
+function runDeterministicValidators(
+  draft: string,
+  lessons: Array<{ rule: string; enforcement: string }>,
+): ValidationViolation[] {
+  const violations: ValidationViolation[] = [];
+
+  // 1. Static banned phrases (from system prompt VOICE DNA)
+  const staticBanned = [
+    "in today's", "it's important to note", "it's worth noting", "delve", "dive into",
+    "unpack", "harness", "leverage", "utilize", "landscape", "realm", "robust",
+    "game-changer", "cutting-edge", "straightforward", "in order to",
+    "furthermore", "additionally", "moreover", "moving forward",
+    "at the end of the day", "let that sink in", "read that again", "full stop",
+    "this changes everything", "supercharge", "unlock your", "future-proof",
+    "10x your", "here's the part nobody", "what nobody tells you",
+  ];
+
+  const lowerDraft = draft.toLowerCase();
+  for (const phrase of staticBanned) {
+    if (lowerDraft.includes(phrase)) {
+      violations.push({
+        type: 'static_banned',
+        message: `Banned phrase detected: "${phrase}"`,
+      });
+    }
+  }
+
+  // 2. Negation pattern ("This isn't X. This is Y." and variations)
+  const negationPatterns = [
+    /this isn['']t .{3,30}\.\s*(this|it)['']?s?\s/gi,
+    /forget .{3,20}\.\s*(this|it)/gi,
+    /less .{3,20},\s*more .{3,20}/gi,
+  ];
+  for (const pattern of negationPatterns) {
+    const match = draft.match(pattern);
+    if (match) {
+      violations.push({
+        type: 'negation_pattern',
+        message: `Fatal pattern "Not X. Y." detected: "${match[0].substring(0, 60)}..." — delete the negation, just state the positive claim`,
+      });
+      break;
+    }
+  }
+
+  // 3. Cadence validator — flag 4+ consecutive short fragments (≤5 words)
+  const lines = draft.split('\n').filter(l => l.trim().length > 0);
+  let consecutiveShort = 0;
+  for (const line of lines) {
+    const wordCount = line.trim().split(/\s+/).length;
+    if (wordCount <= 5) {
+      consecutiveShort++;
+      if (consecutiveShort >= 4) {
+        violations.push({
+          type: 'cadence',
+          message: `${consecutiveShort}+ consecutive short lines (≤5 words) — vary sentence length for rhythm`,
+        });
+        break;
+      }
+    } else {
+      consecutiveShort = 0;
+    }
+  }
+
+  // 4. Lesson-derived banned phrases (extract "never use X" / "avoid X" from hard rules)
+  const hardRules = lessons.filter(l => l.enforcement === 'hard');
+  for (const rule of hardRules) {
+    const neverMatch = rule.rule.match(/never use ["'](.+?)["']/i);
+    const avoidMatch = rule.rule.match(/avoid ["'](.+?)["']/i);
+    const phrase = neverMatch?.[1] || avoidMatch?.[1];
+    if (phrase && lowerDraft.includes(phrase.toLowerCase())) {
+      violations.push({
+        type: 'banned_phrase',
+        message: `Learned rule violation: "${phrase}" found in draft (rule: ${rule.rule.substring(0, 80)})`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Check draft against client voice fingerprint for compliance.
+ * Ported from Swift: verifyVoiceCompliance()
+ */
+function checkVoiceCompliance(draft: string, clientAtom: Atom | null): string[] {
+  if (!clientAtom) return [];
+
+  const violations: string[] = [];
+  const intel = clientAtom.structured?.intelligenceModel || {};
+  const voice = intel.voiceFingerprint || {};
+
+  // Check blacklisted phrases
+  const blacklisted = voice.blacklistedPhrases as string[] | undefined;
+  if (blacklisted && blacklisted.length > 0) {
+    const lowerDraft = draft.toLowerCase();
+    for (const phrase of blacklisted) {
+      if (lowerDraft.includes(phrase.toLowerCase())) {
+        violations.push(`Client-banned phrase detected: "${phrase}"`);
+      }
+    }
+  }
+
+  return violations;
 }

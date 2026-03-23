@@ -33,6 +33,20 @@ export async function selectSwipes(
 
   if (allSwipes.length === 0) return [];
 
+  // Build top fingerprints index (top 10 patterns by frequency for structural scoring)
+  const fingerprintCounts = new Map<string, number>();
+  for (const swipe of allSwipes) {
+    const analysis = getAnalysis(swipe);
+    const fp = analysis?.beatFingerprint as string;
+    if (fp) fingerprintCounts.set(fp, (fingerprintCounts.get(fp) || 0) + 1);
+  }
+  const topFingerprints = new Set(
+    [...fingerprintCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([fp]) => fp)
+  );
+
   // Phase 2: Score each swipe on 4 axes
   const scored: Array<{ atom: Atom; score: number; isPrimary: boolean }> = [];
 
@@ -49,15 +63,19 @@ export async function selectSwipes(
     // Skip wrong-format swipes entirely (primary swipes bypass — user chose them)
     if (formatScore === 0 && !isPrimary) continue;
 
-    // Axis 2: Structural — beat pattern quality
+    // Axis 2: Structural — beat pattern quality (check against top patterns)
     const fingerprint = analysis.beatFingerprint as string;
-    const structuralScore = fingerprint ? 0.7 : 0.3; // Simplified: swipes with fingerprints score higher
+    let structuralScore = 0.3;
+    if (fingerprint) {
+      structuralScore = topFingerprints.has(fingerprint) ? 1.0 : 0.7;
+    }
 
-    // Axis 3: Stylistic — hook score as proxy (simplified from sentence length matching)
-    const hookScore = (analysis.hookScore as number) || 5;
-    const stylisticScore = Math.min(hookScore / 10, 1.0);
+    // Axis 3: Stylistic — sentence + word length matching (ported from Swift computeStylisticScore)
+    const body = swipe.body || '';
+    const stylisticScore = computeStylisticScore(body);
 
     // Axis 4: Performance — hookScore normalized
+    const hookScore = (analysis.hookScore as number) || 5;
     const perfScore = Math.min(hookScore / 10, 1.0);
 
     // Weighted fusion
@@ -353,4 +371,35 @@ function detectSwipeFormat(atom: Atom): FormatFamily {
 
   // Default: carousel_thread (safe for Instagram where type is unknown)
   return 'carousel_thread';
+}
+
+/**
+ * Compute stylistic score based on sentence and word length matching.
+ * Ported from Swift: UnifiedWritingEngine.computeStylisticScore() lines 3292-3309
+ * Swipes with natural sentence lengths (5-15 words) and moderate word lengths (3-7 chars)
+ * score higher — they're more likely to match a conversational client voice.
+ */
+function computeStylisticScore(transcript: string): number {
+  if (!transcript || transcript.length === 0) return 0.5;
+
+  // Split on sentence boundaries
+  const sentences = transcript.split(/[.!?]/).filter(s => s.trim().length > 0);
+
+  // Average sentence length in words
+  const avgSentenceLen = sentences.length > 0
+    ? sentences.map(s => s.trim().split(/\s+/).length).reduce((a, b) => a + b, 0) / sentences.length
+    : 0;
+
+  // Average word length in characters
+  const words = transcript.split(/\s+/).filter(w => w.length > 0);
+  const avgWordLen = words.length > 0
+    ? words.map(w => w.length).reduce((a, b) => a + b, 0) / words.length
+    : 0;
+
+  // Scoring tiers (matching Swift logic)
+  let score = 0.5; // Base 50%
+  if (avgSentenceLen >= 5 && avgSentenceLen <= 15) score += 0.25; // +25% for natural sentence length
+  if (avgWordLen >= 3 && avgWordLen <= 7) score += 0.25;           // +25% for moderate word length
+
+  return Math.min(score, 1.0);
 }

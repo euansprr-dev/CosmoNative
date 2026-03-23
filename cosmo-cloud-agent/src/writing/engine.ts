@@ -669,8 +669,6 @@ export class CloudWritingEngine {
 
     const lessons = all.filter(a => {
       const meta = a.metadata || {};
-      // Accept ANY lesson-like atom: subtype=lesson, lessonType=inferred_lesson,
-      // lessonType=learned_rule, lessonType=module_rule, or subtype=standing_instruction excluded
       const subtype = meta.subtype as string | undefined;
       const lessonType = meta.lessonType as string | undefined;
 
@@ -681,9 +679,8 @@ export class CloudWritingEngine {
       const isLesson = subtype === 'lesson' || !!lessonType;
       if (!isLesson) return false;
 
-      // Include universal + client-specific lessons
-      const clientUUID = this.clientAtom?.uuid;
-      if (meta.clientUUID && clientUUID && meta.clientUUID !== clientUUID) return false;
+      // Include ALL lessons regardless of client — writing lessons are universal.
+      // A lesson learned from one client's content applies to all content.
       return true;
     });
 

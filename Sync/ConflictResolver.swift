@@ -195,6 +195,10 @@ class ConflictResolver {
         insertData.removeValue(forKey: "_source")
         insertData.removeValue(forKey: "_version")
         insertData.removeValue(forKey: "fts")
+        // Strip Postgres serial `id` — let GRDB assign its own autoincrement.
+        // Without this, Supabase's id collides with local ids causing
+        // INSERT OR IGNORE to silently drop the entire row.
+        insertData.removeValue(forKey: "id")
 
         // Normalize Postgres timestamps (fractional seconds/offsets) to canonical ISO 8601
         for dateKey in ["created_at", "updated_at"] {
@@ -219,10 +223,15 @@ class ConflictResolver {
         let dbValues = values.map { databaseValue(from: $0) }
 
         do {
-            try await database.asyncWrite { db in
+            let inserted = try await database.asyncWrite { db -> Bool in
                 try db.execute(sql: sql, arguments: StatementArguments(dbValues))
+                return db.changesCount > 0
             }
-            print("📥 Inserted remote entity: \(table):\(data["uuid"] ?? "?")")
+            if inserted {
+                print("📥 Inserted remote entity: \(table):\(data["uuid"] ?? "?")")
+            } else {
+                print("⚠️ Remote insert silently ignored (constraint conflict): \(table):\(data["uuid"] ?? "?")")
+            }
         } catch {
             print("❌ Remote insert failed: \(error)")
         }

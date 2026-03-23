@@ -256,7 +256,18 @@ export async function processMessage(
   }
 
   // 7. Save conversation (with summary + linked atoms)
-  await saveConversation(chatId, messages.slice(-30), {
+  // Always keep the first user message to ensure loaded conversations
+  // start with role=user (required by Anthropic API).
+  const firstUserIdx = messages.findIndex(m => m.role === 'user');
+  const tail = messages.slice(-30);
+  let toSave: AgentMessage[];
+  if (firstUserIdx >= 0 && !tail.some(m => m.role === 'user')) {
+    // Tail has no user message — prepend the first one
+    toSave = [messages[firstUserIdx], ...tail];
+  } else {
+    toSave = tail;
+  }
+  await saveConversation(chatId, toSave, {
     summary: conversationSummary || undefined,
     linkedAtomUUIDs: createdAtomUUIDs,
   });
@@ -297,26 +308,35 @@ async function callLLM(params: {
     params.messages.filter(m => m.role === 'tool' && m.tool_call_id).map(m => m.tool_call_id!)
   );
 
+  const mappedMessages = params.messages.map(m => {
+    if (m.role === 'tool') {
+      return { role: 'tool', content: m.content, tool_call_id: m.tool_call_id };
+    }
+    if (m.tool_calls) {
+      // Filter out tool_calls that don't have matching tool_results (prevents Anthropic 400 error)
+      const validCalls = m.tool_calls.filter((tc: any) => {
+        const id = tc.id || tc.function?.id || '';
+        return toolResultIds.has(id);
+      });
+      if (validCalls.length === 0) {
+        // All tool_calls orphaned — send as plain assistant message
+        return { role: 'assistant', content: m.content || 'Previous tool calls completed.' };
+      }
+      return { role: 'assistant', content: m.content || null, tool_calls: validCalls };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  // Anthropic requires the first non-system message to be role=user.
+  // After conversation slicing, the first message may be an orphaned assistant/tool message.
+  // Drop leading non-user messages to satisfy the API constraint.
+  while (mappedMessages.length > 0 && mappedMessages[0].role !== 'user') {
+    mappedMessages.shift();
+  }
+
   const apiMessages: any[] = [
     { role: 'system', content: params.systemPrompt },
-    ...params.messages.map(m => {
-      if (m.role === 'tool') {
-        return { role: 'tool', content: m.content, tool_call_id: m.tool_call_id };
-      }
-      if (m.tool_calls) {
-        // Filter out tool_calls that don't have matching tool_results (prevents Anthropic 400 error)
-        const validCalls = m.tool_calls.filter((tc: any) => {
-          const id = tc.id || tc.function?.id || '';
-          return toolResultIds.has(id);
-        });
-        if (validCalls.length === 0) {
-          // All tool_calls orphaned — send as plain assistant message
-          return { role: 'assistant', content: m.content || 'Previous tool calls completed.' };
-        }
-        return { role: 'assistant', content: m.content || null, tool_calls: validCalls };
-      }
-      return { role: m.role, content: m.content };
-    }),
+    ...mappedMessages,
   ];
 
   // Build tools in OpenAI format

@@ -93,6 +93,10 @@ struct LibraryView: View {
         .task {
             await viewModel.loadLibrary()
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Sync.atomsPulled)) { _ in
+            viewModel.forceReload()
+            Task { await viewModel.loadLibrary() }
+        }
         .onChange(of: sortMode) { newSort in
             viewModel.applySortMode(newSort)
         }

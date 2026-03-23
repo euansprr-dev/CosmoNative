@@ -220,6 +220,7 @@ export class CloudWritingEngine {
 
   private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock): Promise<string> {
     let lastAssistantText = '';
+    let emptyResponseCount = 0;
 
     for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
       // Build system prompt from blocks
@@ -237,16 +238,44 @@ export class CloudWritingEngine {
       // Call LLM
       const response = await this.callWritingLLM(systemPrompt, apiMessages, tools);
 
-      // No tool calls — final response
+      // No tool calls — classify response (ported from Swift classifyLoopResponse)
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        lastAssistantText = response.content || '';
-        this.messages.push({
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: lastAssistantText,
-          timestamp: new Date().toISOString(),
-        });
-        break;
+        const text = (response.content || '').trim();
+
+        if (text.length > 0) {
+          // Has content — accept
+          if (response.finishReason === 'length') {
+            // Truncated by max_tokens — accept with warning
+            lastAssistantText = text + '\n\n[System] The model hit its output limit before finishing. Ask me to continue from where it left off.';
+            console.log(`  ⚠️ Accepted truncated response (finish_reason=length)`);
+          } else {
+            lastAssistantText = text;
+          }
+          this.messages.push({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: lastAssistantText,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+        } else {
+          // Empty response, no tools — retry once then abort (matching Swift maxTransientEmptyNoToolRetries=1)
+          emptyResponseCount++;
+          if (emptyResponseCount <= 1) {
+            console.log(`  ⚠️ Empty no-tool response (${emptyResponseCount}/1) — retrying`);
+            continue; // retry without pushing message
+          } else {
+            lastAssistantText = 'The writing engine stopped after empty provider responses. I stopped retrying so this does not keep burning tokens. Please try again or ask me to continue.';
+            console.log(`  ❌ Empty response repeated — aborting`);
+            this.messages.push({
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: lastAssistantText,
+              timestamp: new Date().toISOString(),
+            });
+            break;
+          }
+        }
       }
 
       // Execute tool calls
@@ -486,14 +515,11 @@ export class CloudWritingEngine {
     systemPrompt: string,
     messages: any[],
     tools: any[],
-  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> }> {
+  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null }> {
     const apiKey = config.openRouterApiKey;
     const model = config.models.writer;
 
-    console.log(`  ✍️ Writing engine → ${model} (${messages.length} messages, ${tools.length} tools)`);
-
-    // Gap #12 fix: Use structured content blocks with cache_control for Anthropic prompt caching
-    // Blocks 1, 2, 3A get ephemeral cache (reused across turns). Block 3B is dynamic (no cache).
+    // Estimate context size for logging
     const isAnthropicModel = model.includes('anthropic') || model.includes('claude');
     const systemContent = isAnthropicModel
       ? this.blocks.map(block => ({
@@ -501,7 +527,7 @@ export class CloudWritingEngine {
           text: block.content,
           ...(block.cacheControl ? { cache_control: { type: 'ephemeral', ttl: '1h' } } : {}),
         }))
-      : systemPrompt; // Non-Anthropic: plain text
+      : systemPrompt;
 
     const apiMessages = [
       { role: 'system', content: systemContent },
@@ -522,36 +548,86 @@ export class CloudWritingEngine {
       }));
     }
 
-    const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    const estimatedTokens = Math.round(JSON.stringify(body).length / 4);
+    console.log(`  ✍️ Writing engine → ${model} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Writing LLM error ${response.status}: ${errorText.substring(0, 200)}`);
+    // Retry loop with timeout (ported from Swift performWritingAPICall)
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        const backoff = attempt * 2000;
+        console.log(`  ⏳ Writing retry ${attempt}/2 after ${backoff}ms`);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+
+      try {
+        const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(300_000), // 5 min timeout
+        });
+
+        // Retryable errors: 429 rate limit, 5xx server errors
+        if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
+          const errorText = await response.text();
+          console.log(`  ⚠️ Writing LLM retryable error ${response.status}: ${errorText.substring(0, 200)}`);
+          lastError = new Error(`Writing LLM error ${response.status}`);
+          continue;
+        }
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Writing LLM error ${response.status}: ${errorText.substring(0, 200)}`);
+        }
+
+        const data = await response.json() as any;
+        const choice = data.choices?.[0];
+        if (!choice) throw new Error('No choices in writing LLM response');
+
+        // Log usage + cache stats (matching Swift)
+        if (data.usage) {
+          const prompt = data.usage.prompt_tokens || 0;
+          const completion = data.usage.completion_tokens || 0;
+          const cached = data.usage.prompt_tokens_details?.cached_tokens || 0;
+          const cacheRate = prompt > 0 ? ((cached / prompt) * 100).toFixed(1) : '0.0';
+          console.log(`  ✍️ Usage: prompt=${prompt}, cached=${cached}, completion=${completion}, cache_hit=${cacheRate}%`);
+        }
+
+        const finishReason = choice.finish_reason
+          || choice.native_finish_reason
+          || choice.message?.stop_reason
+          || null;
+
+        console.log(`  ✍️ Finish: ${finishReason || '--'}, completion=${data.usage?.completion_tokens || '?'}`);
+
+        const toolCalls = (choice.message?.tool_calls || []).map((tc: any) => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: typeof tc.function.arguments === 'string'
+            ? JSON.parse(tc.function.arguments)
+            : tc.function.arguments,
+        }));
+
+        return {
+          content: choice.message?.content || null,
+          toolCalls,
+          finishReason,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          console.log(`  ⚠️ Writing LLM timeout (attempt ${attempt + 1}/3)`);
+          continue;
+        }
+        if (attempt === 2) throw error;
+      }
     }
 
-    const data = await response.json() as any;
-    const choice = data.choices?.[0];
-    if (!choice) throw new Error('No choices in writing LLM response');
-
-    const toolCalls = (choice.message?.tool_calls || []).map((tc: any) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: typeof tc.function.arguments === 'string'
-        ? JSON.parse(tc.function.arguments)
-        : tc.function.arguments,
-    }));
-
-    return {
-      content: choice.message?.content || null,
-      toolCalls,
-    };
+    throw lastError || new Error('Writing LLM failed after 3 attempts');
   }
 
   // ============================================================

@@ -149,6 +149,9 @@ final class SwipeClassificationEngine: ObservableObject {
         merged.hookScoreReason = classified.hookScoreReason ?? merged.hookScoreReason
         merged.keyInsight = classified.keyInsight ?? merged.keyInsight
         merged.fingerprint = classified.fingerprint ?? merged.fingerprint
+        merged.hookMechanism = classified.hookMechanism ?? merged.hookMechanism
+        merged.structuralRecipe = classified.structuralRecipe ?? merged.structuralRecipe
+        merged.voiceMarkers = classified.voiceMarkers ?? merged.voiceMarkers
 
         // Bump version
         merged.analysisVersion = max(merged.analysisVersion, SwipeClassificationEngine.currentSchemaVersion + 1)
@@ -270,6 +273,9 @@ final class SwipeClassificationEngine: ObservableObject {
           "hookScore": 8.5,
           "hookScoreReason": "Strong curiosity gap with specific number...",
           "keyInsight": "One sentence structural insight about what makes this content work",
+          "hookMechanism": "WHY this hook works — explain the psychological mechanism in 1 sentence",
+          "structuralRecipe": "Step-by-step writing recipe. Format: numbered list, each step = beat label + word count + density (sparse/moderate/dense)",
+          "voiceMarkers": ["conversational", "data-driven", "short sentences"],
           "sentimentQuartiles": [0.1, -0.3, 0.2, 0.6],
           "intensityQuartiles": [0.7, 0.5, 0.6, 0.9]
         }
@@ -298,6 +304,9 @@ final class SwipeClassificationEngine: ObservableObject {
         let hookScore: Double?
         let hookScoreReason: String?
         let keyInsight: String?
+        let hookMechanism: String?
+        let structuralRecipe: String?
+        let voiceMarkers: [String]?
         let sentimentQuartiles: [Double]?
         let intensityQuartiles: [Double]?
     }
@@ -396,7 +405,7 @@ final class SwipeClassificationEngine: ObservableObject {
             frameworkType: frameworkType
         )
 
-        return SwipeAnalysis(
+        var result = SwipeAnalysis(
             hookScore: response.hookScore,
             frameworkType: frameworkType,
             sections: sections,
@@ -419,6 +428,10 @@ final class SwipeClassificationEngine: ObservableObject {
             classificationSource: .ai,
             classificationConfidence: response.classificationConfidence
         )
+        result.hookMechanism = response.hookMechanism
+        result.structuralRecipe = response.structuralRecipe
+        result.voiceMarkers = response.voiceMarkers
+        return result
     }
 
     // MARK: - Creator Resolution

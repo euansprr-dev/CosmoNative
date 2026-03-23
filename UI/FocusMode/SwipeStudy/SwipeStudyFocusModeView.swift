@@ -2235,6 +2235,9 @@ struct SwipeStudyFocusModeView: View {
     private func persistInstagramMediaToAtom(_ mediaData: InstagramMediaData, expectedAtomUUID: String) async {
         guard var current = currentAtom, current.uuid == expectedAtomUUID else { return }
 
+        // Skip media refresh if processing is still in progress — avoid version conflict race
+        guard current.metadataDict?["processingStatus"] as? String == "complete" else { return }
+
         var richContent = current.richContent ?? ResearchRichContent()
         var igData = richContent.instagramData ?? InstagramData(
             originalURL: mediaData.originalURL,

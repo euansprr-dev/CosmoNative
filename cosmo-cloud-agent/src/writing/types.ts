@@ -117,6 +117,9 @@ export interface CompressedSwipe {
   persuasionTechniques: string[];
   emotionalArc: string[];
   hookScoreReason: string;
+  hookMechanism: string;      // WHY the hook works (psychological mechanism)
+  structuralRecipe: string;   // Step-by-step writing recipe
+  voiceMarkers: string[];     // Voice traits (e.g., ["conversational", "data-driven"])
 }
 
 /**
@@ -138,8 +141,18 @@ export function formatCompressedSwipe(swipe: CompressedSwipe): string {
 
   lines.push(`Title: "${swipe.title}"`);
   lines.push(`Hook Type: ${swipe.hookType} (score: ${swipe.hookScore}/10)`);
+  if (swipe.hookMechanism) {
+    lines.push(`Hook Mechanism: ${swipe.hookMechanism}`);
+  }
   lines.push(`Beat Pattern: ${swipe.beatSequence.join(' > ')}`);
+  if (swipe.structuralRecipe) {
+    lines.push(`Structural Recipe:`);
+    lines.push(`  ${swipe.structuralRecipe}`);
+  }
   lines.push(`Framework: ${swipe.framework} | Format: ${swipe.format}${swipe.isPrimary ? ' [PRIMARY BLUEPRINT]' : ''}`);
+  if (swipe.voiceMarkers.length > 0) {
+    lines.push(`Voice: ${swipe.voiceMarkers.join(', ')}`);
+  }
 
   if (swipe.hookScoreReason) {
     lines.push(`Why Hook Works: ${swipe.hookScoreReason}`);

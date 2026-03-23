@@ -353,22 +353,7 @@ final class SwipeProcessingService {
 
         atom.processingStatus = "analyzing"
 
-        // FIELD-LEVEL UPDATE: Only write columns this stage owns
-        do {
-            var columns: [String: (any DatabaseValueConvertible)?] = [
-                "structured": atom.structured,
-                "metadata": atom.metadata,
-            ]
-            if !userIsEditing {
-                columns["body"] = combined
-                columns["title"] = atom.title
-            }
-            atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: columns)
-        } catch {
-            print("SwipeProcessingService: Failed to save transcript: \(error)")
-        }
-
-        // Run NLP analysis
+        // Run NLP analysis (in-memory only — no DB write yet)
         print("SwipeProcessingService: Running analysis for \(uuid)")
         var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atom)
         nlpResult.transcriptSlides = finalSlides
@@ -378,16 +363,7 @@ final class SwipeProcessingService {
         nlpResult.transcriptionWarnings = transcriptionWarnings
         atom = atom.withSwipeAnalysis(nlpResult)
 
-        // FIELD-LEVEL UPDATE: Only structured (swipeAnalysis lives here)
-        do {
-            atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
-                "structured": atom.structured,
-            ])
-        } catch {
-            print("SwipeProcessingService: Failed to save NLP analysis: \(error)")
-        }
-
-        // Deep analysis via Claude
+        // Deep analysis via Claude (in-memory only — no DB write yet)
         let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(atom: atom)
         if classifiedResult.isFullyAnalyzed {
             var enriched = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: nlpResult)
@@ -397,15 +373,6 @@ final class SwipeProcessingService {
             enriched.transcriptionQuality = transcriptionQuality
             enriched.transcriptionWarnings = transcriptionWarnings
             atom = atom.withSwipeAnalysis(enriched)
-
-            // FIELD-LEVEL UPDATE: Only structured
-            do {
-                atom = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
-                    "structured": atom.structured,
-                ])
-            } catch {
-                print("SwipeProcessingService: Failed to save deep analysis: \(error)")
-            }
         }
 
         // Re-index embedding with transcript text
@@ -421,14 +388,13 @@ final class SwipeProcessingService {
             )
         }
 
-        // FIELD-LEVEL UPDATE: Only metadata (processingStatus)
+        // SINGLE WRITE: Persist all accumulated changes (transcript + NLP + classification + status) at once.
+        // This prevents version conflicts when SwipeStudyFocusModeView tries to update the same atom.
+        atom.processingStatus = "complete"
         do {
-            atom.processingStatus = "complete"
-            _ = try await AtomRepository.shared.updateFields(uuid: uuid, columns: [
-                "metadata": atom.metadata,
-            ])
+            _ = try await AtomRepository.shared.update(atom)
         } catch {
-            print("SwipeProcessingService: Failed to mark complete: \(error)")
+            print("SwipeProcessingService: Failed to persist final analysis: \(error)")
         }
 
         // Cache carousel thumbnail locally (CDN URLs expire)

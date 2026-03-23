@@ -9,6 +9,7 @@
 
 import { Atom, fetchAtom, fetchAllByType, loadPromptTemplate } from '../db/queries';
 import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem } from './types';
+import { computeSwipeIntelligenceBrief } from './swipeSelector';
 
 export interface WritingBlock {
   label: string;
@@ -151,6 +152,13 @@ export function assembleBlock3Stable(
 
   if (clientNiche) {
     sections.push(`[CLIENT NICHE: ${clientNiche}]`);
+  }
+
+  // Swipe intelligence brief (aggregated patterns)
+  const brief = computeSwipeIntelligenceBrief(swipes);
+  if (brief) {
+    sections.push('');
+    sections.push(brief);
   }
 
   // Swipe examples

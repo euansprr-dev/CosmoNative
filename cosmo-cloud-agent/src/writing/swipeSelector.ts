@@ -213,7 +213,90 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
     persuasionTechniques,
     emotionalArc,
     hookScoreReason: (analysis.hookScoreReason as string) || '',
+    hookMechanism: (analysis.hookMechanism as string) || '',
+    structuralRecipe: (analysis.structuralRecipe as string) || '',
+    voiceMarkers: (analysis.voiceMarkers as string[]) || [],
   };
+}
+
+// ============================================================
+// Swipe Intelligence Brief (aggregated patterns)
+// ============================================================
+
+export function computeSwipeIntelligenceBrief(swipes: CompressedSwipe[]): string {
+  if (swipes.length === 0) return '';
+
+  const lines: string[] = ['=== SWIPE INTELLIGENCE BRIEF ===', `Aggregated from ${swipes.length} selected swipes:`, ''];
+
+  // HOOK PATTERNS
+  lines.push('HOOK PATTERNS:');
+  const hookTypeCounts: Record<string, number> = {};
+  let totalHookWords = 0;
+  for (const s of swipes) {
+    hookTypeCounts[s.hookType] = (hookTypeCounts[s.hookType] || 0) + 1;
+    totalHookWords += s.hookText.split(/\s+/).length;
+  }
+  const topHooks = Object.entries(hookTypeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  lines.push(`‣ Top hook types: ${topHooks.map(([h, c]) => `${h} (${c}x)`).join(', ')}`);
+  lines.push(`‣ Average hook length: ${Math.round(totalHookWords / swipes.length)} words`);
+
+  // Mechanisms
+  const mechanisms = swipes.filter(s => s.hookMechanism).map(s => s.hookMechanism);
+  if (mechanisms.length > 0) {
+    lines.push(`‣ Hook mechanisms: ${mechanisms.slice(0, 3).join('; ')}`);
+  }
+
+  // STRUCTURAL PATTERNS
+  lines.push('');
+  lines.push('STRUCTURAL PATTERNS:');
+  const avgSections = swipes.reduce((sum, s) => sum + s.beatSequence.length, 0) / swipes.length;
+  lines.push(`‣ Average section count: ${Math.round(avgSections)}`);
+
+  // Most common beat pattern
+  const fingerprints: Record<string, number> = {};
+  for (const s of swipes) {
+    const fp = s.beatSequence.join(' > ');
+    fingerprints[fp] = (fingerprints[fp] || 0) + 1;
+  }
+  const topFP = Object.entries(fingerprints).sort((a, b) => b[1] - a[1])[0];
+  if (topFP) {
+    lines.push(`‣ Most common pattern: ${topFP[0]}`);
+  }
+
+  // Best swipe's recipe
+  const bestSwipe = swipes.reduce((best, s) => s.hookScore > best.hookScore ? s : best, swipes[0]);
+  if (bestSwipe.structuralRecipe) {
+    lines.push(`‣ Recipe from best swipe (${bestSwipe.hookScore}/10):`);
+    for (const line of bestSwipe.structuralRecipe.split('\n')) {
+      lines.push(`    ${line.trim()}`);
+    }
+  }
+
+  // VOICE PATTERNS
+  const allVoiceMarkers: Record<string, number> = {};
+  for (const s of swipes) {
+    for (const v of s.voiceMarkers) {
+      allVoiceMarkers[v] = (allVoiceMarkers[v] || 0) + 1;
+    }
+  }
+  const topVoice = Object.entries(allVoiceMarkers).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  if (topVoice.length > 0) {
+    lines.push('');
+    lines.push('VOICE PATTERNS:');
+    lines.push(`‣ Dominant voice traits: ${topVoice.map(([v, c]) => `${v} (${c}/${swipes.length})`).join(', ')}`);
+  }
+
+  // WHAT MAKES THESE WORK
+  lines.push('');
+  lines.push('WHAT MAKES THESE WORK:');
+  const avgScore = swipes.reduce((sum, s) => sum + s.hookScore, 0) / swipes.length;
+  lines.push(`‣ Average hook score: ${avgScore.toFixed(1)}/10`);
+  const highScorers = swipes.filter(s => s.hookScore >= 8);
+  if (highScorers.length > 0) {
+    lines.push(`‣ ${highScorers.length}/${swipes.length} swipes score 8+ — study these patterns`);
+  }
+
+  return lines.join('\n');
 }
 
 // ============================================================

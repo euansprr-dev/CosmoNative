@@ -58,6 +58,11 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var practiceAttempts: Int?
     public var userHookScore: Double?
 
+    // Deep Classification Intelligence
+    public var hookMechanism: String?
+    public var structuralRecipe: String?
+    public var voiceMarkers: [String]?
+
     // Beat Pattern Intelligence
     public var normalizedBeats: [String]?
     public var beatFingerprint: String?
@@ -110,6 +115,9 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         studiedAt: String? = nil,
         practiceAttempts: Int? = nil,
         userHookScore: Double? = nil,
+        hookMechanism: String? = nil,
+        structuralRecipe: String? = nil,
+        voiceMarkers: [String]? = nil,
         normalizedBeats: [String]? = nil,
         beatFingerprint: String? = nil,
         transcriptComments: [TranscriptComment]? = nil,
@@ -156,6 +164,9 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         self.studiedAt = studiedAt
         self.practiceAttempts = practiceAttempts
         self.userHookScore = userHookScore
+        self.hookMechanism = hookMechanism
+        self.structuralRecipe = structuralRecipe
+        self.voiceMarkers = voiceMarkers
         self.normalizedBeats = normalizedBeats
         self.beatFingerprint = beatFingerprint
         self.transcriptComments = transcriptComments

@@ -206,13 +206,6 @@ struct RichTextEditor: View {
                         .onTapGesture {
                             dismissAllOverlays()
                         }
-                        .gesture(
-                            DragGesture(minimumDistance: 1)
-                                .onChanged { _ in
-                                    // Scroll/drag detected – dismiss
-                                    dismissAllOverlays()
-                                }
-                        )
                         .allowsHitTesting(true)
                 }
 

@@ -11,6 +11,22 @@ fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
     func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool
 }
 
+// MARK: - Scroll-Transparent NSScrollView
+
+/// When `forwardsScrollEvents` is true, scroll wheel events pass through to the
+/// next responder (the parent SwiftUI ScrollView) instead of being consumed.
+final class CosmoScrollView: NSScrollView {
+    var forwardsScrollEvents: Bool = false
+
+    override func scrollWheel(with event: NSEvent) {
+        if forwardsScrollEvents {
+            nextResponder?.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+}
+
 // MARK: - Custom NSTextView
 
 final class CosmoTextView: NSTextView {
@@ -143,8 +159,8 @@ final class CosmoTextView: NSTextView {
 }
 
 extension CosmoTextView {
-    static func scrollableCosmoTextView() -> NSScrollView {
-        let scrollView = NSScrollView()
+    static func scrollableCosmoTextView() -> CosmoScrollView {
+        let scrollView = CosmoScrollView()
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -234,8 +250,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onDeactivate: (() -> Void)?
     var onCommit: (() -> Void)?
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> CosmoScrollView {
         let scrollView = CosmoTextView.scrollableCosmoTextView()
+        scrollView.forwardsScrollEvents = !scrollsInternally
 
         guard let textView = scrollView.documentView as? CosmoTextView else {
             return scrollView
@@ -253,8 +270,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         return scrollView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    func updateNSView(_ scrollView: CosmoScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CosmoTextView else { return }
+        scrollView.forwardsScrollEvents = !scrollsInternally
         context.coordinator.parent = self
         configureTextView(textView, context: context, isInitial: false)
 

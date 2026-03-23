@@ -21,9 +21,15 @@ struct ClusterMasonryLayout: Layout {
     let columnWidth: CGFloat
     let spacing: CGFloat
 
+    private func columnCount(for width: CGFloat) -> Int {
+        // Use columnWidth + spacing as the per-column footprint, but the last column
+        // doesn't need trailing spacing, so add spacing back once to the available width.
+        max(1, Int((width + spacing) / (columnWidth + spacing)))
+    }
+
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let availableWidth = proposal.width ?? 600
-        let columns = max(1, Int(availableWidth / (columnWidth + spacing)))
+        let columns = columnCount(for: availableWidth)
         var columnHeights = Array(repeating: CGFloat(0), count: columns)
 
         for subview in subviews {
@@ -32,22 +38,18 @@ struct ClusterMasonryLayout: Layout {
             columnHeights[minCol] += size.height + spacing
         }
 
-        let totalWidth = CGFloat(columns) * columnWidth + CGFloat(max(columns - 1, 0)) * spacing
         let maxHeight = (columnHeights.max() ?? 0) - (columnHeights.isEmpty ? 0 : spacing)
-        return CGSize(width: totalWidth, height: max(0, maxHeight))
+        // Return the full proposed width so the layout fills available space
+        return CGSize(width: availableWidth, height: max(0, maxHeight))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let columns = max(1, Int(bounds.width / (columnWidth + spacing)))
+        let columns = columnCount(for: bounds.width)
         var columnHeights = Array(repeating: CGFloat(0), count: columns)
-
-        // Center the grid horizontally within the bounds
-        let totalGridWidth = CGFloat(columns) * columnWidth + CGFloat(max(columns - 1, 0)) * spacing
-        let offsetX = (bounds.width - totalGridWidth) / 2
 
         for subview in subviews {
             let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
-            let x = bounds.minX + offsetX + CGFloat(minCol) * (columnWidth + spacing)
+            let x = bounds.minX + CGFloat(minCol) * (columnWidth + spacing)
             let y = bounds.minY + columnHeights[minCol]
             let size = subview.sizeThatFits(.init(width: columnWidth, height: nil))
 

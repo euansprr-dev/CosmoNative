@@ -32,6 +32,8 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
     var updatedAt: String?
     var syncedAt: String?
     var isDeleted: Bool
+    /// UUID of the referenced Atom (mirrors Supabase atom_uuid column)
+    var atomUuid: String?
     var localVersion: Int?
     var serverVersion: Int?
     var syncVersion: Int?
@@ -64,6 +66,7 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
         case updatedAt = "updated_at"
         case syncedAt = "synced_at"
         case isDeleted = "is_deleted"
+        case atomUuid = "atom_uuid"
         case localVersion = "_local_version"
         case serverVersion = "_server_version"
         case syncVersion = "_sync_version"
@@ -97,6 +100,7 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
             updatedAt: ISO8601DateFormatter().string(from: Date()),
             syncedAt: nil,
             isDeleted: false,
+            atomUuid: block.entityUuid,
             localVersion: 1,
             serverVersion: 0,
             syncVersion: 0,

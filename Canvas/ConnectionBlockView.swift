@@ -138,7 +138,7 @@ struct ConnectionBlockView: View {
     // MARK: - Compact Header
 
     private var compactHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             // Entity identity strip
             Capsule()
                 .fill(accentColor.opacity(0.35))
@@ -182,7 +182,8 @@ struct ConnectionBlockView: View {
                     .lineLimit(titleStyle.previewLineLimit)
                     .truncationMode(.tail)
                     .multilineTextAlignment(titleStyle.swiftUITextAlignment)
-                    .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         titleDocumentAtEditStart = titleDocument

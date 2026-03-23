@@ -152,7 +152,7 @@ struct NoteBlockView: View {
     // MARK: - Note Content
 
     private var noteContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             // Entity identity strip
             Capsule()
                 .fill(accentColor.opacity(0.35))
@@ -234,19 +234,20 @@ struct NoteBlockView: View {
                         noteTitleText = plainText
                         if !isSyncingFromDB { scheduleAutoSave() }
                     },
-                    onCommit: { isEditingTitle = false },
                     onDeactivate: { isEditingTitle = false },
+                    onCommit: { isEditingTitle = false },
                     autoFocus: true
                 )
                 .frame(height: min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight)))
             } else {
                 Text(noteTitleText.isEmpty ? "Heading" : noteTitleText)
                     .font(titleStyle.swiftUIFont)
-                    .foregroundStyle(noteTitleText.isEmpty ? DS.textTertiary : DS.text)
+                    .foregroundStyle(noteTitleText.isEmpty ? DS.textMuted : DS.text)
                     .lineLimit(titleStyle.previewLineLimit)
                     .truncationMode(.tail)
                     .multilineTextAlignment(titleStyle.swiftUITextAlignment)
-                    .frame(maxWidth: .infinity, minHeight: titleMinHeight, maxHeight: titlePreviewMaxHeight, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         titleDocumentAtEditStart = noteTitleDocument

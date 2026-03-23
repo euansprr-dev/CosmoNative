@@ -337,6 +337,13 @@ class TelegramBridgeService: ObservableObject {
     // MARK: - Start/Stop Polling
 
     func start() async {
+        // Skip local polling when cloud agent webhook is active
+        if SupabaseAuthService.shared.isSignedIn {
+            print("[Telegram] Cloud agent active — skipping local polling (webhook handles messages)")
+            isConnected = true
+            return
+        }
+
         guard let token = loadTokenFromKeychain() else {
             if let raw = APIKeys.telegramBotToken,
                !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -362,6 +369,10 @@ class TelegramBridgeService: ObservableObject {
             : "***"
         print("[Telegram] Using token: \(masked) (length: \(token.count))")
 
+        // Delete any active webhook before starting local polling
+        // (prevents 409 conflict between getUpdates and webhook)
+        await deleteWebhook()
+
         // Fetch bot username for @mention gating in group chats
         await fetchBotUsername()
 
@@ -370,6 +381,24 @@ class TelegramBridgeService: ObservableObject {
         }
 
         print("[Telegram] Bridge started")
+    }
+
+    /// Remove any active Telegram webhook so local polling can use getUpdates
+    private func deleteWebhook() async {
+        guard !baseURL.isEmpty else { return }
+        guard let url = URL(string: "\(baseURL)/deleteWebhook") else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let ok = json["ok"] as? Bool, ok {
+                print("[Telegram] Webhook deleted — local polling can proceed")
+            } else {
+                let body = String(data: data, encoding: .utf8) ?? "unknown"
+                print("[Telegram] deleteWebhook response: \(body)")
+            }
+        } catch {
+            print("[Telegram] Failed to delete webhook: \(error.localizedDescription)")
+        }
     }
 
     func stop() {

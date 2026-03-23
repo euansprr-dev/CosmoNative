@@ -335,8 +335,8 @@ struct ConnectionFocusModeView: View {
                         allowImages: false,
                         titleConfiguration: titleStyle.titleConfiguration,
                         baseFontWeight: titleStyle.baseFontWeight,
-                        textAlignment: titleStyle.textAlignment,
                         scrollsInternally: true,
+                        textAlignment: titleStyle.textAlignment,
                         onContentHeightChange: { newHeight in
                             titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
                         },

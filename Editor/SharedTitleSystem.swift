@@ -26,11 +26,11 @@ enum SharedTitleSurfaceStyle {
     var fontSize: CGFloat {
         switch self {
         case .noteCanvas:
-            return 28
+            return 32
         case .noteFocus:
             return 32
         case .connectionCanvas:
-            return 22
+            return 26
         case .connectionFocus:
             return 28
         }
@@ -38,7 +38,9 @@ enum SharedTitleSurfaceStyle {
 
     var baseFontWeight: NSFont.Weight {
         switch self {
-        case .noteCanvas, .connectionCanvas, .connectionFocus:
+        case .noteCanvas, .connectionCanvas:
+            return .bold
+        case .connectionFocus:
             return .semibold
         case .noteFocus:
             return .bold

@@ -1538,6 +1538,18 @@ class CosmoDatabase: ObservableObject {
             print("✅ Duplicate canvas_blocks cleanup complete")
         }
 
+        // Add atom_uuid column to canvas_blocks (matches Supabase remote schema)
+        migrator.registerMigration("add_atom_uuid_to_canvas_blocks") { db in
+            print("🔨 Adding atom_uuid to canvas_blocks...")
+            do {
+                try db.execute(sql: "ALTER TABLE canvas_blocks ADD COLUMN atom_uuid TEXT")
+                print("  ✅ Added atom_uuid to canvas_blocks")
+            } catch {
+                print("  ⚠️ atom_uuid may already exist in canvas_blocks: \(error.localizedDescription)")
+            }
+            print("✅ atom_uuid migration complete")
+        }
+
         return migrator
     }
 
@@ -1812,7 +1824,8 @@ class CosmoDatabase: ObservableObject {
                 _local_version INTEGER DEFAULT 1,
                 _server_version INTEGER DEFAULT 0,
                 _sync_version INTEGER DEFAULT 0,
-                _local_pending INTEGER DEFAULT 0
+                _local_pending INTEGER DEFAULT 0,
+                atom_uuid TEXT
             );
 
             CREATE TABLE IF NOT EXISTS sync_queue (

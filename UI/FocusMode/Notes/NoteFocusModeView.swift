@@ -89,48 +89,46 @@ struct NoteFocusModeView: View {
                 topBar
 
                 // Scrollable writing surface
-                GeometryReader { geometry in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            // Title field
-                            titleSection
-                                .padding(.top, DS.space32)
+                GeometryReader { _ in
+                    VStack(spacing: 0) {
+                        // Title field
+                        titleSection
+                            .padding(.top, DS.space32)
 
-                            // Date + tags row
-                            dateTagsRow
-                                .padding(.top, DS.space12)
-                                .padding(.bottom, DS.space24)
+                        // Date + tags row
+                        dateTagsRow
+                            .padding(.top, DS.space12)
+                            .padding(.bottom, DS.space24)
 
-                            // Divider
-                            Rectangle()
-                                .fill(DS.border)
-                                .frame(height: 1)
-                                .frame(maxWidth: CosmoTypography.optimalReadingWidth)
+                        // Divider
+                        Rectangle()
+                            .fill(DS.border)
+                            .frame(height: 1)
+                            .frame(maxWidth: CosmoTypography.optimalReadingWidth)
 
-                            // Rich text editor — use remaining height so it fills the page
-                            CosmoDocumentEditor(
-                                document: $bodyDocument,
-                                fontSize: 17,
-                                placeholder: "Start writing...",
-                                darkMode: false,
-                                allowSlashCommands: true,
-                                allowMentions: true,
-                                allowSelectionMenu: true,
-                                allowImages: true,
-                                typewriterMode: typewriterMode,
-                                onDocumentChange: { _, plainText in
-                                    plainContent = plainText
-                                    if !isInitialLoad { triggerAutoSave() }
-                                }
-                            )
-                            .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
-                            .frame(minHeight: max(400, geometry.size.height - 200))
-                            .padding(.top, DS.space24)
-                            .padding(.bottom, 60)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, DS.space40)
+                        // Body editor owns vertical scrolling in focus mode.
+                        CosmoDocumentEditor(
+                            document: $bodyDocument,
+                            fontSize: 17,
+                            placeholder: "Start writing...",
+                            darkMode: false,
+                            allowSlashCommands: true,
+                            allowMentions: true,
+                            allowSelectionMenu: true,
+                            allowImages: true,
+                            typewriterMode: typewriterMode,
+                            scrollsInternally: true,
+                            onDocumentChange: { _, plainText in
+                                plainContent = plainText
+                                if !isInitialLoad { triggerAutoSave() }
+                            }
+                        )
+                        .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                        .frame(maxHeight: .infinity, alignment: .topLeading)
+                        .padding(.top, DS.space24)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.horizontal, DS.space40)
                 }
             }
 
@@ -138,12 +136,6 @@ struct NoteFocusModeView: View {
             GeometryReader { geo in
                 FocusFloatingBlocksLayer(manager: floatingBlocksManager)
                     .frame(width: geo.size.width, height: geo.size.height)
-            }
-
-            // Footer overlay
-            VStack {
-                Spacer()
-                footerBar
             }
         }
         .overlay(alignment: .topLeading) {
@@ -207,6 +199,9 @@ struct NoteFocusModeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             autoSaveTask?.cancel()
             saveAtomImmediately()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
+            isEditingTitle = false
         }
         .onKeyPress(.escape) {
             onClose()
@@ -363,7 +358,7 @@ struct NoteFocusModeView: View {
                         allowImages: false,
                         titleConfiguration: titleStyle.titleConfiguration,
                         baseFontWeight: titleStyle.baseFontWeight,
-                        scrollsInternally: true,
+                        scrollsInternally: false,
                         onContentHeightChange: { newHeight in
                             titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
                         },
@@ -483,33 +478,6 @@ struct NoteFocusModeView: View {
         .opacity(contentAppeared ? 1 : 0)
         .offset(y: contentAppeared ? 0 : 8)
         .animation(ProMotionSprings.staggered(index: 1), value: contentAppeared)
-    }
-
-    // MARK: - Footer
-
-    private var footerBar: some View {
-        HStack {
-            Spacer()
-            Text("\(wordCount) words")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-            Text("·")
-                .foregroundStyle(DS.textMuted)
-            Text("\(plainContent.count) chars")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-        }
-        .padding(.vertical, DS.space12)
-        .background(
-            LinearGradient(
-                colors: [.clear, DS.bg],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: DS.space40)
-            .offset(y: -DS.space20)
-        )
     }
 
     // MARK: - Save Badge

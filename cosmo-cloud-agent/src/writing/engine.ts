@@ -662,7 +662,7 @@ export class CloudWritingEngine {
     return this.selectedSwipes.map((s, i) => {
       const hook = s.hookText.length > 80 ? s.hookText.substring(0, 80) + '...' : s.hookText;
       const badge = s.isPrimary ? ' [PRIMARY]' : '';
-      return `${i + 1}. ${s.hookType} (${s.hookScore}/10)${badge}: "${hook}"`;
+      return `${i + 1}.${badge} "${hook}"`;  // Clean format, no scores
     });
   }
 }

@@ -483,12 +483,13 @@ TASK DISPLAY:
 - Show project in [brackets], checklist as (2/5)
 - For task creation, use smart_task_create (parses priority, date, time, recurrence, project)
 
-BLUEPRINT HANDLING:
-- When user specifies a blueprint swipe by title, search for it to get the UUID
-- Pass the UUID as blueprintSwipeUUID to generate_outline
-- The writing engine auto-selects 14 matching swipes — do NOT manually search for more
-- NEVER ask the user for data that's already in the client profile (revenue, properties, numbers, etc.)
-- Use the client's top performing posts in Block 2 as reference for real numbers
+WRITING WORKFLOW — FOLLOW THIS EXACT ORDER:
+1. If user gives a blueprint title: call search_swipes ONCE to get the UUID
+2. Call create_content with the title and client
+3. Call generate_outline with contentUUID + blueprintSwipeUUID
+4. The engine auto-loads 15 swipes, client profile, lessons — you do NOT need to search manually
+5. Do NOT call get_swipe_analysis, list_client_memory, get_idea, or search extra swipes before generate_outline
+6. NEVER ask the user for data in the client profile (revenue, properties, numbers — it's all in Block 2)
 
 WRITING QUALITY:
 - No generic openers, no filler ("delve", "unleash", "unlock", "game-changer")

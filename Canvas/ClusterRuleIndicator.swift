@@ -18,9 +18,7 @@ struct ClusterRuleIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if ruleCount > 0 || isHovered {
-            indicatorPill
-        }
+        indicatorPill
     }
 
     // MARK: - Pill

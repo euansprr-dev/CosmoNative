@@ -58,6 +58,8 @@ export async function createAutomation(args: Record<string, any>): Promise<strin
       : [],
   });
 
+  if (!atom) return jsonError('Failed to create automation atom in database');
+
   return jsonEncode({
     success: true,
     uuid: atom.uuid,

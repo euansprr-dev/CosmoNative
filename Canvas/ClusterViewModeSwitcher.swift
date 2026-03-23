@@ -16,6 +16,8 @@ struct ClusterInspectorPanel: View {
     let onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showRecipePopover = false
+    @State private var clusterRules: [AutomationRule] = []
     private let panelWidth: CGFloat = 320
 
     var body: some View {
@@ -25,6 +27,8 @@ struct ClusterInspectorPanel: View {
             colorSection
             sectionDivider
             viewModeSection
+            sectionDivider
+            automationSection
             sectionDivider
             deleteSection
         }
@@ -211,6 +215,122 @@ struct ClusterInspectorPanel: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Automation Section
+
+    private var automationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            automationSectionHeader
+            automationSectionContent
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .onAppear { loadClusterRules() }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.ruleCreated)) { _ in
+            loadClusterRules()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.ruleDeleted)) { _ in
+            loadClusterRules()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.ruleUpdated)) { _ in
+            loadClusterRules()
+        }
+    }
+
+    private var automationSectionHeader: some View {
+        HStack(spacing: 6) {
+            Text("AUTOMATIONS")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+                .tracking(0.8)
+
+            // Active count pill — matches the existing UI density
+            if !clusterRules.isEmpty {
+                Text("\(clusterRules.filter(\.isEnabled).count)")
+                    .font(.system(size: 9, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(cluster.color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule().fill(cluster.color.opacity(0.12))
+                    )
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Add Rule", systemImage: "plus") {
+                showRecipePopover = true
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(DS.accent)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(DS.accentSoft)
+            )
+            .accessibilityLabel("Add automation rule to \(cluster.name)")
+            .popover(isPresented: $showRecipePopover) {
+                AutomationRecipePopover(
+                    clusterId: cluster.id.uuidString,
+                    clusterName: cluster.name,
+                    clusterColor: cluster.color,
+                    onDismiss: {
+                        showRecipePopover = false
+                        loadClusterRules()
+                    }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var automationSectionContent: some View {
+        if clusterRules.isEmpty {
+            automationEmptyState
+        } else {
+            VStack(spacing: 4) {
+                ForEach(clusterRules, id: \.uuid) { rule in
+                    InspectorRuleRow(
+                        rule: rule,
+                        accentColor: cluster.color,
+                        onToggle: {
+                            Task {
+                                try? await AutomationDispatcher.shared.toggleRule(uuid: rule.uuid)
+                                loadClusterRules()
+                            }
+                        },
+                        onDelete: {
+                            Task {
+                                try? await AutomationDispatcher.shared.deleteRule(uuid: rule.uuid)
+                                loadClusterRules()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private var automationEmptyState: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.slash")
+                .font(.system(size: 12, weight: .light))
+                .foregroundStyle(DS.textMuted.opacity(0.4))
+
+            Text("No rules yet")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(DS.textMuted)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func loadClusterRules() {
+        clusterRules = AutomationDispatcher.shared.rules(for: cluster.id.uuidString)
+    }
+
     // MARK: - Delete Section
 
     private var deleteSection: some View {
@@ -229,6 +349,123 @@ struct ClusterInspectorPanel: View {
             .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Inspector Rule Row (extracted subview for performance)
+
+/// Compact rule row for the cluster inspector panel.
+/// Uses Button for all interactive elements (VoiceOver-friendly).
+/// Matches the visual density of color swatches and view mode pills.
+private struct InspectorRuleRow: View {
+
+    let rule: AutomationRule
+    let accentColor: Color
+    let onToggle: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Left accent — 3px bar matching block pattern
+            RoundedRectangle(cornerRadius: 1)
+                .fill(rule.isEnabled ? accentColor : DS.textMuted.opacity(0.2))
+                .frame(width: 3, height: 20)
+
+            // Rule info
+            VStack(alignment: .leading, spacing: 1) {
+                Text(rule.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(rule.isEnabled ? DS.text : DS.textMuted)
+                    .lineLimit(1)
+
+                Text(rule.naturalLanguageDescription)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            // Fire count — subtle, right-aligned
+            if rule.fireCount > 0 {
+                HStack(spacing: 2) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 6))
+                    Text("\(rule.fireCount)")
+                        .font(.system(size: 9, weight: .medium))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(DS.textMuted.opacity(0.6))
+            }
+
+            // Toggle — matches the scale of color swatches (22px)
+            Button {
+                if reduceMotion {
+                    onToggle()
+                } else {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                        onToggle()
+                    }
+                }
+            } label: {
+                ZStack {
+                    Capsule()
+                        .fill(rule.isEnabled ? DS.accent : DS.surfaceHover)
+                        .frame(width: 26, height: 15)
+
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 11, height: 11)
+                        .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+                        .offset(x: rule.isEnabled ? 5 : -5)
+
+                    Capsule()
+                        .stroke(rule.isEnabled ? DS.accent : DS.border, lineWidth: 0.5)
+                        .frame(width: 26, height: 15)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(rule.isEnabled ? "Disable \(rule.name)" : "Enable \(rule.name)")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? DS.surfaceHover : DS.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isHovered ? DS.border : DS.borderSubtle, lineWidth: 0.5)
+        )
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+        .contextMenu {
+            Button {
+                onToggle()
+            } label: {
+                Label(
+                    rule.isEnabled ? "Disable" : "Enable",
+                    systemImage: rule.isEnabled ? "pause.circle" : "play.circle"
+                )
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete Rule", systemImage: "trash")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(rule.name), \(rule.isEnabled ? "enabled" : "disabled")")
+        .accessibilityHint("Right-click for options")
     }
 }
 

@@ -394,6 +394,8 @@ export function createProgressTracker(chatId: string, threadId?: number) {
   let flushTimeout: NodeJS.Timeout | null = null;
   let flushing = false; // Lock to prevent race condition
   let dirty = false;    // Flag to re-flush after current flush completes
+  let toolCount = 0;
+  const startTime = Date.now();
 
   function buildText(isFinal: boolean): string {
     const parts: string[] = [];
@@ -436,8 +438,13 @@ export function createProgressTracker(chatId: string, threadId?: number) {
   const callback: ToolProgressCallback = (event) => {
     if (event.type === 'started') {
       activeLine = event.label;
-      scheduleFlush();
+      // Only show progress for longer workflows (>3 tools or slow actions)
+      // For fast actions, we skip the progress message entirely
+      if (toolCount >= 3) {
+        scheduleFlush();
+      }
     } else if (event.type === 'completed') {
+      toolCount++;
       const phase = PHASE_MAP[event.tool];
       if (phase && completedPhases.has(phase)) return; // Dedup
       if (phase) completedPhases.add(phase);
@@ -446,12 +453,33 @@ export function createProgressTracker(chatId: string, threadId?: number) {
       if (event.preview) line += ` (${event.preview})`;
       completedLines.push(line);
       activeLine = null;
-      scheduleFlush();
+      // Start showing progress after 3rd tool completes
+      if (toolCount >= 3) {
+        scheduleFlush();
+      }
     }
   };
 
   const finalize = async (): Promise<void> => {
     if (flushTimeout) { clearTimeout(flushTimeout); flushTimeout = null; }
+    const elapsed = Date.now() - startTime;
+
+    // For fast actions (≤3 tools or < 5 seconds), delete progress message
+    // instead of showing it — the final response is enough
+    if (toolCount <= 3 || elapsed < 5000) {
+      if (messageId) {
+        // Delete the progress message silently
+        try {
+          await fetch(
+            `https://api.telegram.org/bot${config.telegramBotToken}/deleteMessage`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, message_id: messageId }) }
+          );
+        } catch {}
+      }
+      return;
+    }
+
+    // For longer workflows, finalize with ✅ Done header
     if (completedLines.length > 0) {
       await flush(true);
     }

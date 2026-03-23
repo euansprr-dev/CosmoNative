@@ -503,12 +503,26 @@ function getResultPreview(tool: string, result: string): string {
   try {
     const parsed = JSON.parse(result);
     switch (tool) {
-      case 'generate_outline':
-        return parsed.sectionCount ? `${parsed.sectionCount} sections` : '';
-      case 'generate_draft':
-        return parsed.wordCount ? `${parsed.wordCount} words` : '';
+      case 'generate_outline': {
+        const swipes = parsed.swipesLoaded as string[] | undefined;
+        let preview = parsed.sectionCount ? `${parsed.sectionCount} sections` : '';
+        if (swipes && swipes.length > 0) {
+          preview += `\n    Swipes loaded (${swipes.length}):\n` + swipes.map((s: string) => `    ${s}`).join('\n');
+        }
+        return preview;
+      }
+      case 'generate_draft': {
+        const swipes = parsed.swipesLoaded as string[] | undefined;
+        let preview = parsed.wordCount ? `${parsed.wordCount} words` : '';
+        if (swipes && swipes.length > 0 && !preview.includes('Swipes')) {
+          preview += `\n    Swipes loaded (${swipes.length}):\n` + swipes.map((s: string) => `    ${s}`).join('\n');
+        }
+        return preview;
+      }
       case 'generate_hooks':
         return parsed.hookVariants ? `${parsed.hookVariants.length} variants` : '';
+      case 'revise_draft':
+        return parsed.wordCount ? `${parsed.wordCount} words` : '';
       case 'score_draft':
         return parsed.overallConfidence ? `Score: ${parsed.overallConfidence}/100` : '';
       case 'get_client_profile':

@@ -109,7 +109,7 @@ export function modelTierForIntent(intent: AgentIntent): ModelTier {
       return 'strategist';
     case 'draft':
     case 'brainstorm':
-      return 'writer';
+      return 'strategist'; // Sonnet handles tool routing; Opus only used inside writing engine
   }
 }
 

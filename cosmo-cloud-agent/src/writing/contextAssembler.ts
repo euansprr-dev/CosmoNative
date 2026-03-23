@@ -129,6 +129,34 @@ export async function assembleBlock2(
     sections.push(`\n--- VOICE GUIDE ---\n${structured.voiceNotes}`);
   }
 
+  // Top performing posts (real numbers, engagement data — prevents LLM asking for data in profile)
+  const topPosts = structured.topPerformingPosts as any[] | undefined;
+  if (topPosts && topPosts.length > 0) {
+    sections.push('\n--- TOP PERFORMING POSTS (use these numbers as reference) ---');
+    for (const post of topPosts.slice(0, 5)) {
+      const title = post.title || post.transcript?.substring(0, 80) || 'Untitled';
+      const stats: string[] = [];
+      if (post.likes) stats.push(`${post.likes} likes`);
+      if (post.shares) stats.push(`${post.shares} shares`);
+      if (post.views) stats.push(`${post.views} views`);
+      if (post.leads) stats.push(`${post.leads} leads`);
+      if (post.platform) stats.push(post.platform);
+      sections.push(`  "${title}" — ${stats.join(', ')}`);
+      if (post.transcript) {
+        sections.push(`    ${post.transcript.substring(0, 500)}`);
+      }
+    }
+  }
+
+  // Top performing transcripts (full text for voice/style matching)
+  const topTranscripts = structured.topPerformingTranscripts as string[] | undefined;
+  if (topTranscripts && topTranscripts.length > 0 && (!topPosts || topPosts.length === 0)) {
+    sections.push('\n--- CLIENT TOP CONTENT (reference for voice/style) ---');
+    for (let i = 0; i < Math.min(topTranscripts.length, 3); i++) {
+      sections.push(`  Post ${i + 1}: ${topTranscripts[i].substring(0, 800)}`);
+    }
+  }
+
   const content = sections.join('\n');
 
   // Cap at 200K chars (matching Swift)

@@ -209,7 +209,11 @@ export async function searchAtoms(
 ): Promise<Atom[]> {
   const limit = options?.limit ?? 20;
 
-  // Use Postgres FTS via the generated tsvector column
+  // Step 1: ILIKE on title first — best for exact title matches (blueprint lookup)
+  const ilikeResults = await searchAtomsILike(query, options);
+  if (ilikeResults.length > 0) return ilikeResults;
+
+  // Step 2: Fall back to FTS for keyword/semantic search
   let rpcQuery = supabase
     .from('atoms')
     .select('*')
@@ -224,11 +228,35 @@ export async function searchAtoms(
 
   const { data, error } = await rpcQuery;
 
-  if (error) {
-    // Fallback to ILIKE search if FTS fails
-    return searchAtomsILike(query, options);
+  if (error || !data || data.length === 0) {
+    // Step 3: ILIKE on body as last resort
+    return searchAtomsBodyILike(query, options);
   }
 
+  return (data as Atom[]) || [];
+}
+
+async function searchAtomsBodyILike(
+  query: string,
+  options?: { types?: string[]; limit?: number }
+): Promise<Atom[]> {
+  const limit = options?.limit ?? 20;
+  const pattern = `%${query.substring(0, 100)}%`;
+
+  let q = supabase
+    .from('atoms')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_deleted', false)
+    .ilike('body', pattern)
+    .limit(limit)
+    .order('updated_at', { ascending: false });
+
+  if (options?.types && options.types.length > 0) {
+    q = q.in('type', options.types);
+  }
+
+  const { data } = await q;
   return (data as Atom[]) || [];
 }
 

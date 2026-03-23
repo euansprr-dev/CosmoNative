@@ -30,7 +30,7 @@ export const config = {
   },
 
   // Timezone (for task date resolution + heartbeat scheduling on UTC server)
-  timezone: process.env.TIMEZONE || 'UTC',
+  timezone: process.env.TIMEZONE || 'Asia/Ho_Chi_Minh',
 
   // Telegram chat ID for proactive messages (heartbeat, standing instructions)
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',

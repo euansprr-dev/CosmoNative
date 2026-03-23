@@ -22,7 +22,7 @@ const PRIORITY_ORDER: Record<string, number> = {
 function todayDateString(): string {
   // Use TIMEZONE env var for correct "today" in user's timezone (server runs UTC)
   // CRITICAL: If TIMEZONE is not set, tasks will show wrong overdue/today status
-  const tz = process.env.TIMEZONE || 'Europe/London';
+  const tz = process.env.TIMEZONE || 'Asia/Ho_Chi_Minh';
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
     return formatter.format(new Date()); // Returns yyyy-MM-dd
@@ -347,7 +347,7 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
   }
 
   const today = todayDateString();
-  const tz = process.env.TIMEZONE || 'Europe/London';
+  const tz = process.env.TIMEZONE || 'Asia/Ho_Chi_Minh';
   console.log(`  📅 Tasks: today=${today} (tz=${tz}), list=${list}, ${allTasks.length} total tasks`);
 
   let sections: Array<{ name: string; tasks: Record<string, any>[] }> = [];

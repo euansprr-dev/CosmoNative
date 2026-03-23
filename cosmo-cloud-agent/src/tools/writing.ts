@@ -72,7 +72,7 @@ export async function generateOutline(args: Record<string, any>): Promise<string
       hookVariants: hooks,
       sectionCount: outline.length,
       hookCount: hooks.length,
-      swipesUsed: engine.getSwipeTitles(),
+      swipesLoaded: engine.getSwipesSummary(),
       swipeCount: engine.getSwipeCount(),
     });
   } catch (error) {
@@ -129,7 +129,7 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
       format,
       wordCount,
       engineNotes: response,
-      swipesUsed: engine.getSwipeTitles(),
+      swipesLoaded: engine.getSwipesSummary(),
       swipeCount: engine.getSwipeCount(),
     });
   } catch (error) {
@@ -213,7 +213,7 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
       formattedDraft,
       format,
       engineNotes: response,
-      swipesUsed: engine.getSwipeTitles(),
+      swipesLoaded: engine.getSwipesSummary(),
       swipeCount: engine.getSwipeCount(),
     });
   } catch (error) {

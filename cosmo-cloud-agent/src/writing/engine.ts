@@ -50,18 +50,13 @@ export async function getOrCreateEngine(contentUUID: string): Promise<CloudWriti
     if (oldestKey) engineCache.delete(oldestKey);
   }
 
-  // Check existing engine — evict if client changed (Gap #1 fix)
+  // Return cached engine if it exists — conversation context persists across phases
+  // Only evicted on explicit evictEngine() call or TTL expiry
   const existing = engineCache.get(contentUUID);
   if (existing) {
-    const atom = await fetchAtom(contentUUID);
-    const currentClient = atom?.metadata?.clientProfileUUID as string | undefined;
-    if (currentClient && existing.engine.getClientUUID() !== currentClient) {
-      console.log(`🔄 Engine evicted: client changed for ${contentUUID}`);
-      engineCache.delete(contentUUID);
-    } else {
-      existing.lastUsed = now;
-      return existing.engine;
-    }
+    existing.lastUsed = now;
+    console.log(`  ✍️ Reusing cached engine for ${contentUUID} (${existing.engine.getSwipeCount()} swipes, conversation preserved)`);
+    return existing.engine;
   }
 
   const engine = new CloudWritingEngine(contentUUID);
@@ -136,9 +131,20 @@ export class CloudWritingEngine {
       this.messages = structured.writingConversation as WritingMessage[];
     }
 
-    // Select swipes
-    const primaryUUIDs = (meta.inheritedSwipeUUIDs as string[]) || [];
-    this.selectedSwipes = await selectSwipes(this.contentAtom, this.targetFormat, primaryUUIDs);
+    // Select swipes — use stored selection if available (persists across engine re-creation)
+    const storedSwipeUUIDs = meta.selectedSwipeUUIDs as string[] | undefined;
+    if (storedSwipeUUIDs && storedSwipeUUIDs.length > 0) {
+      // Re-load the SAME swipes from a previous session (not random re-selection)
+      this.selectedSwipes = await this.loadSpecificSwipes(storedSwipeUUIDs, (meta.inheritedSwipeUUIDs as string[]) || []);
+      console.log(`  ✍️ Restored ${this.selectedSwipes.length} swipes from previous session`);
+    } else {
+      // First-time selection — weighted random sampling
+      const primaryUUIDs = (meta.inheritedSwipeUUIDs as string[]) || [];
+      this.selectedSwipes = await selectSwipes(this.contentAtom, this.targetFormat, primaryUUIDs);
+      // Persist selection for future re-initialization
+      const selectedUUIDs = this.selectedSwipes.map(s => s.uuid);
+      await updateAtom(this.contentUUID, { metadata: { selectedSwipeUUIDs: selectedUUIDs } });
+    }
 
     // Load lessons for this client
     const lessons = await this.loadLessons();
@@ -608,6 +614,45 @@ export class CloudWritingEngine {
   // ============================================================
   // Load Lessons
   // ============================================================
+
+  private async loadSpecificSwipes(uuids: string[], primaryUUIDs: string[]): Promise<CompressedSwipe[]> {
+    const { selectSwipes } = await import('./swipeSelector');
+    const swipes: CompressedSwipe[] = [];
+    for (const uuid of uuids) {
+      const atom = await fetchAtom(uuid);
+      if (!atom) continue;
+      const isPrimary = primaryUUIDs.includes(uuid);
+      // Re-compress with same format as initial selection
+      const analysis = atom.structured?.swipeAnalysis || atom.structured || {};
+      const fingerprint = (analysis.beatFingerprint as string) || '';
+      const hookText = (analysis.hookText as string) || atom.body?.substring(0, 500) || '';
+      swipes.push({
+        uuid: atom.uuid,
+        title: atom.title || 'Untitled',
+        hookText,
+        hookType: (analysis.hookType as string) || 'Unknown',
+        hookScore: (analysis.hookScore as number) || 5,
+        beatSequence: fingerprint ? fingerprint.split('>').map((b: string) => b.trim()) : [],
+        beatFingerprint: fingerprint,
+        keyTransitions: [],
+        ctaText: '',
+        framework: (analysis.frameworkType as string) || 'Original',
+        format: (atom.metadata?.contentSource as string) || 'Unknown',
+        isPrimary,
+        isClientExample: false,
+        engagementSummary: '',
+        fullBody: atom.body || '',
+        structuralBreakdown: '',
+        persuasionTechniques: ((analysis.persuasionTypes as any[]) || []).slice(0, 5).map((p: any) => typeof p === 'string' ? p : p.type || ''),
+        emotionalArc: ((analysis.emotions as any[]) || []).slice(0, 6).map((e: any) => typeof e === 'string' ? e : e.name || ''),
+        hookScoreReason: (analysis.hookScoreReason as string) || '',
+        hookMechanism: (analysis.hookMechanism as string) || '',
+        structuralRecipe: (analysis.structuralRecipe as string) || '',
+        voiceMarkers: (analysis.voiceMarkers as string[]) || [],
+      });
+    }
+    return swipes;
+  }
 
   private async loadLessons(): Promise<Array<{ rule: string; enforcement: string }>> {
     const all = await fetchAllByType('agent_learning');

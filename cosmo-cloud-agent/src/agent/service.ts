@@ -291,7 +291,12 @@ async function callLLM(params: {
   const apiKey = config.openRouterApiKey || config.agentLLMApiKey;
   const baseUrl = config.agentLLMBaseUrl || config.openRouterBaseUrl;
 
-  // Build OpenAI-compatible messages
+  // Build OpenAI-compatible messages with safety sanitization
+  // Collect all tool_result IDs so we can verify tool_calls have matching results
+  const toolResultIds = new Set(
+    params.messages.filter(m => m.role === 'tool' && m.tool_call_id).map(m => m.tool_call_id!)
+  );
+
   const apiMessages: any[] = [
     { role: 'system', content: params.systemPrompt },
     ...params.messages.map(m => {
@@ -299,7 +304,16 @@ async function callLLM(params: {
         return { role: 'tool', content: m.content, tool_call_id: m.tool_call_id };
       }
       if (m.tool_calls) {
-        return { role: 'assistant', content: m.content || null, tool_calls: m.tool_calls };
+        // Filter out tool_calls that don't have matching tool_results (prevents Anthropic 400 error)
+        const validCalls = m.tool_calls.filter((tc: any) => {
+          const id = tc.id || tc.function?.id || '';
+          return toolResultIds.has(id);
+        });
+        if (validCalls.length === 0) {
+          // All tool_calls orphaned — send as plain assistant message
+          return { role: 'assistant', content: m.content || 'Previous tool calls completed.' };
+        }
+        return { role: 'assistant', content: m.content || null, tool_calls: validCalls };
       }
       return { role: m.role, content: m.content };
     }),

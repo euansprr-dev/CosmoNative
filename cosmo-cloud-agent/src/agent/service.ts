@@ -255,6 +255,19 @@ export async function processMessage(
     compressOldToolResults(messages);
   }
 
+  // Fallback: if loop exhausted iterations without a final response, explain what happened
+  if (!finalResponse && toolsUsed.length > 0) {
+    const hasContent = toolsUsed.includes('create_content');
+    const hasOutline = toolsUsed.includes('generate_outline');
+    const searchCount = toolsUsed.filter(t => t === 'search_swipes').length;
+    if (hasContent && !hasOutline) {
+      finalResponse = `I created the content atom but ran out of processing steps before generating the outline (${searchCount} searches used). Send "continue" and I'll pick up from here.`;
+    } else if (!hasContent) {
+      finalResponse = `I ran out of processing steps before completing the task. ${searchCount} searches were made. Please try again with a simpler request.`;
+    }
+    console.log(`⚠️ Loop exhausted: ${iterations}/${iterationLimit} iterations, tools: ${toolsUsed.join(', ')}`);
+  }
+
   // 7. Save conversation (with summary + linked atoms)
   // Always keep the first user message to ensure loaded conversations
   // start with role=user (required by Anthropic API).

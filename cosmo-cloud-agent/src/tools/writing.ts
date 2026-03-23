@@ -3,7 +3,7 @@
 // PORTING SOURCE: AgentToolExecutor.swift lines 2037-2500
 // Phase 3: Real engine implementation (replaces stubs)
 
-import { fetchAtom, updateAtom, fuzzyFindClient } from '../db/queries';
+import { fetchAtom, updateAtom, fuzzyFindClient, searchAtoms, isSwipeFileAtom } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 import { getOrCreateEngine, evictEngine } from '../writing/engine';
 import { renderDraftForDisplay, detectContentFormat } from '../writing/types';
@@ -30,6 +30,20 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   if (args.blueprintSwipeUUIDs && Array.isArray(args.blueprintSwipeUUIDs)) {
     for (const uuid of args.blueprintSwipeUUIDs) {
       if (uuid && !blueprintUUIDs.includes(uuid)) blueprintUUIDs.push(uuid);
+    }
+  }
+
+  // Resolve blueprint TITLES to UUIDs (so agent doesn't need search_swipes)
+  if (args.blueprintTitles && Array.isArray(args.blueprintTitles)) {
+    for (const title of args.blueprintTitles) {
+      const results = await searchAtoms(title, { types: ['research'], limit: 3 });
+      const swipe = results.find(a => isSwipeFileAtom(a));
+      if (swipe && !blueprintUUIDs.includes(swipe.uuid)) {
+        blueprintUUIDs.push(swipe.uuid);
+        console.log(`    ✍️ Resolved blueprint: "${title}" → ${swipe.uuid}`);
+      } else {
+        console.log(`    ⚠️ Blueprint not found: "${title}"`);
+      }
     }
   }
 

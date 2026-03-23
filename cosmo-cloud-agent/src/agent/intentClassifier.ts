@@ -130,6 +130,6 @@ export function maxToolIterations(intent: AgentIntent): number {
     case 'analyze': return 10;
     case 'brainstorm': return 12;
     case 'strategy': return 12;
-    case 'draft': return 16;
+    case 'draft': return 24;
   }
 }

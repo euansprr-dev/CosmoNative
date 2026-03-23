@@ -2,7 +2,7 @@
 // Content tools — 6 tools ported from AgentToolExecutor.swift
 // PORTING SOURCE: AgentToolExecutor.swift lines 1412-1570
 
-import { fetchAtom, fetchAllByType, createAtom, updateAtom, fuzzyFindClient, atomToDict } from '../db/queries';
+import { fetchAtom, fetchAllByType, createAtom, updateAtom, fuzzyFindClient, atomToDict, searchAtoms, isSwipeFileAtom } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 
 // ============================================================
@@ -113,8 +113,25 @@ export async function createContent(args: Record<string, any>): Promise<string> 
     links.push({ type: 'contentToClient', uuid: clientUUID, entityType: 'client_profile' });
   }
 
-  const swipeUUIDs = args.swipeUUIDs as string[] | undefined;
+  let swipeUUIDs = args.swipeUUIDs as string[] | undefined;
   const hooks = args.hooks as string[] | undefined;
+
+  // Resolve blueprint TITLES to UUIDs (so agent doesn't need search_swipes)
+  const blueprintTitles = args.blueprintTitles as string[] | undefined;
+  if (blueprintTitles && blueprintTitles.length > 0) {
+    const resolved: string[] = [];
+    for (const title of blueprintTitles) {
+      const results = await searchAtoms(title, { types: ['research'], limit: 3 });
+      const swipe = results.find(a => isSwipeFileAtom(a));
+      if (swipe) {
+        resolved.push(swipe.uuid);
+        console.log(`    📎 Blueprint linked: "${title}" → ${swipe.uuid}`);
+      }
+    }
+    if (resolved.length > 0) {
+      swipeUUIDs = [...(swipeUUIDs || []), ...resolved];
+    }
+  }
 
   const atom = await createAtom({
     type: 'content',

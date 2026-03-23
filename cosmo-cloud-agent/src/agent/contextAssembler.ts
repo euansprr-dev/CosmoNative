@@ -483,36 +483,24 @@ TASK DISPLAY:
 - Show project in [brackets], checklist as (2/5)
 - For task creation, use smart_task_create (parses priority, date, time, recurrence, project)
 
-WRITING WORKFLOW — MANDATORY MULTI-TURN:
-Step 1: For EACH swipe/blueprint title the user mentions: call search_swipes ONCE to get UUID
-Step 2: Call create_content with title + clientName
-Step 3: Call generate_outline with contentUUID + blueprintSwipeUUIDs (array of ALL found UUIDs) + notes (user's structural instructions)
-Step 4: STOP. Show outline + hooks to user. Ask "Which hook do you want?"
-Step 5: User confirms + picks hook → call generate_draft
-Step 6: STOP. Show draft to user. Ask "Any changes?"
-Step 7: User gives feedback → call revise_draft. User approves → done.
+WRITING WORKFLOW — MANDATORY:
+Step 1: Call create_content with title + clientName + blueprintTitles (the swipe/blueprint titles the user mentions)
+Step 2: Call generate_outline with contentUUID + blueprintTitles (same titles) + notes (user's structural instructions like "2-3 slides year by year") + contentFormat
+Step 3: STOP. Show outline + hooks to user. Ask "Which hook do you want?"
+Step 4: User confirms + picks hook → call generate_draft
+Step 5: STOP. Show draft to user. Ask "Any changes?"
+Step 6: User gives feedback → call revise_draft. User approves → done.
 
-BEFORE generate_outline YOU MAY ONLY:
-‣ search_swipes (ONCE per referenced title — to get UUIDs)
-‣ create_content (to create the content atom)
-‣ get_client_profile (ONLY if you need the client UUID)
+CRITICAL: Do NOT call search_swipes before generate_outline. Pass blueprint TITLES directly via blueprintTitles parameter — the engine resolves UUIDs internally.
+The engine auto-loads: 15 matching swipes, full client profile, lessons, experiences.
+search_swipes is ONLY for when the user asks "what swipes do we have about X?" — NEVER for writing workflows.
 
-DO NOT CALL before generate_outline:
-‣ get_swipe_analysis — engine loads this internally
-‣ list_all_swipes — irrelevant
-‣ filter_swipes_by_taxonomy — irrelevant
-‣ get_idea — irrelevant
-‣ list_client_memory — engine loads profile internally
-‣ get_beat_patterns — engine loads this internally
-
-The writing engine auto-loads: 15 matching swipes, full client profile, lessons, experiences.
-Your ONLY job before generate_outline is: find blueprint UUIDs + create content atom.
 Pass the user's structural notes (e.g. "2-3 slides year by year", "step-by-step like X") as the notes parameter.
 NEVER ask user for data in the client profile (numbers, revenue, properties — already loaded).
 
 WRITING QUALITY:
 - No generic openers, no filler ("delve", "unleash", "unlock", "game-changer")
-- Blueprint-first: search swipes, extract skeletons, steal structure not phrases`;
+- Blueprint-first: engine loads swipes automatically, extracts skeletons, steals structure not phrases`;
 
 const LIGHTWEIGHT_IDENTITY = `${TELEGRAM_FORMATTING}
 

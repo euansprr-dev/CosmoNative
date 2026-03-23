@@ -41,7 +41,7 @@ function todayDateString(): string {
  * (rescheduled to today) should show as TODAY, not OVERDUE.
  * This matches the Mac's CommandCenterDashboardViewModel behavior.
  */
-function getTaskDate(meta: Record<string, any>): string | null {
+export function getTaskDate(meta: Record<string, any>): string | null {
   const raw = (meta.whenDate ?? meta.focusDate ?? meta.dueDate ?? null) as string | null;
   if (!raw) return null;
   return raw.split('T')[0];
@@ -525,7 +525,7 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
  * Lazy recurrence generation: find recurring templates that should fire today
  * but don't yet have a today instance. Create the instance on the fly.
  */
-async function generateTodayRecurrenceInstances(allTasks: Atom[], today: string): Promise<void> {
+export async function generateTodayRecurrenceInstances(allTasks: Atom[], today: string): Promise<void> {
   const templates = allTasks.filter(t => isRecurringTemplate(t.metadata || {}));
   if (templates.length === 0) return;
 

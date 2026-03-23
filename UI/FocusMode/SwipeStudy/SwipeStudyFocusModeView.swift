@@ -2543,6 +2543,10 @@ struct SwipeStudyFocusModeView: View {
                 currentAtom = updated2
             }
             isDeepAnalyzing = false
+
+            // Notify the swipe gallery to reload so the card reflects the updated hookType
+            NotificationCenter.default.post(name: .researchCreated, object: nil,
+                                            userInfo: ["uuid": (currentAtom ?? atom).uuid])
         }
     }
 

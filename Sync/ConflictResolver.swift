@@ -196,6 +196,13 @@ class ConflictResolver {
         insertData.removeValue(forKey: "_version")
         insertData.removeValue(forKey: "fts")
 
+        // Normalize Postgres timestamps (fractional seconds/offsets) to canonical ISO 8601
+        for dateKey in ["created_at", "updated_at"] {
+            if let dateStr = insertData[dateKey] as? String {
+                insertData[dateKey] = ISO8601.normalize(dateStr)
+            }
+        }
+
         // Fill NOT NULL defaults for canvas_blocks (Postgres allows null, GRDB doesn't)
         if table == "canvas_blocks" {
             sanitizeCanvasBlockDefaults(&insertData)
@@ -232,6 +239,13 @@ class ConflictResolver {
         updateData.removeValue(forKey: "_source")
         updateData.removeValue(forKey: "_version")
         updateData.removeValue(forKey: "fts")
+
+        // Normalize Postgres timestamps (fractional seconds/offsets) to canonical ISO 8601
+        for dateKey in ["created_at", "updated_at"] {
+            if let dateStr = updateData[dateKey] as? String {
+                updateData[dateKey] = ISO8601.normalize(dateStr)
+            }
+        }
 
         // Fill NOT NULL defaults for canvas_blocks
         if table == "canvas_blocks" {

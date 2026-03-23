@@ -318,6 +318,12 @@ class SyncEngine: ObservableObject {
                 }
             }
         }
+        // Normalize Postgres timestamps (fractional seconds/offsets) to canonical ISO 8601
+        for dateKey in ["created_at", "updated_at"] {
+            if let dateStr = converted[dateKey] as? String {
+                converted[dateKey] = ISO8601.normalize(dateStr)
+            }
+        }
         // Remove Postgres-only fields
         converted.removeValue(forKey: "user_id")
         converted.removeValue(forKey: "_source")

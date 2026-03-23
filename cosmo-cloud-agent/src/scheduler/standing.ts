@@ -7,6 +7,7 @@ import { fetchAllByType, updateAtom, Atom } from '../db/queries';
 import { processMessage } from '../agent/service';
 import { getProactiveChatId } from '../telegram/webhook';
 import { config } from '../config';
+import { generateTodayRecurrenceInstances, getTaskDate } from '../tools/tasks';
 
 let schedulerTask: cron.ScheduledTask | null = null;
 const heartbeatTasks: cron.ScheduledTask[] = [];
@@ -70,17 +71,36 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
   console.log(`💓 Heartbeat (${slot}): building check-in...`);
 
   try {
-    const allTasks = await fetchAllByType('task', { limit: 500 });
+    // Generate recurring task instances before filtering (mirrors get_tasks('today') in tasks.ts)
+    let allTasks = await fetchAllByType('task', { limit: 500 });
     const todayStr = getTodayString();
 
-    // Today's incomplete tasks (using whenDate > focusDate > dueDate priority)
-    const todayTasks = allTasks.filter(a => {
+    await generateTodayRecurrenceInstances(allTasks, todayStr);
+    // Re-fetch to include newly created recurring instances
+    allTasks = await fetchAllByType('task', { limit: 500 });
+
+    // Filter to incomplete, non-template tasks
+    const incomplete = allTasks.filter(a => {
       const meta = a.metadata || {};
       if (meta.isCompleted) return false;
       if (meta.recurrence && !meta.recurrenceParentUUID) return false; // Skip templates
-      const taskDate = getTaskDateStr(meta);
-      return taskDate === todayStr;
+      return true;
     });
+
+    // Separate into overdue / today (using whenDate > focusDate > dueDate priority)
+    const overdueTasks: Atom[] = [];
+    const todayTasks: Atom[] = [];
+
+    for (const task of incomplete) {
+      const meta = task.metadata || {};
+      const taskDate = getTaskDate(meta);
+
+      if (taskDate && taskDate < todayStr) {
+        overdueTasks.push(task);
+      } else if (taskDate === todayStr) {
+        todayTasks.push(task);
+      }
+    }
 
     // Completed today
     const completedToday = allTasks.filter(a => {
@@ -90,9 +110,10 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
       return completedAt === todayStr;
     }).length;
 
-    const totalToday = todayTasks.length + completedToday;
+    const remainingCount = todayTasks.length + overdueTasks.length;
+    const totalToday = remainingCount + completedToday;
 
-    // Partition into scheduled / unscheduled
+    // Partition today's tasks into scheduled / unscheduled
     const scheduled: Array<{ title: string; priority: string; time: string }> = [];
     const unscheduled: Array<{ title: string; priority: string }> = [];
 
@@ -110,22 +131,44 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
       }
     }
 
+    // Overdue list
+    const overdue: Array<{ title: string; priority: string; date: string }> = [];
+    for (const task of overdueTasks) {
+      const meta = task.metadata || {};
+      overdue.push({
+        title: task.title || 'Untitled',
+        priority: priorityEmoji(meta.priority as string || 'medium'),
+        date: getTaskDate(meta) || 'unknown',
+      });
+    }
+
     // Sort
     scheduled.sort((a, b) => a.time.localeCompare(b.time));
     const pOrder: Record<string, number> = { '🔴': 0, '🟠': 1, '🟡': 2, '⚪': 3 };
     unscheduled.sort((a, b) => (pOrder[a.priority] ?? 4) - (pOrder[b.priority] ?? 4));
+    overdue.sort((a, b) => (pOrder[a.priority] ?? 4) - (pOrder[b.priority] ?? 4));
 
     // Build message
     const lines: string[] = [];
     lines.push(GREETINGS[slot]);
     lines.push('');
 
-    if (todayTasks.length === 0 && completedToday === 0) {
+    if (remainingCount === 0 && completedToday === 0) {
       lines.push('No tasks scheduled for today. Enjoy the free time or capture some ideas.');
     } else {
-      lines.push(`${todayTasks.length} task${todayTasks.length === 1 ? '' : 's'} remaining today:`);
+      lines.push(`${remainingCount} task${remainingCount === 1 ? '' : 's'} remaining today:`);
 
       let num = 1;
+
+      if (overdue.length > 0) {
+        lines.push('');
+        lines.push('⚠️ OVERDUE');
+        for (const t of overdue) {
+          lines.push(`${num}. ${t.priority} ${t.title} — from ${t.date}`);
+          num++;
+        }
+      }
+
       if (scheduled.length > 0) {
         lines.push('');
         lines.push('⏰ SCHEDULED');
@@ -150,7 +193,7 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
 
     // Contextual message per time slot
     lines.push('');
-    lines.push(getContextualMessage(slot, todayTasks.length, completedToday, totalToday));
+    lines.push(getContextualMessage(slot, remainingCount, completedToday, totalToday));
 
     const message = lines.join('\n');
 
@@ -299,12 +342,6 @@ function getTodayString(): string {
   } catch {
     return new Date().toISOString().split('T')[0];
   }
-}
-
-function getTaskDateStr(meta: Record<string, any>): string | null {
-  const raw = (meta.whenDate ?? meta.focusDate ?? meta.dueDate ?? null) as string | null;
-  if (!raw) return null;
-  return raw.split('T')[0];
 }
 
 function priorityEmoji(priority: string): string {

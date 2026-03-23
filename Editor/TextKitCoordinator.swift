@@ -11,16 +11,41 @@ fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
     func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool
 }
 
+fileprivate extension NSView {
+    func nearestAncestorScrollView(excluding excluded: NSScrollView? = nil) -> NSScrollView? {
+        var currentSuperview: NSView? = superview
+        while let view = currentSuperview {
+            if let scrollView = view as? NSScrollView, scrollView !== excluded {
+                return scrollView
+            }
+            currentSuperview = view.superview
+        }
+        return nil
+    }
+}
+
 // MARK: - Scroll-Transparent NSScrollView
 
 /// When `forwardsScrollEvents` is true, scroll wheel events pass through to the
 /// next responder (the parent SwiftUI ScrollView) instead of being consumed.
 final class CosmoScrollView: NSScrollView {
     var forwardsScrollEvents: Bool = false
+    var intrinsicHeight: CGFloat?
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: intrinsicHeight ?? NSView.noIntrinsicMetric
+        )
+    }
 
     override func scrollWheel(with event: NSEvent) {
         if forwardsScrollEvents {
-            nextResponder?.scrollWheel(with: event)
+            if let ancestorScrollView = nearestAncestorScrollView(excluding: self) {
+                ancestorScrollView.scrollWheel(with: event)
+            } else {
+                nextResponder?.scrollWheel(with: event)
+            }
         } else {
             super.scrollWheel(with: event)
         }
@@ -110,8 +135,11 @@ final class CosmoTextView: NSTextView {
             // Let the enclosing NSScrollView handle scrolling within the block
             super.scrollWheel(with: event)
         } else {
-            // Forward scroll events up the responder chain (canvas zoom)
-            if let scrollView = enclosingScrollView {
+            // Forward scroll events to the nearest ancestor scroll view so the
+            // surrounding SwiftUI page scrolls as one unit.
+            if let ancestorScrollView = nearestAncestorScrollView(excluding: enclosingScrollView) {
+                ancestorScrollView.scrollWheel(with: event)
+            } else if let scrollView = enclosingScrollView {
                 scrollView.nextResponder?.scrollWheel(with: event)
             } else {
                 super.scrollWheel(with: event)
@@ -1670,6 +1698,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 minimum = 0
             }
             let newHeight = max(minimum, measuredHeight)
+            if !parent.scrollsInternally,
+               let scrollView = textView.enclosingScrollView as? CosmoScrollView {
+                let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
+                if textView.frame.height != newHeight || textView.frame.width != currentWidth {
+                    textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
+                }
+                if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
+                    scrollView.intrinsicHeight = newHeight
+                    scrollView.invalidateIntrinsicContentSize()
+                }
+                let clipView = scrollView.contentView
+                if clipView.bounds.origin != .zero {
+                    clipView.scroll(to: .zero)
+                    scrollView.reflectScrolledClipView(clipView)
+                }
+            }
             // Only notify when height changes by >1pt to prevent sub-pixel jitter
             guard abs(newHeight - lastReportedHeight) > 1.0 else { return }
             lastReportedHeight = newHeight

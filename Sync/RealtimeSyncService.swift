@@ -175,6 +175,12 @@ final class RealtimeSyncService {
                 }
             }
         }
+        // Normalize Postgres timestamps (fractional seconds/offsets) to canonical ISO 8601
+        for dateKey in ["created_at", "updated_at"] {
+            if let dateStr = converted[dateKey] as? String {
+                converted[dateKey] = ISO8601.normalize(dateStr)
+            }
+        }
         converted.removeValue(forKey: "user_id")
         converted.removeValue(forKey: "_source")
         converted.removeValue(forKey: "fts")

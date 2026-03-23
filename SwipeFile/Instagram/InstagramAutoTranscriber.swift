@@ -1521,7 +1521,7 @@ final class InstagramAutoTranscriber: Sendable {
     ) async -> [TranscriptSlide] {
         guard !rawSlides.isEmpty else { return [] }
 
-        let postProcessed = postProcessSlides(rawSlides, contentType: contentType)
+        let postProcessed = postProcessSlides(rawSlides, contentType: contentType, isCarousel: isCarousel)
         let needsAIRefinement = contentType != .voiceoverOnly &&
             postProcessed.contains { ($0.source ?? .manual) != .speechAudio }
 
@@ -1595,11 +1595,10 @@ final class InstagramAutoTranscriber: Sendable {
         let lineBreakRule: String
         if isCarousel {
             lineBreakRule = """
-            6. PRESERVE intentional line breaks from the original slide. Carousel slides often have \
-            deliberate formatting — bullet points, short punchy lines, lists, or headers on separate lines. \
-            Keep those line breaks. Only join lines that are clearly a single sentence fragmented by OCR. \
-            However, if multiple lines are clearly part of the same flowing paragraph (full sentences that \
-            continue from one line to the next), join them into one paragraph.
+            6. PRESERVE line breaks between sentences. Each sentence should be on its own line. \
+            Do NOT merge sentences into flowing paragraphs. \
+            However, if a single sentence is split across multiple lines due to OCR fragmentation, \
+            join those fragments into one line.
             7. NEVER remove text that could be part of the creator's core message. When in doubt about \
             whether text is background/watermark vs. core content, KEEP IT. Only remove text you are \
             highly confident is a watermark, account handle overlay, or UI element.
@@ -1726,13 +1725,14 @@ final class InstagramAutoTranscriber: Sendable {
 
     func postProcessSlides(
         _ slides: [TranscriptSlide],
-        contentType: TranscriptionContentType
+        contentType: TranscriptionContentType,
+        isCarousel: Bool = false
     ) -> [TranscriptSlide] {
         guard !slides.isEmpty else { return [] }
 
         var sanitized: [TranscriptSlide] = slides.map { slide in
             var updated = slide
-            let cleaned = sanitizeSlideText(slide.text)
+            let cleaned = sanitizeSlideText(slide.text, isCarousel: isCarousel)
             updated.text = cleaned.isEmpty
                 ? slide.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 : cleaned
@@ -1765,7 +1765,7 @@ final class InstagramAutoTranscriber: Sendable {
         return result
     }
 
-    private func sanitizeSlideText(_ text: String) -> String {
+    private func sanitizeSlideText(_ text: String, isCarousel: Bool = false) -> String {
         let rawLines = text
             .components(separatedBy: .newlines)
             .map {
@@ -1782,7 +1782,7 @@ final class InstagramAutoTranscriber: Sendable {
                 #endif
                 continue
             }
-            if let last = mergedLines.last, shouldJoinLine(previous: last, next: line) {
+            if let last = mergedLines.last, shouldJoinLine(previous: last, next: line, isCarousel: isCarousel) {
                 mergedLines.removeLast()
                 let joiner = last.hasSuffix("-") ? "" : " "
                 let stitched = (last + joiner + line).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
@@ -1793,14 +1793,40 @@ final class InstagramAutoTranscriber: Sendable {
         }
 
         mergedLines = deduplicateLinesPreservingOrder(mergedLines)
+
+        // For carousels: split joined text at sentence boundaries for readability.
+        // After OCR lines are merged, sentences run together — split them apart so
+        // each sentence gets its own line.
+        if isCarousel {
+            mergedLines = mergedLines.flatMap { line -> [String] in
+                splitAtSentenceBoundaries(line)
+            }
+        }
+
         let joined = mergedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         return normalizeStandaloneYearArtifacts(in: joined)
     }
 
-    private func shouldJoinLine(previous: String, next: String) -> Bool {
+    /// Splits a line at sentence boundaries (". ", "! ", "? " followed by uppercase)
+    /// into separate lines for carousel readability.
+    private func splitAtSentenceBoundaries(_ text: String) -> [String] {
+        guard text.count > 1 else { return [text] }
+
+        let pattern = #"(?<=[.!?])\s+(?=[A-Z])"#
+
+        let parts = text
+            .replacingOccurrences(of: pattern, with: "\n", options: .regularExpression)
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        return parts.isEmpty ? [text] : parts
+    }
+
+    private func shouldJoinLine(previous: String, next: String, isCarousel: Bool = false) -> Bool {
         if previous.hasSuffix("-") { return true }
-        // Don't join numbered list items (e.g. "50. Mississippi ($186,618)")
-        let numberedPattern = #"^\d+[\.\)]"#
+        // Don't join numbered list items (e.g. "50. Mississippi ($186,618)" or "1- Item")
+        let numberedPattern = #"^\d+[\.\)\-]\s?"#
         if previous.range(of: numberedPattern, options: .regularExpression) != nil ||
             next.range(of: numberedPattern, options: .regularExpression) != nil {
             return false
@@ -1811,9 +1837,22 @@ final class InstagramAutoTranscriber: Sendable {
             previous.range(of: bulletPattern, options: .regularExpression) != nil {
             return false
         }
-        if next.count <= 3 { return true }
+        if next.count <= 3 {
+            // For carousels, don't merge short words starting with uppercase (likely list items)
+            if isCarousel, let first = next.first, first.isUppercase { return false }
+            return true
+        }
         if next.first?.isLowercase == true && !endsSentence(previous) { return true }
-        if previous.count <= 14 && next.count <= 14 { return true }
+        if previous.count <= 14 && next.count <= 14 {
+            // For carousels, don't merge two short lines if both start with uppercase
+            // (likely separate list items, not a wrapped sentence)
+            if isCarousel,
+               let prevFirst = previous.first, prevFirst.isUppercase,
+               let nextFirst = next.first, nextFirst.isUppercase {
+                return false
+            }
+            return true
+        }
         return false
     }
 

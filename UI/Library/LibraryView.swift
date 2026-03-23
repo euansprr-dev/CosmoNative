@@ -491,6 +491,7 @@ struct LibraryItem: Identifiable {
     let typeName: String
     let relativeDate: String
     let childCount: Int
+    let createdAt: Date
     let updatedAt: Date
     let preview: String?
     let thumbnailURL: String?
@@ -531,8 +532,8 @@ struct LibraryItem: Identifiable {
         return "\(Int(interval / 604800))w"
     }
 
-    private static func parseUpdatedAt(_ value: String) -> Date? {
-        ISO8601DateFormatter().date(from: value)
+    private static func parseISO8601Date(_ value: String) -> Date? {
+        ISO8601.date(from: value)
     }
 
     init(atom: Atom, childCount: Int = 0, project: Atom? = nil, thinkspaces: [Thinkspace] = []) {
@@ -624,7 +625,9 @@ struct LibraryItem: Identifiable {
 
         self.childCount = childCount
 
-        if let date = Self.parseUpdatedAt(atom.updatedAt) {
+        self.createdAt = Self.parseISO8601Date(atom.createdAt) ?? Date()
+
+        if let date = Self.parseISO8601Date(atom.updatedAt) {
             self.updatedAt = date
             self.relativeDate = Self.relativeDateString(from: date)
         } else {
@@ -646,6 +649,7 @@ struct LibraryItem: Identifiable {
             self.color = DS.accent
         }
         self.typeName = "Thinkspace"
+        self.createdAt = thinkspace.lastOpened
         self.updatedAt = thinkspace.lastOpened
         self.relativeDate = Self.relativeDateString(from: thinkspace.lastOpened)
         self.kind = .thinkspace
@@ -1009,7 +1013,9 @@ final class LibraryViewModel: ObservableObject {
         }
 
         switch sortMode {
-        case .dateAdded, .lastModified:
+        case .dateAdded:
+            return lhs.createdAt > rhs.createdAt
+        case .lastModified:
             return lhs.updatedAt > rhs.updatedAt
         case .name:
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending

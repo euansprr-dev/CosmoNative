@@ -163,8 +163,18 @@ enum ISO8601 {
         CosmoDateFormatters.iso8601.string(from: date)
     }
 
-    /// Parse ISO 8601 string to Date
+    /// Parse ISO 8601 string to Date (tries standard, then fractional seconds)
     static func date(from string: String) -> Date? {
         CosmoDateFormatters.iso8601.date(from: string)
+            ?? CosmoDateFormatters.iso8601WithFractionalSeconds.date(from: string)
+    }
+
+    /// Parse any ISO 8601 variant and re-emit in canonical format ("2024-01-15T14:30:00Z").
+    /// Returns the original string if parsing fails.
+    static func normalize(_ string: String) -> String {
+        if let date = date(from: string) {
+            return CosmoDateFormatters.iso8601.string(from: date)
+        }
+        return string
     }
 }

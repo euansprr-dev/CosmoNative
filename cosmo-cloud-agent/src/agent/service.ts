@@ -158,11 +158,14 @@ export async function processMessage(
       fullDynamic += `\n\n${activeItems}`;
     }
 
+    // Sanitize messages before sending — remove orphaned tool_calls without matching tool_results
+    const sanitizedMessages = sanitizeToolPairs(messages);
+
     // Call LLM
     const llmResponse = await callLLM({
       model,
       systemPrompt: `${systemPrompt.cached}\n\n${fullDynamic}`,
-      messages,
+      messages: sanitizedMessages,
       tools,
     });
 
@@ -364,6 +367,56 @@ async function callLLM(params: {
 // ============================================================
 // Helpers
 // ============================================================
+
+/**
+ * Remove orphaned tool_calls that don't have matching tool_results.
+ * Anthropic API rejects messages with tool_use blocks that aren't followed by tool_result.
+ * This happens when conversation history is loaded from a previous session where
+ * tool results were compressed or the session was interrupted.
+ */
+function sanitizeToolPairs(messages: AgentMessage[]): AgentMessage[] {
+  const result: AgentMessage[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    // If this is an assistant message with tool_calls, check that ALL tool_calls
+    // have matching tool_result messages following it
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      const toolCallIds = new Set(
+        msg.tool_calls.map((tc: any) => tc.id || tc.function?.id || '')
+      );
+
+      // Look ahead for matching tool_results
+      let allMatched = true;
+      const matchedResults: AgentMessage[] = [];
+
+      for (let j = i + 1; j < messages.length && matchedResults.length < toolCallIds.size; j++) {
+        if (messages[j].role === 'tool' && messages[j].tool_call_id) {
+          if (toolCallIds.has(messages[j].tool_call_id!)) {
+            matchedResults.push(messages[j]);
+          }
+        } else if (messages[j].role === 'user' || (messages[j].role === 'assistant' && !messages[j].tool_call_id)) {
+          break; // Hit a new turn — stop looking
+        }
+      }
+
+      if (matchedResults.length < toolCallIds.size) {
+        // Orphaned tool_calls — convert to plain assistant message
+        result.push({
+          role: 'assistant',
+          content: msg.content || '[Tool calls from previous session]',
+        });
+        // Skip the orphaned tool_result messages too
+        continue;
+      }
+    }
+
+    result.push(msg);
+  }
+
+  return result;
+}
 
 function compressOldToolResults(messages: AgentMessage[]): void {
   let toolResultCount = 0;

@@ -67,7 +67,7 @@ export async function generateOutline(args: Record<string, any>): Promise<string
     return jsonEncode({
       success: true,
       contentUUID,
-      message: response || 'Outline generated via cloud writing engine.',
+      message: 'STOP HERE. Show this outline and hook variants to the user. Ask which hook they want. Do NOT call generate_draft until user confirms.',
       outlineSections: outline.map((o, i) => `${i + 1}. ${o.title}${o.beatLabel ? ` [${o.beatLabel}]` : ''}`),
       hookVariants: hooks,
       sectionCount: outline.length,
@@ -124,7 +124,7 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
     return jsonEncode({
       success: true,
       contentUUID,
-      message: 'Here is the draft. Display the text below to the user exactly as-is:',
+      message: 'STOP HERE. Show this draft to the user exactly as-is. Ask for feedback. Do NOT call any more tools.',
       formattedDraft,
       format,
       wordCount,
@@ -209,7 +209,7 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
     return jsonEncode({
       success: true,
       contentUUID,
-      message: 'Here is the revised draft:',
+      message: 'STOP HERE. Show this revised draft to the user. Ask if they want more changes.',
       formattedDraft,
       format,
       engineNotes: response,

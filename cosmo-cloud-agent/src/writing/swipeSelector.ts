@@ -42,9 +42,12 @@ export async function selectSwipes(
 
     const isPrimary = primarySwipeUUIDs.includes(swipe.uuid);
 
-    // Axis 1: Format match (0.0 or 1.0)
+    // Axis 1: Format match — HARD EXCLUDE wrong-format (matching Swift guard behavior)
     const swipeFormat = detectSwipeFormat(swipe);
     const formatScore = swipeFormat === targetFamily ? 1.0 : 0.0;
+
+    // Skip wrong-format swipes entirely (primary swipes bypass — user chose them)
+    if (formatScore === 0 && !isPrimary) continue;
 
     // Axis 2: Structural — beat pattern quality
     const fingerprint = analysis.beatFingerprint as string;
@@ -312,24 +315,42 @@ function getAnalysis(atom: Atom): Record<string, any> | null {
 
 function detectSwipeFormat(atom: Atom): FormatFamily {
   const analysis = getAnalysis(atom);
+
+  // Priority 1: AI taxonomy swipeContentFormat (most accurate — user confirmed)
   const format = analysis?.swipeContentFormat as string | undefined;
-  const source = atom.metadata?.contentSource as string | undefined;
-
   if (format) {
-    if (format.toLowerCase().includes('reel') || format.toLowerCase().includes('tiktok')) return 'reel';
-    if (format.toLowerCase().includes('carousel')) return 'carousel_thread';
-    if (format.toLowerCase().includes('thread')) return 'carousel_thread';
-    if (format.toLowerCase().includes('post')) return 'post';
-    if (format.toLowerCase().includes('youtube')) return 'youtube';
+    const f = format.toLowerCase();
+    if (f.includes('reel') || f.includes('tiktok') || f.includes('voiceover')) return 'reel';
+    if (f.includes('carousel')) return 'carousel_thread';
+    if (f.includes('thread')) return 'carousel_thread';
+    if (f.includes('static') || f === 'post') return 'post';
+    if (f.includes('youtube') || f.includes('long form')) return 'youtube';
+    if (f.includes('newsletter')) return 'newsletter';
   }
 
-  if (source) {
-    if (source.toLowerCase().includes('reel') || source.toLowerCase().includes('tiktok')) return 'reel';
-    if (source.toLowerCase().includes('instagram')) return 'carousel_thread';
-    if (source.toLowerCase().includes('youtube')) return 'youtube';
-    if (source.toLowerCase().includes('twitter') || source.toLowerCase().includes('x')) return 'carousel_thread';
-    if (source.toLowerCase().includes('linkedin')) return 'post';
+  // Priority 2: Rich content type signals (capture-time, reliable)
+  const richContent = atom.structured?.richContent || atom.structured;
+  const instagramType = (richContent?.instagramType as string || '').toLowerCase();
+  const sourceType = (richContent?.sourceType as string || '').toLowerCase();
+  const contentType = (richContent?.instagramData?.contentType as string || '').toLowerCase();
+
+  if (instagramType.includes('reel') || sourceType.includes('reel') || contentType.includes('reel')) return 'reel';
+  if (instagramType.includes('carousel') || contentType.includes('carousel')) return 'carousel_thread';
+
+  // Priority 3: URL pattern
+  const sourceUrl = (atom.metadata?.sourceUrl || richContent?.sourceURL) as string | undefined;
+  if (sourceUrl) {
+    if (sourceUrl.includes('/reel/') || sourceUrl.includes('/reels/')) return 'reel';
+    if (sourceUrl.includes('/p/') && richContent?.instagramData?.carouselItems) return 'carousel_thread';
   }
 
-  return 'carousel_thread'; // Default
+  // Priority 4: Generic contentSource (LEAST reliable)
+  const source = (atom.metadata?.contentSource as string || '').toLowerCase();
+  if (source.includes('youtube')) return 'youtube';
+  if (source.includes('tiktok')) return 'reel';
+  if (source.includes('twitter') || source.includes('x.com')) return 'carousel_thread';
+  if (source.includes('linkedin')) return 'post';
+
+  // Default: carousel_thread (safe for Instagram where type is unknown)
+  return 'carousel_thread';
 }

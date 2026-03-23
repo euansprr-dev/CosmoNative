@@ -119,41 +119,81 @@ export async function assembleBlock2(
     }
   }
 
-  // Brand story
-  if (structured.brandStory) {
-    sections.push(`\n--- BRAND STORY ---\n${structured.brandStory}`);
-  }
+  // Client profile documents (story, voice guide, top performing content with real numbers)
+  // Source: ProfileDocument array in metadata.documents or structured.documents
+  // Categories: story, voiceGuide, reel, thread, underperformingReel, underperformingThread
+  const documents = (structured.documents || meta.documents) as any[] | undefined;
 
-  // Voice guide
-  if (structured.voiceNotes) {
-    sections.push(`\n--- VOICE GUIDE ---\n${structured.voiceNotes}`);
-  }
-
-  // Top performing posts (real numbers, engagement data — prevents LLM asking for data in profile)
-  const topPosts = structured.topPerformingPosts as any[] | undefined;
-  if (topPosts && topPosts.length > 0) {
-    sections.push('\n--- TOP PERFORMING POSTS (use these numbers as reference) ---');
-    for (const post of topPosts.slice(0, 5)) {
-      const title = post.title || post.transcript?.substring(0, 80) || 'Untitled';
-      const stats: string[] = [];
-      if (post.likes) stats.push(`${post.likes} likes`);
-      if (post.shares) stats.push(`${post.shares} shares`);
-      if (post.views) stats.push(`${post.views} views`);
-      if (post.leads) stats.push(`${post.leads} leads`);
-      if (post.platform) stats.push(post.platform);
-      sections.push(`  "${title}" — ${stats.join(', ')}`);
-      if (post.transcript) {
-        sections.push(`    ${post.transcript.substring(0, 500)}`);
+  if (documents && documents.length > 0) {
+    // Story documents (brand story with real business numbers — properties, revenue, etc.)
+    const stories = documents.filter((d: any) => d.category === 'story');
+    for (const story of stories) {
+      if (story.content) {
+        sections.push(`\n--- BRAND STORY (contains real numbers — use these, NEVER ask user for them) ---`);
+        sections.push(story.content);
       }
     }
-  }
 
-  // Top performing transcripts (full text for voice/style matching)
-  const topTranscripts = structured.topPerformingTranscripts as string[] | undefined;
-  if (topTranscripts && topTranscripts.length > 0 && (!topPosts || topPosts.length === 0)) {
-    sections.push('\n--- CLIENT TOP CONTENT (reference for voice/style) ---');
-    for (let i = 0; i < Math.min(topTranscripts.length, 3); i++) {
-      sections.push(`  Post ${i + 1}: ${topTranscripts[i].substring(0, 800)}`);
+    // Voice guides
+    const guides = documents.filter((d: any) => d.category === 'voiceGuide');
+    for (const guide of guides) {
+      if (guide.content) {
+        sections.push(`\n--- VOICE GUIDE ---`);
+        sections.push(guide.content);
+      }
+    }
+
+    // Top performing content (reels + threads with real transcripts and engagement metrics)
+    const topContent = documents.filter((d: any) => ['reel', 'thread'].includes(d.category));
+    if (topContent.length > 0) {
+      sections.push('\n--- TOP PERFORMING CONTENT (real transcripts with engagement data) ---');
+      for (const doc of topContent.slice(0, 5)) {
+        const stats: string[] = [];
+        if (doc.likes) stats.push(`${doc.likes} likes`);
+        if (doc.shares) stats.push(`${doc.shares} shares`);
+        if (doc.views) stats.push(`${doc.views} views`);
+        if (doc.leads) stats.push(`${doc.leads} leads`);
+        if (doc.platform) stats.push(doc.platform);
+        sections.push(`  [${doc.category}] "${doc.title || 'Untitled'}" — ${stats.join(', ')}`);
+        if (doc.content) {
+          sections.push(`    ${doc.content.substring(0, 1000)}`);
+        }
+      }
+    }
+
+    // Underperforming content (for failure fingerprint)
+    const underperforming = documents.filter((d: any) => d.category?.startsWith('underperforming'));
+    if (underperforming.length > 0) {
+      sections.push('\n--- UNDERPERFORMING CONTENT (avoid these patterns) ---');
+      for (const doc of underperforming.slice(0, 3)) {
+        sections.push(`  [${doc.category}] "${doc.title || 'Untitled'}"`);
+        if (doc.content) {
+          sections.push(`    ${doc.content.substring(0, 500)}`);
+        }
+      }
+    }
+  } else {
+    // Fallback to flat fields if no documents array
+    if (structured.brandStory) {
+      sections.push(`\n--- BRAND STORY ---\n${structured.brandStory}`);
+    }
+    if (structured.voiceNotes) {
+      sections.push(`\n--- VOICE GUIDE ---\n${structured.voiceNotes}`);
+    }
+
+    // Top performing posts (flat field fallback)
+    const topPosts = structured.topPerformingPosts as any[] | undefined;
+    if (topPosts && topPosts.length > 0) {
+      sections.push('\n--- TOP PERFORMING POSTS ---');
+      for (const post of topPosts.slice(0, 5)) {
+        const title = post.title || post.transcript?.substring(0, 80) || 'Untitled';
+        const stats: string[] = [];
+        if (post.likes) stats.push(`${post.likes} likes`);
+        if (post.shares) stats.push(`${post.shares} shares`);
+        if (post.views) stats.push(`${post.views} views`);
+        sections.push(`  "${title}" — ${stats.join(', ')}`);
+        if (post.transcript) sections.push(`    ${post.transcript.substring(0, 500)}`);
+      }
     }
   }
 

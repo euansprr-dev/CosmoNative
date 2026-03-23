@@ -157,6 +157,8 @@ export class CloudWritingEngine {
 
     this.blocks = [block1, block2, block3a];
     this.initialized = true;
+
+    console.log(`  ✍️ Writing engine initialized: ${this.selectedSwipes.length} swipes, ${lessons.length} lessons, ${experiences.length} experiences, client: ${this.clientAtom?.title || 'none'}, format: ${this.targetFormat}`);
   }
 
   // ============================================================
@@ -245,6 +247,7 @@ export class CloudWritingEngine {
       this.messages.push(assistantMessage);
 
       for (const toolCall of response.toolCalls) {
+        console.log(`    ✍️ Engine tool: ${toolCall.name}`);
         const result = await this.executeInnerTool(toolCall.name, toolCall.arguments);
         this.messages.push({
           id: crypto.randomUUID(),
@@ -447,6 +450,8 @@ export class CloudWritingEngine {
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> }> {
     const apiKey = config.openRouterApiKey;
     const model = config.models.writer;
+
+    console.log(`  ✍️ Writing engine → ${model} (${messages.length} messages, ${tools.length} tools)`);
 
     // Gap #12 fix: Use structured content blocks with cache_control for Anthropic prompt caching
     // Blocks 1, 2, 3A get ephemeral cache (reused across turns). Block 3B is dynamic (no cache).

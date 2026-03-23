@@ -104,10 +104,11 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
   const contentUUID = args.contentUUID as string;
   if (!contentUUID) return jsonError('contentUUID is required');
 
-  // Format injection
+  // Format injection — only update metadata, NEVER evict engine during draft
+  // (engine was already initialized with the correct format during outline)
   if (args.contentFormat) {
     await updateAtom(contentUUID, { metadata: { explicitFormat: args.contentFormat, contentFormat: args.contentFormat } });
-    evictEngine(contentUUID);
+    // DO NOT evictEngine here — preserves conversation context from outline phase
   }
 
   const engine = await getOrCreateEngine(contentUUID);

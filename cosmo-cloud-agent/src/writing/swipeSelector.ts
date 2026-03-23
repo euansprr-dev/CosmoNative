@@ -13,7 +13,7 @@
 import { Atom, fetchAllByType, fetchAtom, isSwipeFileAtom } from '../db/queries';
 import { CompressedSwipe, ContentFormat, FormatFamily, getFormatFamily } from './types';
 
-const TARGET_SWIPE_COUNT = 15; // 10-20 in Swift, use 15 for cloud
+const TARGET_SWIPE_COUNT = 20; // Match Swift's count for full pattern diversity
 const MAX_SWIPE_POOL = 200;
 
 /**

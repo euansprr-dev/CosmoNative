@@ -33,7 +33,8 @@ export async function assembleBlock1(format: ContentFormat): Promise<WritingBloc
   if (methodology) {
     content = content.replace('{METHODOLOGY_TEXT}', methodology);
   } else {
-    content = content.replace('{METHODOLOGY_TEXT}', '');
+    console.log('    ⚠️ Methodology not synced — using default with all 7 craft modules');
+    content = content.replace('{METHODOLOGY_TEXT}', DEFAULT_METHODOLOGY);
   }
   if (constraints) {
     content = content.replace('{PLATFORM_CONSTRAINTS}', constraints);
@@ -270,12 +271,14 @@ export function assembleBlock3Stable(
     if (primarySwipe.beatSequence.length > 0) {
       sections.push('  Beat functions (apply these structural roles, NOT the blueprint\'s topic):');
       primarySwipe.beatSequence.forEach((beat, i) => {
-        sections.push(`    ${i + 1}. [${beat}]`);
+        const transition = primarySwipe.keyTransitions && i < primarySwipe.keyTransitions.length
+          ? ` — ${primarySwipe.keyTransitions[i]}` : '';
+        sections.push(`    ${i + 1}. [${beat}]${transition}`);
       });
     }
   }
   sections.push('RULES:');
-  sections.push(`1. These ${swipes.length} swipes are your PERMANENT reference library for this session.`);
+  sections.push(`1. These ${swipes.length} swipes are your PERMANENT reference library. Their full bodies are loaded — read and absorb them.`);
   sections.push('2. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook type, and emotional arc.');
   sections.push('3. On EVERY revision, maintain the PRIMARY swipe\'s structural DNA — beat pattern, section count, and emotional arc.');
   sections.push('4. When shortening/lengthening, REDISTRIBUTE content to preserve the beat pattern — don\'t flatten the structure.');
@@ -352,6 +355,9 @@ export function assembleBlock3Dynamic(
     for (const item of outline) {
       const beat = item.beatLabel ? ` [${item.beatLabel}]` : '';
       sections.push(`  ${item.sortOrder + 1}. ${item.title}${beat}`);
+      if ((item as any).reasoning) {
+        sections.push(`     Notes: ${(item as any).reasoning}`);
+      }
     }
   }
 
@@ -511,3 +517,107 @@ Study the PRIMARY BLUEPRINT's hook and generate variants that match its EXACT fo
 - Do NOT add colons or trailing explanations after the hook statement
 - The user's title IS the hook template — generate variations of THAT structure, not generic alternatives
 - Each variant should swap specific details (numbers, timeframes, methods) while keeping the same sentence skeleton`;
+
+// ============================================================
+// Default Methodology + Skill Modules (fallback if not synced)
+// These 7 craft modules are the HOW of writing — they teach
+// specific techniques the LLM must apply on every draft.
+// ============================================================
+
+const DEFAULT_METHODOLOGY = `## Content Strategy & Methodology
+
+Study blueprints. Steal structure, not words. Every draft must be grounded in proven swipe patterns.
+
+## The Dinner Table Test
+
+The test: Read every slide aloud as if saying it to a friend at dinner. If it sounds like a caption, quote, thesis, or marketing line — it fails. Rewrite using only the slide's structural purpose.
+
+BEFORE writing: Read 3 of the client's actual posts aloud. Absorb rhythm, fragments vs sentences, "I" vs "we", formality level.
+
+DURING writing: Every 3-4 slides, read aloud. Common failures:
+- Thesis statements: "A high income didn't mean a good life" → FAILS. Say: "Sure we made more money, but we were still working 80 hour weeks"
+- Caption voice: "We chose freedom." → FAILS.
+- Corporate phrasing: "leveraged our experience," "the journey was transformative" → FAILS.
+- Triple-comma lists: stacking 3 rhetorical items = copywriting, not speech. Say ONE with feeling.
+
+AFTER writing: Full read-aloud pass. Any stumble = rewrite. Carousel > 90 seconds = too dense.
+
+## Slide Density & Breath Rule
+
+Rule: One slide = one breath. Need a breath mid-slide? Split. Two slides feel like one exhale? Combine.
+
+Hard limits:
+- Carousel: 15-20 words max per slide. 25+ = always too long.
+- Reel scripts: 8-12 words per spoken beat.
+- Threads: Up to 280 chars but one-breath-per-sentence within each tweet.
+
+Tests:
+- Two complete sentences on one slide = too long (unless both < 5 words).
+- Period mid-slide followed by new sentence = two slides pretending to be one.
+- Ellipsis (...) only if the client's swipes use that pattern.
+- Read slide N and N+1 together — if one breath, combine. Read slide N alone — if two ideas, split.
+
+## Causal Slide Chaining
+
+Rule: Every slide connects to the next via implied "so," "but," or "that's when." If you can swap two consecutive slides unnoticed, the chain is broken.
+
+Test: Insert the connector mentally between every pair. If it doesn't fit, fix by:
+1. Adding the connector explicitly ("So I got into sales...")
+2. Reordering so cause precedes effect
+3. Adding a bridge slide for the missing logical step
+
+Time compression: Never jump gaps in one slide. BAD: "entry-level job" → "$120K combined". GOOD: add 2-3 intermediate steps showing the journey.
+
+Never separate cause from effect across unrelated slides. "We made a dumb decision... we liquidated our retirement" = same slide or immediate sequence.
+
+## Hook Craft
+
+Process: Write 3 variants. Never use first instinct. Read each aloud in < 3 seconds — if you can't, cut words.
+
+Tests:
+- Cover test: Hide hook, read slide 2. If slide 2 makes sense alone, hook isn't creating an open loop.
+- Scroll test: Would this stop someone between a cooking video and a dog video? If not, add tension/specificity/surprise.
+
+Rules:
+- Hook = open loop. Reader must continue to close it.
+- Specific > vague. "$47K in 11 days" beats "How I grew my business."
+- Hook = promise. "3 mistakes" → deliver exactly 3. Bait-and-switch kills trust.
+- Compare structure (not words) to client's 3 highest-performing hooks. Match their mechanism.
+
+## Voice Matching (The Absorption Method)
+
+Before writing: Pull 3 of the client's posts (top performers, similar format). Read aloud. Notice:
+- Sentence length: 5-8 word fragments or 15-20 word flowing sentences?
+- Formality: "I" or "we"? Contractions? Casual asides?
+- Signature patterns: "Look..." / "Here's the thing..." / emojis / "..." between thoughts?
+- Absences: No rhetorical questions? No exclamation marks? Absences matter as much as presences.
+
+During writing: After first 3 slides, compare to client's real post. If different people wrote them, start over.
+
+Voice drift to catch: sentences getting longer/more complex (AI default), vocabulary becoming more sophisticated, losing characteristic starters, adding hedging ("perhaps," "it might be"), shifting person mid-piece.
+
+Same-person test: Read client's actual post, then your draft. Must sound like same person, same day. If yours sounds smarter or more polished — it's wrong.
+
+## CTA Craft
+
+Rule: CTA must feel like the natural next sentence. If tone/voice shifts to deliver it, the transition is broken. Read last content slide + CTA together — must feel like one continuous thought.
+
+Use the client's proven CTA pattern. Don't innovate unless asked.
+
+Construction rules:
+- One action, one keyword, one outcome. "Comment FLIP and I'll send you the breakdown" → clear.
+- "DM me for more info" → vague/friction. Specify what they get.
+- Never two CTAs. Pick one. Split attention = no action.
+
+## Self-Edit Pass (The Final Check)
+
+Run all 6 steps after every draft, before presenting. Not optional.
+
+1. Read-aloud: Every slide at speaking pace. Flag stumbles, rhythm breaks, "content voice," or lost thread.
+2. Density: Flag any carousel slide > 20 words, reel slide > 12 words. Split or cut.
+3. Chain: Insert "so/but/that's when" between every slide pair. Bad fit = broken transition.
+4. Perspective: Who speaks to whom on slide 1? Must stay consistent.
+5. Scroll test: Read slides 3-5 as the SPECIFIC target audience. Would they feel seen?
+6. Blueprint comparison: Does draft feel same universe as swipes? Any slide that's just rephrased blueprint = rewrite from structural function only.
+
+All 6 pass → present. Any fail → fix first.`;

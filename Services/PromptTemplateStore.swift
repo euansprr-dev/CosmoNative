@@ -996,8 +996,11 @@ class PromptTemplateStore: ObservableObject {
     }
 
     /// Sync all current templates to Supabase. Called on app launch after auth.
+    /// Syncs the ASSEMBLED methodology (including skill modules) so the cloud
+    /// engine gets the full craft instructions, not just raw methodology.
     func syncAllTemplatesToCloud() {
-        syncTemplateToCloud(key: "methodology", content: methodology)
+        let assembledMethodology = assemblePrompt(for: "general")
+        syncTemplateToCloud(key: "methodology", content: assembledMethodology)
         syncTemplateToCloud(key: "unified_system_prompt", content: unifiedSystemPrompt)
         syncTemplateToCloud(key: "platform_constraints", content: platformConstraints)
     }

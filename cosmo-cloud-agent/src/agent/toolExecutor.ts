@@ -22,6 +22,7 @@ import * as writing from '../tools/writing';
 import * as search from '../tools/search';
 import * as tasks from '../tools/tasks';
 import * as projects from '../tools/projects';
+import * as learning from '../tools/learning';
 
 export type ToolResult = string; // JSON-encoded string, matching Swift jsonEncode()
 
@@ -226,6 +227,12 @@ export async function executeTool(
         return await writing.generateHooks(args);
       case 'score_draft':
         return await writing.scoreDraft(args);
+
+      // === LEARNING ===
+      case 'learn_from_url':
+        return await learning.learnFromUrl(args as any);
+      case 'learn_from_text':
+        return await learning.learnFromText(args as any);
 
       // === WEB SEARCH ===
       case 'web_search':

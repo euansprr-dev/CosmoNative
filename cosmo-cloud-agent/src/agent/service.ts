@@ -8,7 +8,7 @@ import { config } from '../config';
 import { classifyIntent, modelTierForIntent, maxToolIterations, AgentIntent, ModelTier } from './intentClassifier';
 import { assembleSystemPrompt } from './contextAssembler';
 import { executeTool, jsonEncode } from './toolExecutor';
-import { loadConversation, saveConversation, logApiUsage } from '../db/queries';
+import { loadConversation, saveConversation, logApiUsage, createAtom } from '../db/queries';
 import { getToolDefinitions } from './toolRegistry';
 
 interface AgentMessage {
@@ -247,6 +247,9 @@ export async function processMessage(
     linkedAtomUUIDs: createdAtomUUIDs,
   });
 
+  // Fire-and-forget: extract lessons from conversation if teachable moment detected
+  extractLessonsFromConversation(chatId, text, finalResponse).catch(() => {});
+
   return {
     response: finalResponse || 'I processed your request but had no final response.',
     toolsUsed,
@@ -383,6 +386,73 @@ function compressOldToolResults(messages: AgentMessage[]): void {
         } catch {}
       }
     }
+  }
+}
+
+// ============================================================
+// Auto-Lesson Extraction
+// ============================================================
+
+const TEACHABLE_PATTERN = /remember|always|never|from now on|don't use|stop using|I prefer|I like when|rule:|lesson:|not like that|that's wrong|that's not what|you should|next time/i;
+
+async function extractLessonsFromConversation(chatId: string, userMessage: string, agentResponse: string): Promise<void> {
+  // Skip if no teachable signals
+  if (!TEACHABLE_PATTERN.test(userMessage)) return;
+
+  try {
+    const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.openRouterApiKey}` },
+      body: JSON.stringify({
+        model: config.models.sensor, // Haiku — cheap
+        messages: [
+          {
+            role: 'system',
+            content: `You analyze conversations to extract learning rules. If the user taught, corrected, or stated a preference, extract it as a JSON array of rules. Each rule: {"rule": "clear instruction", "category": "hook_style|voice|structure|format|cta|scheduling|productivity|general", "evidence": "what the user said"}. If nothing teachable, return empty array []. ONLY return JSON, nothing else.`,
+          },
+          {
+            role: 'user',
+            content: `User said: "${userMessage}"\n\nAgent responded: "${agentResponse.substring(0, 500)}"`,
+          },
+        ],
+        max_tokens: 512,
+        temperature: 0,
+      }),
+    });
+
+    const data = await response.json() as any;
+    const content = data.choices?.[0]?.message?.content || '[]';
+
+    // Parse JSON
+    const match = content.match(/\[[\s\S]*\]/);
+    if (!match) return;
+
+    const rules = JSON.parse(match[0]);
+    if (!Array.isArray(rules) || rules.length === 0) return;
+
+    // Store each rule as a lesson
+    for (const rule of rules.slice(0, 3)) {
+      if (!rule.rule) continue;
+
+      await createAtom({
+        type: 'agent_learning',
+        title: (rule.rule as string).substring(0, 80),
+        body: rule.rule,
+        metadata: {
+          subtype: 'lesson',
+          lessonType: 'inferred_lesson',
+          category: rule.category || 'general',
+          confidence: 0.7,
+          source: 'conversation_inference',
+          enforcement: 'advisory', // Inferred, not explicit — starts as advisory
+          evidence: rule.evidence || null,
+        },
+      });
+
+      console.log(`\u{1F4DA} Auto-learned: ${(rule.rule as string).substring(0, 60)}`);
+    }
+  } catch (error) {
+    // Silent failure — learning is best-effort, never blocks
   }
 }
 

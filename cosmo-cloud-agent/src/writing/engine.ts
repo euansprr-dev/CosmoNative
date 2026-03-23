@@ -143,12 +143,16 @@ export class CloudWritingEngine {
     // Load lessons for this client
     const lessons = await this.loadLessons();
 
+    // Load experience buffer (past edit examples) for few-shot learning
+    const experiences = await this.loadExperiences();
+
     // Build blocks
     const block1 = await assembleBlock1(this.targetFormat);
     const block2 = await assembleBlock2(this.clientAtom, lessons);
     const block3a = assembleBlock3Stable(
       this.selectedSwipes,
       this.clientAtom?.metadata?.niche as string | null || null,
+      experiences,
     );
 
     this.blocks = [block1, block2, block3a];
@@ -615,6 +619,32 @@ export class CloudWritingEngine {
       rule: a.body || a.title || '',
       enforcement: (a.metadata?.enforcement as string) || 'advisory',
     }));
+  }
+
+  private async loadExperiences(): Promise<Array<{ generated: string; edited: string; summary: string; format?: string }>> {
+    const all = await fetchAllByType('agent_learning');
+    const experiences = all.filter(a => {
+      const meta = a.metadata || {};
+      if (meta.lessonType !== 'experience') return false;
+      const clientUUID = this.clientAtom?.uuid;
+      if (meta.clientUUID && clientUUID && meta.clientUUID !== clientUUID) return false;
+      return true;
+    });
+
+    return experiences
+      .sort((a, b) => {
+        // Sort by edit distance (most surprising first)
+        const aD = (a.metadata?.editDistance as number) || 0;
+        const bD = (b.metadata?.editDistance as number) || 0;
+        return bD - aD;
+      })
+      .slice(0, 3)
+      .map(a => ({
+        generated: (a.structured?.generatedExcerpt as string) || '',
+        edited: (a.structured?.editedExcerpt as string) || '',
+        summary: (a.structured?.diffSummary as string) || a.body || '',
+        format: a.metadata?.contentFormat as string | undefined,
+      }));
   }
 
   // ============================================================

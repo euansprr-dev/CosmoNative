@@ -91,11 +91,30 @@ export async function assembleBlock2(
     }
   }
 
-  // Learned lesson rules
+  // Learned lesson rules (RULE/BAD/GOOD/WHY format matching Swift's optimized instructions)
   if (lessons.length > 0) {
-    sections.push('\n--- LEARNED RULES ---');
-    for (const lesson of lessons.slice(0, 15)) {
-      sections.push(`  [${lesson.enforcement}] ${lesson.rule}`);
+    const hardRules = lessons.filter(l => l.enforcement === 'hard').slice(0, 10);
+    const advisoryRules = lessons.filter(l => l.enforcement !== 'hard').slice(0, 5);
+
+    if (hardRules.length > 0) {
+      sections.push('\n--- LEARNED WRITING RULES — MANDATORY (HARD) ---');
+      sections.push('Violating ANY of these triggers revision.');
+      for (let i = 0; i < hardRules.length; i++) {
+        const r = hardRules[i];
+        // If rule has RULE/BAD/GOOD format, use it directly
+        if (r.rule.includes('RULE:') || r.rule.includes('BAD:') || r.rule.includes('\n')) {
+          sections.push(`\n${i + 1}. ${r.rule}`);
+        } else {
+          sections.push(`\n${i + 1}. RULE: ${r.rule}`);
+        }
+      }
+    }
+
+    if (advisoryRules.length > 0) {
+      sections.push('\n--- LEARNED WRITING PREFERENCES — ADVISORY ---');
+      for (let i = 0; i < advisoryRules.length; i++) {
+        sections.push(`  ${i + 1}. ${advisoryRules[i].rule}`);
+      }
     }
   }
 
@@ -124,6 +143,7 @@ export async function assembleBlock2(
 export function assembleBlock3Stable(
   swipes: CompressedSwipe[],
   clientNiche: string | null,
+  experiences?: Array<{ generated: string; edited: string; summary: string; format?: string }>,
 ): WritingBlock {
   const sections: string[] = [];
 
@@ -171,6 +191,21 @@ export function assembleBlock3Stable(
     // Average hook score
     const avgScore = swipes.reduce((sum, s) => sum + s.hookScore, 0) / swipes.length;
     sections.push(`Average Hook Score: ${avgScore.toFixed(1)}/10`);
+  }
+
+  // Experience buffer (few-shot examples from past edits)
+  if (experiences && experiences.length > 0) {
+    sections.push('\n=== PAST EDITING EXAMPLES ===');
+    sections.push('The user previously made these edits to AI-generated content.');
+    sections.push('Learn from these patterns to generate content closer to their preferences:\n');
+    for (let i = 0; i < Math.min(experiences.length, 3); i++) {
+      const exp = experiences[i];
+      sections.push(`--- Example ${i + 1}${exp.format ? ` (${exp.format})` : ''} ---`);
+      sections.push(`AI Generated: ${exp.generated}`);
+      sections.push(`User Edited To: ${exp.edited}`);
+      sections.push(`Key Change: ${exp.summary}`);
+      sections.push('');
+    }
   }
 
   const content = sections.join('\n');

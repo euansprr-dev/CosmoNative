@@ -120,6 +120,10 @@ const ALL_TOOLS: ToolDefinition[] = [
   // === MODULE MANAGEMENT ===
   { name: 'suggest_module_addition', description: 'Suggest adding content to a skill module or creating a new module', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add_to_module', 'create_module'] }, moduleId: { type: 'string' }, content: { type: 'string' }, reason: { type: 'string' }, newModuleTitle: { type: 'string' }, newModuleId: { type: 'string' } }, required: ['action', 'content', 'reason'] } },
 
+  // === LEARNING ===
+  { name: 'learn_from_url', description: 'Learn writing rules from a URL (article, social post, style guide). Extracts 2-3 actionable rules using AI.', parameters: { type: 'object', properties: { url: { type: 'string' }, context: { type: 'string', description: 'What to learn from this content' }, clientName: { type: 'string', description: 'Scope lessons to this client' } }, required: ['url'] } },
+  { name: 'learn_from_text', description: 'Learn writing rules from pasted text content. Extracts 2-3 actionable rules.', parameters: { type: 'object', properties: { text: { type: 'string' }, context: { type: 'string' }, clientName: { type: 'string' } }, required: ['text'] } },
+
   // === WEB SEARCH ===
   { name: 'web_search', description: 'Search the web for current information', parameters: { type: 'object', properties: { query: { type: 'string' }, maxResults: { type: 'integer' } }, required: ['query'] } },
 
@@ -147,6 +151,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   intelligence: ['get_weekly_content_plan', 'suggest_next_content', 'analyze_content_gap', 'predict_performance', 'get_swipe_study_plan', 'get_creator_profile', 'get_audience_insights', 'review_draft_persuasion', 'suggest_persuasion_stack', 'compare_to_swipe'],
   moduleManagement: ['suggest_module_addition'],
   insightMemory: ['save_analysis', 'get_saved_analyses'],
+  learning: ['learn_from_url', 'learn_from_text'],
   webSearch: ['web_search'],
   ux: ['send_telegram_buttons'],
 };
@@ -161,9 +166,9 @@ const INTENT_TOOL_GROUPS: Record<AgentIntent, string[]> = {
   execute: ['content', 'schedule', 'task', 'project', 'writing', 'clientProfile', 'ux', 'lesson', 'moduleManagement'],
   debrief: ['analytics', 'lesson', 'moduleManagement'],
   reflect: ['analytics', 'lesson', 'moduleManagement'],
-  meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement'],
+  meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement', 'learning'],
   strategy: ['intelligence', 'swipe', 'content', 'analytics', 'writing', 'clientProfile', 'client', 'insightMemory', 'ux', 'lesson', 'moduleManagement', 'webSearch'],
-  draft: ['content', 'swipe', 'idea', 'intelligence', 'writing', 'clientProfile', 'client', 'preference', 'capture', 'scoring', 'insightMemory', 'lesson', 'ux', 'moduleManagement', 'webSearch'],
+  draft: ['content', 'swipe', 'idea', 'intelligence', 'writing', 'clientProfile', 'client', 'preference', 'capture', 'scoring', 'insightMemory', 'lesson', 'ux', 'moduleManagement', 'learning', 'webSearch'],
   analyze: ['intelligence', 'swipe', 'analytics', 'content', 'clientProfile', 'insightMemory', 'lesson', 'moduleManagement', 'webSearch'],
 };
 

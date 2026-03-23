@@ -658,11 +658,29 @@ export class CloudWritingEngine {
     const all = await fetchAllByType('agent_learning');
     console.log(`    ✍️ Lessons: ${all.length} agent_learning atoms found`);
 
+    // Log what subtypes/lessonTypes exist in the DB for debugging
+    const subtypes = new Map<string, number>();
+    for (const a of all) {
+      const meta = a.metadata || {};
+      const key = `subtype=${meta.subtype || 'none'},lessonType=${meta.lessonType || 'none'}`;
+      subtypes.set(key, (subtypes.get(key) || 0) + 1);
+    }
+    console.log(`    ✍️ Lesson types: ${[...subtypes.entries()].map(([k, v]) => `${k}(${v})`).join(', ')}`);
+
     const lessons = all.filter(a => {
       const meta = a.metadata || {};
-      // Accept both 'lesson' subtype and 'inferred_lesson' lessonType
-      const isLesson = meta.subtype === 'lesson' || meta.lessonType === 'inferred_lesson';
+      // Accept ANY lesson-like atom: subtype=lesson, lessonType=inferred_lesson,
+      // lessonType=learned_rule, lessonType=module_rule, or subtype=standing_instruction excluded
+      const subtype = meta.subtype as string | undefined;
+      const lessonType = meta.lessonType as string | undefined;
+
+      // Exclude non-lesson subtypes explicitly
+      if (subtype === 'standing_instruction' || subtype === 'agent_analysis' || subtype === 'experience') return false;
+
+      // Accept: has a lessonType (any value) OR subtype is 'lesson'
+      const isLesson = subtype === 'lesson' || !!lessonType;
       if (!isLesson) return false;
+
       // Include universal + client-specific lessons
       const clientUUID = this.clientAtom?.uuid;
       if (meta.clientUUID && clientUUID && meta.clientUUID !== clientUUID) return false;

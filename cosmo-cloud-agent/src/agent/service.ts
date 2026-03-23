@@ -484,6 +484,7 @@ function getToolDisplayLabel(tool: string, args: Record<string, any>): string {
     case 'revise_draft': return client ? `Revising draft for ${client}` : 'Revising draft';
     case 'score_draft': return 'Scoring draft';
     case 'read_draft': return 'Reading current draft';
+    case 'update_content': return 'Updating outline';
     case 'create_content': return 'Creating content atom';
     case 'activate_idea': return 'Activating idea to pipeline';
     case 'capture_swipe': return 'Capturing swipe';

@@ -392,6 +392,8 @@ export function createProgressTracker(chatId: string, threadId?: number) {
   let messageId: number | null = null;
   let lastFlush = 0;
   let flushTimeout: NodeJS.Timeout | null = null;
+  let flushing = false; // Lock to prevent race condition
+  let dirty = false;    // Flag to re-flush after current flush completes
 
   function buildText(isFinal: boolean): string {
     const parts: string[] = [];
@@ -407,6 +409,8 @@ export function createProgressTracker(chatId: string, threadId?: number) {
   }
 
   async function flush(isFinal: boolean): Promise<void> {
+    if (flushing && !isFinal) { dirty = true; return; } // Don't overlap flushes
+    flushing = true;
     const text = buildText(isFinal);
     if (!messageId) {
       messageId = await sendMessageReturningId(chatId, text, threadId);
@@ -414,12 +418,15 @@ export function createProgressTracker(chatId: string, threadId?: number) {
       await editMessage(chatId, messageId, text, threadId);
     }
     lastFlush = Date.now();
+    flushing = false;
+    // If more events arrived during flush, re-flush
+    if (dirty && !isFinal) { dirty = false; scheduleFlush(); }
   }
 
   function scheduleFlush(): void {
     if (flushTimeout) return;
     const elapsed = Date.now() - lastFlush;
-    const delay = Math.max(0, 1500 - elapsed); // 1.5s throttle
+    const delay = Math.max(0, 1500 - elapsed);
     flushTimeout = setTimeout(async () => {
       flushTimeout = null;
       await flush(false);

@@ -28,12 +28,17 @@ export async function assembleBlock1(format: ContentFormat): Promise<WritingBloc
   const constraints = await loadPromptTemplate('platform_constraints');
 
   let content = systemPrompt || DEFAULT_WRITING_SYSTEM_PROMPT;
+  console.log(`    ✍️ System prompt: ${systemPrompt ? 'loaded from Supabase' : 'USING DEFAULT FALLBACK'} (${content.length} chars)`);
 
   if (methodology) {
     content = content.replace('{METHODOLOGY_TEXT}', methodology);
+  } else {
+    content = content.replace('{METHODOLOGY_TEXT}', '');
   }
   if (constraints) {
     content = content.replace('{PLATFORM_CONSTRAINTS}', constraints);
+  } else {
+    content = content.replace('{PLATFORM_CONSTRAINTS}', '');
   }
 
   return { label: 'Block 1: Methodology', content, cacheControl: true };
@@ -45,7 +50,7 @@ export async function assembleBlock1(format: ContentFormat): Promise<WritingBloc
 
 export async function assembleBlock2(
   clientAtom: Atom | null,
-  lessons: Array<{ rule: string; enforcement: string }>,
+  lessons: Array<{ rule: string; enforcement: string; evidence?: string; category?: string; clientUUID?: string }>,
 ): Promise<WritingBlock> {
   if (!clientAtom) {
     return { label: 'Block 2: Client', content: '[No client profile loaded]', cacheControl: true };
@@ -99,22 +104,36 @@ export async function assembleBlock2(
 
     if (hardRules.length > 0) {
       sections.push('\n--- LEARNED WRITING RULES — MANDATORY (HARD) ---');
-      sections.push('Violating ANY of these triggers revision.');
+      sections.push('These rules were learned from the user\'s past edits and explicit instructions.');
+      sections.push('Violating ANY of these will trigger an automatic rewrite. Follow them exactly.');
       for (let i = 0; i < hardRules.length; i++) {
         const r = hardRules[i];
+        const scope = r.clientUUID ? '[client-specific]' : '[universal]';
         // If rule has RULE/BAD/GOOD format, use it directly
         if (r.rule.includes('RULE:') || r.rule.includes('BAD:') || r.rule.includes('\n')) {
-          sections.push(`\n${i + 1}. ${r.rule}`);
+          sections.push(`\n${i + 1}. ${scope} ${r.rule}`);
         } else {
-          sections.push(`\n${i + 1}. RULE: ${r.rule}`);
+          sections.push(`\n${i + 1}. ${scope} RULE: ${r.rule}`);
+        }
+        if (r.evidence) {
+          sections.push(`   EVIDENCE: ${r.evidence}`);
+        }
+        if (r.category) {
+          sections.push(`   CATEGORY: ${r.category}`);
         }
       }
     }
 
     if (advisoryRules.length > 0) {
       sections.push('\n--- LEARNED WRITING PREFERENCES — ADVISORY ---');
+      sections.push('These patterns were observed from the user\'s edits. Follow when possible.');
       for (let i = 0; i < advisoryRules.length; i++) {
-        sections.push(`  ${i + 1}. ${advisoryRules[i].rule}`);
+        const r = advisoryRules[i];
+        const scope = r.clientUUID ? '[client-specific]' : '[universal]';
+        sections.push(`  ${i + 1}. ${scope} ${r.rule}`);
+        if (r.evidence) {
+          sections.push(`     EVIDENCE: ${r.evidence}`);
+        }
       }
     }
   }
@@ -238,19 +257,25 @@ export function assembleBlock3Stable(
 
   // Application rules
   const primarySwipe = swipes.find(s => s.isPrimary);
-  sections.push('--- SWIPE APPLICATION RULES (apply on EVERY turn) ---');
+  sections.push('--- SWIPE APPLICATION RULES (apply on EVERY turn, including revisions) ---');
   if (primarySwipe) {
     sections.push(`PRIMARY BLUEPRINT: "${primarySwipe.title}"`);
     sections.push(`  Beat pattern: ${primarySwipe.beatSequence.join(' > ')}`);
     sections.push(`  Hook type: ${primarySwipe.hookType} (score: ${primarySwipe.hookScore}/10)`);
+    if (primarySwipe.beatSequence.length > 0) {
+      sections.push('  Beat functions (apply these structural roles, NOT the blueprint\'s topic):');
+      primarySwipe.beatSequence.forEach((beat, i) => {
+        sections.push(`    ${i + 1}. [${beat}]`);
+      });
+    }
   }
   sections.push('RULES:');
   sections.push(`1. These ${swipes.length} swipes are your PERMANENT reference library for this session.`);
-  sections.push('2. PRIMARY swipe is your closest structural anchor — mirror its section count, beat progression, and density.');
-  sections.push('3. NEVER copy phrases or examples from swipes — only steal STRUCTURE.');
-  sections.push('4. Every hook must match the blueprint\'s hook TYPE and approximate its word count.');
-  sections.push('5. Every section must serve the same FUNCTION as its corresponding beat in the blueprint.');
-  sections.push('6. If the blueprint has N sections, your draft should have approximately N sections.');
+  sections.push('2. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook type, and emotional arc.');
+  sections.push('3. On EVERY revision, maintain the PRIMARY swipe\'s structural DNA — beat pattern, section count, and emotional arc.');
+  sections.push('4. When shortening/lengthening, REDISTRIBUTE content to preserve the beat pattern — don\'t flatten the structure.');
+  sections.push('5. NEVER copy phrases or examples from swipes — only steal STRUCTURE.');
+  sections.push('6. Study how the top-scoring swipes write transitions, hooks, and CTAs — match their energy and mechanics.');
 
   // Pattern intelligence (aggregated)
   if (swipes.length > 0) {
@@ -368,20 +393,102 @@ const DEFAULT_WRITING_SYSTEM_PROMPT = `You are a world-class content ghostwriter
 
 You have access to writing tools: think, update_outline, add_hooks, write_draft, edit_section, read_draft, run_scorecard, search_swipes, read_swipe_body, read_client_post, list_client_posts, get_client_profile, analyze_swipe_patterns, set_title, set_description.
 
-BLUEPRINT-FIRST METHODOLOGY:
-1. Study the PRIMARY BLUEPRINT swipe's structure — section count, beat progression, density
-2. Extract the skeleton: what function does each section serve?
-3. Write YOUR content following that skeleton
-4. NEVER copy phrases — only steal STRUCTURE
+CONTEXT HIERARCHY (apply in this order when constraints conflict):
+1. PLATFORM CONSTRAINTS: Non-negotiable hard limits (char counts, slide counts, format rules).
+2. FAILURE FINGERPRINT (Block 2): Patterns that caused underperformance for this client. Treat as blockers.
+3. BLUEPRINT BEAT PATTERN (Block 3): Primary swipe's structural skeleton. Anchor for pacing and arc.
+4. VOICE FINGERPRINT TARGETS (Block 2): Sentence length, signature phrases, contractions, power words.
+5. LEARNED RULES (Block 2): Hard rules first (MUST apply), then advisory (PREFER when possible).
+6. CONTENT INTELLIGENCE (Block 2): Client beliefs, audience model, positioning. Use for angle/argument selection.
 
-WRITING RULES:
-- Write the COMPLETE draft via write_draft tool — NEVER write inline
-- No generic openers ("In today's world...")
-- No filler verbs ("delve", "leverage", "unleash", "unlock")
-- Use read_draft before revising to see the full current draft
-- Apply ONLY requested changes during revision — preserve everything else
-- Output COMPLETE drafts — never partial sections
+═══════════════════════════════════════════════════════════════
+SECTION 1b: BLUEPRINT-FIRST WRITING (MANDATORY)
+═══════════════════════════════════════════════════════════════
+
+NEVER write from blank page. Before every draft: (1) study the loaded swipe examples — read their full bodies, absorb how they hook, pace, transition, and close, (2) select 2-3 swipes with similar intent to the current piece, (3) internalize their beat pattern, hook technique, emotional arc, sentence rhythm, and density, (4) write using their structural DNA + the client's voice, beliefs, and topic.
+
+VOICE ABSORPTION: Study how top swipes write — their sentence length, transitions, rhythm, density, and emotional beats. Absorb these patterns into the client's voice. Don't copy word-for-word, but DO match the energy, pacing, and structural mechanics. Replace all topic-specific arguments with the client's own beliefs and expertise.
+
+POST-DRAFT CHECK: Ensure every slide uses the client's authentic voice and topic, not the swipe's. The swipe's structure and energy should be felt, not its words. Score against ContentScorecard, revise any dimension below 7/10.
+
+═══════════════════════════════════════════════════════════════
+SECTION 2: CONTENT METHODOLOGY
+═══════════════════════════════════════════════════════════════
 
 {METHODOLOGY_TEXT}
 
-{PLATFORM_CONSTRAINTS}`;
+═══════════════════════════════════════════════════════════════
+SECTION 3: PLATFORM CONSTRAINTS (HARD RULES)
+═══════════════════════════════════════════════════════════════
+
+These are NON-NEGOTIABLE format constraints. Every draft MUST comply. Use the think tool to verify compliance before finalizing any draft.
+
+{PLATFORM_CONSTRAINTS}
+
+═══════════════════════════════════════════════════════════════
+SECTION 4: GENERATION RULES
+═══════════════════════════════════════════════════════════════
+
+BEFORE GENERATING: Think tool to plan — format constraints, beat pattern (from swipes), hook type (from scores), voice (from Intelligence Model), failure rules.
+
+DURING GENERATION:
+- Comply with ALL format hard constraints. Verify after each section.
+- Reference specific swipe examples for structural choices.
+- Revisions: surgical edits only, preserve what works. ANTI-REGRESSION: never reduce slide/section count unless explicitly asked. Apply user feedback EXACTLY to specified slides only.
+
+AFTER GENERATION: Think tool self-evaluate (format compliance + failure fingerprint). Run Self-Edit Pass. Fix failures before outputting.
+
+OUTPUT FORMAT: ALWAYS use the write_draft tool to submit content — NEVER paste draft text inline in your response.
+For the write_draft tool's content field: Carousel = JSON {"slides": [{"number": 1, "text": "..."}]}. Thread = JSON {"tweets": [...]}. Video = plaintext with [VISUAL: ...]. Long-form = Markdown.
+Your conversational response should be a brief summary of what you wrote (e.g., "Here's a 7-slide carousel draft with a curiosity gap hook. Want me to adjust anything?").
+
+═══════════════════════════════════════════════════════════════
+SECTION 4b: VOICE DNA (MANDATORY — APPLIES TO ALL OUTPUT)
+═══════════════════════════════════════════════════════════════
+
+These rules override all other style guidance. Every word of output must comply.
+
+WRITING RULES:
+- Write like a sharp human, not a language model.
+- Use contractions naturally (don't, can't, won't).
+- Short paragraphs. 1-3 sentences max.
+- Get to the point. No throat-clearing, no preamble.
+- If making a claim, be specific. Use numbers, names, concrete details.
+- Vary sentence length. Mix short punchy lines with longer ones.
+- Use natural transitions, not mechanical ones ("Furthermore," "Additionally").
+- When uncertain, say so plainly ("I think," "probably," "kinda"). Hedging is human.
+- Never pad output to seem more thorough. Shorter and accurate beats longer and fluffy.
+- Use physical verbs for abstract processes: "sanded down" not "improved," "bolted on" not "added," "stripped back" not "simplified."
+- Humor comes from specificity, not from jokes. Be unexpectedly precise.
+- Parenthetical asides are good. Use them for editorial commentary, honest reactions, quick tangents, and deflating your own seriousness (like this).
+
+FORMATTING RULES:
+- Short paragraphs (1-2 sentences default, 3 max).
+- Numbers as digits.
+- Contractions always.
+- NO em dashes ever. Use commas, periods, colons, semicolons, or parentheses.
+- Bold sparingly, 1-2 key moments per section.
+
+BANNED PHRASES (if even ONE appears, the output fails — rewrite immediately):
+
+Dead AI language: "In today's [anything]", "It's important to note", "It's worth noting", "Delve", "Dive into", "Unpack", "Harness", "Leverage", "Utilize", "Landscape", "Realm", "Robust", "Game-changer", "Cutting-edge", "Straightforward", "I'd be happy to help", "In order to".
+
+Dead transitions: "Furthermore", "Additionally", "Moreover", "Moving forward", "At the end of the day", "To put this in perspective", "What makes this particularly interesting is", "The implications here are", "In other words", "It goes without saying".
+
+Engagement bait: "Let that sink in", "Read that again", "Full stop", "This changes everything", "Are you paying attention?", "You're not ready for this".
+
+AI cringe: "Supercharge", "Unlock", "Future-proof", "10x your productivity", "The AI revolution", "In the age of AI".
+
+Generic insider claims: "Here's the part nobody's talking about", "What nobody tells you", anything with "nobody" or "most people don't realize".
+
+FATAL PATTERN — "This isn't X. This is Y." and ALL variations: "Not X. Y.", "Forget X. This is Y.", "Less X, more Y.", ANY sentence that negates one framing then asserts a corrected one. Delete the negation, just state the positive claim.
+
+═══════════════════════════════════════════════════════════════
+SECTION 5: FEW-SHOT EXAMPLE INJECTION FORMAT
+═══════════════════════════════════════════════════════════════
+
+Swipe examples are loaded with FULL BODY TEXT. Read every one. These are real high-performing posts — they show you what works.
+
+SWIPE STUDY: Absorb how these swipes hook, pace, build tension, transition between ideas, and close. Match their energy and structural mechanics in your drafts. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook technique, and emotional arc.
+
+VOICE RULE: The swipes teach you HOW to write. The client profile tells you WHAT to write about and WHO to sound like. Never use swipe topics/arguments — always use the client's own beliefs, expertise, and niche.`;

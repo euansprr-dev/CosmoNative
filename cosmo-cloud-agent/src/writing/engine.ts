@@ -654,7 +654,7 @@ export class CloudWritingEngine {
     return swipes;
   }
 
-  private async loadLessons(): Promise<Array<{ rule: string; enforcement: string }>> {
+  private async loadLessons(): Promise<Array<{ rule: string; enforcement: string; evidence?: string; category?: string; clientUUID?: string }>> {
     const all = await fetchAllByType('agent_learning');
     console.log(`    ✍️ Lessons: ${all.length} agent_learning atoms found`);
 
@@ -689,6 +689,9 @@ export class CloudWritingEngine {
     return lessons.map(a => ({
       rule: a.body || a.title || '',
       enforcement: (a.metadata?.enforcement as string) || 'advisory',
+      evidence: (a.metadata?.evidence as string) || (a.structured?.evidence as string) || undefined,
+      category: (a.metadata?.category as string) || undefined,
+      clientUUID: (a.metadata?.clientUUID as string) || undefined,
     }));
   }
 

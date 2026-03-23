@@ -24,14 +24,24 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   const atom = await fetchAtom(contentUUID);
   if (!atom) return jsonError(`Content not found: ${contentUUID}`);
 
+  // Collect ALL blueprint UUIDs (single + array)
+  const blueprintUUIDs: string[] = [];
+  if (args.blueprintSwipeUUID) blueprintUUIDs.push(args.blueprintSwipeUUID);
+  if (args.blueprintSwipeUUIDs && Array.isArray(args.blueprintSwipeUUIDs)) {
+    for (const uuid of args.blueprintSwipeUUIDs) {
+      if (uuid && !blueprintUUIDs.includes(uuid)) blueprintUUIDs.push(uuid);
+    }
+  }
+
   // Pre-engine metadata injection
   const metaUpdates: Record<string, any> = {};
   let shouldEvict = false;
 
-  if (args.blueprintSwipeUUID) {
+  if (blueprintUUIDs.length > 0) {
     const existing = (atom.metadata?.inheritedSwipeUUIDs as string[]) || [];
-    if (!existing.includes(args.blueprintSwipeUUID)) {
-      metaUpdates.inheritedSwipeUUIDs = [args.blueprintSwipeUUID, ...existing];
+    const merged = [...new Set([...blueprintUUIDs, ...existing])];
+    if (JSON.stringify(merged) !== JSON.stringify(existing)) {
+      metaUpdates.inheritedSwipeUUIDs = merged;
       shouldEvict = true;
     }
   }
@@ -51,12 +61,13 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   // Get or create engine
   const engine = await getOrCreateEngine(contentUUID);
 
-  // Build instruction
+  // Build instruction — include user's structural notes + blueprint context
   let instruction = args.notes || 'Generate an outline for this content piece.';
-  if (args.blueprintSwipeUUID) {
-    instruction += ' Use BLUEPRINT-FIRST methodology — study the primary blueprint swipe structure and mirror it.';
+  if (blueprintUUIDs.length > 0) {
+    instruction += `\n\n${blueprintUUIDs.length} blueprint swipes loaded as PRIMARY references. Study their structure and mirror it.`;
+    instruction += ' Use BLUEPRINT-FIRST methodology.';
   }
-  instruction += ' Call update_outline with the sections, then add_hooks with hook variants.';
+  instruction += '\nCall update_outline with the sections, then add_hooks with hook variants.';
 
   try {
     const response = await engine.sendMessage(instruction, 'brainstorm');

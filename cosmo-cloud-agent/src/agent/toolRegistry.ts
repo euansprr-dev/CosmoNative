@@ -153,6 +153,8 @@ const TOOL_GROUPS: Record<string, string[]> = {
   insightMemory: ['save_analysis', 'get_saved_analyses'],
   learning: ['learn_from_url', 'learn_from_text'],
   webSearch: ['web_search'],
+  // Minimal tool set for draft writing — only what's needed to find blueprints + write
+  draftEssentials: ['search_swipes', 'create_content', 'generate_outline', 'generate_draft', 'read_draft', 'revise_draft', 'generate_hooks', 'score_draft', 'update_content', 'get_client_profile', 'list_client_profiles'],
   ux: ['send_telegram_buttons'],
 };
 
@@ -168,7 +170,7 @@ const INTENT_TOOL_GROUPS: Record<AgentIntent, string[]> = {
   reflect: ['analytics', 'lesson', 'moduleManagement'],
   meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement', 'learning'],
   strategy: ['intelligence', 'swipe', 'content', 'analytics', 'writing', 'clientProfile', 'client', 'insightMemory', 'ux', 'lesson', 'moduleManagement', 'webSearch'],
-  draft: ['content', 'swipe', 'idea', 'intelligence', 'writing', 'clientProfile', 'client', 'preference', 'capture', 'scoring', 'insightMemory', 'lesson', 'ux', 'moduleManagement', 'learning', 'webSearch'],
+  draft: ['draftEssentials'], // Minimal: search_swipes + writing tools + client profile. NO analysis/filter/list tools.
   analyze: ['intelligence', 'swipe', 'analytics', 'content', 'clientProfile', 'insightMemory', 'lesson', 'moduleManagement', 'webSearch'],
 };
 

@@ -611,14 +611,20 @@ export class CloudWritingEngine {
 
   private async loadLessons(): Promise<Array<{ rule: string; enforcement: string }>> {
     const all = await fetchAllByType('agent_learning');
+    console.log(`    ✍️ Lessons: ${all.length} agent_learning atoms found`);
+
     const lessons = all.filter(a => {
       const meta = a.metadata || {};
-      if (meta.subtype !== 'lesson') return false;
+      // Accept both 'lesson' subtype and 'inferred_lesson' lessonType
+      const isLesson = meta.subtype === 'lesson' || meta.lessonType === 'inferred_lesson';
+      if (!isLesson) return false;
       // Include universal + client-specific lessons
       const clientUUID = this.clientAtom?.uuid;
       if (meta.clientUUID && clientUUID && meta.clientUUID !== clientUUID) return false;
       return true;
     });
+
+    console.log(`    ✍️ Lessons: ${lessons.length} matched (client: ${this.clientAtom?.title || 'universal'})`);
 
     return lessons.map(a => ({
       rule: a.body || a.title || '',

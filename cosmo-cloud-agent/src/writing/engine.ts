@@ -221,6 +221,7 @@ export class CloudWritingEngine {
   private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock): Promise<string> {
     let lastAssistantText = '';
     let emptyResponseCount = 0;
+    let consecutiveThinks = 0;
 
     for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
       // Build system prompt from blocks
@@ -298,6 +299,29 @@ export class CloudWritingEngine {
           timestamp: new Date().toISOString(),
           toolCallId: toolCall.id,
         });
+      }
+
+      // Detect think stalling loop — if model keeps calling think without progressing
+      const allThinks = response.toolCalls.every(tc => tc.name === 'think');
+      if (allThinks) {
+        consecutiveThinks++;
+        if (consecutiveThinks >= 3) {
+          console.log(`  ⚠️ Think stall detected (${consecutiveThinks} consecutive thinks) — injecting nudge`);
+          this.messages.push({
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: '[System] You have been thinking for 3+ turns without taking action. Stop thinking and take action NOW. Call write_draft with the full draft content, or call update_outline/add_hooks if still in brainstorm phase. Do NOT call think again — act immediately.',
+            timestamp: new Date().toISOString(),
+          });
+          consecutiveThinks = 0;
+        }
+      } else {
+        consecutiveThinks = 0;
+      }
+
+      // Log warning for incomplete responses (finish_reason missing)
+      if (!response.finishReason) {
+        console.log(`  ⚠️ Incomplete response (finish_reason=--) on iteration ${iteration + 1} — model may be producing truncated output`);
       }
 
       // Refresh dynamic block after tool execution (outline/hooks/draft may have changed)

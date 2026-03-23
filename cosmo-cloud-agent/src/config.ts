@@ -29,8 +29,11 @@ export const config = {
     writer: process.env.MODEL_WRITER || 'anthropic/claude-opus-4-1',       // Draft, brainstorm
   },
 
-  // Timezone (for task date resolution on UTC server)
+  // Timezone (for task date resolution + heartbeat scheduling on UTC server)
   timezone: process.env.TIMEZONE || 'UTC',
+
+  // Telegram chat ID for proactive messages (heartbeat, standing instructions)
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 
   // Server
   port: parseInt(process.env.PORT || '3000', 10),

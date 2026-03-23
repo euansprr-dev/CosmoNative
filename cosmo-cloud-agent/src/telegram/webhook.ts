@@ -13,6 +13,14 @@ import { processMessage } from '../agent/service';
 
 // Debounce state
 const debounceBuffers: Map<string, string[]> = new Map();
+
+// Last active chat ID — used for proactive messages (heartbeat, standing instructions)
+let lastActiveChatId: string | null = config.telegramChatId || null;
+
+/** Get the chat ID to send proactive messages to */
+export function getProactiveChatId(): string | null {
+  return lastActiveChatId;
+}
 const debounceTimers: Map<string, NodeJS.Timeout> = new Map();
 const processingChats: Set<string> = new Set();
 
@@ -73,6 +81,9 @@ async function handleMessage(message: any): Promise<void> {
   const chatId = String(message.chat.id);
   const threadId = message.message_thread_id;
   const compositeId = threadId ? `${chatId}:${threadId}` : chatId;
+
+  // Track last active chat for proactive messages (heartbeat, standing instructions)
+  lastActiveChatId = chatId;
 
   // Extract text
   const text = message.text as string | undefined;

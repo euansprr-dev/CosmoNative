@@ -21,7 +21,8 @@ const PRIORITY_ORDER: Record<string, number> = {
 
 function todayDateString(): string {
   // Use TIMEZONE env var for correct "today" in user's timezone (server runs UTC)
-  const tz = process.env.TIMEZONE || 'UTC';
+  // CRITICAL: If TIMEZONE is not set, tasks will show wrong overdue/today status
+  const tz = process.env.TIMEZONE || 'Europe/London';
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
     return formatter.format(new Date()); // Returns yyyy-MM-dd
@@ -346,6 +347,8 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
   }
 
   const today = todayDateString();
+  const tz = process.env.TIMEZONE || 'Europe/London';
+  console.log(`  📅 Tasks: today=${today} (tz=${tz}), list=${list}, ${allTasks.length} total tasks`);
 
   let sections: Array<{ name: string; tasks: Record<string, any>[] }> = [];
 
@@ -365,7 +368,17 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
         allTasks = allTasks.filter(t => (t.metadata?.intent ?? 'general') === intentFilter);
       }
 
-      const incomplete = allTasks.filter(t => !(t.metadata?.isCompleted));
+      const incomplete = allTasks.filter(t => {
+        const meta = t.metadata || {};
+        // Skip completed tasks
+        if (meta.isCompleted) return false;
+        // Skip recurring templates (not instances)
+        if (isRecurringTemplate(meta)) return false;
+        // Skip tasks with empty/placeholder titles (test artifacts)
+        const title = (t.title || '').trim().toLowerCase();
+        if (!title || title === 'new task' || title === 'untitled') return false;
+        return true;
+      });
 
       const overdue: Atom[] = [];
       const scheduled: Atom[] = [];
@@ -373,14 +386,16 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
 
       for (const task of incomplete) {
         const meta = task.metadata || {};
-        // Skip recurring templates
-        if (isRecurringTemplate(meta)) continue;
-
         const taskDate = getTaskDate(meta);
+
+        // Skip tasks with no date and in "someday"/"anytime" scheduling state
+        const schedulingState = meta.schedulingState as string | undefined;
+        if (!taskDate && (schedulingState === 'someday' || schedulingState === 'anytime')) continue;
 
         if (taskDate && taskDate < today) {
           overdue.push(task);
-        } else if (taskDate === today) {
+        } else if (taskDate === today || (!taskDate && !schedulingState)) {
+          // Tasks dated today OR tasks with no date and no scheduling state (unscheduled for today)
           const startTime = meta.startTime as string | undefined;
           const startDate = startTime?.split('T')[0];
           if (startTime && startDate === today) {
@@ -408,7 +423,14 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
     }
 
     case 'upcoming': {
-      const incomplete = allTasks.filter(t => !(t.metadata?.isCompleted) && !isRecurringTemplate(t.metadata || {}));
+      const incomplete = allTasks.filter(t => {
+        const meta = t.metadata || {};
+        if (meta.isCompleted) return false;
+        if (isRecurringTemplate(meta)) return false;
+        const title = (t.title || '').trim().toLowerCase();
+        if (!title || title === 'new task' || title === 'untitled') return false;
+        return true;
+      });
 
       // Group by date for next 7 days
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

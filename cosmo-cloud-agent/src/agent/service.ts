@@ -99,9 +99,12 @@ function escalateIntent(intent: AgentIntent, messages: AgentMessage[]): AgentInt
  * Process a user message through the full agent pipeline.
  * Source: CosmoAgentService.processMessage() in Swift
  */
+export type ToolProgressCallback = (event: { type: 'started' | 'completed'; tool: string; label: string; preview?: string }) => void;
+
 export async function processMessage(
   text: string,
   chatId: string,
+  onToolProgress?: ToolProgressCallback,
 ): Promise<ProcessResult> {
   // 1. Classify intent (with escalation based on conversation history)
   let intent = classifyIntent(text);
@@ -200,6 +203,10 @@ export async function processMessage(
       console.log(`  🔧 Tool: ${toolCall.name}`);
       toolsUsed.push(toolCall.name);
 
+      // Emit progress: started
+      const displayLabel = getToolDisplayLabel(toolCall.name, toolCall.arguments);
+      onToolProgress?.({ type: 'started', tool: toolCall.name, label: displayLabel });
+
       const result = await executeTool(toolCall.name, toolCall.arguments);
 
       // Track created atoms (with deduplication + success check)
@@ -229,6 +236,10 @@ export async function processMessage(
           activeItemsContext.set(chatId, itemLines.join('\n'));
         }
       } catch {}
+
+      // Emit progress: completed
+      const resultPreview = getResultPreview(toolCall.name, result);
+      onToolProgress?.({ type: 'completed', tool: toolCall.name, label: displayLabel, preview: resultPreview });
 
       messages.push({
         role: 'tool',
@@ -453,6 +464,67 @@ async function extractLessonsFromConversation(chatId: string, userMessage: strin
     }
   } catch (error) {
     // Silent failure — learning is best-effort, never blocks
+  }
+}
+
+// ============================================================
+// Tool Progress Display Labels (matching Swift's toolDisplayLabel)
+// ============================================================
+
+function getToolDisplayLabel(tool: string, args: Record<string, any>): string {
+  const client = args.clientName || args.client_name || args.name || '';
+  switch (tool) {
+    case 'get_client_profile': return client ? `Loading profile: ${client}` : 'Loading client profile';
+    case 'search_swipes': return 'Searching swipe library';
+    case 'list_all_swipes': return 'Loading swipe library';
+    case 'find_similar_swipes': return 'Finding similar swipes';
+    case 'generate_outline': return client ? `Generating outline for ${client}` : 'Generating outline';
+    case 'generate_draft': return client ? `Writing draft for ${client}` : 'Writing draft';
+    case 'generate_hooks': return client ? `Generating hooks for ${client}` : 'Generating hooks';
+    case 'revise_draft': return client ? `Revising draft for ${client}` : 'Revising draft';
+    case 'score_draft': return 'Scoring draft';
+    case 'read_draft': return 'Reading current draft';
+    case 'create_content': return 'Creating content atom';
+    case 'activate_idea': return 'Activating idea to pipeline';
+    case 'capture_swipe': return 'Capturing swipe';
+    case 'search_ideas': return 'Searching ideas';
+    case 'get_tasks': return 'Loading tasks';
+    case 'smart_task_create': return 'Creating task';
+    case 'complete_task': return 'Completing task';
+    case 'reschedule_task': return 'Rescheduling task';
+    case 'learn_from_url': return 'Learning from URL';
+    case 'learn_from_text': return 'Learning from content';
+    case 'web_search': return `Searching: ${args.query || ''}`;
+    default: return tool.replace(/_/g, ' ');
+  }
+}
+
+function getResultPreview(tool: string, result: string): string {
+  try {
+    const parsed = JSON.parse(result);
+    switch (tool) {
+      case 'generate_outline':
+        return parsed.sectionCount ? `${parsed.sectionCount} sections` : '';
+      case 'generate_draft':
+        return parsed.wordCount ? `${parsed.wordCount} words` : '';
+      case 'generate_hooks':
+        return parsed.hookVariants ? `${parsed.hookVariants.length} variants` : '';
+      case 'score_draft':
+        return parsed.overallConfidence ? `Score: ${parsed.overallConfidence}/100` : '';
+      case 'get_client_profile':
+        return parsed.name || '';
+      case 'search_swipes':
+      case 'search_ideas':
+      case 'get_tasks':
+        return parsed.count !== undefined ? `${parsed.count} results` : '';
+      case 'learn_from_url':
+      case 'learn_from_text':
+        return parsed.rulesLearned ? `${parsed.rulesLearned.length} rules` : '';
+      default:
+        return parsed.message?.substring(0, 60) || '';
+    }
+  } catch {
+    return '';
   }
 }
 

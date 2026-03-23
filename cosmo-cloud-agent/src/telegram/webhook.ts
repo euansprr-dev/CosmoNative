@@ -9,7 +9,7 @@
 // - Debounce still implemented (2.5s window)
 
 import { config } from '../config';
-import { processMessage } from '../agent/service';
+import { processMessage, ToolProgressCallback } from '../agent/service';
 
 // Debounce state
 const debounceBuffers: Map<string, string[]> = new Map();
@@ -154,8 +154,14 @@ async function flushDebounceBuffer(compositeId: string, chatId: string, threadId
     // Send typing indicator
     await sendChatAction(chatId, 'typing', threadId);
 
-    // Process through full agent
-    const result = await processMessage(joinedText, compositeId);
+    // Create progress tracker for live-updating status message
+    const progress = createProgressTracker(chatId, threadId);
+
+    // Process through full agent with progress callback
+    const result = await processMessage(joinedText, compositeId, progress.callback);
+
+    // Finalize progress message (change header to ✅ Done)
+    await progress.finalize();
 
     // Send response (with chunking for long messages)
     await sendLongMessage(chatId, result.response, threadId);
@@ -367,6 +373,110 @@ async function sendChatAction(chatId: string, action: string, threadId?: number)
  * Send inline keyboard buttons.
  * Source: TelegramBridgeService send_telegram_buttons in Swift
  */
+// ============================================================
+// Real-Time Progress Tracker (live-updating message during tool loop)
+// ============================================================
+
+const PHASE_MAP: Record<string, string> = {
+  generate_outline: 'outline', update_outline: 'outline',
+  generate_draft: 'draft', write_draft: 'draft',
+  generate_hooks: 'hooks', add_hooks: 'hooks',
+  score_draft: 'score', run_scorecard: 'score',
+  revise_draft: 'revise',
+};
+
+export function createProgressTracker(chatId: string, threadId?: number) {
+  const completedLines: string[] = [];
+  const completedPhases = new Set<string>();
+  let activeLine: string | null = null;
+  let messageId: number | null = null;
+  let lastFlush = 0;
+  let flushTimeout: NodeJS.Timeout | null = null;
+
+  function buildText(isFinal: boolean): string {
+    const parts: string[] = [];
+    parts.push(isFinal ? '✅ Done' : '🔄 Working...');
+    parts.push('');
+    for (const line of completedLines) {
+      parts.push(`  ✓ ${line}`);
+    }
+    if (!isFinal && activeLine) {
+      parts.push(`  ⏳ ${activeLine}...`);
+    }
+    return parts.join('\n');
+  }
+
+  async function flush(isFinal: boolean): Promise<void> {
+    const text = buildText(isFinal);
+    if (!messageId) {
+      messageId = await sendMessageReturningId(chatId, text, threadId);
+    } else {
+      await editMessage(chatId, messageId, text, threadId);
+    }
+    lastFlush = Date.now();
+  }
+
+  function scheduleFlush(): void {
+    if (flushTimeout) return;
+    const elapsed = Date.now() - lastFlush;
+    const delay = Math.max(0, 1500 - elapsed); // 1.5s throttle
+    flushTimeout = setTimeout(async () => {
+      flushTimeout = null;
+      await flush(false);
+    }, delay);
+  }
+
+  const callback: ToolProgressCallback = (event) => {
+    if (event.type === 'started') {
+      activeLine = event.label;
+      scheduleFlush();
+    } else if (event.type === 'completed') {
+      const phase = PHASE_MAP[event.tool];
+      if (phase && completedPhases.has(phase)) return; // Dedup
+      if (phase) completedPhases.add(phase);
+
+      let line = event.label;
+      if (event.preview) line += ` (${event.preview})`;
+      completedLines.push(line);
+      activeLine = null;
+      scheduleFlush();
+    }
+  };
+
+  const finalize = async (): Promise<void> => {
+    if (flushTimeout) { clearTimeout(flushTimeout); flushTimeout = null; }
+    if (completedLines.length > 0) {
+      await flush(true);
+    }
+  };
+
+  return { callback, finalize };
+}
+
+async function sendMessageReturningId(chatId: string, text: string, threadId?: number): Promise<number | null> {
+  const body: any = { chat_id: chatId, text };
+  if (threadId) body.message_thread_id = threadId;
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  );
+
+  if (!response.ok) return null;
+  const data = await response.json() as any;
+  return data.result?.message_id ?? null;
+}
+
+async function editMessage(chatId: string, messageId: number, text: string, threadId?: number): Promise<void> {
+  const body: any = { chat_id: chatId, message_id: messageId, text };
+  if (threadId) body.message_thread_id = threadId;
+
+  await fetch(
+    `https://api.telegram.org/bot${config.telegramBotToken}/editMessageText`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  ).catch(() => {}); // Silent failure — edit is best-effort
+}
+
 export async function sendTelegramButtons(
   chatId: string,
   message: string,

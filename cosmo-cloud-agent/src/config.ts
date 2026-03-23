@@ -24,9 +24,9 @@ export const config = {
 
   // Model tiers (matching Swift ContentModelTier)
   models: {
-    sensor: process.env.MODEL_SENSOR || 'anthropic/claude-haiku-4-5',      // Capture, query, correct
-    strategist: process.env.MODEL_STRATEGIST || 'anthropic/claude-sonnet-4-5', // Analyze, strategy
-    writer: process.env.MODEL_WRITER || 'anthropic/claude-opus-4-1',       // Draft, brainstorm
+    sensor: process.env.MODEL_SENSOR || 'anthropic/claude-haiku-4-5',        // Capture, query, correct, plan
+    strategist: process.env.MODEL_STRATEGIST || 'anthropic/claude-sonnet-4-6', // Analyze, strategy, draft/brainstorm routing
+    writer: process.env.MODEL_WRITER || 'anthropic/claude-opus-4-6',         // Writing engine inner loop (outline, hooks, draft, revise)
   },
 
   // Timezone (for task date resolution + heartbeat scheduling on UTC server)

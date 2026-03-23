@@ -262,6 +262,11 @@ export function assembleBlock3Stable(
     sections.push(`PRIMARY BLUEPRINT: "${primarySwipe.title}"`);
     sections.push(`  Beat pattern: ${primarySwipe.beatSequence.join(' > ')}`);
     sections.push(`  Hook type: ${primarySwipe.hookType} (score: ${primarySwipe.hookScore}/10)`);
+    if (primarySwipe.hookText) {
+      const hookPreview = primarySwipe.hookText.length > 200 ? primarySwipe.hookText.substring(0, 200) : primarySwipe.hookText;
+      sections.push(`  Hook text: "${hookPreview}"`);
+      sections.push(`  → All generated hooks MUST match this format exactly (case, perspective, structure)`);
+    }
     if (primarySwipe.beatSequence.length > 0) {
       sections.push('  Beat functions (apply these structural roles, NOT the blueprint\'s topic):');
       primarySwipe.beatSequence.forEach((beat, i) => {
@@ -491,4 +496,18 @@ Swipe examples are loaded with FULL BODY TEXT. Read every one. These are real hi
 
 SWIPE STUDY: Absorb how these swipes hook, pace, build tension, transition between ideas, and close. Match their energy and structural mechanics in your drafts. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook technique, and emotional arc.
 
-VOICE RULE: The swipes teach you HOW to write. The client profile tells you WHAT to write about and WHO to sound like. Never use swipe topics/arguments — always use the client's own beliefs, expertise, and niche.`;
+VOICE RULE: The swipes teach you HOW to write. The client profile tells you WHAT to write about and WHO to sound like. Never use swipe topics/arguments — always use the client's own beliefs, expertise, and niche.
+
+═══════════════════════════════════════════════════════════════
+SECTION 6: HOOK GENERATION RULES (MANDATORY for add_hooks)
+═══════════════════════════════════════════════════════════════
+
+Study the PRIMARY BLUEPRINT's hook and generate variants that match its EXACT format:
+- Match CASE: if blueprint hook is ALL CAPS, all variants MUST be ALL CAPS
+- Match PERSPECTIVE: if blueprint is third-person ("Military man retires..."), stay third-person. Do NOT switch to first-person ("I went from...")
+- Match STRUCTURE: if blueprint uses "SUBJECT + VERB + SPECIFIC METRICS", follow that exact pattern
+- Match LENGTH: hook variants should be similar word count to the blueprint hook
+- Do NOT add filler phrases ("Here's how:", "Here's my breakdown:", "and how you can too:", "Here's exactly how it works:")
+- Do NOT add colons or trailing explanations after the hook statement
+- The user's title IS the hook template — generate variations of THAT structure, not generic alternatives
+- Each variant should swap specific details (numbers, timeframes, methods) while keeping the same sentence skeleton`;

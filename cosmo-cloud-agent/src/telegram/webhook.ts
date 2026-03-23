@@ -160,8 +160,9 @@ async function flushDebounceBuffer(compositeId: string, chatId: string, threadId
     // Process through full agent with progress callback
     const result = await processMessage(joinedText, compositeId, progress.callback);
 
-    // Finalize progress message (change header to ✅ Done)
-    await progress.finalize();
+    // Finalize progress message — keep for writing workflows, delete for quick actions
+    const writingIntents = new Set(['draft', 'brainstorm', 'strategy', 'analyze']);
+    await progress.finalize(writingIntents.has(result.intent));
 
     // Send response (with chunking for long messages)
     await sendLongMessage(chatId, result.response, threadId);
@@ -438,11 +439,7 @@ export function createProgressTracker(chatId: string, threadId?: number) {
   const callback: ToolProgressCallback = (event) => {
     if (event.type === 'started') {
       activeLine = event.label;
-      // Only show progress for longer workflows (>3 tools or slow actions)
-      // For fast actions, we skip the progress message entirely
-      if (toolCount >= 3) {
-        scheduleFlush();
-      }
+      scheduleFlush();
     } else if (event.type === 'completed') {
       toolCount++;
       const phase = PHASE_MAP[event.tool];
@@ -453,35 +450,27 @@ export function createProgressTracker(chatId: string, threadId?: number) {
       if (event.preview) line += ` (${event.preview})`;
       completedLines.push(line);
       activeLine = null;
-      // Start showing progress after 3rd tool completes
-      if (toolCount >= 3) {
-        scheduleFlush();
-      }
+      scheduleFlush();
     }
   };
 
-  const finalize = async (): Promise<void> => {
+  const finalize = async (keepProgress = false): Promise<void> => {
     if (flushTimeout) { clearTimeout(flushTimeout); flushTimeout = null; }
-    const elapsed = Date.now() - startTime;
 
-    // For fast actions (≤3 tools or < 5 seconds), delete progress message
-    // instead of showing it — the final response is enough
-    if (toolCount <= 3 || elapsed < 5000) {
-      if (messageId) {
-        // Delete the progress message silently
-        try {
-          await fetch(
-            `https://api.telegram.org/bot${config.telegramBotToken}/deleteMessage`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, message_id: messageId }) }
-          );
-        } catch {}
-      }
+    // For writing workflows, always show the progress summary
+    if (keepProgress && completedLines.length > 0) {
+      await flush(true);
       return;
     }
 
-    // For longer workflows, finalize with ✅ Done header
-    if (completedLines.length > 0) {
-      await flush(true);
+    // For quick actions (captures, queries, ideas), delete progress message
+    if (messageId) {
+      try {
+        await fetch(
+          `https://api.telegram.org/bot${config.telegramBotToken}/deleteMessage`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, message_id: messageId }) }
+        );
+      } catch {}
     }
   };
 

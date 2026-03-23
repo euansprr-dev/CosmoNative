@@ -90,6 +90,9 @@ class SyncEngine: ObservableObject {
         // Don't sync if not authenticated — RLS will block everything
         guard let client = supabaseClient, client.isAuthenticated else { return }
 
+        // Refresh auth token before sync to prevent JWT expired errors
+        await SupabaseAuthService.shared.refreshSessionIfNeeded()
+
         syncState = .syncing
 
         // 1. Push local changes

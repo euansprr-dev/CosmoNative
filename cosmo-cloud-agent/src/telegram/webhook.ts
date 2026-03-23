@@ -83,6 +83,9 @@ async function handleMessage(message: any): Promise<void> {
   const compositeId = threadId ? `${chatId}:${threadId}` : chatId;
 
   // Track last active chat for proactive messages (heartbeat, standing instructions)
+  if (lastActiveChatId !== chatId) {
+    console.log(`📱 Active chat ID: ${chatId}`);
+  }
   lastActiveChatId = chatId;
 
   // Extract text

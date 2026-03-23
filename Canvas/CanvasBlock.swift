@@ -86,6 +86,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .calendar:   return CGSize(width: 400, height: 500)
         case .image:      return CGSize(width: 320, height: 240)
         case .stickyNote: return CGSize(width: 220, height: 220)
+        case .liveQuery:  return CGSize(width: 280, height: 360)
         default:          return CGSize(width: 220, height: 310)
         }
     }

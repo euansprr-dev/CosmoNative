@@ -1686,6 +1686,25 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return
             }
 
+            var nonScrollingViewportWidth: CGFloat?
+            if !parent.scrollsInternally,
+               let scrollView = textView.enclosingScrollView as? CosmoScrollView {
+                let targetWidth = max(scrollView.contentSize.width, 1)
+                let targetContainerWidth = parent.singleLine ? CGFloat.greatestFiniteMagnitude : targetWidth
+                if abs(textContainer.containerSize.width - targetContainerWidth) > 0.5 {
+                    textContainer.containerSize = NSSize(
+                        width: targetContainerWidth,
+                        height: parent.singleLine
+                            ? parent.resolvedSingleLineHeight()
+                            : CGFloat.greatestFiniteMagnitude
+                    )
+                }
+                if abs(textView.frame.width - targetWidth) > 0.5 {
+                    textView.setFrameSize(NSSize(width: targetWidth, height: max(textView.frame.height, 1)))
+                }
+                nonScrollingViewportWidth = targetWidth
+            }
+
             layoutManager.ensureLayout(for: textContainer)
             let measuredHeight = measuredSingleLineContentHeight(for: textView)
                 ?? ceil(layoutManager.usedRect(for: textContainer).height + (textView.textContainerInset.height * 2))
@@ -1700,18 +1719,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let newHeight = max(minimum, measuredHeight)
             if !parent.scrollsInternally,
                let scrollView = textView.enclosingScrollView as? CosmoScrollView {
-                let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
-                if textView.frame.height != newHeight || textView.frame.width != currentWidth {
+                let currentWidth = nonScrollingViewportWidth ?? max(scrollView.contentSize.width, textView.frame.width)
+                if textView.frame.height != newHeight || abs(textView.frame.width - currentWidth) > 0.5 {
                     textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
                 }
                 if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
                     scrollView.intrinsicHeight = newHeight
                     scrollView.invalidateIntrinsicContentSize()
-                }
-                let clipView = scrollView.contentView
-                if clipView.bounds.origin != .zero {
-                    clipView.scroll(to: .zero)
-                    scrollView.reflectScrolledClipView(clipView)
                 }
             }
             // Only notify when height changes by >1pt to prevent sub-pixel jitter

@@ -44,6 +44,7 @@ struct CanvasClusterLayer: View {
     @State private var editingName: String = ""
     @State private var localResizingClusterId: UUID?
     @State private var clusterViewDropPreview: ClusterViewDropPreview?
+    @State private var showRecipePopoverForCluster: UUID?
 
     // MARK: - Body
 
@@ -201,6 +202,31 @@ struct CanvasClusterLayer: View {
                     .foregroundColor(cluster.color)
             }
             clusterLabel(cluster, isEditing: isEditing)
+
+            // Automation rule indicator
+            if cluster.isUserCreated {
+                ClusterRuleIndicator(
+                    clusterId: cluster.id,
+                    clusterColor: cluster.color,
+                    ruleCount: AutomationDispatcher.shared.activeRuleCount(for: cluster.id.uuidString),
+                    onAddRule: {
+                        showRecipePopoverForCluster = cluster.id
+                    }
+                )
+                .popover(isPresented: Binding(
+                    get: { showRecipePopoverForCluster == cluster.id },
+                    set: { if !$0 { showRecipePopoverForCluster = nil } }
+                )) {
+                    AutomationRecipePopover(
+                        clusterId: cluster.id.uuidString,
+                        clusterName: cluster.name,
+                        clusterColor: cluster.color,
+                        onDismiss: {
+                            showRecipePopoverForCluster = nil
+                        }
+                    )
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)

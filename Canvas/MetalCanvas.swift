@@ -412,6 +412,8 @@ extension EntityType {
             return [0.35, 0.61, 0.63, 1.0]  // Muted teal
         case .stickyNote:
             return [0.83, 0.76, 0.42, 1.0]  // Warm yellow
+        case .liveQuery:
+            return [0.18, 0.42, 0.31, 1.0]  // Forest green (automation)
         }
     }
 }

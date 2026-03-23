@@ -108,6 +108,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     // MARK: - Areas (Things 3-inspired hierarchy)
     case area                                           // Permanent life category container for projects
 
+    // MARK: - Automation
+    case automation                                     // Automation rules (reactive canvas behaviors)
+
     // MARK: - Category Classification
 
     /// Category for grouping atom types
@@ -132,7 +135,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .journalInsight, .analysisChunk, .emotionalState, .clarityScore:
             return .reflection
         case .dailySummary, .weeklySummary, .syncEvent, .systemEvent, .userPreference, .routineDefinition,
-             .thinkspace, .agentLearning:
+             .thinkspace, .agentLearning, .automation:
             return .system
         case .correlationInsight, .causalityComputation, .semanticExtraction, .sanctuarySnapshot,
              .livingInsight, .syncState:
@@ -257,6 +260,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .image: return "Image"
         // Areas
         case .area: return "Area"
+        // Automation
+        case .automation: return "Automation"
         }
     }
 
@@ -345,6 +350,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .image: return "Images"
         // Areas
         case .area: return "Areas"
+        // Automation
+        case .automation: return "Automations"
         }
     }
 
@@ -433,6 +440,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .image: return "photo.fill"
         // Areas
         case .area: return "square.stack.fill"
+        // Automation
+        case .automation: return "bolt.fill"
         }
     }
 }
@@ -586,6 +595,9 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
     case swipeToClient = "swipe_to_client"                 // Swipe tagged for a client
     case clientToSwipe = "client_to_swipe"                 // Client's tagged swipes
 
+    // MARK: - Automation Links
+    case automationScope = "automation_scope"              // Automation rule → scoped thinkspace/cluster
+
     // MARK: - Bidirectional Links (for knowledge graph traversal)
     case linksTo = "links_to"                              // Generic forward link
     case linkedFrom = "linked_from"                        // Generic back link
@@ -700,6 +712,8 @@ enum AtomLinkType: String, Codable, CaseIterable, Sendable {
         case .creatorToSwipe: return "Creator to Swipe"
         case .swipeToClient: return "Swipe to Client"
         case .clientToSwipe: return "Client to Swipe"
+        // Automation
+        case .automationScope: return "Automation Scope"
         }
     }
 }

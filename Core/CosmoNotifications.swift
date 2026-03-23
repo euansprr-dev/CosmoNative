@@ -324,6 +324,9 @@ enum CosmoNotification {
         static let uncommittedItemCreated = Notification.Name("com.cosmo.sync.uncommittedItemCreated")
         static let uncommittedItemPromoted = Notification.Name("com.cosmo.sync.uncommittedItemPromoted")
         static let uncommittedItemRestored = Notification.Name("com.cosmo.sync.uncommittedItemRestored")
+        /// Posted after cloud atoms are pulled and applied locally.
+        /// userInfo: ["atomUUIDs": [String]] — UUIDs of newly created/updated atoms from cloud
+        static let atomsPulled = Notification.Name("com.cosmo.sync.atomsPulled")
     }
 
     // MARK: - NodeGraph Notifications
@@ -364,6 +367,20 @@ enum CosmoNotification {
         /// Fired when creator data changes (new creator saved, posts saved, stats updated).
         /// userInfo: ["creatorUUID": String] (optional — nil means reload all)
         static let creatorDataChanged = Notification.Name("com.cosmo.swipefile.creatorDataChanged")
+    }
+
+    // MARK: - Automation Notifications
+    enum Automation {
+        /// An automation rule was fired
+        static let ruleFired = Notification.Name("com.cosmo.automation.ruleFired")
+        /// An automation rule was created
+        static let ruleCreated = Notification.Name("com.cosmo.automation.ruleCreated")
+        /// An automation rule was updated (enabled/disabled, edited)
+        static let ruleUpdated = Notification.Name("com.cosmo.automation.ruleUpdated")
+        /// An automation rule was deleted
+        static let ruleDeleted = Notification.Name("com.cosmo.automation.ruleDeleted")
+        /// Deferred spatial actions are ready to execute on a thinkspace
+        static let deferredActionsReady = Notification.Name("com.cosmo.automation.deferredActionsReady")
     }
 
     // MARK: - Daemon Notifications

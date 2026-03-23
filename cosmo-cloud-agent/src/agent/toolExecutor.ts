@@ -23,6 +23,7 @@ import * as search from '../tools/search';
 import * as tasks from '../tools/tasks';
 import * as projects from '../tools/projects';
 import * as learning from '../tools/learning';
+import * as automations from '../tools/automations';
 
 export type ToolResult = string; // JSON-encoded string, matching Swift jsonEncode()
 
@@ -237,6 +238,16 @@ export async function executeTool(
       // === WEB SEARCH ===
       case 'web_search':
         return await search.webSearch(args);
+
+      // === AUTOMATIONS ===
+      case 'create_automation':
+        return await automations.createAutomation(args);
+      case 'list_automations':
+        return await automations.listAutomations(args);
+      case 'toggle_automation':
+        return await automations.toggleAutomation(args);
+      case 'delete_automation':
+        return await automations.deleteAutomation(args);
 
       // === TELEGRAM UX ===
       case 'send_telegram_buttons':

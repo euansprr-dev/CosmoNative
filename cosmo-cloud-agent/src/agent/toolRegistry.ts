@@ -127,6 +127,12 @@ const ALL_TOOLS: ToolDefinition[] = [
   // === WEB SEARCH ===
   { name: 'web_search', description: 'Search the web for current information', parameters: { type: 'object', properties: { query: { type: 'string' }, maxResults: { type: 'integer' } }, required: ['query'] } },
 
+  // === AUTOMATIONS ===
+  { name: 'create_automation', description: 'Create an automation rule. Rules react to events (atom created, status changed, link created) and perform actions (notify, set status, move to cluster). Use natural language for trigger/condition/action.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Human-readable rule name' }, trigger: { type: 'string', description: 'What triggers the rule (e.g. "when an idea is created", "when status changes")' }, condition: { type: 'string', description: 'Optional filter (e.g. "from telegram", "type is content", "linked to client Josh")' }, action: { type: 'string', description: 'What to do (e.g. "notify me on telegram", "set status to developing", "run analysis")' }, scope: { type: 'string', description: 'Scope: "global", "thinkspace:UUID", or "cluster:UUID". Default: global' } }, required: ['name', 'trigger', 'action'] } },
+  { name: 'list_automations', description: 'List all automation rules', parameters: { type: 'object', properties: {} } },
+  { name: 'toggle_automation', description: 'Enable or disable an automation rule', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
+  { name: 'delete_automation', description: 'Delete an automation rule', parameters: { type: 'object', properties: { uuid: { type: 'string' } }, required: ['uuid'] } },
+
   // === TELEGRAM UX ===
   { name: 'send_telegram_buttons', description: 'Send inline buttons to Telegram', parameters: { type: 'object', properties: { message: { type: 'string' }, buttons: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, action: { type: 'string' } } } } }, required: ['message', 'buttons'] } },
 ];
@@ -155,6 +161,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   webSearch: ['web_search'],
   // Minimal tool set for draft writing — only what's needed to find blueprints + write
   draftEssentials: ['search_swipes', 'create_content', 'generate_outline', 'generate_draft', 'read_draft', 'revise_draft', 'generate_hooks', 'score_draft', 'update_content', 'get_client_profile', 'list_client_profiles'],
+  automation: ['create_automation', 'list_automations', 'toggle_automation', 'delete_automation'],
   ux: ['send_telegram_buttons'],
 };
 
@@ -168,7 +175,7 @@ const INTENT_TOOL_GROUPS: Record<AgentIntent, string[]> = {
   execute: ['content', 'schedule', 'task', 'project', 'writing', 'clientProfile', 'ux', 'lesson', 'moduleManagement'],
   debrief: ['analytics', 'lesson', 'moduleManagement'],
   reflect: ['analytics', 'lesson', 'moduleManagement'],
-  meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement', 'learning'],
+  meta: ['preference', 'standing', 'client', 'lesson', 'ux', 'moduleManagement', 'learning', 'automation'],
   strategy: ['intelligence', 'swipe', 'content', 'analytics', 'writing', 'clientProfile', 'client', 'insightMemory', 'ux', 'lesson', 'moduleManagement', 'webSearch'],
   draft: ['draftEssentials'], // Minimal: search_swipes + writing tools + client profile. NO analysis/filter/list tools.
   analyze: ['intelligence', 'swipe', 'analytics', 'content', 'clientProfile', 'insightMemory', 'lesson', 'moduleManagement', 'webSearch'],

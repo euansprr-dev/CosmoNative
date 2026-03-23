@@ -93,6 +93,12 @@ struct CosmoApp: App {
         // Restore UI state
         restoreUIState()
 
+        // Start automation engine — seed built-in rules + start dispatcher
+        Task {
+            await BuiltInRules.seedIfNeeded()
+            AutomationDispatcher.shared.start()
+        }
+
         // Initialize voice system (hotkey registered immediately, speech/LLM loaded async)
         // Hotkey registration happens in VoiceEngine.init() for immediate availability
         // Speech recognition TCC is handled gracefully without crashing
@@ -437,6 +443,7 @@ public enum EntityType: String, Codable, Sendable {
     case swipeFile = "swipe_file"  // Curated content swipe file
     case image                     // Native image blocks on canvas
     case stickyNote = "sticky_note" // Square sticky note blocks on canvas
+    case liveQuery = "live_query"   // Live query block that auto-updates with matching atoms
 
     public var icon: String {
         switch self {
@@ -454,6 +461,7 @@ public enum EntityType: String, Codable, Sendable {
         case .journal: return "book.fill"
         case .swipeFile: return "bookmark.fill"
         case .image: return "photo.fill"
+        case .liveQuery: return "bolt.horizontal.fill"
         }
     }
 
@@ -474,6 +482,7 @@ public enum EntityType: String, Codable, Sendable {
         case .journal: return DS.entityNote
         case .swipeFile: return DS.entitySwipe
         case .image: return DS.entityImage
+        case .liveQuery: return DS.accent
         }
     }
 }

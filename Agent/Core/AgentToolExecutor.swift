@@ -225,6 +225,11 @@ class AgentToolExecutor {
         case "suggest_module_addition": return try await suggestModuleAddition(arguments)
         // Web Search
         case "web_search": return try await webSearch(arguments)
+        // Automations
+        case "create_automation": return try await createAutomation(arguments)
+        case "list_automations": return try await listAutomations(arguments)
+        case "toggle_automation": return try await toggleAutomation(arguments)
+        case "delete_automation": return try await deleteAutomation(arguments)
         // Telegram UX
         case "send_telegram_buttons": return try await sendTelegramButtons(arguments)
         // In-App UX
@@ -3545,6 +3550,187 @@ class AgentToolExecutor {
                 "query": query
             ] as [String: Any])
         }
+    }
+
+    // MARK: - Automations
+
+    private func createAutomation(_ args: [String: Any]) async throws -> String {
+        guard let name = args["name"] as? String else {
+            return jsonError("name is required")
+        }
+
+        let triggerStr = args["trigger"] as? String ?? "atom_created"
+        let conditionStr = args["condition"] as? String
+        let actionStr = args["action"] as? String ?? "show_notification"
+        let scopeStr = args["scope"] as? String ?? "global"
+
+        // Parse scope
+        let scope: AutomationScope
+        var scopeId: String?
+        if scopeStr.contains(":") {
+            let parts = scopeStr.split(separator: ":")
+            scope = AutomationScope(rawValue: String(parts[0])) ?? .global
+            scopeId = String(parts[1])
+        } else {
+            scope = AutomationScope(rawValue: scopeStr) ?? .global
+        }
+
+        // Parse trigger type from natural language
+        let triggerType = parseTriggerType(triggerStr)
+        var triggerConfig: [String: String] = [:]
+        if let atomType = parseAtomTypeFromTrigger(triggerStr) {
+            triggerConfig["atomType"] = atomType
+        }
+
+        // Parse conditions
+        var conditions: [AutomationCondition] = []
+        if let cond = conditionStr {
+            if let parsed = parseConditionNL(cond) {
+                conditions.append(parsed)
+            }
+        }
+
+        // Parse action
+        let action = parseActionNL(actionStr)
+
+        let rule = AutomationRule.create(
+            name: name,
+            scope: scope,
+            scopeId: scopeId,
+            triggerType: triggerType,
+            triggerConfig: triggerConfig,
+            conditions: conditions,
+            actions: [action]
+        )
+
+        let saved = try await AutomationDispatcher.shared.createRule(rule)
+
+        return jsonEncode([
+            "success": true,
+            "uuid": saved.uuid,
+            "name": name,
+            "message": "Automation rule '\(name)' created and active."
+        ] as [String: Any])
+    }
+
+    private func listAutomations(_ args: [String: Any]) async throws -> String {
+        let rules = try await AutomationDispatcher.shared.fetchAllRules()
+
+        let ruleList = rules.map { rule -> [String: Any] in
+            [
+                "uuid": rule.uuid,
+                "name": rule.name,
+                "trigger": rule.triggerType.rawValue,
+                "scope": rule.scope.rawValue,
+                "isEnabled": rule.isEnabled,
+                "fireCount": rule.fireCount
+            ]
+        }
+
+        return jsonEncode([
+            "rules": ruleList,
+            "count": rules.count
+        ] as [String: Any])
+    }
+
+    private func toggleAutomation(_ args: [String: Any]) async throws -> String {
+        guard let uuid = args["uuid"] as? String else {
+            return jsonError("uuid is required")
+        }
+
+        try await AutomationDispatcher.shared.toggleRule(uuid: uuid)
+
+        return jsonEncode([
+            "success": true,
+            "uuid": uuid,
+            "message": "Automation toggled."
+        ] as [String: Any])
+    }
+
+    private func deleteAutomation(_ args: [String: Any]) async throws -> String {
+        guard let uuid = args["uuid"] as? String else {
+            return jsonError("uuid is required")
+        }
+
+        try await AutomationDispatcher.shared.deleteRule(uuid: uuid)
+
+        return jsonEncode([
+            "success": true,
+            "uuid": uuid,
+            "message": "Automation deleted."
+        ] as [String: Any])
+    }
+
+    // MARK: - NL Parsing Helpers (Automation)
+
+    private func parseTriggerType(_ input: String) -> AutomationTriggerType {
+        let lower = input.lowercased()
+        if lower.contains("status") && lower.contains("change") { return .statusChanged }
+        if lower.contains("link") { return .linkCreated }
+        if lower.contains("idea") || lower.contains("content") || lower.contains("swipe") || lower.contains("task") || lower.contains("research") {
+            return .atomTypeCreated
+        }
+        return .atomCreated
+    }
+
+    private func parseAtomTypeFromTrigger(_ input: String) -> String? {
+        let lower = input.lowercased()
+        if lower.contains("idea") { return "idea" }
+        if lower.contains("content") { return "content" }
+        if lower.contains("swipe") || lower.contains("research") { return "research" }
+        if lower.contains("task") { return "task" }
+        return nil
+    }
+
+    private func parseConditionNL(_ input: String) -> AutomationCondition? {
+        let lower = input.lowercased()
+        if lower.contains("telegram") {
+            return AutomationCondition(field: .captureSource, op: .equals, value: .string("telegram"))
+        }
+        if lower.contains("client") {
+            return AutomationCondition(field: .atomClientUUID, op: .isSet, value: .bool(true))
+        }
+        return nil
+    }
+
+    private func parseActionNL(_ input: String) -> AutomationAction {
+        let lower = input.lowercased()
+        if lower.contains("telegram") || lower.contains("notify") && lower.contains("telegram") {
+            return AutomationAction(
+                type: .sendTelegram,
+                config: ["message": .string("⚡ {{atom.title}} — automation fired")],
+                label: "Send Telegram notification"
+            )
+        }
+        if lower.contains("notify") || lower.contains("notification") {
+            return AutomationAction(
+                type: .showNotification,
+                config: ["message": .string("Rule fired for {{atom.title}}")],
+                label: "Show notification"
+            )
+        }
+        if lower.contains("status") {
+            // Extract target status
+            let words = input.split(separator: " ")
+            let statusValue = words.last.map(String.init) ?? "developing"
+            return AutomationAction(
+                type: .setStatus,
+                config: ["status": .string(statusValue)],
+                label: "Set status to \(statusValue)"
+            )
+        }
+        if lower.contains("analyz") || lower.contains("enrich") {
+            return AutomationAction(
+                type: .runAnalysis,
+                config: ["analysisType": .string("quickEnrich")],
+                label: "Run analysis"
+            )
+        }
+        return AutomationAction(
+            type: .showNotification,
+            config: ["message": .string("Rule fired for {{atom.title}}")],
+            label: "Show notification"
+        )
     }
 }
 

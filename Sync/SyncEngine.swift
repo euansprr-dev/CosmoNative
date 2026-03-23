@@ -241,6 +241,8 @@ class SyncEngine: ObservableObject {
     private func pullRemoteChanges() async {
         guard isOnline, let client = supabaseClient else { return }
 
+        var pulledAtomUUIDs: [String] = []
+
         for table in pullTables {
             do {
                 let lastSync = await getLastPullTime(for: table)
@@ -251,12 +253,31 @@ class SyncEngine: ObservableObject {
 
                 for change in remoteChanges {
                     await applyRemoteChange(table: table, data: change)
+
+                    // Track pulled atom UUIDs for automation catch-up
+                    if table == "atoms", let uuid = change["uuid"] as? String {
+                        let source = change["_source"] as? String ?? "mac"
+                        if source != "mac" {
+                            pulledAtomUUIDs.append(uuid)
+                        }
+                    }
                 }
 
                 await updateLastPullTime(for: table)
 
             } catch {
                 print("⚠️ Pull failed for \(table): \(error)")
+            }
+        }
+
+        // Notify automation dispatcher of newly pulled cloud atoms
+        if !pulledAtomUUIDs.isEmpty {
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Sync.atomsPulled,
+                    object: nil,
+                    userInfo: ["atomUUIDs": pulledAtomUUIDs]
+                )
             }
         }
     }

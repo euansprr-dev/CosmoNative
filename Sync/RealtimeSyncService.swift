@@ -99,6 +99,14 @@ final class RealtimeSyncService {
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
             print("📡 Realtime: cloud atom inserted — \(uuid)")
+            // Notify automation dispatcher for catch-up evaluation
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Sync.atomsPulled,
+                    object: nil,
+                    userInfo: ["atomUUIDs": [uuid]]
+                )
+            }
 
         case .update(let update):
             let data = convertRecord(update.record)
@@ -109,6 +117,14 @@ final class RealtimeSyncService {
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
             print("📡 Realtime: cloud atom updated — \(uuid)")
+            // Notify automation dispatcher for catch-up evaluation
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Sync.atomsPulled,
+                    object: nil,
+                    userInfo: ["atomUUIDs": [uuid]]
+                )
+            }
 
         case .delete(let delete):
             let oldData = convertRecord(delete.oldRecord)

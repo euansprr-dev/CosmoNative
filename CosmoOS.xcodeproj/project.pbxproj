@@ -7,6 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DD259A6FCAE54CDF8996CDDF /* LiveQueryBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */; };
+		DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */; };
+		38926731ECFA47A98770CCD8 /* AutomationListPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */; };
+		64599EA49CF44F6A8592CF92 /* AutomationRuleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */; };
+		8D3FAF7DF55045B6B11A1AA3 /* AutomationRecipePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F9193DB185C4BFCA6CEF06E /* AutomationRecipePopover.swift */; };
+		304E6E9115F5478B8423E06A /* ClusterRuleIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C37CE2BC7C64FCC87FFE502 /* ClusterRuleIndicator.swift */; };
+		69712C1A0703420BBB78FAA7 /* AutomationDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A92D20D23C14495387B1ED1F /* AutomationDispatcher.swift */; };
+		BD0E02C7A1AB4474B5155119 /* AutomationActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3942FEE5AB6044B29FA67AC9 /* AutomationActionExecutor.swift */; };
+		699D0ABA42974A3D8EE495FB /* AutomationRuleEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B3C1A86299A40108DA53BB4 /* AutomationRuleEvaluator.swift */; };
+		58A686D9A7E440EE8D40457B /* AutomationContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74035A742964BF29158C5EA /* AutomationContext.swift */; };
+		F48429B1DAA94C938CDD0CA0 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21BAFA2200FB442A907F9676 /* AutomationRule.swift */; };
 		6086D46323B52140AE78B063 /* PolishHighlightColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D3ABE91D7F91BF10018200 /* PolishHighlightColors.swift */; };
 		00103B2D83A93376B38A8048 /* ConnectionSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F53B73C0B31E7972B7DB2458 /* ConnectionSectionView.swift */; };
 		00802BE20C1735C2F0F6AAAF /* ReadwiseBookCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34C7206C12F213CDB4482121 /* ReadwiseBookCard.swift */; };
@@ -588,6 +599,17 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveQueryBlockView.swift; sourceTree = "<group>"; };
+		F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInRules.swift; sourceTree = "<group>"; };
+		7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutomationListPanel.swift; path = UI/Automation/AutomationListPanel.swift; sourceTree = SOURCE_ROOT; };
+		0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutomationRuleRow.swift; path = UI/Automation/AutomationRuleRow.swift; sourceTree = SOURCE_ROOT; };
+		6F9193DB185C4BFCA6CEF06E /* AutomationRecipePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutomationRecipePopover.swift; path = UI/Automation/AutomationRecipePopover.swift; sourceTree = SOURCE_ROOT; };
+		6C37CE2BC7C64FCC87FFE502 /* ClusterRuleIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterRuleIndicator.swift; sourceTree = "<group>"; };
+		A92D20D23C14495387B1ED1F /* AutomationDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationDispatcher.swift; sourceTree = "<group>"; };
+		3942FEE5AB6044B29FA67AC9 /* AutomationActionExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationActionExecutor.swift; sourceTree = "<group>"; };
+		3B3C1A86299A40108DA53BB4 /* AutomationRuleEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRuleEvaluator.swift; sourceTree = "<group>"; };
+		E74035A742964BF29158C5EA /* AutomationContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationContext.swift; sourceTree = "<group>"; };
+		21BAFA2200FB442A907F9676 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
 		009859145542050185350980 /* ApifyInstagramProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApifyInstagramProvider.swift; sourceTree = "<group>"; };
 		01F3354F072B1F53086AAFEC /* ProactiveNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProactiveNotificationService.swift; sourceTree = "<group>"; };
 		0220E592A9AF696EEB1E0FEE /* ConnectionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionEditorView.swift; sourceTree = "<group>"; };
@@ -1162,6 +1184,30 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		360D091FD82C487BBD0DC18C /* Automation */ = {
+			isa = PBXGroup;
+			children = (
+				6F9193DB185C4BFCA6CEF06E /* AutomationRecipePopover.swift */,
+				7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */,
+				0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */,
+			);
+			name = Automation;
+			path = Automation;
+			sourceTree = "<group>";
+		};
+		1106482B5FE44B7F85A77FEA /* Automation */ = {
+			isa = PBXGroup;
+			children = (
+				21BAFA2200FB442A907F9676 /* AutomationRule.swift */,
+				F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */,
+				A92D20D23C14495387B1ED1F /* AutomationDispatcher.swift */,
+				3942FEE5AB6044B29FA67AC9 /* AutomationActionExecutor.swift */,
+				3B3C1A86299A40108DA53BB4 /* AutomationRuleEvaluator.swift */,
+				E74035A742964BF29158C5EA /* AutomationContext.swift */,
+			);
+			path = Automation;
+			sourceTree = "<group>";
+		};
 		0C3D61274102978D4CDE3E27 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -1500,6 +1546,7 @@
 			isa = PBXGroup;
 			children = (
 				A765128C0A995AB77914B236 /* AI */,
+				1106482B5FE44B7F85A77FEA /* Automation */,
 				50BCE385B683052583E002B7 /* Agent */,
 				B79DDF80D162C6D5388671CE /* Canvas */,
 				4EC7E4E3736F84E0C67024EE /* Components */,
@@ -1628,6 +1675,7 @@
 			isa = PBXGroup;
 			children = (
 				C5D089E41E546C801FCDA08A /* CommandK */,
+				360D091FD82C487BBD0DC18C /* Automation */,
 				F65B51ABE47C7EFA63C14DC8 /* CosmoWindow */,
 				BFD698487CF04027BA110F4B /* FocusMode */,
 				A267C5DC1A573DF8049B5C47 /* LevelSystem */,
@@ -2071,6 +2119,8 @@
 				CD10A2B3C4D5E6F708192A3B /* Drawing */,
 				2E335A930FACCBF88CE7922C /* CanvasBlockFrameTracker.swift */,
 				8A95B53231B529DFC27DAE73 /* BlockContextMenu.swift */,
+				6C37CE2BC7C64FCC87FFE502 /* ClusterRuleIndicator.swift */,
+				19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */,
 				5A1B2C3D4E5F6A7B8C9D0E01 /* LassoGestureDetector.swift */,
 				B1C2D3E4F5A6B7C8D9E0F102 /* ActiveCanvasDragState.swift */,
 				B1C2D3E4F5A6B7C8D9E0F104 /* CanvasGridPatternCache.swift */,
@@ -2521,6 +2571,12 @@
 				FD220D6C01BB03C0BA440C2A /* AmbientBackground.swift in Sources */,
 				AE4DD2C5F49FD9261D5C2C50 /* AssignmentStatusGroupHeader.swift in Sources */,
 				C3F8BFE426ABCE3CFFCC9942 /* Atom.swift in Sources */,
+				F48429B1DAA94C938CDD0CA0 /* AutomationRule.swift in Sources */,
+				DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */,
+				69712C1A0703420BBB78FAA7 /* AutomationDispatcher.swift in Sources */,
+				BD0E02C7A1AB4474B5155119 /* AutomationActionExecutor.swift in Sources */,
+				699D0ABA42974A3D8EE495FB /* AutomationRuleEvaluator.swift in Sources */,
+				58A686D9A7E440EE8D40457B /* AutomationContext.swift in Sources */,
 				075BE8BA7E1E397AA6B1E759 /* AtomExtensions.swift in Sources */,
 				D0D22C21070FAB05B7D154E8 /* AtomMigration.swift in Sources */,
 				8101A0138A377B51BE8B9639 /* AtomRepository.swift in Sources */,
@@ -2876,6 +2932,11 @@
 				AFEDC57BBF9617D57CF15899 /* ContentPolishView.swift in Sources */,
 				878EB062F56B8C7549A9B93C /* CanvasBlockFrameTracker.swift in Sources */,
 				8424D4918807F94B384469C9 /* BlockContextMenu.swift in Sources */,
+				8D3FAF7DF55045B6B11A1AA3 /* AutomationRecipePopover.swift in Sources */,
+				38926731ECFA47A98770CCD8 /* AutomationListPanel.swift in Sources */,
+				64599EA49CF44F6A8592CF92 /* AutomationRuleRow.swift in Sources */,
+				304E6E9115F5478B8423E06A /* ClusterRuleIndicator.swift in Sources */,
+				DD259A6FCAE54CDF8996CDDF /* LiveQueryBlockView.swift in Sources */,
 				C8769DAEE2A210F561AAB639 /* FocusConnectManager.swift in Sources */,
 				512FE05980789EF4C72FD74C /* FocusSidebarTrigger.swift in Sources */,
 				2E97070D637A484763470C41 /* UniversalFocusSidebar.swift in Sources */,

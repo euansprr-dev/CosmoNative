@@ -1550,6 +1550,45 @@ class CosmoDatabase: ObservableObject {
             print("✅ atom_uuid migration complete")
         }
 
+        // Create automation_rules performance index table
+        migrator.registerMigration("create_automation_rules") { db in
+            print("🔨 Creating automation_rules table...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS automation_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    isEnabled INTEGER NOT NULL DEFAULT 1,
+                    scope TEXT NOT NULL DEFAULT 'global',
+                    scopeId TEXT,
+                    triggerType TEXT NOT NULL,
+                    triggerConfig TEXT NOT NULL DEFAULT '{}',
+                    conditions TEXT,
+                    conditionLogic TEXT NOT NULL DEFAULT 'all',
+                    actions TEXT NOT NULL DEFAULT '[]',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    cooldownSeconds INTEGER NOT NULL DEFAULT 1,
+                    lastFiredAt TEXT,
+                    fireCount INTEGER NOT NULL DEFAULT 0,
+                    maxFires INTEGER,
+                    isBuiltIn INTEGER NOT NULL DEFAULT 0,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                )
+            """)
+            // Index for fast trigger-type lookup (the primary query path)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_automation_rules_trigger
+                ON automation_rules(triggerType, isEnabled)
+            """)
+            // Index for scope-based queries
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_automation_rules_scope
+                ON automation_rules(scope, scopeId)
+            """)
+            print("✅ automation_rules table created")
+        }
+
         return migrator
     }
 

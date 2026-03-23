@@ -1503,6 +1503,18 @@ class TelegramBridgeService: ObservableObject {
         }
     }
 
+    // MARK: - Automation Notifications
+
+    /// Send an automation notification to the active Telegram chat.
+    /// Used by AutomationActionExecutor when a rule fires with sendTelegram action.
+    func sendAutomationNotification(_ message: String) async {
+        guard let chatId = activeChatId else {
+            print("⚡ [Telegram] No active chat ID — cannot send automation notification")
+            return
+        }
+        await sendLongMessage(chatId: chatId, text: "⚡ \(message)")
+    }
+
     // MARK: - Chat Actions
 
     /// Send a chat action (e.g. "typing") to show activity indicator in Telegram.

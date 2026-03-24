@@ -53,6 +53,15 @@ function isRecurringTemplate(meta: Record<string, any>): boolean {
 }
 
 /**
+ * Extract yyyy-MM-dd date string from an ISO8601 or date-only value.
+ * Returns null if the value is empty/undefined.
+ */
+function extractDate(value: any): string | null {
+  if (!value || typeof value !== 'string' || value.trim().length === 0) return null;
+  return value.split('T')[0];
+}
+
+/**
  * Read the project name from a task's links array.
  * Looks for a link with type "project" and fetches the atom title.
  */
@@ -370,13 +379,11 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
 
       const incomplete = allTasks.filter(t => {
         const meta = t.metadata || {};
-        // Skip completed tasks
         if (meta.isCompleted) return false;
-        // Skip recurring templates (not instances)
         if (isRecurringTemplate(meta)) return false;
-        // Skip tasks with empty/placeholder titles (test artifacts)
-        const title = (t.title || '').trim().toLowerCase();
-        if (!title || title === 'new task' || title === 'untitled') return false;
+        // Skip single-char or empty titles (test artifacts)
+        const title = (t.title || '').trim();
+        if (title.length <= 1) return false;
         return true;
       });
 
@@ -384,21 +391,33 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
       const scheduled: Atom[] = [];
       const unscheduled: Atom[] = [];
 
+      // Match Mac app's EXACT Today logic (CommandCenterDashboardViewModel):
+      // Include task if: isDue || isScheduled || isWhen || isOverdue
+      // isOverdue = dueDate < today (ONLY dueDate, not whenDate/focusDate)
       for (const task of incomplete) {
         const meta = task.metadata || {};
-        const taskDate = getTaskDate(meta);
+        const whenDate = extractDate(meta.whenDate);
+        const focusDate = extractDate(meta.focusDate);
+        const dueDate = extractDate(meta.dueDate);
 
-        // Skip tasks with no date and in "someday"/"anytime" scheduling state
-        const schedulingState = meta.schedulingState as string | undefined;
-        if (!taskDate && (schedulingState === 'someday' || schedulingState === 'anytime')) continue;
+        const isWhen = whenDate === today;
+        const isFocus = focusDate === today;
+        const isDue = dueDate === today;
+        // isOverdue: ONLY from dueDate (matching Swift TaskViewModel.isOverdue)
+        const isOverdue = dueDate !== null && dueDate < today;
 
-        if (taskDate && taskDate < today) {
+        // Include if ANY date matches today OR task is overdue
+        if (!isWhen && !isFocus && !isDue && !isOverdue) continue;
+
+        // Section assignment (matching Mac's sectioning):
+        // - OVERDUE: isOverdue AND no date field equals today
+        // - SCHEDULED: has startTime set to today
+        // - UNSCHEDULED: everything else that qualifies
+        if (isOverdue && !isWhen && !isFocus && !isDue) {
           overdue.push(task);
-        } else if (taskDate === today || (!taskDate && !schedulingState)) {
-          // Tasks dated today OR tasks with no date and no scheduling state (unscheduled for today)
+        } else {
           const startTime = meta.startTime as string | undefined;
-          const startDate = startTime?.split('T')[0];
-          if (startTime && startDate === today) {
+          if (startTime) {
             scheduled.push(task);
           } else {
             unscheduled.push(task);

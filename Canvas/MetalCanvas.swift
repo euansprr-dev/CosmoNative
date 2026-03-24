@@ -414,6 +414,8 @@ extension EntityType {
             return [0.83, 0.76, 0.42, 1.0]  // Warm yellow
         case .liveQuery:
             return [0.18, 0.42, 0.31, 1.0]  // Forest green (automation)
+        case .ideaBoard:
+            return [0.42, 0.43, 0.66, 1.0]  // Indigo (ideas)
         }
     }
 }

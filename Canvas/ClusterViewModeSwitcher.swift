@@ -24,6 +24,8 @@ struct ClusterInspectorPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
             sectionDivider
+            intentSection
+            sectionDivider
             colorSection
             sectionDivider
             viewModeSection
@@ -79,6 +81,32 @@ struct ClusterInspectorPanel: View {
         .padding(.horizontal, 16)
         .padding(.top, 14)
         .padding(.bottom, 12)
+    }
+
+    // MARK: - Intent Section
+
+    private var intentSection: some View {
+        ClusterIntentField(
+            clusterId: cluster.id,
+            clusterColor: cluster.color,
+            intent: Binding(
+                get: { cluster.intent ?? "" },
+                set: { _ in } // Read-only binding — changes go through onIntentChanged
+            ),
+            onIntentChanged: { newIntent in
+                // Persist intent via cluster engine (requires wiring from CanvasView)
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Automation.ruleUpdated,
+                    object: nil,
+                    userInfo: [
+                        "clusterId": cluster.id.uuidString,
+                        "intent": newIntent
+                    ]
+                )
+            }
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     // MARK: - Color Section

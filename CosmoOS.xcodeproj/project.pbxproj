@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14D44F193B9940BF890061C2 /* AutomationSuggestionTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE8A169BB804ECDBC04F101 /* AutomationSuggestionTracker.swift */; };
+		4E2A31A86A3D4D33AC970841 /* AutomationFlowLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090FFFBE066643309A7BE8B0 /* AutomationFlowLine.swift */; };
+		D507AE2AC886494282D36081 /* IdeaBoardBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E5085455F24C29B3F14F79 /* IdeaBoardBlockView.swift */; };
+		F60C3BA3AFCC40D8B7FE59B2 /* PipelineTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D8ED9CA4B8F4AD3AAD25682 /* PipelineTemplateSheet.swift */; };
+		A0DE0EB122BB48E8810C428A /* PipelineTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E80962A18F34E839CE304DE /* PipelineTemplates.swift */; };
+		A66BD391AA85431FBEBD7646 /* ClusterIntentField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3F69782AC54ABE85A81E7C /* ClusterIntentField.swift */; };
 		A8ABD0ACEA9B451393545D8E /* IntentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099630900F044261A8A991F2 /* IntentParser.swift */; };
 		DD259A6FCAE54CDF8996CDDF /* LiveQueryBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */; };
 		DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */; };
@@ -600,6 +606,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5BE8A169BB804ECDBC04F101 /* AutomationSuggestionTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationSuggestionTracker.swift; sourceTree = "<group>"; };
+		090FFFBE066643309A7BE8B0 /* AutomationFlowLine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationFlowLine.swift; sourceTree = "<group>"; };
+		20E5085455F24C29B3F14F79 /* IdeaBoardBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaBoardBlockView.swift; sourceTree = "<group>"; };
+		8D8ED9CA4B8F4AD3AAD25682 /* PipelineTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PipelineTemplateSheet.swift; path = UI/Automation/PipelineTemplateSheet.swift; sourceTree = SOURCE_ROOT; };
+		1E80962A18F34E839CE304DE /* PipelineTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineTemplates.swift; sourceTree = "<group>"; };
+		5B3F69782AC54ABE85A81E7C /* ClusterIntentField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ClusterIntentField.swift; path = UI/Automation/ClusterIntentField.swift; sourceTree = SOURCE_ROOT; };
 		099630900F044261A8A991F2 /* IntentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentParser.swift; sourceTree = "<group>"; };
 		19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveQueryBlockView.swift; sourceTree = "<group>"; };
 		F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInRules.swift; sourceTree = "<group>"; };
@@ -1190,6 +1202,8 @@
 			isa = PBXGroup;
 			children = (
 				6F9193DB185C4BFCA6CEF06E /* AutomationRecipePopover.swift */,
+				8D8ED9CA4B8F4AD3AAD25682 /* PipelineTemplateSheet.swift */,
+				5B3F69782AC54ABE85A81E7C /* ClusterIntentField.swift */,
 				7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */,
 				0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */,
 			);
@@ -1202,6 +1216,8 @@
 			children = (
 				21BAFA2200FB442A907F9676 /* AutomationRule.swift */,
 				099630900F044261A8A991F2 /* IntentParser.swift */,
+				5BE8A169BB804ECDBC04F101 /* AutomationSuggestionTracker.swift */,
+				1E80962A18F34E839CE304DE /* PipelineTemplates.swift */,
 				F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */,
 				A92D20D23C14495387B1ED1F /* AutomationDispatcher.swift */,
 				3942FEE5AB6044B29FA67AC9 /* AutomationActionExecutor.swift */,
@@ -2124,6 +2140,8 @@
 				8A95B53231B529DFC27DAE73 /* BlockContextMenu.swift */,
 				6C37CE2BC7C64FCC87FFE502 /* ClusterRuleIndicator.swift */,
 				19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */,
+				090FFFBE066643309A7BE8B0 /* AutomationFlowLine.swift */,
+				20E5085455F24C29B3F14F79 /* IdeaBoardBlockView.swift */,
 				5A1B2C3D4E5F6A7B8C9D0E01 /* LassoGestureDetector.swift */,
 				B1C2D3E4F5A6B7C8D9E0F102 /* ActiveCanvasDragState.swift */,
 				B1C2D3E4F5A6B7C8D9E0F104 /* CanvasGridPatternCache.swift */,
@@ -2576,6 +2594,8 @@
 				C3F8BFE426ABCE3CFFCC9942 /* Atom.swift in Sources */,
 				F48429B1DAA94C938CDD0CA0 /* AutomationRule.swift in Sources */,
 				A8ABD0ACEA9B451393545D8E /* IntentParser.swift in Sources */,
+				14D44F193B9940BF890061C2 /* AutomationSuggestionTracker.swift in Sources */,
+				A0DE0EB122BB48E8810C428A /* PipelineTemplates.swift in Sources */,
 				DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */,
 				69712C1A0703420BBB78FAA7 /* AutomationDispatcher.swift in Sources */,
 				BD0E02C7A1AB4474B5155119 /* AutomationActionExecutor.swift in Sources */,
@@ -2937,10 +2957,14 @@
 				878EB062F56B8C7549A9B93C /* CanvasBlockFrameTracker.swift in Sources */,
 				8424D4918807F94B384469C9 /* BlockContextMenu.swift in Sources */,
 				8D3FAF7DF55045B6B11A1AA3 /* AutomationRecipePopover.swift in Sources */,
+				F60C3BA3AFCC40D8B7FE59B2 /* PipelineTemplateSheet.swift in Sources */,
+				A66BD391AA85431FBEBD7646 /* ClusterIntentField.swift in Sources */,
 				38926731ECFA47A98770CCD8 /* AutomationListPanel.swift in Sources */,
 				64599EA49CF44F6A8592CF92 /* AutomationRuleRow.swift in Sources */,
 				304E6E9115F5478B8423E06A /* ClusterRuleIndicator.swift in Sources */,
 				DD259A6FCAE54CDF8996CDDF /* LiveQueryBlockView.swift in Sources */,
+				4E2A31A86A3D4D33AC970841 /* AutomationFlowLine.swift in Sources */,
+				D507AE2AC886494282D36081 /* IdeaBoardBlockView.swift in Sources */,
 				C8769DAEE2A210F561AAB639 /* FocusConnectManager.swift in Sources */,
 				512FE05980789EF4C72FD74C /* FocusSidebarTrigger.swift in Sources */,
 				2E97070D637A484763470C41 /* UniversalFocusSidebar.swift in Sources */,

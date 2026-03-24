@@ -87,6 +87,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .image:      return CGSize(width: 320, height: 240)
         case .stickyNote: return CGSize(width: 220, height: 220)
         case .liveQuery:  return CGSize(width: 280, height: 360)
+        case .ideaBoard:  return CGSize(width: 280, height: 400)
         default:          return CGSize(width: 220, height: 310)
         }
     }

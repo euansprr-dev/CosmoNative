@@ -44,6 +44,7 @@ struct NoteFocusModeView: View {
     @State private var titleUnderlineProgress: CGFloat = 0
     @State private var titleEditorHeight: CGFloat = 76
     @State private var bodyEditorHeight: CGFloat = 400
+    @State private var scrollViewportHeight: CGFloat = 0
     @State private var pendingObservedTitleDocument: RichDocument?
     @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
@@ -90,55 +91,58 @@ struct NoteFocusModeView: View {
                 topBar
 
                 // Scrollable writing surface
-                GeometryReader { geometry in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            // Title field
-                            titleSection
-                                .padding(.top, DS.space32)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // Title field
+                        titleSection
+                            .padding(.top, DS.space32)
 
-                            // Date + tags row
-                            dateTagsRow
-                                .padding(.top, DS.space12)
-                                .padding(.bottom, DS.space24)
-
-                            // Divider
-                            Rectangle()
-                                .fill(DS.border)
-                                .frame(height: 1)
-                                .frame(maxWidth: CosmoTypography.optimalReadingWidth)
-
-                            // Full note body expands to its measured document height.
-                            CosmoDocumentEditor(
-                                document: $bodyDocument,
-                                fontSize: 17,
-                                placeholder: "Start writing...",
-                                darkMode: false,
-                                allowSlashCommands: true,
-                                allowMentions: true,
-                                allowSelectionMenu: true,
-                                allowImages: true,
-                                typewriterMode: typewriterMode,
-                                scrollsInternally: false,
-                                onContentHeightChange: { newHeight in
-                                    bodyEditorHeight = max(400, newHeight)
-                                },
-                                onDocumentChange: { _, plainText in
-                                    plainContent = plainText
-                                    if !isInitialLoad { triggerAutoSave() }
-                                }
-                            )
-                            .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
-                            .frame(
-                                height: max(bodyEditorHeight, geometry.size.height - 200),
-                                alignment: .topLeading
-                            )
-                            .padding(.top, DS.space24)
+                        // Date + tags row
+                        dateTagsRow
+                            .padding(.top, DS.space12)
                             .padding(.bottom, DS.space24)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, DS.space40)
+
+                        // Divider
+                        Rectangle()
+                            .fill(DS.border)
+                            .frame(height: 1)
+                            .frame(maxWidth: CosmoTypography.optimalReadingWidth)
+
+                        // Full note body expands to its measured document height.
+                        CosmoDocumentEditor(
+                            document: $bodyDocument,
+                            fontSize: 17,
+                            placeholder: "Start writing...",
+                            darkMode: false,
+                            allowSlashCommands: true,
+                            allowMentions: true,
+                            allowSelectionMenu: true,
+                            allowImages: true,
+                            typewriterMode: typewriterMode,
+                            scrollsInternally: false,
+                            onContentHeightChange: { newHeight in
+                                bodyEditorHeight = max(400, newHeight)
+                            },
+                            onDocumentChange: { _, plainText in
+                                plainContent = plainText
+                                if !isInitialLoad { triggerAutoSave() }
+                            }
+                        )
+                        .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .topLeading)
+                        .frame(
+                            minHeight: max(bodyEditorHeight, scrollViewportHeight - 200),
+                            alignment: .topLeading
+                        )
+                        .padding(.top, DS.space24)
+                        .padding(.bottom, DS.space24)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, DS.space40)
+                }
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { newValue in
+                    scrollViewportHeight = newValue
                 }
             }
 

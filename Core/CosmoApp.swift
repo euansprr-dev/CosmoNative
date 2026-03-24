@@ -444,6 +444,7 @@ public enum EntityType: String, Codable, Sendable {
     case image                     // Native image blocks on canvas
     case stickyNote = "sticky_note" // Square sticky note blocks on canvas
     case liveQuery = "live_query"   // Live query block that auto-updates with matching atoms
+    case ideaBoard = "idea_board"   // Client idea board — live-updating idea list from Command-K
 
     public var icon: String {
         switch self {
@@ -462,6 +463,7 @@ public enum EntityType: String, Codable, Sendable {
         case .swipeFile: return "bookmark.fill"
         case .image: return "photo.fill"
         case .liveQuery: return "bolt.horizontal.fill"
+        case .ideaBoard: return "list.bullet.rectangle.portrait.fill"
         }
     }
 
@@ -483,6 +485,7 @@ public enum EntityType: String, Codable, Sendable {
         case .swipeFile: return DS.entitySwipe
         case .image: return DS.entityImage
         case .liveQuery: return DS.accent
+        case .ideaBoard: return DS.entityIdea
         }
     }
 }

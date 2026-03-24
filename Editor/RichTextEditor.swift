@@ -118,190 +118,191 @@ struct RichTextEditor: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                // Main editor
-                TextKitEditorRepresentable(
-                    attributedText: $text,
-                    plainText: $plainText,
-                    cursorPosition: $cursorPosition,
-                    shouldRefocus: $shouldRefocusEditor,
-                    fontSize: fontSize,
-                    compact: compact,
-                    darkMode: darkMode,
-                    allowSlashCommands: allowSlashCommands,
-                    allowMentions: allowMentions,
-                    allowImages: allowImages,
-                    allowSelectionMenu: allowSelectionMenu,
-                    singleLine: singleLine,
-                    titleConfiguration: titleConfiguration,
-                    baseFontWeight: baseFontWeight,
-                    polishHighlights: polishHighlights,
-                    textAlignment: textAlignment,
-                    typewriterMode: typewriterMode,
-                    isEditable: isEditable,
-                    scrollsInternally: scrollsInternally,
-                    onSlashCommand: { position in
-                        guard allowSlashCommands else { return }
-                        slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 330), in: geometry.size)
-                        showSlashMenu = true
-                    },
-                    onMention: { position, query in
-                        guard allowMentions else { return }
-                        mentionMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 360, height: 320), in: geometry.size)
-                        mentionSearchQuery = query
-                        showMentionMenu = true
-                    },
-                    onSelectionChange: { snapshot in
-                        onSelectionChanged?(snapshot)
-                        if snapshot.range.length > 0 {
-                            if allowSelectionMenu && !showSlashMenu && !showMentionMenu {
-                                let menuHeight: CGFloat = 52
-                                // Y: place menu center above selection top
-                                let menuY = snapshot.rectInEditor.minY - (menuHeight / 2) - 8
-                                // X: center on selection midpoint (no clamping — menu uses .fixedSize())
-                                selectionMenuPosition = CGPoint(x: snapshot.rectInEditor.midX, y: menuY)
-                                showSelectionMenu = true
-                            }
-                        } else {
-                            DispatchQueue.main.async {
-                                showSelectionMenu = false
-                            }
+        ZStack(alignment: .topLeading) {
+            // Main editor
+            TextKitEditorRepresentable(
+                attributedText: $text,
+                plainText: $plainText,
+                cursorPosition: $cursorPosition,
+                shouldRefocus: $shouldRefocusEditor,
+                fontSize: fontSize,
+                compact: compact,
+                darkMode: darkMode,
+                allowSlashCommands: allowSlashCommands,
+                allowMentions: allowMentions,
+                allowImages: allowImages,
+                allowSelectionMenu: allowSelectionMenu,
+                singleLine: singleLine,
+                titleConfiguration: titleConfiguration,
+                baseFontWeight: baseFontWeight,
+                polishHighlights: polishHighlights,
+                textAlignment: textAlignment,
+                typewriterMode: typewriterMode,
+                isEditable: isEditable,
+                scrollsInternally: scrollsInternally,
+                onSlashCommand: { position in
+                    guard allowSlashCommands else { return }
+                    slashMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 300, height: 330), in: containerSize)
+                    showSlashMenu = true
+                },
+                onMention: { position, query in
+                    guard allowMentions else { return }
+                    mentionMenuPosition = clampMenuPosition(position, menuSize: CGSize(width: 360, height: 320), in: containerSize)
+                    mentionSearchQuery = query
+                    showMentionMenu = true
+                },
+                onSelectionChange: { snapshot in
+                    onSelectionChanged?(snapshot)
+                    if snapshot.range.length > 0 {
+                        if allowSelectionMenu && !showSlashMenu && !showMentionMenu {
+                            let menuHeight: CGFloat = 52
+                            // Y: place menu center above selection top
+                            let menuY = snapshot.rectInEditor.minY - (menuHeight / 2) - 8
+                            // X: center on selection midpoint (no clamping — menu uses .fixedSize())
+                            selectionMenuPosition = CGPoint(x: snapshot.rectInEditor.midX, y: menuY)
+                            showSelectionMenu = true
                         }
-                    },
-                    onDismissMenus: {
+                    } else {
+                        DispatchQueue.main.async {
+                            showSelectionMenu = false
+                        }
+                    }
+                },
+                onDismissMenus: {
+                    dismissAllOverlays()
+                },
+                onContentHeightChange: onContentHeightChange,
+                onActivate: onActivate,
+                onDeactivate: onDeactivate,
+                onCommit: onCommit
+            )
+            .frame(maxWidth: .infinity)
+            // Ensure the entire editor area is clickable, even when empty
+            .contentShape(Rectangle())
+
+            // Placeholder - aligned with textContainerInset (16x16)
+            if plainText.isEmpty {
+                Text(placeholder)
+                    .font(.system(size: fontSize, weight: swiftUIFontWeight))
+                    .foregroundStyle(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
+                    .padding(.top, editorInsets.top)
+                    .padding(.leading, editorInsets.leading)
+                    .allowsHitTesting(false)
+
+                // Clickable overlay to focus empty editor
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        shouldRefocusEditor = true
+                    }
+            }
+
+            // MARK: - Invisible dismiss layer (captures outside clicks)
+            if isOverlayVisible {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onTapGesture {
                         dismissAllOverlays()
-                    },
-                    onContentHeightChange: onContentHeightChange,
-                    onActivate: onActivate,
-                    onDeactivate: onDeactivate,
-                    onCommit: onCommit
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Ensure the entire editor area is clickable, even when empty
-                .contentShape(Rectangle())
+                    }
+                    .allowsHitTesting(true)
+            }
 
-                // Placeholder - aligned with textContainerInset (16x16)
-                if plainText.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: fontSize, weight: swiftUIFontWeight))
-                        .foregroundStyle(darkMode ? Color.white.opacity(0.4) : CosmoColors.textTertiary)
-                        .padding(.top, editorInsets.top)
-                        .padding(.leading, editorInsets.leading)
-                        .allowsHitTesting(false)
+            // Slash command menu
+            if showSlashMenu {
+                SlashCommandMenu(
+                    position: slashMenuPosition,
+                    onSelect: { command in
+                        // First dismiss overlays and refocus
+                        dismissAllOverlays()
 
-                    // Clickable overlay to focus empty editor
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                        // Then after a short delay, insert the command
+                        // This ensures the editor has focus when the notification is posted
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             shouldRefocusEditor = true
-                        }
-                }
 
-                // MARK: - Invisible dismiss layer (captures outside clicks)
-                if isOverlayVisible {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .onTapGesture {
-                            dismissAllOverlays()
-                        }
-                        .allowsHitTesting(true)
-                }
-
-                // Slash command menu
-                if showSlashMenu {
-                    SlashCommandMenu(
-                        position: slashMenuPosition,
-                        onSelect: { command in
-                            // First dismiss overlays and refocus
-                            dismissAllOverlays()
-
-                            // Then after a short delay, insert the command
-                            // This ensures the editor has focus when the notification is posted
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                shouldRefocusEditor = true
-
-                                // Wait for refocus to complete, then insert
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    insertSlashCommand(command)
-                                }
+                            // Wait for refocus to complete, then insert
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                insertSlashCommand(command)
                             }
-                        },
-                        onDismiss: {
-                            dismissAllOverlays()
-                            refocusAfterDismiss()
-                        },
-                        darkMode: darkMode
-                    )
-                    .background(ScrollEventBlocker())
-                    .zIndex(1000)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
-                }
+                        }
+                    },
+                    onDismiss: {
+                        dismissAllOverlays()
+                        refocusAfterDismiss()
+                    },
+                    darkMode: darkMode
+                )
+                .background(ScrollEventBlocker())
+                .zIndex(1000)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
 
-                // Mention menu
-                if showMentionMenu {
-                    MentionMenu(
-                        position: mentionMenuPosition,
-                        searchQuery: mentionSearchQuery,
-                        onSelect: { entity in
-                            dismissAllOverlays()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                shouldRefocusEditor = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    performMentionSelection(entity)
-                                }
+            // Mention menu
+            if showMentionMenu {
+                MentionMenu(
+                    position: mentionMenuPosition,
+                    searchQuery: mentionSearchQuery,
+                    onSelect: { entity in
+                        dismissAllOverlays()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            shouldRefocusEditor = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                performMentionSelection(entity)
                             }
-                        },
-                        onDismiss: {
-                            dismissAllOverlays()
-                            refocusAfterDismiss()
-                        },
-                        darkMode: darkMode
-                    )
-                    .background(ScrollEventBlocker())
-                    .zIndex(1000)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
-                }
+                        }
+                    },
+                    onDismiss: {
+                        dismissAllOverlays()
+                        refocusAfterDismiss()
+                    },
+                    darkMode: darkMode
+                )
+                .background(ScrollEventBlocker())
+                .zIndex(1000)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
 
-                // Selection formatting menu
-                if showSelectionMenu && !showSlashMenu && !showMentionMenu {
-                    SelectionFormattingMenu(
-                        position: selectionMenuPosition,
-                        compact: compact,
-                        onDismiss: { showSelectionMenu = false },
-                        onAIAction: onAIAction,
-                        onCustomPrompt: onCustomPrompt
-                    )
-                    .zIndex(900)
-                    .transition(.opacity)
-                }
+            // Selection formatting menu
+            if showSelectionMenu && !showSlashMenu && !showMentionMenu {
+                SelectionFormattingMenu(
+                    position: selectionMenuPosition,
+                    compact: compact,
+                    onDismiss: { showSelectionMenu = false },
+                    onAIAction: onAIAction,
+                    onCustomPrompt: onCustomPrompt
+                )
+                .zIndex(900)
+                .transition(.opacity)
             }
-            .onAppear {
-                containerSize = geometry.size
-                if autoFocus {
-                    shouldRefocusEditor = true
-                }
+        }
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newValue in
+            containerSize = newValue
+        }
+        .onAppear {
+            if autoFocus {
+                shouldRefocusEditor = true
             }
-            .onChange(of: geometry.size) { _, newSize in containerSize = newSize }
-            .onChange(of: autoFocus) { _, shouldFocus in
-                if shouldFocus {
-                    shouldRefocusEditor = true
-                }
+        }
+        .onChange(of: autoFocus) { _, shouldFocus in
+            if shouldFocus {
+                shouldRefocusEditor = true
             }
-            .onChange(of: isOverlayVisible) { _, visible in
-                if visible {
-                    installOutsideClickDismissMonitor()
-                } else {
-                    removeOutsideClickDismissMonitor()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
-                dismissAllOverlays(includeSelection: false)
-            }
-            .onDisappear {
+        }
+        .onChange(of: isOverlayVisible) { _, visible in
+            if visible {
+                installOutsideClickDismissMonitor()
+            } else {
                 removeOutsideClickDismissMonitor()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
+            dismissAllOverlays(includeSelection: false)
+        }
+        .onDisappear {
+            removeOutsideClickDismissMonitor()
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSlashMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showMentionMenu)

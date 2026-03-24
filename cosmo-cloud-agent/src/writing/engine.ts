@@ -723,7 +723,8 @@ If ALL checks pass, present the draft.
     // Strip provider prefix for direct Anthropic (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
     const modelId = useDirectAnthropic ? model.replace(/^anthropic\//, '') : model;
 
-    const estimatedTokens = Math.round(JSON.stringify(messages).length / 4);
+    const systemChars = this.blocks.reduce((sum, b) => sum + b.content.length, 0);
+    const estimatedTokens = Math.round((systemChars + JSON.stringify(messages).length) / 4);
     console.log(`  ✍️ Writing engine → ${modelId} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)${useDirectAnthropic ? ' [direct]' : ' [openrouter]'}`);
 
     if (useDirectAnthropic) {
@@ -772,14 +773,10 @@ If ALL checks pass, present the draft.
     }
 
     // Retry loop
+    // Rate-limit-aware retry: up to 5 attempts for 429s (transient, always resolve)
+    const MAX_RETRIES = 5;
     let lastError: Error | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) {
-        const backoff = attempt * 2000;
-        console.log(`  ⏳ Writing retry ${attempt}/2 after ${backoff}ms`);
-        await new Promise(r => setTimeout(r, backoff));
-      }
-
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const response = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -793,11 +790,24 @@ If ALL checks pass, present the draft.
           signal: AbortSignal.timeout(300_000), // 5 min timeout
         });
 
-        // Retryable: 429 rate limit, 529 overloaded, 5xx server
-        if (response.status === 429 || response.status === 529 || (response.status >= 500 && response.status < 600)) {
+        // Rate limit: parse retry-after header or wait 30s default
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          const waitMs = retryAfter ? Math.ceil(parseFloat(retryAfter) * 1000) : 30_000;
           const errorText = await response.text();
-          console.log(`  ⚠️ Anthropic retryable error ${response.status}: ${errorText.substring(0, 200)}`);
+          console.log(`  ⚠️ Anthropic rate limited — waiting ${(waitMs / 1000).toFixed(0)}s before retry ${attempt + 1}/${MAX_RETRIES} (${errorText.substring(0, 120)})`);
+          lastError = new Error(`Anthropic rate limit`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+
+        // Server errors: shorter backoff
+        if (response.status === 529 || (response.status >= 500 && response.status < 600)) {
+          const backoff = (attempt + 1) * 2000;
+          const errorText = await response.text();
+          console.log(`  ⚠️ Anthropic server error ${response.status} — retrying in ${backoff}ms: ${errorText.substring(0, 120)}`);
           lastError = new Error(`Anthropic error ${response.status}`);
+          await new Promise(r => setTimeout(r, backoff));
           continue;
         }
 
@@ -814,8 +824,9 @@ If ALL checks pass, present the draft.
           const completion = data.usage.output_tokens || 0;
           const cacheCreation = data.usage.cache_creation_input_tokens || 0;
           const cacheRead = data.usage.cache_read_input_tokens || 0;
-          const cacheRate = prompt > 0 ? ((cacheRead / prompt) * 100).toFixed(1) : '0.0';
-          console.log(`  ✍️ Usage: prompt=${prompt}, cache_read=${cacheRead}, cache_write=${cacheCreation}, completion=${completion}, cache_hit=${cacheRate}%`);
+          const totalInput = prompt + cacheRead + cacheCreation;
+          const cacheRate = totalInput > 0 ? ((cacheRead / totalInput) * 100).toFixed(1) : '0.0';
+          console.log(`  ✍️ Usage: input=${totalInput} (uncached=${prompt}, cache_read=${cacheRead}, cache_write=${cacheCreation}), completion=${completion}, cache_hit=${cacheRate}%`);
         }
 
         const finishReason = data.stop_reason || null;
@@ -854,7 +865,7 @@ If ALL checks pass, present the draft.
       }
     }
 
-    throw lastError || new Error('Anthropic API failed after 3 attempts');
+    throw lastError || new Error(`Anthropic API failed after ${MAX_RETRIES} attempts`);
   }
 
   /**

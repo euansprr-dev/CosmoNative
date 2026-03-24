@@ -459,6 +459,7 @@ TOOL USE — MANDATORY:
 - To complete tasks: MUST call complete_task for EACH task
 - To create time blocks: MUST call create_block for EACH block
 - To create tasks: MUST call smart_task_create
+- When user shares a URL: You HAVE internet access via capture tools. Use capture_swipe for swipes, capture_research for research, capture_swipe_with_idea when they want swipe + linked idea. NEVER say you can't access URLs.
 - If user says "schedule all for today" or "do X for all" → call the tool ONCE PER ITEM
 - NEVER fabricate task data, schedules, or results. Call get_tasks first.
 - NEVER mention tool names to the user. Just do the work.
@@ -513,5 +514,9 @@ ${TOOL_MANDATE}
 RULES:
 - Call tools before responding about user data
 - Reference items by title or number, never UUIDs
-- For URLs: capture as swipes unless told otherwise
+- You CAN fetch and process external URLs (Instagram, YouTube, Twitter, etc.) via tools. NEVER say you can't access links.
+  • "swipe this" → call capture_swipe
+  • "capture this as research" → call capture_research
+  • "swipe this and link to idea X" → call capture_swipe_with_idea (captures swipe + creates idea + links them)
+  • Just a URL with no instruction → ask what they want to do with it
 - For tasks: use get_tasks for lists, smart_task_create for creation, reschedule_task for moving`;

@@ -459,7 +459,7 @@ TOOL USE — MANDATORY:
 - To complete tasks: MUST call complete_task for EACH task
 - To create time blocks: MUST call create_block for EACH block
 - To create tasks: MUST call smart_task_create
-- When user shares a URL: You HAVE internet access via capture tools. Use capture_swipe for swipes, capture_research for research, capture_swipe_with_idea when they want swipe + linked idea. NEVER say you can't access URLs.
+- When user shares a URL: You HAVE internet access via capture tools. Use capture_swipe for swipes, capture_research for research, capture_swipe_with_idea when they want swipe + linked idea. NEVER say you can't access URLs. If user says "swipe this" + URL, call capture_swipe IMMEDIATELY — do NOT ask for client/idea/details.
 - If user says "schedule all for today" or "do X for all" → call the tool ONCE PER ITEM
 - NEVER fabricate task data, schedules, or results. Call get_tasks first.
 - NEVER mention tool names to the user. Just do the work.
@@ -515,8 +515,9 @@ RULES:
 - Call tools before responding about user data
 - Reference items by title or number, never UUIDs
 - You CAN fetch and process external URLs (Instagram, YouTube, Twitter, etc.) via tools. NEVER say you can't access links.
-  • "swipe this" → call capture_swipe
+  • "swipe this" / "swipe" / "save this" / "capture this" + URL → IMMEDIATELY call capture_swipe. Do NOT ask for client, idea, or any other details — just capture it. Act first, confirm after.
   • "capture this as research" → call capture_research
-  • "swipe this and link to idea X" → call capture_swipe_with_idea (captures swipe + creates idea + links them)
-  • Just a URL with no instruction → ask what they want to do with it
+  • "swipe this and link to idea X" / "swipe for [client]" → call capture_swipe_with_idea or pass clientName
+  • Just a bare URL with zero text → ask what they want to do with it
+  • IMPORTANT: If the user gave ANY action word (swipe, save, capture, add), execute the tool IMMEDIATELY. Never ask clarifying questions when the intent is obvious.
 - For tasks: use get_tasks for lists, smart_task_create for creation, reschedule_task for moving`;

@@ -96,6 +96,58 @@ function escalateIntent(intent: AgentIntent, messages: AgentMessage[]): AgentInt
 }
 
 /**
+ * Fast-path capture: if the user sends an obvious "swipe this [URL]" or "capture [URL]",
+ * skip the LLM entirely and call capture_swipe directly. This avoids Haiku asking
+ * unnecessary clarifying questions.
+ */
+async function tryFastCapture(
+  text: string,
+  intent: AgentIntent,
+  chatId: string,
+  messages: AgentMessage[],
+  onToolProgress?: ToolProgressCallback,
+): Promise<ProcessResult | null> {
+  if (intent !== 'capture') return null;
+
+  const lower = text.toLowerCase();
+  const urlMatch = text.match(/https?:\/\/[^\s]+/);
+  if (!urlMatch) return null;
+
+  const url = urlMatch[0];
+  const hasSwipeKeyword = /swipe|save this|capture this|add this/i.test(lower);
+
+  // Only fast-path when there's a clear action word — bare URLs still go through LLM
+  if (!hasSwipeKeyword) return null;
+
+  console.log(`⚡ Fast-path capture: ${url}`);
+
+  onToolProgress?.({ type: 'started', tool: 'capture_swipe', label: 'Swiping...' });
+
+  const result = await executeTool('capture_swipe', { url });
+
+  onToolProgress?.({ type: 'completed', tool: 'capture_swipe', label: 'Swiped', preview: url });
+
+  let parsed: any = {};
+  try { parsed = JSON.parse(result); } catch {}
+
+  const createdAtomUUIDs = parsed.uuid ? [parsed.uuid] : [];
+
+  // Build a confirmation response
+  const title = parsed.title || 'Swipe';
+  const source = parsed.source || 'link';
+  const response = parsed.success !== false
+    ? `⚡ Swiped\n\n${title}\n${source} ‣ saved to your library`
+    : `Something went wrong capturing that URL. ${parsed.error || ''}`;
+
+  // Save to conversation history
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return { response, toolsUsed: ['capture_swipe'], createdAtomUUIDs, intent: 'capture' };
+}
+
+/**
  * Process a user message through the full agent pipeline.
  * Source: CosmoAgentService.processMessage() in Swift
  */
@@ -119,6 +171,11 @@ export async function processMessage(
   const iterationLimit = maxToolIterations(intent);
 
   console.log(`🧠 Intent: ${intent} | Model: ${model} | Max iterations: ${iterationLimit}`);
+
+  // 1b. FAST PATH — deterministic capture for obvious swipe/capture commands
+  // Bypasses LLM entirely when intent is unambiguous (e.g. "swipe this" + URL)
+  const fastCaptureResult = await tryFastCapture(text, intent, chatId, messages, onToolProgress);
+  if (fastCaptureResult) return fastCaptureResult;
 
   // 2. Session rotation — summarize older messages if conversation is long
   let conversationSummary = existingConv?.summary || '';

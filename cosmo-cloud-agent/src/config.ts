@@ -35,6 +35,9 @@ export const config = {
   // Telegram chat ID for proactive messages (heartbeat, standing instructions)
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 
+  // Writing API (for Mac app to call cloud engine directly)
+  writingApiKey: process.env.WRITING_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+
   // Server
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',

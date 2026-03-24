@@ -6,6 +6,7 @@ import express from 'express';
 import { config, validateConfig } from './config';
 import { handleUpdate, initWebhook } from './telegram/webhook';
 import { startScheduler } from './scheduler/standing';
+import { writingRouter } from './api/writing';
 
 const app = express();
 app.use(express.json());
@@ -22,6 +23,12 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// ============================================================
+// Writing API (used by Mac app for canonical engine access)
+// ============================================================
+
+app.use('/api/writing', writingRouter);
 
 // ============================================================
 // Telegram webhook endpoint

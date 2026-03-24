@@ -108,6 +108,9 @@ final class RealtimeSyncService {
                 )
             }
 
+            // Auto-process cloud-captured swipes (transcription + analysis)
+            await autoProcessCloudSwipe(uuid: uuid, data: localData)
+
         case .update(let update):
             let data = convertRecord(update.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
@@ -179,6 +182,44 @@ final class RealtimeSyncService {
             dict[key] = native
         }
         return dict
+    }
+
+    // MARK: - Auto-Process Cloud Swipes
+
+    /// When a cloud-captured swipe syncs down, auto-trigger transcription + analysis.
+    private func autoProcessCloudSwipe(uuid: String, data: [String: Any]) async {
+        // Check if this is a swipe file needing processing
+        guard let type = data["type"] as? String, type == "research" else { return }
+
+        // Parse metadata to check isSwipeFile
+        let metadataStr: String?
+        if let str = data["metadata"] as? String {
+            metadataStr = str
+        } else if let obj = data["metadata"], !(obj is NSNull),
+                  let jsonData = try? JSONSerialization.data(withJSONObject: obj),
+                  let str = String(data: jsonData, encoding: .utf8) {
+            metadataStr = str
+        } else {
+            metadataStr = nil
+        }
+
+        guard let metaStr = metadataStr,
+              let metaData = metaStr.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
+              meta["isSwipeFile"] as? Bool == true else { return }
+
+        // Check processingStatus — only process if not already complete
+        let status = meta["processingStatus"] as? String
+        if status == "complete" { return }
+
+        print("📡 Realtime: auto-processing cloud swipe \(uuid)")
+
+        // Small delay to let the atom fully persist locally before processing
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        await MainActor.run {
+            SwipeProcessingService.shared.processSwipeInBackground(uuid: uuid)
+        }
     }
 
     private func convertJSONFieldsFromPostgres(_ data: [String: Any]) -> [String: Any] {

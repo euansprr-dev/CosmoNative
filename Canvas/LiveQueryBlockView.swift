@@ -205,15 +205,16 @@ struct LiveQueryBlockView: View {
                 atoms = try await AtomRepository.shared.fetchRecent(limit: 100)
             }
 
-            // Apply conditions
+            // Apply conditions — build contexts async first, then filter synchronously
             let evaluator = AutomationRuleEvaluator()
-            let filtered = atoms.filter { atom in
-                config.conditions.allSatisfy { condition in
-                    let context = AutomationContextBuilder.build(
-                        event: AutomationEvent(triggerType: .atomPropertyMatch, atomUUID: atom.uuid),
-                        atom: atom,
-                        thinkspaceId: nil
-                    )
+            var filteredAtoms: [Atom] = []
+            for atom in atoms {
+                let context = await AutomationContextBuilder.build(
+                    event: AutomationEvent(triggerType: .atomPropertyMatch, atomUUID: atom.uuid),
+                    atom: atom,
+                    thinkspaceId: nil
+                )
+                let allMatch = config.conditions.allSatisfy { condition in
                     let rule = AutomationRule.create(
                         name: "query",
                         triggerType: .atomPropertyMatch,
@@ -222,9 +223,12 @@ struct LiveQueryBlockView: View {
                     )
                     return evaluator.evaluate(rule: rule, context: context)
                 }
+                if allMatch {
+                    filteredAtoms.append(atom)
+                }
             }
 
-            results = filtered.prefix(50).map { atom in
+            results = filteredAtoms.prefix(50).map { atom in
                 LiveQueryResult(
                     id: atom.uuid,
                     title: atom.title ?? "(untitled)",

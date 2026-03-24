@@ -369,7 +369,7 @@ class AutomationDispatcher: ObservableObject {
     private func detectStatusChange(atomUUID: String) async {
         guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) else { return }
 
-        let currentStatus = AutomationContextBuilder.build(
+        let currentStatus = await AutomationContextBuilder.build(
             event: AutomationEvent(triggerType: .atomUpdated, atomUUID: atomUUID),
             atom: atom,
             thinkspaceId: nil
@@ -437,7 +437,7 @@ class AutomationDispatcher: ObservableObject {
         if executor.isRecentlyAutomated(event.atomUUID) { return }
 
         // Build context (spatial info would come from canvas engines)
-        let context = AutomationContextBuilder.build(
+        let context = await AutomationContextBuilder.build(
             event: event,
             atom: atom,
             thinkspaceId: event.thinkspaceId,

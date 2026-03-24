@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A8ABD0ACEA9B451393545D8E /* IntentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099630900F044261A8A991F2 /* IntentParser.swift */; };
 		DD259A6FCAE54CDF8996CDDF /* LiveQueryBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */; };
 		DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */; };
 		38926731ECFA47A98770CCD8 /* AutomationListPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */; };
@@ -599,6 +600,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		099630900F044261A8A991F2 /* IntentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentParser.swift; sourceTree = "<group>"; };
 		19274008DC7042EEA4C0974F /* LiveQueryBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveQueryBlockView.swift; sourceTree = "<group>"; };
 		F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInRules.swift; sourceTree = "<group>"; };
 		7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutomationListPanel.swift; path = UI/Automation/AutomationListPanel.swift; sourceTree = SOURCE_ROOT; };
@@ -1199,6 +1201,7 @@
 			isa = PBXGroup;
 			children = (
 				21BAFA2200FB442A907F9676 /* AutomationRule.swift */,
+				099630900F044261A8A991F2 /* IntentParser.swift */,
 				F139B813CDD34D1BB8D7433A /* BuiltInRules.swift */,
 				A92D20D23C14495387B1ED1F /* AutomationDispatcher.swift */,
 				3942FEE5AB6044B29FA67AC9 /* AutomationActionExecutor.swift */,
@@ -2572,6 +2575,7 @@
 				AE4DD2C5F49FD9261D5C2C50 /* AssignmentStatusGroupHeader.swift in Sources */,
 				C3F8BFE426ABCE3CFFCC9942 /* Atom.swift in Sources */,
 				F48429B1DAA94C938CDD0CA0 /* AutomationRule.swift in Sources */,
+				A8ABD0ACEA9B451393545D8E /* IntentParser.swift in Sources */,
 				DCF4DF6A5BD44C49B711DA22 /* BuiltInRules.swift in Sources */,
 				69712C1A0703420BBB78FAA7 /* AutomationDispatcher.swift in Sources */,
 				BD0E02C7A1AB4474B5155119 /* AutomationActionExecutor.swift in Sources */,

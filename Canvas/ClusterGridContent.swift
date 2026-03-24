@@ -130,11 +130,46 @@ struct ClusterGridContent: View {
 
     // MARK: - Block View Dispatch
 
-    /// Compute grid cell height by scaling block's canvas aspect ratio to the fixed column width.
+    /// Compute grid cell height from the block's canonical default size so that
+    /// all blocks of the same type get identical heights regardless of canvas resizing.
+    /// Research blocks use media-type-aware sizing for correct aspect ratios.
     private func gridCellHeight(for block: CanvasBlock) -> CGFloat {
-        guard block.size.width > 0 else { return Self.minCellHeight }
-        let scale = Self.masonryColumnWidth / block.size.width
-        return max(Self.minCellHeight, block.size.height * scale)
+        Self.canonicalCellHeight(for: block)
+    }
+
+    /// Canonical cell height for a block in the masonry grid.
+    /// Static so it can be reused by `estimatedGridHeight` without a view instance.
+    static func canonicalCellHeight(for block: CanvasBlock) -> CGFloat {
+        let ref: CGSize
+        if block.entityType == .research,
+           let url = block.metadata["url"], !url.isEmpty {
+            let mediaType = CanvasBlock.detectMediaTypeFromURL(url)
+            switch mediaType {
+            case .reel:     ref = CGSize(width: 220, height: 420)
+            case .youtube:  ref = CGSize(width: 320, height: 230)
+            case .carousel: ref = CGSize(width: 300, height: 350)
+            case .generic:  ref = block.defaultSize
+            }
+        } else {
+            ref = block.defaultSize
+        }
+        guard ref.width > 0 else { return minCellHeight }
+        let scale = masonryColumnWidth / ref.width
+        return max(minCellHeight, ref.height * scale)
+    }
+
+    /// Estimate the total masonry layout height for a set of blocks without rendering.
+    /// Used by `CanvasClusterEngine.fitClusterRectForMode` for accurate adaptive sizing.
+    static func estimatedGridHeight(blocks: [CanvasBlock], availableWidth: CGFloat) -> CGFloat {
+        let columns = max(1, Int((availableWidth + masonrySpacing) / (masonryColumnWidth + masonrySpacing)))
+        var columnHeights = Array(repeating: CGFloat(0), count: columns)
+
+        for block in blocks {
+            let cellHeight = canonicalCellHeight(for: block)
+            let minCol = columnHeights.enumerated().min(by: { $0.element < $1.element })!.offset
+            columnHeights[minCol] += cellHeight + masonrySpacing
+        }
+        return (columnHeights.max() ?? 0)
     }
 
     @ViewBuilder

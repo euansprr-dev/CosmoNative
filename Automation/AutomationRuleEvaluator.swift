@@ -178,6 +178,31 @@ struct AutomationRuleEvaluator: Sendable {
         case .timeSinceUpdated:
             return compareTimeSince(atom.updatedAt, op: condition.op, value: condition.value)
 
+        // MARK: Content Metrics
+        case .bodyLength:
+            return compareNumber(Double(atom.bodyLength), op: condition.op, value: condition.value)
+
+        case .linkedSwipeCount:
+            return compareNumber(Double(atom.linkedSwipeCount), op: condition.op, value: condition.value)
+
+        case .clientName:
+            return compareString(atom.clientName ?? "", op: condition.op, value: condition.value)
+
+        case .createdToday:
+            let isToday = Calendar.current.isDateInToday(parseDate(atom.createdAt) ?? Date.distantPast)
+            if let expected = condition.value.boolValue {
+                return isToday == expected
+            }
+            return isToday
+
+        case .createdThisWeek:
+            let date = parseDate(atom.createdAt) ?? Date.distantPast
+            let isThisWeek = Calendar.current.isDate(date, equalTo: Date(), toGranularity: .weekOfYear)
+            if let expected = condition.value.boolValue {
+                return isThisWeek == expected
+            }
+            return isThisWeek
+
         // MARK: Graph Metrics
         case .pageRank, .inDegree, .outDegree:
             // Would need graph data in context — not currently passed
@@ -277,6 +302,14 @@ struct AutomationRuleEvaluator: Sendable {
         default:
             return false
         }
+    }
+
+    private func parseDate(_ dateString: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: dateString) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: dateString)
     }
 
     private func compareTimeSince(_ dateString: String, op: ConditionOperator, value: ConditionValue) -> Bool {

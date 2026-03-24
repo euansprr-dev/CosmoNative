@@ -183,6 +183,14 @@ enum AutomationTriggerType: String, Codable, CaseIterable, Sendable {
     // Time-based
     case schedule = "schedule"                       // config: {"cron": "0 9 * * *"}
 
+    // Threshold-based
+    case bodyLengthExceeds = "body_length_exceeds"     // config: {"threshold": "200"}
+    case linkCountReaches = "link_count_reaches"       // config: {"count": "3"}
+
+    // Entity events
+    case clientAssigned = "client_assigned"             // Atom linked to a client profile
+    case analysisComplete = "analysis_complete"         // IdeaInsightEngine finished
+
     // Compound
     case atomPropertyMatch = "atom_property_match"
 
@@ -201,6 +209,10 @@ enum AutomationTriggerType: String, Codable, CaseIterable, Sendable {
         case .removedFromCluster: return "Block leaves cluster"
         case .addedToThinkspace: return "Block added to thinkspace"
         case .schedule: return "On a schedule"
+        case .bodyLengthExceeds: return "Body length exceeds threshold"
+        case .linkCountReaches: return "Link count reaches threshold"
+        case .clientAssigned: return "Client assigned"
+        case .analysisComplete: return "Analysis completed"
         case .atomPropertyMatch: return "Atom matches criteria"
         }
     }
@@ -256,6 +268,13 @@ enum ConditionField: String, Codable, Sendable, CaseIterable {
     case timeSinceCreated = "time_since_created"
     case timeSinceUpdated = "time_since_updated"
 
+    // Content metrics
+    case bodyLength = "body_length"
+    case linkedSwipeCount = "linked_swipe_count"
+    case clientName = "client_name"              // Fuzzy match by name, not UUID
+    case createdToday = "created_today"          // Bool — was created today
+    case createdThisWeek = "created_this_week"   // Bool — was created this week
+
     // Graph metrics
     case pageRank = "page_rank"
     case inDegree = "in_degree"
@@ -289,6 +308,11 @@ enum ConditionField: String, Codable, Sendable, CaseIterable {
         case .hourOfDay: return "Hour of day"
         case .timeSinceCreated: return "Time since created"
         case .timeSinceUpdated: return "Time since updated"
+        case .bodyLength: return "Body length"
+        case .linkedSwipeCount: return "Linked swipe count"
+        case .clientName: return "Client name"
+        case .createdToday: return "Created today"
+        case .createdThisWeek: return "Created this week"
         case .pageRank: return "PageRank"
         case .inDegree: return "In-degree"
         case .outDegree: return "Out-degree"
@@ -428,6 +452,18 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
     case runAnalysis = "run_analysis"
     case askCosmo = "ask_cosmo"
 
+    // Pipeline actions
+    case advancePipeline = "advance_pipeline"    // Move content to next phase
+    case generateOutline = "generate_outline"    // Auto-generate outline for content
+    case assignToClient = "assign_to_client"     // Link atom to client profile
+    case archiveAtom = "archive_atom"            // Soft-delete / archive
+
+    // Task creation
+    case createTask = "create_task"              // Create a task linked to triggering atom
+
+    // Gamification
+    case awardXP = "award_xp"                   // Award XP for automated action
+
     // Visual feedback
     case highlightCluster = "highlight_cluster"
     case pulseBlock = "pulse_block"
@@ -437,6 +473,16 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .moveToCluster, .removeFromCluster, .placeOnCanvas, .moveToThinkspace,
              .highlightCluster, .pulseBlock:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether this action affects the content pipeline
+    var isPipelineAction: Bool {
+        switch self {
+        case .advancePipeline, .generateOutline, .archiveAtom:
             return true
         default:
             return false
@@ -461,6 +507,12 @@ enum AutomationActionType: String, Codable, CaseIterable, Sendable {
         case .sendTelegram: return "Send Telegram message"
         case .runAnalysis: return "Run analysis"
         case .askCosmo: return "Ask Cosmo"
+        case .advancePipeline: return "Advance pipeline phase"
+        case .generateOutline: return "Generate outline"
+        case .assignToClient: return "Assign to client"
+        case .archiveAtom: return "Archive"
+        case .createTask: return "Create task"
+        case .awardXP: return "Award XP"
         case .highlightCluster: return "Highlight cluster"
         case .pulseBlock: return "Pulse block"
         }

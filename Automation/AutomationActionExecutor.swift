@@ -70,7 +70,7 @@ class AutomationActionExecutor {
             // Build a minimal context for deferred execution
             guard let atom = try? await AtomRepository.shared.fetch(uuid: deferred.atomUUID) else { continue }
 
-            let context = AutomationContextBuilder.build(
+            let context = await AutomationContextBuilder.build(
                 event: AutomationEvent(triggerType: .atomCreated, atomUUID: deferred.atomUUID, isFromSync: true),
                 atom: atom,
                 thinkspaceId: thinkspaceId
@@ -124,8 +124,22 @@ class AutomationActionExecutor {
             try await handlePlaceOnCanvas(action, context: context)
 
         case .moveToThinkspace:
-            // Cross-thinkspace moves deferred to WP7
             break
+
+        case .advancePipeline:
+            try await handleAdvancePipeline(action, context: context)
+
+        case .generateOutline:
+            try await handleGenerateOutline(action, context: context)
+
+        case .assignToClient:
+            try await handleAssignToClient(action, context: context)
+
+        case .archiveAtom:
+            try await handleArchiveAtom(action, context: context)
+
+        case .awardXP:
+            handleAwardXP(action, context: context)
 
         case .createLink:
             try await handleCreateLink(action, context: context)
@@ -136,8 +150,10 @@ class AutomationActionExecutor {
         case .createAtom:
             try await handleCreateAtom(action, context: context)
 
+        case .createTask:
+            try await handleCreateTask(action, context: context)
+
         case .duplicateAtom:
-            // Complex — deferred to later WP
             break
 
         case .showNotification:
@@ -411,6 +427,133 @@ class AutomationActionExecutor {
                 "atomUUID": context.atom.uuid
             ]
         )
+    }
+
+    // MARK: - Pipeline Actions
+
+    private func handleAdvancePipeline(_ action: AutomationAction, context: AutomationContext) async throws {
+        guard var atom = try await AtomRepository.shared.fetch(uuid: context.atom.uuid) else { return }
+        guard atom.type == .content else { return }
+
+        var metaDict = Self.parseMetadata(atom.metadata)
+        let currentPhase = metaDict["contentPhase"] as? String ?? metaDict["content_phase"] as? String ?? "ideation"
+
+        let phases = ["ideation", "brainstorm", "draft", "polish", "scheduled", "published", "analyzing", "archived"]
+        guard let currentIdx = phases.firstIndex(of: currentPhase),
+              currentIdx + 1 < phases.count else { return }
+
+        let nextPhase = phases[currentIdx + 1]
+        metaDict["contentPhase"] = nextPhase
+        metaDict["content_phase"] = nextPhase
+        atom.metadata = Self.encodeMetadata(metaDict)
+        let _ = try await AtomRepository.shared.update(atom)
+
+        // Award pipeline XP
+        NotificationCenter.default.post(
+            name: .xpAwarded,
+            object: nil,
+            userInfo: ["xpAmount": 15, "dimension": "creative"]
+        )
+
+        print("⚡ [Automation] Advanced pipeline: \(currentPhase) → \(nextPhase) for \(context.atom.uuid)")
+    }
+
+    private func handleGenerateOutline(_ action: AutomationAction, context: AutomationContext) async throws {
+        // Post notification for the agent to generate an outline
+        NotificationCenter.default.post(
+            name: CosmoNotification.Automation.ruleFired,
+            object: nil,
+            userInfo: [
+                "action": "generateOutline",
+                "atomUUID": context.atom.uuid,
+                "contentUUID": context.atom.uuid
+            ]
+        )
+        print("⚡ [Automation] Triggered outline generation for \(context.atom.uuid)")
+    }
+
+    private func handleAssignToClient(_ action: AutomationAction, context: AutomationContext) async throws {
+        guard let clientUUID = action.configString("clientUUID")
+                ?? action.configString("clientName") else { return }
+        guard var atom = try await AtomRepository.shared.fetch(uuid: context.atom.uuid) else { return }
+
+        // If clientName provided, try to resolve UUID
+        var resolvedUUID = clientUUID
+        if clientUUID.count < 30 { // Likely a name, not UUID
+            if let client = try? await AtomRepository.shared.search(query: clientUUID, limit: 1).first,
+               client.type == .clientProfile {
+                resolvedUUID = client.uuid
+            }
+        }
+
+        var metaDict = Self.parseMetadata(atom.metadata)
+        metaDict["clientUUID"] = resolvedUUID
+        atom.metadata = Self.encodeMetadata(metaDict)
+
+        // Add client link
+        var links = atom.linksList
+        let newLink = AtomLink(type: AtomLinkType.ideaToClient.rawValue, uuid: resolvedUUID)
+        if !links.contains(where: { $0.uuid == resolvedUUID }) {
+            links.append(newLink)
+            atom.links = Self.encodeLinks(links)
+        }
+
+        let _ = try await AtomRepository.shared.update(atom)
+        print("⚡ [Automation] Assigned \(context.atom.uuid) to client \(resolvedUUID)")
+    }
+
+    private func handleArchiveAtom(_ action: AutomationAction, context: AutomationContext) async throws {
+        guard var atom = try await AtomRepository.shared.fetch(uuid: context.atom.uuid) else { return }
+
+        var metaDict = Self.parseMetadata(atom.metadata)
+        metaDict["status"] = "archived"
+        if atom.type == .idea {
+            metaDict["ideaStatus"] = "archived"
+        }
+        if atom.type == .content {
+            metaDict["contentPhase"] = "archived"
+            metaDict["content_phase"] = "archived"
+        }
+        atom.metadata = Self.encodeMetadata(metaDict)
+        let _ = try await AtomRepository.shared.update(atom)
+
+        print("⚡ [Automation] Archived atom \(context.atom.uuid)")
+    }
+
+    // MARK: - Task Creation
+
+    private func handleCreateTask(_ action: AutomationAction, context: AutomationContext) async throws {
+        let titleTemplate = action.configString("title") ?? "Review {{atom.title}}"
+        let title = interpolateTemplate(titleTemplate, context: context)
+
+        let _ = try await AtomRepository.shared.create(
+            type: .task,
+            title: title,
+            body: nil,
+            metadata: "{\"status\": \"todo\"}",
+            links: [AtomLink(type: AtomLinkType.related.rawValue, uuid: context.atom.uuid)]
+        )
+
+        print("⚡ [Automation] Created task: \(title)")
+    }
+
+    // MARK: - Gamification
+
+    private func handleAwardXP(_ action: AutomationAction, context: AutomationContext) {
+        let amount = Int(action.configNumber("amount") ?? 10)
+        let dimension = action.configString("dimension") ?? "cognitive"
+
+        NotificationCenter.default.post(
+            name: .xpAwarded,
+            object: nil,
+            userInfo: [
+                "xpAmount": amount,
+                "dimension": dimension,
+                "source": "automation"
+            ]
+        )
+
+        print("⚡ [Automation] Awarded \(amount) XP (\(dimension)) for \(context.atom.uuid)")
     }
 
     // MARK: - Template Interpolation

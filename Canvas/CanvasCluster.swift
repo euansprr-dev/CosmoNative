@@ -75,6 +75,9 @@ struct CanvasCluster: Identifiable {
     /// Command Center zone type identifier — "welcomeHub", "planningDock", "goalForge", "questBoard"
     var zoneType: String? = nil
 
+    /// Natural language intent — describes what this cluster collects (e.g. "Josh's content for review")
+    var intent: String? = nil
+
     /// How member blocks are displayed (canvas/list/board)
     var viewMode: ClusterViewMode = .canvas
 
@@ -180,6 +183,12 @@ struct CanvasCluster: Identifiable {
         updateBoundingRect(blocks: blocks, padding: padding, growOnly: true)
     }
 
+    /// Recompute bounding rect to tightly fit remaining members (allows shrinking).
+    /// Respects `manualSizeOverride` as a floor so user-resized clusters don't shrink below their explicit size.
+    mutating func shrinkToFitMembers(blocks: [CanvasBlock], padding: CGFloat = 40) {
+        updateBoundingRect(blocks: blocks, padding: padding, growOnly: false)
+    }
+
     /// Clear the manual size override, allowing the cluster to auto-fit blocks again
     mutating func clearManualSize() {
         manualSizeOverride = nil
@@ -274,6 +283,9 @@ struct CodableCluster: Codable, Sendable {
     // Command Center zone type (nil for non-zone clusters)
     var zoneType: String?
 
+    // Cluster intent (NL automation description)
+    var intent: String?
+
     // View mode persistence (nil → .canvas for backward compat)
     var viewMode: String?
     var sortOrder: String?
@@ -295,6 +307,7 @@ struct CodableCluster: Codable, Sendable {
         manualHeight: Double? = nil,
         isZone: Bool? = nil,
         zoneType: String? = nil,
+        intent: String? = nil,
         viewMode: String? = nil,
         sortOrder: String? = nil,
         boardGrouping: String? = nil
@@ -313,6 +326,7 @@ struct CodableCluster: Codable, Sendable {
         self.manualHeight = manualHeight
         self.isZone = isZone
         self.zoneType = zoneType
+        self.intent = intent
         self.viewMode = viewMode
         self.sortOrder = sortOrder
         self.boardGrouping = boardGrouping
@@ -337,9 +351,10 @@ struct CodableCluster: Codable, Sendable {
         }
         self.isZone = cluster.isZone ? true : nil
         self.zoneType = cluster.zoneType
-        self.viewMode = cluster.viewMode != .canvas ? cluster.viewMode.rawValue : nil
-        self.sortOrder = cluster.sortOrder != .dateUpdated ? cluster.sortOrder.rawValue : nil
-        self.boardGrouping = cluster.boardGrouping != .auto ? cluster.boardGrouping.rawValue : nil
+        self.intent = cluster.intent
+        self.viewMode = cluster.viewMode.rawValue
+        self.sortOrder = cluster.sortOrder.rawValue
+        self.boardGrouping = cluster.boardGrouping.rawValue
     }
 
     func toCanvasCluster(blocks: [CanvasBlock], thinkspaceId: String?) -> CanvasCluster {
@@ -373,6 +388,7 @@ struct CodableCluster: Codable, Sendable {
             manualSizeOverride: manualSize,
             isZone: isZone ?? false,
             zoneType: zoneType,
+            intent: intent,
             viewMode: viewMode.flatMap { ClusterViewMode(rawValue: $0) } ?? .canvas,
             sortOrder: sortOrder.flatMap { ClusterSortOrder(rawValue: $0) } ?? .dateUpdated,
             boardGrouping: boardGrouping.flatMap { ClusterBoardGrouping(rawValue: $0) } ?? .auto

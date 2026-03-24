@@ -29,6 +29,8 @@ struct AutomationContext: Sendable {
         let captureSource: String?
         let linkTypes: [String]            // Types of outgoing links
         let linkCount: Int
+        let linkedSwipeCount: Int         // Count of idea_to_swipe / swipe_to_idea links
+        let clientName: String?           // Resolved client name (from client profile atom)
         let createdAt: String
         let updatedAt: String
         let bodyLength: Int
@@ -48,7 +50,7 @@ enum AutomationContextBuilder {
         clusterMembership: [String] = [],
         clusterNames: [String: String] = [:],
         executionDepth: Int = 0
-    ) -> AutomationContext {
+    ) async -> AutomationContext {
         // Extract status from metadata
         let status = extractStatus(from: atom)
 
@@ -76,6 +78,13 @@ enum AutomationContextBuilder {
         let linkedTypes = links.compactMap { $0.entityType }
         let linkTypes = links.map { $0.type }
 
+        // Count linked swipes
+        let swipeLinkTypes = ["idea_to_swipe", "swipe_to_idea"]
+        let linkedSwipeCount = links.filter { swipeLinkTypes.contains($0.type) }.count
+
+        // Resolve client name from clientUUID
+        let resolvedClientName: String? = await resolveClientName(clientUUID: clientUUID)
+
         let snapshot = AutomationContext.AutomationAtomSnapshot(
             uuid: atom.uuid,
             type: atom.type.rawValue,
@@ -89,6 +98,8 @@ enum AutomationContextBuilder {
             captureSource: captureSource,
             linkTypes: linkTypes,
             linkCount: links.count,
+            linkedSwipeCount: linkedSwipeCount,
+            clientName: resolvedClientName,
             createdAt: atom.createdAt,
             updatedAt: atom.updatedAt,
             bodyLength: (atom.body ?? "").count
@@ -136,6 +147,14 @@ enum AutomationContextBuilder {
             return nil
         }
         return dict[key] as? String
+    }
+
+    private static func resolveClientName(clientUUID: String?) async -> String? {
+        guard let uuid = clientUUID, !uuid.isEmpty else { return nil }
+        if let client = try? await AtomRepository.shared.fetch(uuid: uuid) {
+            return client.title
+        }
+        return nil
     }
 
     private static func extractTags(from atom: Atom) -> [String] {

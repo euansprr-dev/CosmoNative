@@ -317,7 +317,162 @@ export function computeSwipeIntelligenceBrief(swipes: CompressedSwipe[]): string
     lines.push(`‣ ${highScorers.length}/${swipes.length} swipes score 8+ — study these patterns`);
   }
 
+  // FORMATTING DNA (measured from loaded swipes)
+  const stats = computeStyleDNA(swipes);
+  if (stats.totalSlidesAnalyzed > 0) {
+    lines.push('');
+    lines.push('FORMATTING DNA (measured from your loaded swipes):');
+    lines.push(`‣ Em-dashes: ${stats.swipesWithEmDash}/${swipes.length} swipes use em-dashes${stats.swipesWithEmDash === 0 ? ' → NONE of your reference swipes use them' : ''}`);
+    lines.push(`‣ Density: avg ${stats.avgSentencesPerSlide.toFixed(1)} sentences per slide`);
+    lines.push(`‣ Words per slide: avg ${stats.avgWordsPerSlide}`);
+    lines.push(`‣ Sentence length: avg ${stats.avgWordsPerSentence} words`);
+    lines.push(`‣ Slide count: range ${stats.slideCountRange[0]}-${stats.slideCountRange[1]}, avg ${stats.avgSlideCount}`);
+    for (const line of stats.evidenceLines) {
+      lines.push(`‣ ${line}`);
+    }
+  }
+
   return lines.join('\n');
+}
+
+// ============================================================
+// Style DNA — Structural Statistics from Loaded Swipes
+// ============================================================
+
+export interface StyleDNA {
+  avgSentencesPerSlide: number;
+  avgWordsPerSlide: number;
+  avgWordsPerSentence: number;
+  slideCountRange: [number, number];
+  avgSlideCount: number;
+  emDashCount: number;
+  swipesWithEmDash: number;
+  totalSwipes: number;
+  totalSlidesAnalyzed: number;
+  evidenceLines: string[];
+}
+
+/**
+ * Extract individual slide/paragraph texts from a swipe body.
+ * Tries JSON → Slide N headers → double-newline paragraphs.
+ */
+export function extractSlideTexts(body: string): string[] {
+  if (!body || body.trim().length === 0) return [];
+
+  // Try JSON parse (carousel or thread format)
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      return parsed.slides.map((s: any) => (typeof s === 'string' ? s : s.text || '').trim()).filter(Boolean);
+    }
+    if (parsed.tweets && Array.isArray(parsed.tweets)) {
+      return parsed.tweets.map((t: any) => (typeof t === 'string' ? t : t.text || '').trim()).filter(Boolean);
+    }
+  } catch {
+    // Not JSON — try text-based parsing
+  }
+
+  // Try Slide N headers (plaintext carousel format)
+  const slideHeaderPattern = /^Slide \d+/im;
+  if (slideHeaderPattern.test(body)) {
+    const parts = body.split(/^Slide \d+[^\n]*/im).filter(s => s.trim().length > 0);
+    if (parts.length >= 3) return parts.map(s => s.trim());
+  }
+
+  // Fallback: double-newline paragraphs
+  const paragraphs = body.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
+  if (paragraphs.length >= 3) return paragraphs;
+
+  // Single block — return as one "slide"
+  return [body.trim()];
+}
+
+/**
+ * Compute measurable structural statistics from loaded swipes.
+ * These are evidence-based observations, not hardcoded rules.
+ */
+export function computeStyleDNA(swipes: CompressedSwipe[]): StyleDNA {
+  let totalEmDashes = 0;
+  let swipesWithEmDash = 0;
+  let totalSlides = 0;
+  let totalSentences = 0;
+  let totalWords = 0;
+  let totalSentenceWords = 0;
+  let totalSentenceCount = 0;
+  let swipesAnalyzed = 0;
+  let minSlides = Infinity;
+  let maxSlides = 0;
+  const evidenceLines: string[] = [];
+
+  for (const swipe of swipes) {
+    const body = swipe.fullBody;
+    if (!body || body.trim().length === 0) continue;
+
+    // Em-dash usage
+    const emDashes = (body.match(/[\u2014\u2013]/g) || []).length;
+    totalEmDashes += emDashes;
+    if (emDashes > 0) swipesWithEmDash++;
+
+    // Extract slides
+    const slides = extractSlideTexts(body);
+    if (slides.length >= 2) {
+      swipesAnalyzed++;
+      const slideCount = slides.length;
+      totalSlides += slideCount;
+      if (slideCount < minSlides) minSlides = slideCount;
+      if (slideCount > maxSlides) maxSlides = slideCount;
+
+      for (const slide of slides) {
+        // Words per slide
+        const words = slide.split(/\s+/).filter(Boolean);
+        totalWords += words.length;
+
+        // Sentences per slide
+        const sentences = slide.match(/[^.!?]*[.!?]+(?:\s|$)/g) || [];
+        const sentCount = Math.max(sentences.length, 1);
+        totalSentences += sentCount;
+
+        // Words per sentence
+        for (const sent of sentences) {
+          const sentWords = sent.trim().split(/\s+/).filter(Boolean).length;
+          if (sentWords > 0) {
+            totalSentenceWords += sentWords;
+            totalSentenceCount++;
+          }
+        }
+      }
+    }
+  }
+
+  const avgSentencesPerSlide = totalSlides > 0 ? totalSentences / totalSlides : 0;
+  const avgWordsPerSlide = totalSlides > 0 ? Math.round(totalWords / totalSlides) : 0;
+  const avgWordsPerSentence = totalSentenceCount > 0 ? Math.round(totalSentenceWords / totalSentenceCount) : 0;
+  const avgSlideCount = swipesAnalyzed > 0 ? Math.round(totalSlides / swipesAnalyzed) : 0;
+
+  if (minSlides === Infinity) minSlides = 0;
+
+  // Build evidence lines
+  if (swipesWithEmDash === 0 && swipes.length > 0) {
+    evidenceLines.push('Zero em-dashes across all loaded swipes — this punctuation is not part of high-performing content');
+  }
+  if (avgSentencesPerSlide > 0 && avgSentencesPerSlide <= 1.5) {
+    evidenceLines.push('Swipes use ~1 sentence per slide — short, punchy, one-breath rhythm');
+  } else if (avgSentencesPerSlide > 3) {
+    evidenceLines.push(`Swipes use ~${avgSentencesPerSlide.toFixed(0)} sentences per slide — denser, storytelling rhythm`);
+  }
+
+  return {
+    avgSentencesPerSlide,
+    avgWordsPerSlide,
+    avgWordsPerSentence,
+    slideCountRange: [minSlides, maxSlides],
+    avgSlideCount,
+    emDashCount: totalEmDashes,
+    swipesWithEmDash,
+    totalSwipes: swipes.length,
+    totalSlidesAnalyzed: swipesAnalyzed,
+    evidenceLines,
+  };
 }
 
 // ============================================================

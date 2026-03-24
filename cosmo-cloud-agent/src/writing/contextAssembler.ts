@@ -394,11 +394,20 @@ export function assembleBlock3Stable(
 // Block 3B: Dynamic Context (Current Content State)
 // ============================================================
 
+export interface WritingContext {
+  swipePatternAnalysis?: string;
+  structuralPlan?: string;
+  keyDecisions?: string[];
+  selfReviewFindings?: string;
+  analysisDepth?: number;
+}
+
 export function assembleBlock3Dynamic(
   contentAtom: Atom,
   outline: OutlineItem[] | null,
   hooks: string[] | null,
   conversationSummary: string | null,
+  writingContext?: WritingContext,
 ): WritingBlock {
   const meta = contentAtom.metadata || {};
   const sections: string[] = [];
@@ -459,6 +468,20 @@ export function assembleBlock3Dynamic(
   // Conversation summary
   if (conversationSummary) {
     sections.push(`\n--- CONVERSATION SUMMARY ---\n${conversationSummary}`);
+  }
+
+  // Prior analysis context (persisted across phases)
+  if (writingContext?.swipePatternAnalysis) {
+    sections.push('\n--- YOUR PRIOR ANALYSIS (from earlier phase) ---');
+    sections.push(writingContext.swipePatternAnalysis);
+  }
+  if (writingContext?.structuralPlan) {
+    sections.push('\n--- YOUR WRITING PLAN ---');
+    sections.push(writingContext.structuralPlan);
+  }
+  if (writingContext?.selfReviewFindings) {
+    sections.push('\n--- SELF-REVIEW FINDINGS (from previous draft) ---');
+    sections.push(writingContext.selfReviewFindings);
   }
 
   const content = sections.join('\n');

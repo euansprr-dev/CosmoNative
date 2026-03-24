@@ -96,6 +96,13 @@ export class CloudWritingEngine {
   // Auto-refinement counter (max 2 passes)
   private refinementCount = 0;
 
+  // Deep analysis tracking — gates outline/draft behind substantive thinking
+  private analysisDepth = 0;
+  private hasWrittenOutlineBefore = false;
+  private hasWrittenDraftBefore = false;
+  private hasCompletedSelfReview = false;
+  private writingContext: import('./contextAssembler').WritingContext = {};
+
   constructor(contentUUID: string) {
     this.contentUUID = contentUUID;
   }
@@ -131,10 +138,18 @@ export class CloudWritingEngine {
       this.hooks = meta.inheritedHooks as string[];
     }
 
-    // Restore persisted conversation
+    // Restore persisted conversation + writing context
     const structured = this.contentAtom.structured || {};
     if (structured.writingConversation && Array.isArray(structured.writingConversation)) {
       this.messages = structured.writingConversation as WritingMessage[];
+    }
+    if (structured.writingContext) {
+      this.writingContext = structured.writingContext as import('./contextAssembler').WritingContext;
+      this.analysisDepth = this.writingContext.analysisDepth || 0;
+      // If analysis was done in a prior phase, don't re-gate
+      if (this.analysisDepth > 0) {
+        this.hasWrittenOutlineBefore = true;
+      }
     }
 
     // Select swipes — use stored selection if available (persists across engine re-creation)
@@ -189,12 +204,18 @@ export class CloudWritingEngine {
     // Refresh content atom for latest state
     this.contentAtom = await fetchAtom(this.contentUUID) || this.contentAtom;
 
-    // Build dynamic block
+    // Reset self-review flag for new draft requests
+    if (phase === 'draft') {
+      this.hasCompletedSelfReview = false;
+    }
+
+    // Build dynamic block (includes prior analysis context)
     const block3b = assembleBlock3Dynamic(
       this.contentAtom,
       this.outline.length > 0 ? this.outline : null,
       this.hooks.length > 0 ? this.hooks : null,
       this.conversationSummary,
+      this.writingContext,
     );
 
     // Add user message
@@ -301,16 +322,16 @@ export class CloudWritingEngine {
         });
       }
 
-      // Detect think stalling loop — if model keeps calling think without progressing
+      // Detect extended analysis — gentle nudge after 8 consecutive thinks (was 3 — too aggressive)
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;
-        if (consecutiveThinks >= 3) {
-          console.log(`  ⚠️ Think stall detected (${consecutiveThinks} consecutive thinks) — injecting nudge`);
+        if (consecutiveThinks >= 8) {
+          console.log(`  ⚠️ Extended analysis (${consecutiveThinks} consecutive thinks) — gentle nudge`);
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'user',
-            content: '[System] You have been thinking for 3+ turns without taking action. Stop thinking and take action NOW. Call write_draft with the full draft content, or call update_outline/add_hooks if still in brainstorm phase. Do NOT call think again — act immediately.',
+            content: '[System] You\'ve done extensive analysis. When you\'re ready, apply your findings — call update_outline, add_hooks, or write_draft to take action.',
             timestamp: new Date().toISOString(),
           });
           consecutiveThinks = 0;
@@ -331,6 +352,7 @@ export class CloudWritingEngine {
         this.outline.length > 0 ? this.outline : null,
         this.hooks.length > 0 ? this.hooks : null,
         this.conversationSummary,
+        this.writingContext,
       );
     }
 
@@ -343,10 +365,58 @@ export class CloudWritingEngine {
 
   private async executeInnerTool(name: string, args: Record<string, any>): Promise<string> {
     switch (name) {
-      case 'think':
-        return 'Thinking noted.';
+      case 'think': {
+        const thought = (args.thought as string) || '';
+        const wordCount = thought.split(/\s+/).length;
+
+        // Track analysis depth for pre-write/outline gate
+        if (wordCount > 200) {
+          this.analysisDepth++;
+          // Capture analysis into writingContext for cross-phase persistence
+          if (/swipe|pattern|density|hook|voice|structure|transition|punctuation/i.test(thought)) {
+            this.writingContext.swipePatternAnalysis = thought.substring(0, 4000);
+          }
+          if (/plan|approach|strategy|will write|going to|outline|structure/i.test(thought)) {
+            this.writingContext.structuralPlan = thought.substring(0, 2000);
+          }
+          this.writingContext.analysisDepth = this.analysisDepth;
+        }
+
+        // Capture self-review findings
+        if (this.hasCompletedSelfReview && wordCount > 100) {
+          this.writingContext.selfReviewFindings = thought.substring(0, 2000);
+        }
+
+        // Guide toward thorough analysis
+        if (this.analysisDepth === 0 && wordCount < 100) {
+          return `Analysis received (${wordCount} words). Before writing, ensure you've analyzed your loaded swipes through EVERY lens: density patterns, punctuation usage, hook mechanics, voice characteristics, transition patterns, CTA structure. Reference the Slide Density, Dinner Table Test, Voice Matching, Hook Craft, Causal Chaining, and CTA Craft modules in your context for what to look for.`;
+        }
+
+        return `Analysis received (${wordCount} words). ${this.analysisDepth >= 2 ? 'Deep analysis complete. You may proceed when ready.' : 'Continue analyzing — check remaining skill module dimensions.'}`;
+      }
 
       case 'update_outline': {
+        // Pre-outline analysis gate — require deep thinking before first outline
+        if (this.analysisDepth < 1 && !this.hasWrittenOutlineBefore) {
+          return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before creating an outline:
+
+1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe:
+   • HOOKS: What hook mechanisms do the top-scoring swipes use? How are they structured? (Hook Craft module)
+   • STRUCTURE: What beat patterns do the swipes follow? How many sections? (Beat Patterns in methodology)
+   • DENSITY: How many sentences per slide? Words per sentence? (Slide Density module)
+   • VOICE: What's the tone, formality, sentence length patterns? (Voice Matching module)
+   • TRANSITIONS: How do slides connect? (Causal Chaining module)
+   • CTA: What CTA patterns work? (CTA Craft module)
+   • DINNER TABLE: Would these sound natural spoken aloud? (Dinner Table Test)
+
+2. Call think to study the CLIENT PROFILE — their voice targets, brand story, beliefs, audience, positioning, failure fingerprint, top performing content patterns
+
+3. Call think to plan your outline approach — how will you combine the swipe structural DNA with the client's voice and topic?
+
+Only after thorough analysis can you call update_outline.`;
+        }
+        this.hasWrittenOutlineBefore = true;
+
         const sections = args.sections as any[];
         if (!sections) return 'Error: sections required';
         this.outline = sections.map((s: any, i: number) => ({
@@ -375,6 +445,25 @@ export class CloudWritingEngine {
       }
 
       case 'write_draft': {
+        // Pre-write analysis gate — require deep thinking before first draft
+        if (this.analysisDepth < 1 && !this.hasWrittenDraftBefore) {
+          return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before writing:
+
+1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe across the swipes:
+   • DENSITY: How many sentences per slide? How many words per sentence? (Slide Density module)
+   • VOICE: What's the tone? Contractions? Sentence fragments vs full sentences? Formality level? (Voice Matching module)
+   • HOOKS: What hook mechanisms do the top-scoring swipes use? How long are hooks? (Hook Craft module)
+   • TRANSITIONS: How do slides connect? Implied "so/but/that's when"? (Causal Chaining module)
+   • PUNCTUATION: Do they use em-dashes? Ellipses? Exclamation marks? What's ABSENT? (Voice DNA)
+   • CTA: What CTA pattern do they use? Keyword + action? (CTA Craft module)
+   • DINNER TABLE: Would these swipes sound natural spoken aloud at dinner? What makes them conversational? (Dinner Table Test)
+
+2. Call think again to plan your writing approach — how will you apply these patterns to THIS content for THIS client?
+
+Only after thorough analysis can you call write_draft.`;
+        }
+        this.hasWrittenDraftBefore = true;
+
         const content = args.content as string;
         if (!content) return 'Error: content required';
         const format = args.format as string || 'plaintext';
@@ -424,6 +513,30 @@ export class CloudWritingEngine {
           if (this.refinementCount <= 2) {
             result += `\n\nAUTO-REFINEMENT PASS ${this.refinementCount}/2: Fix the violations above, then call write_draft again with the corrected content.`;
           }
+        }
+
+        // Self-review injection — fires once per draft, after all deterministic validation
+        if (!this.hasCompletedSelfReview && deterministicViolations.length === 0 && voiceViolations.length === 0) {
+          this.hasCompletedSelfReview = true;
+
+          result += `\n\n═══ SELF-REVIEW REQUIRED ═══
+Before presenting this draft, you MUST run the Self-Edit Pass (Module 7 in your context). Apply ALL 6 checks:
+1. Read-aloud check
+2. Density check
+3. Causal chain check
+4. Perspective check
+5. Scroll test
+6. Blueprint comparison
+
+Then compare your draft against:
+• ALL loaded swipes in your context — does your draft match their density, voice, punctuation patterns, and structural mechanics?
+• ALL skill modules (Dinner Table Test, Slide Density, Causal Chaining, Hook Craft, Voice Matching, CTA Craft) — does your draft pass every test described in these modules?
+• ALL learned rules and failure fingerprint in your client intelligence — are any rules violated?
+• Your own pre-write analysis — did you follow the patterns you identified?
+
+Call think with your self-review findings. If ANY check fails, call write_draft with corrections.
+If ALL checks pass, present the draft.
+═══════════════════════════`;
         }
 
         return result;
@@ -696,18 +809,52 @@ export class CloudWritingEngine {
   // ============================================================
 
   private async persistConversation(): Promise<void> {
-    // Save only user + assistant text messages (skip tool calls/results)
-    const toSave = this.messages
-      .filter(m => (m.role === 'user' || m.role === 'assistant') && !m.toolCalls)
-      .map(m => ({
-        id: m.id,
-        role: m.role,
-        content: m.content.substring(0, 2000),
-        timestamp: m.timestamp,
-      }));
+    // Save ALL messages including think tool calls — analysis must persist across phases
+    const toSave = this.messages.map(m => {
+      // For think tool results, preserve full content
+      if (m.role === 'tool' && m.toolCallId) {
+        const matchingCall = this.messages.find(
+          msg => msg.toolCalls?.some(tc => tc.id === m.toolCallId)
+        );
+        const isThink = matchingCall?.toolCalls?.some(
+          tc => tc.id === m.toolCallId && tc.name === 'think'
+        );
+        if (isThink) {
+          return { id: m.id, role: m.role, content: m.content, timestamp: m.timestamp, toolCallId: m.toolCallId };
+        }
+        return null; // Skip non-think tool results
+      }
+
+      // For assistant messages with think tool calls, preserve the full thought
+      if (m.toolCalls?.some(tc => tc.name === 'think')) {
+        return {
+          id: m.id, role: m.role, content: m.content,
+          timestamp: m.timestamp,
+          toolCalls: m.toolCalls.filter(tc => tc.name === 'think').map(tc => ({
+            id: tc.id, name: tc.name,
+            arguments: { thought: (tc.arguments as any)?.thought || '' },
+          })),
+        };
+      }
+
+      // Skip assistant messages that only contain non-think tool calls
+      if (m.toolCalls && m.toolCalls.length > 0 && !m.toolCalls.some(tc => tc.name === 'think')) {
+        return null;
+      }
+
+      // For user + assistant text messages, keep with generous truncation
+      if (m.role === 'user' || m.role === 'assistant') {
+        return { id: m.id, role: m.role, content: m.content.substring(0, 4000), timestamp: m.timestamp };
+      }
+
+      return null;
+    }).filter(Boolean);
 
     await updateAtom(this.contentUUID, {
-      structured: { writingConversation: toSave },
+      structured: {
+        writingConversation: toSave,
+        writingContext: this.writingContext,
+      },
     });
   }
 
@@ -883,7 +1030,7 @@ export class CloudWritingEngine {
 // ============================================================
 
 interface ValidationViolation {
-  type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned';
+  type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned' | 'em_dash';
   message: string;
 }
 
@@ -962,6 +1109,16 @@ function runDeterministicValidators(
         message: `Learned rule violation: "${phrase}" found in draft (rule: ${rule.rule.substring(0, 80)})`,
       });
     }
+  }
+
+  // 5. Em-dash detection (content lines only, not slide headers which use — structurally)
+  const contentLines = draft.split('\n').filter(l => !l.match(/^Slide \d+/i));
+  const emDashMatches = contentLines.join('\n').match(/[\u2014\u2013]/g);
+  if (emDashMatches) {
+    violations.push({
+      type: 'em_dash',
+      message: `${emDashMatches.length} em-dash(es) found in content. Replace ALL with commas, periods, colons, semicolons, or parentheses. Em-dashes are NEVER used in your loaded swipes.`,
+    });
   }
 
   return violations;

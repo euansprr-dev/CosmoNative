@@ -409,32 +409,25 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
         // Include if ANY date matches today OR task is overdue
         if (!isWhen && !isFocus && !isDue && !isOverdue) continue;
 
-        // Section assignment (matching Mac's sectioning):
-        // - OVERDUE: isOverdue AND no date field equals today
-        // - SCHEDULED: has startTime set to today
-        // - UNSCHEDULED: everything else that qualifies
-        if (isOverdue && !isWhen && !isFocus && !isDue) {
-          overdue.push(task);
+        // Section assignment:
+        // Mac app shows ALL qualifying tasks as "Due today" — no separate OVERDUE section.
+        // Tasks with past dueDate but whenDate/focusDate = today are still "today" tasks.
+        // We merge overdue into scheduled/unscheduled to match the app's presentation.
+        const startTime = meta.startTime as string | undefined;
+        if (startTime) {
+          scheduled.push(task);
         } else {
-          const startTime = meta.startTime as string | undefined;
-          if (startTime) {
-            scheduled.push(task);
-          } else {
-            unscheduled.push(task);
-          }
+          unscheduled.push(task);
         }
       }
 
-      // Sort
-      overdue.sort((a, b) => (PRIORITY_ORDER[a.metadata?.priority ?? 'medium'] ?? 2) - (PRIORITY_ORDER[b.metadata?.priority ?? 'medium'] ?? 2));
+      // Sort: scheduled by time, unscheduled by priority
       scheduled.sort((a, b) => (a.metadata?.startTime ?? '').localeCompare(b.metadata?.startTime ?? ''));
       unscheduled.sort((a, b) => (PRIORITY_ORDER[a.metadata?.priority ?? 'medium'] ?? 2) - (PRIORITY_ORDER[b.metadata?.priority ?? 'medium'] ?? 2));
 
-      const overdueFormatted = await Promise.all(overdue.map(formatTask));
       const scheduledFormatted = await Promise.all(scheduled.map(formatTask));
       const unscheduledFormatted = await Promise.all(unscheduled.map(formatTask));
 
-      if (overdueFormatted.length > 0) sections.push({ name: 'OVERDUE', tasks: overdueFormatted });
       if (scheduledFormatted.length > 0) sections.push({ name: 'SCHEDULED', tasks: scheduledFormatted });
       if (unscheduledFormatted.length > 0) sections.push({ name: 'UNSCHEDULED', tasks: unscheduledFormatted });
 

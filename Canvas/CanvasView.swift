@@ -947,6 +947,36 @@ struct CanvasView: View {
                     handleOpenCalendarWindow(notification: notification)
                 }
 
+                // Listen for idea board block creation (from Command-K)
+                addCanvasObserver(
+                    forName: Notification.Name("createIdeaBoardBlock"),
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    let clientUUID = notification.userInfo?["clientUUID"] as? String ?? ""
+                    let clientName = notification.userInfo?["clientName"] as? String ?? "Client"
+                    let position = screenToCanvasPosition(
+                        CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                    )
+                    let block = CanvasBlock(
+                        position: position,
+                        size: CGSize(width: 280, height: 400),
+                        entityType: .ideaBoard,
+                        entityId: -1,
+                        entityUuid: UUID().uuidString,
+                        title: clientName,
+                        metadata: [
+                            "clientUUID": clientUUID,
+                            "clientName": clientName
+                        ]
+                    )
+                    Task {
+                        await spatialEngine.addBlock(block, persist: true)
+                    }
+                }
+
                 // Listen for inbox block creation
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createInboxBlock,
@@ -4042,6 +4072,10 @@ struct CanvasBlockStaticView: View {
             ImageBlockView(block: block)
         case .stickyNote:
             StickyNoteBlockView(block: block)
+        case .liveQuery:
+            LiveQueryBlockView(block: block)
+        case .ideaBoard:
+            IdeaBoardBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

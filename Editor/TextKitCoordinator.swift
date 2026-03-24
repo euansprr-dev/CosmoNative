@@ -298,34 +298,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         return scrollView
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView scrollView: CosmoScrollView, context: Context) -> CGSize? {
-        // When scrolling internally or in single-line mode, use default sizing
-        guard !scrollsInternally, !singleLine else { return nil }
-
-        guard let textView = scrollView.documentView as? CosmoTextView,
-              let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else { return nil }
-
-        let width = proposal.width ?? scrollView.frame.width
-        guard width > 1 else { return nil }
-
-        // Ensure text container matches the proposed width for accurate measurement
-        let containerWidth = titleConfiguration != nil ? width : width
-        if abs(textContainer.containerSize.width - containerWidth) > 0.5 {
-            textContainer.containerSize = NSSize(width: containerWidth, height: CGFloat.greatestFiniteMagnitude)
-        }
-
-        layoutManager.ensureLayout(for: textContainer)
-        let measuredHeight = ceil(
-            layoutManager.usedRect(for: textContainer).height
-            + textView.textContainerInset.height * 2
-        )
-
-        // Return measured content height so the parent ScrollView knows the real size.
-        // The parent can still enforce a minHeight via .frame(minHeight:).
-        return CGSize(width: width, height: measuredHeight)
-    }
-
     func updateNSView(_ scrollView: CosmoScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CosmoTextView else { return }
         scrollView.forwardsScrollEvents = !scrollsInternally

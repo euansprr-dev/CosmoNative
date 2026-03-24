@@ -167,10 +167,6 @@ struct CanvasClusterLayer: View {
         }
         .position(x: rect.midX, y: rect.midY)
         .offset(x: dragOffset.width, y: dragOffset.height)
-        .animation(
-            (clusterIsResizing || draggingCluster(cluster.id)) ? nil : ProMotionSprings.gentle,
-            value: rect
-        )
         .transaction { tx in
             if clusterIsResizing || draggingCluster(cluster.id) {
                 tx.animation = nil

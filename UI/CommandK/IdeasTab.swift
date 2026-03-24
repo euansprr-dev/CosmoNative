@@ -564,22 +564,34 @@ private struct IdeaBoardView: View {
     @ViewBuilder
     private func columnHeader(_ section: IdeaClientSection) -> some View {
         HStack(spacing: 8) {
-            // Colored profile name badge
+            // Colored profile name badge — long-press to drag idea board to canvas
             Text(section.clientName.uppercased())
                 .font(.system(size: 11, weight: .bold))
                 .tracking(0.5)
-                .foregroundColor(section.color)
+                .foregroundStyle(section.color)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(section.color.opacity(0.10))
                 )
+                .onLongPressGesture(minimumDuration: 0.4) {
+                    // Post notification to create an idea board block on canvas
+                    NotificationCenter.default.post(
+                        name: Notification.Name("addIdeaBoardToCanvas"),
+                        object: nil,
+                        userInfo: [
+                            "clientUUID": section.clientUUID ?? "",
+                            "clientName": section.clientName
+                        ]
+                    )
+                }
+                .help("Long-press to add \(section.clientName)'s idea board to canvas")
 
             // Count badge
             Text("\(section.items.count)")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundColor(section.color.opacity(0.8))
+                .foregroundStyle(section.color.opacity(0.8))
 
             Spacer()
 
@@ -620,6 +632,21 @@ private struct IdeaBoardView: View {
     @ViewBuilder
     private func columnOptionsMenu(_ section: IdeaClientSection) -> some View {
         Menu {
+            Button {
+                NotificationCenter.default.post(
+                    name: Notification.Name("addIdeaBoardToCanvas"),
+                    object: nil,
+                    userInfo: [
+                        "clientUUID": section.clientUUID ?? "",
+                        "clientName": section.clientName
+                    ]
+                )
+            } label: {
+                Label("Add to Canvas", systemImage: "square.grid.3x3.topleft.filled")
+            }
+
+            Divider()
+
             Button {} label: {
                 Label("Sort by Recent", systemImage: "clock")
             }

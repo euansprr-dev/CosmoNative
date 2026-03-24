@@ -537,6 +537,28 @@ struct MainView: View {
                 )
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaBoardToCanvas"))) { notification in
+            let clientUUID = notification.userInfo?["clientUUID"] as? String ?? ""
+            let clientName = notification.userInfo?["clientName"] as? String ?? "Client"
+
+            withAnimation(.spring(response: 0.2)) {
+                showCommandK = false
+                commandKBehindFocusMode = false
+                commandKViewModel.clear()
+            }
+
+            navigateToLastThinkspace()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NotificationCenter.default.post(
+                    name: Notification.Name("createIdeaBoardBlock"),
+                    object: nil,
+                    userInfo: [
+                        "clientUUID": clientUUID,
+                        "clientName": clientName
+                    ]
+                )
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
 

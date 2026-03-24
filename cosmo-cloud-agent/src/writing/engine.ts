@@ -96,10 +96,9 @@ export class CloudWritingEngine {
   // Auto-refinement counter (max 2 passes)
   private refinementCount = 0;
 
-  // Deep analysis tracking — gates outline/draft behind substantive thinking
+  // Deep analysis tracking — gates outline/draft/hooks behind substantive thinking
+  // Uses analysisDepth as single gate (no boolean flags — they caused bypass-on-revision bugs)
   private analysisDepth = 0;
-  private hasWrittenOutlineBefore = false;
-  private hasWrittenDraftBefore = false;
   private hasCompletedSelfReview = false;
   private writingContext: import('./contextAssembler').WritingContext = {};
 
@@ -146,10 +145,8 @@ export class CloudWritingEngine {
     if (structured.writingContext) {
       this.writingContext = structured.writingContext as import('./contextAssembler').WritingContext;
       this.analysisDepth = this.writingContext.analysisDepth || 0;
-      // If analysis was done in a prior phase, don't re-gate
-      if (this.analysisDepth > 0) {
-        this.hasWrittenOutlineBefore = true;
-      }
+      // analysisDepth persists across phases — no boolean flags needed
+      // If LLM did deep analysis in outline phase, gates stay open for draft phase
     }
 
     // Select swipes — use stored selection if available (persists across engine re-creation)
@@ -243,6 +240,7 @@ export class CloudWritingEngine {
     let lastAssistantText = '';
     let emptyResponseCount = 0;
     let consecutiveThinks = 0;
+    let truncatedResponseCount = 0;
 
     for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
       // Build system prompt from blocks
@@ -300,6 +298,43 @@ export class CloudWritingEngine {
         }
       }
 
+      // Detect truncated/degraded responses — provider returned garbage
+      // A real response has finish_reason set (tool_calls, stop, length) and meaningful content
+      // A truncated response has finish_reason=null and tiny completion (<50 tokens)
+      if (!response.finishReason && response.completionTokens < 50 && response.toolCalls.length > 0) {
+        truncatedResponseCount++;
+        const thinkContent = response.toolCalls
+          .filter(tc => tc.name === 'think')
+          .map(tc => (tc.arguments as any)?.thought || '')
+          .join(' ');
+        const thinkWords = thinkContent.split(/\s+/).filter(Boolean).length;
+
+        console.log(`  ⚠️ Truncated response detected (${response.completionTokens} tokens, ${thinkWords} think words, attempt ${truncatedResponseCount}/3)`);
+
+        if (truncatedResponseCount >= 3) {
+          // Circuit breaker — stop burning tokens
+          console.log(`  ❌ Truncated response loop (${truncatedResponseCount}x) — aborting to save tokens`);
+          lastAssistantText = 'The writing engine received repeated truncated responses from the AI provider (likely a timeout). The model could not produce meaningful output. Please try again — the provider may route to a faster instance.';
+          this.messages.push({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: lastAssistantText,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+        }
+
+        // Don't push garbage to messages — retry with clean conversation state
+        // Brief delay before retry to allow provider recovery
+        await new Promise(r => setTimeout(r, 2000));
+        continue; // retry without accumulating garbage
+      }
+
+      // Valid response — reset truncated counter
+      if (response.finishReason) {
+        truncatedResponseCount = 0;
+      }
+
       // Execute tool calls
       const assistantMessage: WritingMessage = {
         id: crypto.randomUUID(),
@@ -322,27 +357,22 @@ export class CloudWritingEngine {
         });
       }
 
-      // Detect extended analysis — gentle nudge after 8 consecutive thinks (was 3 — too aggressive)
+      // Detect extended analysis — nudge after 4 consecutive thinks
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;
-        if (consecutiveThinks >= 8) {
-          console.log(`  ⚠️ Extended analysis (${consecutiveThinks} consecutive thinks) — gentle nudge`);
+        if (consecutiveThinks >= 4) {
+          console.log(`  ⚠️ Extended analysis (${consecutiveThinks} consecutive thinks) — directive nudge`);
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'user',
-            content: '[System] You\'ve done extensive analysis. When you\'re ready, apply your findings — call update_outline, add_hooks, or write_draft to take action.',
+            content: '[System] You have done 4 consecutive think calls without taking action. You MUST now call a tool to make progress — update_outline, add_hooks, or write_draft. Do NOT call think again.',
             timestamp: new Date().toISOString(),
           });
           consecutiveThinks = 0;
         }
       } else {
         consecutiveThinks = 0;
-      }
-
-      // Log warning for incomplete responses (finish_reason missing)
-      if (!response.finishReason) {
-        console.log(`  ⚠️ Incomplete response (finish_reason=--) on iteration ${iteration + 1} — model may be producing truncated output`);
       }
 
       // Refresh dynamic block after tool execution (outline/hooks/draft may have changed)
@@ -387,8 +417,13 @@ export class CloudWritingEngine {
           this.writingContext.selfReviewFindings = thought.substring(0, 2000);
         }
 
-        // Guide toward thorough analysis
-        if (this.analysisDepth === 0 && wordCount < 100) {
+        // Guard against garbage/truncated thinks — never confirm ultra-short thoughts
+        if (wordCount < 30) {
+          return `Analysis received (${wordCount} words) — this is very short. If you're planning to take action, call the appropriate tool (update_outline, add_hooks, write_draft). If you need to reason, write a thorough analysis with specific observations from your loaded swipes (200+ words minimum for substantive analysis).`;
+        }
+
+        // Guide toward thorough analysis on first real think
+        if (this.analysisDepth === 0 && wordCount < 200) {
           return `Analysis received (${wordCount} words). Before writing, ensure you've analyzed your loaded swipes through EVERY lens: density patterns, punctuation usage, hook mechanics, voice characteristics, transition patterns, CTA structure. Reference the Slide Density, Dinner Table Test, Voice Matching, Hook Craft, Causal Chaining, and CTA Craft modules in your context for what to look for.`;
         }
 
@@ -396,8 +431,8 @@ export class CloudWritingEngine {
       }
 
       case 'update_outline': {
-        // Pre-outline analysis gate — require deep thinking before first outline
-        if (this.analysisDepth < 1 && !this.hasWrittenOutlineBefore) {
+        // Pre-outline analysis gate — require deep thinking before outline
+        if (this.analysisDepth < 1) {
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before creating an outline:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe:
@@ -415,7 +450,6 @@ export class CloudWritingEngine {
 
 Only after thorough analysis can you call update_outline.`;
         }
-        this.hasWrittenOutlineBefore = true;
 
         const sections = args.sections as any[];
         if (!sections) return 'Error: sections required';
@@ -435,8 +469,45 @@ Only after thorough analysis can you call update_outline.`;
       }
 
       case 'add_hooks': {
+        // Analysis gate — require deep thinking before hooks
+        if (this.analysisDepth < 1) {
+          return `[BLOCKED] Before generating hooks, you must analyze the PRIMARY BLUEPRINT's hook format. Call think and study:
+
+1. The PRIMARY BLUEPRINT hook in your context — what is its exact structure?
+   • Is it first-person or third-person?
+   • Does it use an authority label (e.g., "Ex-banker explains:")?
+   • What's the sentence pattern?
+   • How long is it (word count)?
+   • Is it ALL CAPS, Title Case, or lowercase?
+
+2. The user's title — this IS the hook template. Your variants must keep its sentence skeleton.
+
+3. Section 6 hook rules in your context — Match CASE, PERSPECTIVE, STRUCTURE, and LENGTH exactly.
+
+Only after this analysis can you call add_hooks.`;
+        }
+
         const hookVariants = args.hooks as any[];
         if (!hookVariants) return 'Error: hooks required';
+
+        // Validate hooks against primary blueprint format
+        const primarySwipe = this.selectedSwipes.find(s => s.isPrimary);
+        if (primarySwipe) {
+          const generatedHooks = hookVariants.map((h: any) => typeof h === 'string' ? h : h.text || '');
+          const violations = validateHooksAgainstBlueprint(
+            generatedHooks,
+            primarySwipe.hookText,
+            this.contentAtom?.title || '',
+          );
+          if (violations.length > 0) {
+            return `[HOOK FORMAT VIOLATIONS] Your hooks don't match the primary blueprint format.\n\n` +
+              `PRIMARY BLUEPRINT HOOK: "${primarySwipe.hookText.substring(0, 200)}"\n` +
+              `USER'S TITLE (your template): "${this.contentAtom?.title || ''}"\n\n` +
+              `VIOLATIONS:\n${violations.map(v => `  • ${v}`).join('\n')}\n\n` +
+              `Fix these and call add_hooks again. Each variant must keep the SAME sentence skeleton as the user's title.`;
+          }
+        }
+
         this.hooks = hookVariants.map((h: any) => typeof h === 'string' ? h : h.text || '');
         await updateAtom(this.contentUUID, {
           metadata: { hooks: this.hooks, inheritedHooks: this.hooks },
@@ -445,8 +516,8 @@ Only after thorough analysis can you call update_outline.`;
       }
 
       case 'write_draft': {
-        // Pre-write analysis gate — require deep thinking before first draft
-        if (this.analysisDepth < 1 && !this.hasWrittenDraftBefore) {
+        // Pre-write analysis gate — require deep thinking before draft
+        if (this.analysisDepth < 1) {
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before writing:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe across the swipes:
@@ -462,7 +533,6 @@ Only after thorough analysis can you call update_outline.`;
 
 Only after thorough analysis can you call write_draft.`;
         }
-        this.hasWrittenDraftBefore = true;
 
         const content = args.content as string;
         if (!content) return 'Error: content required';
@@ -645,18 +715,164 @@ If ALL checks pass, present the draft.
   }
 
   // ============================================================
-  // LLM Call
+  // LLM Call — Direct Anthropic Messages API (no OpenRouter middleman)
   // ============================================================
 
   private async callWritingLLM(
-    systemPrompt: string,
+    _systemPrompt: string, // unused — system built from this.blocks directly
     messages: any[],
     tools: any[],
-  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null }> {
-    const apiKey = config.openRouterApiKey;
+  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
+    const apiKey = config.anthropicApiKey || config.openRouterApiKey;
+    const useDirectAnthropic = !!config.anthropicApiKey;
     const model = config.models.writer;
 
-    // Estimate context size for logging
+    // Strip provider prefix for direct Anthropic (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
+    const modelId = useDirectAnthropic ? model.replace(/^anthropic\//, '') : model;
+
+    const estimatedTokens = Math.round(JSON.stringify(messages).length / 4);
+    console.log(`  ✍️ Writing engine → ${modelId} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)${useDirectAnthropic ? ' [direct]' : ' [openrouter]'}`);
+
+    if (useDirectAnthropic) {
+      return this.callAnthropicDirect(modelId, messages, tools);
+    } else {
+      return this.callOpenRouter(model, messages, tools);
+    }
+  }
+
+  /**
+   * Direct Anthropic Messages API — no middleman, native prompt caching, no provider routing
+   */
+  private async callAnthropicDirect(
+    model: string,
+    messages: any[],
+    tools: any[],
+  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
+    const apiKey = config.anthropicApiKey!;
+
+    // System prompt: array of text blocks with cache_control for prompt caching
+    const system = this.blocks.map(block => ({
+      type: 'text' as const,
+      text: block.content,
+      ...(block.cacheControl ? { cache_control: { type: 'ephemeral' as const } } : {}),
+    }));
+
+    // Build Anthropic-format messages
+    const anthropicMessages = this.buildAnthropicMessages();
+
+    const body: any = {
+      model,
+      system,
+      messages: anthropicMessages,
+      max_tokens: 16384,
+      temperature: 0.3,
+    };
+
+    // Tools: Anthropic uses input_schema instead of parameters
+    if (tools.length > 0) {
+      body.tools = tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters,
+      }));
+    }
+
+    // Retry loop
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        const backoff = attempt * 2000;
+        console.log(`  ⏳ Writing retry ${attempt}/2 after ${backoff}ms`);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+
+      try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'prompt-caching-2024-07-31',
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(300_000), // 5 min timeout
+        });
+
+        // Retryable: 429 rate limit, 529 overloaded, 5xx server
+        if (response.status === 429 || response.status === 529 || (response.status >= 500 && response.status < 600)) {
+          const errorText = await response.text();
+          console.log(`  ⚠️ Anthropic retryable error ${response.status}: ${errorText.substring(0, 200)}`);
+          lastError = new Error(`Anthropic error ${response.status}`);
+          continue;
+        }
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Anthropic error ${response.status}: ${errorText.substring(0, 200)}`);
+        }
+
+        const data = await response.json() as any;
+
+        // Log usage + cache stats
+        if (data.usage) {
+          const prompt = data.usage.input_tokens || 0;
+          const completion = data.usage.output_tokens || 0;
+          const cacheCreation = data.usage.cache_creation_input_tokens || 0;
+          const cacheRead = data.usage.cache_read_input_tokens || 0;
+          const cacheRate = prompt > 0 ? ((cacheRead / prompt) * 100).toFixed(1) : '0.0';
+          console.log(`  ✍️ Usage: prompt=${prompt}, cache_read=${cacheRead}, cache_write=${cacheCreation}, completion=${completion}, cache_hit=${cacheRate}%`);
+        }
+
+        const finishReason = data.stop_reason || null;
+        const completionTokens = data.usage?.output_tokens || 0;
+        console.log(`  ✍️ Finish: ${finishReason || '--'}, completion=${completionTokens}`);
+
+        // Parse response content blocks
+        let textContent = '';
+        const toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }> = [];
+
+        for (const block of (data.content || [])) {
+          if (block.type === 'text') {
+            textContent += block.text;
+          } else if (block.type === 'tool_use') {
+            toolCalls.push({
+              id: block.id,
+              name: block.name,
+              arguments: block.input || {},
+            });
+          }
+        }
+
+        return {
+          content: textContent || null,
+          toolCalls,
+          finishReason,
+          completionTokens,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          console.log(`  ⚠️ Anthropic timeout (attempt ${attempt + 1}/3)`);
+          continue;
+        }
+        if (attempt === 2) throw error;
+      }
+    }
+
+    throw lastError || new Error('Anthropic API failed after 3 attempts');
+  }
+
+  /**
+   * OpenRouter fallback — used when ANTHROPIC_API_KEY is not set
+   */
+  private async callOpenRouter(
+    model: string,
+    messages: any[],
+    tools: any[],
+  ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
+    const apiKey = config.openRouterApiKey;
+
     const isAnthropicModel = model.includes('anthropic') || model.includes('claude');
     const systemContent = isAnthropicModel
       ? this.blocks.map(block => ({
@@ -664,7 +880,7 @@ If ALL checks pass, present the draft.
           text: block.content,
           ...(block.cacheControl ? { cache_control: { type: 'ephemeral', ttl: '1h' } } : {}),
         }))
-      : systemPrompt;
+      : this.blocks.map(b => b.content).join('\n\n');
 
     const apiMessages = [
       { role: 'system', content: systemContent },
@@ -676,6 +892,11 @@ If ALL checks pass, present the draft.
       messages: apiMessages,
       max_tokens: 16384,
       temperature: 0.3,
+      provider: {
+        order: ['Anthropic'],
+        allow_fallbacks: true,
+        require_parameters: true,
+      },
     };
 
     if (tools.length > 0) {
@@ -685,10 +906,6 @@ If ALL checks pass, present the draft.
       }));
     }
 
-    const estimatedTokens = Math.round(JSON.stringify(body).length / 4);
-    console.log(`  ✍️ Writing engine → ${model} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)`);
-
-    // Retry loop with timeout (ported from Swift performWritingAPICall)
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) {
@@ -703,12 +920,13 @@ If ALL checks pass, present the draft.
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
+            'HTTP-Referer': 'https://cosmoos.app',
+            'X-Title': 'CosmoOS Writing Engine',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(300_000), // 5 min timeout
+          signal: AbortSignal.timeout(300_000),
         });
 
-        // Retryable errors: 429 rate limit, 5xx server errors
         if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
           const errorText = await response.text();
           console.log(`  ⚠️ Writing LLM retryable error ${response.status}: ${errorText.substring(0, 200)}`);
@@ -725,7 +943,6 @@ If ALL checks pass, present the draft.
         const choice = data.choices?.[0];
         if (!choice) throw new Error('No choices in writing LLM response');
 
-        // Log usage + cache stats (matching Swift)
         if (data.usage) {
           const prompt = data.usage.prompt_tokens || 0;
           const completion = data.usage.completion_tokens || 0;
@@ -753,6 +970,7 @@ If ALL checks pass, present the draft.
           content: choice.message?.content || null,
           toolCalls,
           finishReason,
+          completionTokens: data.usage?.completion_tokens || 0,
         };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -768,10 +986,18 @@ If ALL checks pass, present the draft.
   }
 
   // ============================================================
-  // Build API Messages (with compaction for old turns)
+  // Build API Messages
   // ============================================================
 
+  /**
+   * Build messages for OpenRouter (OpenAI chat/completions format)
+   */
   private buildAPIMessages(): any[] {
+    const useDirectAnthropic = !!config.anthropicApiKey;
+    if (useDirectAnthropic) {
+      return this.buildAnthropicMessages();
+    }
+
     const result: any[] = [];
 
     for (let i = 0; i < this.messages.length; i++) {
@@ -798,6 +1024,68 @@ If ALL checks pass, present the draft.
           role: msg.role === 'system' ? 'user' : msg.role,
           content: msg.content,
         });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Build messages for Anthropic Messages API format.
+   * Key differences from OpenAI format:
+   * - Tool results are user messages with content: [{ type: "tool_result", tool_use_id, content }]
+   * - Assistant tool calls are content: [{ type: "tool_use", id, name, input }]
+   * - Consecutive same-role messages must be merged
+   */
+  private buildAnthropicMessages(): any[] {
+    const result: any[] = [];
+
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+
+      if (msg.role === 'tool') {
+        // Anthropic: tool results are user messages with tool_result content blocks
+        // Batch consecutive tool results into one user message
+        const toolResults: any[] = [{
+          type: 'tool_result',
+          tool_use_id: msg.toolCallId,
+          content: msg.content,
+        }];
+        // Look ahead for more consecutive tool results
+        while (i + 1 < this.messages.length && this.messages[i + 1].role === 'tool') {
+          i++;
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: this.messages[i].toolCallId,
+            content: this.messages[i].content,
+          });
+        }
+        result.push({ role: 'user', content: toolResults });
+      } else if (msg.toolCalls && msg.toolCalls.length > 0) {
+        // Assistant message with tool_use blocks
+        const content: any[] = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        for (const tc of msg.toolCalls) {
+          content.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.name,
+            input: tc.arguments,
+          });
+        }
+        result.push({ role: 'assistant', content });
+      } else if (msg.role === 'user' || msg.role === 'system') {
+        // Merge consecutive user messages (Anthropic doesn't allow consecutive same-role)
+        const lastMsg = result[result.length - 1];
+        if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string') {
+          lastMsg.content += '\n\n' + msg.content;
+        } else {
+          result.push({ role: 'user', content: msg.content });
+        }
+      } else if (msg.role === 'assistant') {
+        result.push({ role: 'assistant', content: msg.content });
       }
     }
 
@@ -1032,6 +1320,49 @@ If ALL checks pass, present the draft.
 interface ValidationViolation {
   type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned' | 'em_dash';
   message: string;
+}
+
+function validateHooksAgainstBlueprint(
+  hooks: string[],
+  blueprintHook: string,
+  userTitle: string,
+): string[] {
+  const violations: string[] = [];
+  const template = userTitle || blueprintHook;
+  if (!template) return [];
+
+  // Detect blueprint characteristics
+  const bpIsThirdPerson = /^(man|woman|guy|girl|couple|expert|banker|investor|millionaire|[a-z]+ (explains|reveals|shares|shows))/i.test(template);
+  const bpHasExplains = /explains:|reveals:|shares:|shows:/i.test(template);
+  const bpIsAllCaps = template === template.toUpperCase() && template.length > 10;
+  const bpWordCount = template.split(/\s+/).length;
+
+  for (let i = 0; i < hooks.length; i++) {
+    const hook = hooks[i];
+
+    // Perspective check: if blueprint is third-person, hooks should be too
+    if (bpIsThirdPerson && /^(I |I'|My |We |I just|I got|I paid|I made)/i.test(hook)) {
+      violations.push(`Hook ${i + 1}: First-person but blueprint is third-person.`);
+    }
+
+    // "explains:" pattern check
+    if (bpHasExplains && !/explains:|reveals:|shares:|shows:/i.test(hook)) {
+      violations.push(`Hook ${i + 1}: Missing "[Authority] explains:" pattern.`);
+    }
+
+    // Case check
+    if (bpIsAllCaps && hook !== hook.toUpperCase()) {
+      violations.push(`Hook ${i + 1}: Blueprint is ALL CAPS but hook is not.`);
+    }
+
+    // Length check (within 50% of blueprint)
+    const hookWords = hook.split(/\s+/).length;
+    if (hookWords < bpWordCount * 0.5 || hookWords > bpWordCount * 1.5) {
+      violations.push(`Hook ${i + 1}: ${hookWords} words vs blueprint ${bpWordCount} words.`);
+    }
+  }
+
+  return violations;
 }
 
 function runDeterministicValidators(

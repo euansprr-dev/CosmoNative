@@ -14,9 +14,13 @@ export const config = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramWebhookUrl: process.env.TELEGRAM_WEBHOOK_URL || '',
 
-  // LLM / OpenRouter
+  // LLM / OpenRouter (used for sensor/strategist calls)
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+
+  // Direct Anthropic API (used for writing engine — no middleman, native caching)
+  // If set, writing engine bypasses OpenRouter entirely for faster, more reliable generation
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
 
   // Agent LLM (separate key if using direct Anthropic/OpenAI)
   agentLLMApiKey: process.env.AGENT_LLM_API_KEY || '',

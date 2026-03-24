@@ -243,20 +243,14 @@ export class CloudWritingEngine {
     let truncatedResponseCount = 0;
 
     for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
-      // Build system prompt from blocks
-      const systemPrompt = [
-        ...this.blocks.map(b => b.content),
-        block3b.content,
-      ].join('\n\n');
-
       // Build API messages
       const apiMessages = this.buildAPIMessages();
 
       // Available tools for this phase
       const tools = this.getToolDefinitions(phase);
 
-      // Call LLM
-      const response = await this.callWritingLLM(systemPrompt, apiMessages, tools);
+      // Call LLM (pass dynamic block separately — it changes each iteration)
+      const response = await this.callWritingLLM(block3b, apiMessages, tools);
 
       // No tool calls — classify response (ported from Swift classifyLoopResponse)
       if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -719,11 +713,10 @@ If ALL checks pass, present the draft.
   // ============================================================
 
   private async callWritingLLM(
-    _systemPrompt: string, // unused — system built from this.blocks directly
+    dynamicBlock: WritingBlock | null,
     messages: any[],
     tools: any[],
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
-    const apiKey = config.anthropicApiKey || config.openRouterApiKey;
     const useDirectAnthropic = !!config.anthropicApiKey;
     const model = config.models.writer;
 
@@ -734,9 +727,9 @@ If ALL checks pass, present the draft.
     console.log(`  ✍️ Writing engine → ${modelId} (${messages.length} messages, ${tools.length} tools, ~${estimatedTokens} est tokens)${useDirectAnthropic ? ' [direct]' : ' [openrouter]'}`);
 
     if (useDirectAnthropic) {
-      return this.callAnthropicDirect(modelId, messages, tools);
+      return this.callAnthropicDirect(modelId, messages, tools, dynamicBlock);
     } else {
-      return this.callOpenRouter(model, messages, tools);
+      return this.callOpenRouter(model, messages, tools, dynamicBlock);
     }
   }
 
@@ -747,23 +740,24 @@ If ALL checks pass, present the draft.
     model: string,
     messages: any[],
     tools: any[],
+    dynamicBlock: WritingBlock | null,
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const apiKey = config.anthropicApiKey!;
 
-    // System prompt: array of text blocks with cache_control for prompt caching
-    const system = this.blocks.map(block => ({
+    // System prompt: stable blocks with cache_control + dynamic block (no cache — changes each iteration)
+    const system: any[] = this.blocks.map(block => ({
       type: 'text' as const,
       text: block.content,
       ...(block.cacheControl ? { cache_control: { type: 'ephemeral' as const } } : {}),
     }));
-
-    // Build Anthropic-format messages
-    const anthropicMessages = this.buildAnthropicMessages();
+    if (dynamicBlock) {
+      system.push({ type: 'text', text: dynamicBlock.content });
+    }
 
     const body: any = {
       model,
       system,
-      messages: anthropicMessages,
+      messages, // already in Anthropic format from buildAPIMessages() → buildAnthropicMessages()
       max_tokens: 16384,
       temperature: 0.3,
     };
@@ -870,17 +864,19 @@ If ALL checks pass, present the draft.
     model: string,
     messages: any[],
     tools: any[],
+    dynamicBlock: WritingBlock | null,
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const apiKey = config.openRouterApiKey;
 
     const isAnthropicModel = model.includes('anthropic') || model.includes('claude');
+    const allBlocks = dynamicBlock ? [...this.blocks, dynamicBlock] : this.blocks;
     const systemContent = isAnthropicModel
-      ? this.blocks.map(block => ({
+      ? allBlocks.map(block => ({
           type: 'text' as const,
           text: block.content,
           ...(block.cacheControl ? { cache_control: { type: 'ephemeral', ttl: '1h' } } : {}),
         }))
-      : this.blocks.map(b => b.content).join('\n\n');
+      : allBlocks.map(b => b.content).join('\n\n');
 
     const apiMessages = [
       { role: 'system', content: systemContent },
@@ -1077,15 +1073,27 @@ If ALL checks pass, present the draft.
         }
         result.push({ role: 'assistant', content });
       } else if (msg.role === 'user' || msg.role === 'system') {
-        // Merge consecutive user messages (Anthropic doesn't allow consecutive same-role)
+        // Merge consecutive user messages (Anthropic rejects consecutive same-role)
         const lastMsg = result[result.length - 1];
-        if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string') {
-          lastMsg.content += '\n\n' + msg.content;
+        if (lastMsg && lastMsg.role === 'user') {
+          if (typeof lastMsg.content === 'string') {
+            // Both are strings — simple concatenation
+            lastMsg.content += '\n\n' + msg.content;
+          } else if (Array.isArray(lastMsg.content)) {
+            // Previous is tool_result array — append text block
+            lastMsg.content.push({ type: 'text', text: msg.content });
+          }
         } else {
           result.push({ role: 'user', content: msg.content });
         }
       } else if (msg.role === 'assistant') {
-        result.push({ role: 'assistant', content: msg.content });
+        // Merge consecutive assistant messages (can happen with restored conversations)
+        const lastMsg = result[result.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant' && typeof lastMsg.content === 'string' && typeof msg.content === 'string') {
+          lastMsg.content += '\n\n' + msg.content;
+        } else {
+          result.push({ role: 'assistant', content: msg.content });
+        }
       }
     }
 

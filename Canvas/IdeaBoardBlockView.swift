@@ -1,7 +1,7 @@
 // CosmoOS/Canvas/IdeaBoardBlockView.swift
 // Live-updating client idea board canvas block
-// Shows a client's ideas filtered by status, auto-updates via GRDB observation
-// Dragged from Command-K onto the canvas — Command-K is the "component library"
+// Renders the IDENTICAL UI as the CMD+K Ideas tab column — same IdeaBoardCard, same layout
+// Data fetched via GRDB observation, rebuilt into IdeaClientSection for the shared components
 
 import SwiftUI
 import GRDB
@@ -10,216 +10,162 @@ struct IdeaBoardBlockView: View {
 
     let block: CanvasBlock
 
-    @State private var ideas: [IdeaBoardItem] = []
+    @State private var section: IdeaClientSection?
     @State private var isLoading = true
     @State private var observation: AnyDatabaseCancellable?
+    @State private var hasAppeared = false
 
-    private var clientUUID: String? { block.metadata["clientUUID"] }
+    private var clientUUID: String? {
+        let uuid = block.metadata["clientUUID"]
+        return (uuid?.isEmpty == true) ? nil : uuid
+    }
     private var clientName: String { block.metadata["clientName"] ?? block.title }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             boardHeader
-            Divider().padding(.horizontal, 12)
-            ideaList
-            boardFooter
+
+            Divider()
+                .background(sectionColor.opacity(0.2))
+
+            // Cards — identical to IdeasTab boardColumn
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 8) {
+                    if let section {
+                        ForEach(
+                            Array(section.items.enumerated()),
+                            id: \.element.id
+                        ) { index, item in
+                            IdeaBoardCard(
+                                item: item,
+                                columnColor: section.color,
+                                viewModel: nil,
+                                hasAppeared: hasAppeared,
+                                appearDelay: Double(index) * 0.04
+                            )
+                            .draggable(item.atomUUID)
+                        }
+
+                        if section.items.isEmpty {
+                            emptyPlaceholder
+                        }
+                    } else if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 30)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+            }
         }
         .frame(width: 280, height: 400)
-        .background(DS.surface)
-        .clipShape(.rect(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(DS.surfaceElevated)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .shadow(color: .black.opacity(0.02), radius: 2, y: 1)
         .task {
             await loadIdeas()
             startObservation()
+            withAnimation(ProMotionSprings.snappy) {
+                hasAppeared = true
+            }
         }
         .onDisappear {
             observation?.cancel()
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header (matches IdeasTab columnHeader)
 
     private var boardHeader: some View {
         HStack(spacing: 8) {
-            // Client avatar circle
-            Circle()
-                .fill(DS.entityIdea)
-                .frame(width: 22, height: 22)
-                .overlay(
-                    Text(clientName.prefix(1).uppercased())
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
+            Text(clientName.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(sectionColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(sectionColor.opacity(0.10))
                 )
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(clientName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Text("IDEA BOARD")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.6)
-            }
+            Text("\(section?.items.count ?? 0)")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(sectionColor.opacity(0.8))
 
             Spacer()
-
-            // Live indicator
-            HStack(spacing: 3) {
-                Circle()
-                    .fill(DS.green)
-                    .frame(width: 4, height: 4)
-
-                Text("LIVE")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(DS.green)
-                    .tracking(0.4)
-            }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
-    // MARK: - Idea List
+    // MARK: - Empty (matches IdeasTab emptyColumnPlaceholder)
 
-    private var ideaList: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            if isLoading {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 30)
-            } else if ideas.isEmpty {
-                emptyState
-            } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(ideas) { idea in
-                        ideaRow(idea)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    private func ideaRow(_ idea: IdeaBoardItem) -> some View {
-        HStack(spacing: 8) {
-            // Status dot
-            Circle()
-                .fill(idea.statusColor)
-                .frame(width: 6, height: 6)
-
-            Text(idea.title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-
-            if let format = idea.format {
-                Text(format)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .tracking(0.3)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(DS.surfaceHover))
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "lightbulb.slash")
-                .font(.system(size: 16, weight: .light))
-                .foregroundStyle(DS.textMuted.opacity(0.4))
+    private var emptyPlaceholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "lightbulb")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(sectionColor.opacity(0.25))
 
             Text("No ideas yet")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(DS.textMuted)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 30)
+        .padding(.vertical, 24)
     }
 
-    // MARK: - Footer
+    // MARK: - Color
 
-    private var boardFooter: some View {
-        HStack {
-            Text("\(ideas.count) idea\(ideas.count == 1 ? "" : "s")")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-
-            Spacer()
-
-            // Status breakdown
-            let sparkCount = ideas.filter { $0.status == "spark" }.count
-            let devCount = ideas.filter { $0.status == "developing" }.count
-            if sparkCount > 0 || devCount > 0 {
-                HStack(spacing: 4) {
-                    if sparkCount > 0 {
-                        statusPill(count: sparkCount, color: .orange, label: "spark")
-                    }
-                    if devCount > 0 {
-                        statusPill(count: devCount, color: DS.accent, label: "dev")
-                    }
-                }
-            }
+    private var sectionColor: Color {
+        if let uuid = clientUUID {
+            // Use the same client color assignment as IdeasTab
+            let hash = abs(uuid.hashValue)
+            let colors: [Color] = [
+                DS.entityIdea, DS.entityContent, DS.entityConnection,
+                DS.entityResearch, DS.entitySwipe, DS.entityTask
+            ]
+            return colors[hash % colors.count]
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(DS.surfaceHover.opacity(0.5))
+        return DS.entityIdea
     }
 
-    private func statusPill(count: Int, color: Color, label: String) -> some View {
-        HStack(spacing: 2) {
-            Circle().fill(color).frame(width: 4, height: 4)
-            Text("\(count)")
-                .font(.system(size: 9, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(DS.textMuted)
-        }
-        .accessibilityLabel("\(count) \(label)")
-    }
-
-    // MARK: - Data
+    // MARK: - Data Loading (same query as IdeasTab sections builder)
 
     private func loadIdeas() async {
         do {
-            var atoms = try await AtomRepository.shared.fetchAll(type: .idea)
+            let allIdeas = try await AtomRepository.shared.fetchAll(type: .idea)
 
-            // Filter by client
-            if let uuid = clientUUID {
-                atoms = atoms.filter { atom in
+            let clientItems: [IdeaGalleryItem] = allIdeas.compactMap { atom -> IdeaGalleryItem? in
+                // Filter to this client
+                if let uuid = clientUUID {
+                    let meta = atom.ideaMetadata
                     let links = atom.linksList
-                    return links.contains { $0.uuid == uuid } ||
-                           atom.ideaMetadata?.clientUUID == uuid
+                    let matchesClient = meta?.clientUUID == uuid ||
+                        links.contains { $0.uuid == uuid }
+                    guard matchesClient else { return nil }
                 }
-            }
 
-            // Sort by most recent
-            atoms.sort { $0.updatedAt > $1.updatedAt }
-
-            ideas = atoms.prefix(30).map { atom in
-                let meta = atom.ideaMetadata
-                return IdeaBoardItem(
-                    id: atom.uuid,
-                    title: atom.title ?? "(untitled)",
-                    status: meta?.ideaStatus?.rawValue ?? "spark",
-                    format: meta?.contentFormat?.rawValue,
-                    statusColor: statusColor(for: meta?.ideaStatus)
-                )
+                return atom.toIdeaGalleryItem(clientName: clientName)
             }
+            .sorted { $0.updatedAt > $1.updatedAt }
+
+            section = IdeaClientSection(
+                id: clientUUID ?? "unassigned",
+                clientName: clientName,
+                clientUUID: clientUUID,
+                color: sectionColor,
+                items: clientItems
+            )
 
             isLoading = false
         } catch {
@@ -240,26 +186,4 @@ struct IdeaBoardBlockView: View {
             }
         }
     }
-
-    private func statusColor(for status: IdeaStatus?) -> Color {
-        switch status {
-        case .spark: return .orange
-        case .developing: return DS.accent
-        case .ready: return DS.green
-        case .inProduction: return DS.info
-        case .published: return DS.green
-        case .archived: return DS.textMuted
-        case nil: return DS.textMuted
-        }
-    }
-}
-
-// MARK: - Data Model
-
-struct IdeaBoardItem: Identifiable {
-    let id: String
-    let title: String
-    let status: String
-    let format: String?
-    let statusColor: Color
 }

@@ -47,6 +47,9 @@ struct RichTextEditor: View {
 
     // Geometry for menu clamping
     @State private var containerSize: CGSize = .zero
+    // Tracks measured text content height so the representable can be explicitly sized
+    // (needed for non-scrolling mode inside a parent ScrollView)
+    @State private var measuredContentHeight: CGFloat = 0
     @State private var outsideClickDismissMonitor: Any?
 
     @EnvironmentObject var voiceEngine: VoiceEngine
@@ -171,12 +174,16 @@ struct RichTextEditor: View {
                 onDismissMenus: {
                     dismissAllOverlays()
                 },
-                onContentHeightChange: onContentHeightChange,
+                onContentHeightChange: { height in
+                    measuredContentHeight = height
+                    onContentHeightChange?(height)
+                },
                 onActivate: onActivate,
                 onDeactivate: onDeactivate,
                 onCommit: onCommit
             )
             .frame(maxWidth: .infinity)
+            .frame(height: (!scrollsInternally && measuredContentHeight > 1) ? measuredContentHeight : nil)
             // Ensure the entire editor area is clickable, even when empty
             .contentShape(Rectangle())
 

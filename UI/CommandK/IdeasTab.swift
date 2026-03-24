@@ -23,7 +23,7 @@ enum IdeaSortMode: String, CaseIterable {
 
 // MARK: - IdeaClientSection
 
-private struct IdeaClientSection: Identifiable {
+struct IdeaClientSection: Identifiable {
     let id: String
     let clientName: String
     let clientUUID: String?   // nil for "Unassigned"
@@ -822,7 +822,7 @@ private struct IdeaBoardView: View {
 
 // MARK: - Board Card (Compact)
 
-private struct IdeaBoardCard: View {
+struct IdeaBoardCard: View {
 
     let item: IdeaGalleryItem
     let columnColor: Color

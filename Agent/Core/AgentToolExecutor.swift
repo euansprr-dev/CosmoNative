@@ -15,11 +15,8 @@ class AgentToolExecutor {
     /// Batch tracker for rapid idea captures (3+ within 2 minutes → batched confirmation)
     private var recentIdeaCaptures: [(timestamp: Date, title: String, clientName: String?)] = []
 
-    /// Cache of UnifiedWritingEngine instances per content UUID for conversation continuity.
-    /// Writing tool calls within the same content piece share the same engine, preserving
-    /// conversation history between outline → draft → revise operations.
-    private var engineCache: [String: (engine: UnifiedWritingEngine, lastUsed: Date)] = [:]
-    private let maxCachedEngines = 3
+    // Writing engine cache removed — all writing now goes through CloudWritingClient.
+    // The cloud engine manages its own session cache per contentUUID.
 
     struct PendingConfirmation {
         let toolName: String
@@ -73,67 +70,10 @@ class AgentToolExecutor {
 
     private init() {}
 
-    // MARK: - Writing Engine Cache
-
-    /// Get or create a UnifiedWritingEngine for a content atom. Engines are cached so that
-    /// successive writing tool calls (outline → draft → revise) share the same conversation
-    /// history, creative decisions, and swipe analysis context.
-    private func getOrCreateEngine(for contentUUID: String, clientName: String? = nil) async -> UnifiedWritingEngine? {
-        // Evict stale engines (> 30 min since last use)
-        let staleThreshold = Date().addingTimeInterval(-1800)
-        engineCache = engineCache.filter { $0.value.lastUsed > staleThreshold }
-
-        // If clientName provided, ensure the content atom has the correct clientProfileUUID
-        // This prevents the engine from loading the wrong client profile
-        if let clientName = clientName, !clientName.isEmpty {
-            if let clientAtom = try? await atomRepo.fuzzyFindClient(query: clientName) {
-                let contentAtom = try? await atomRepo.fetch(uuid: contentUUID)
-                let currentClientUUID = contentAtom?.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID
-                if currentClientUUID != clientAtom.uuid {
-                    // Content atom has wrong or missing client — update the metadata
-                    _ = try? await atomRepo.update(uuid: contentUUID) { atom in
-                        var meta = atom.metadataDict ?? [:]
-                        meta["clientProfileUUID"] = clientAtom.uuid
-                        if let data = try? JSONSerialization.data(withJSONObject: meta),
-                           let str = String(data: data, encoding: .utf8) {
-                            atom.metadata = str
-                        }
-                    }
-                    // Evict cached engine on ANY client mismatch — including nil → set.
-                    // A nil-client engine was initialized without client voice, swipe
-                    // weighting, or learned rules — it must be recreated.
-                    engineCache.removeValue(forKey: contentUUID)
-                    print("🔄 [AgentToolExecutor] Fixed client mismatch: was \(currentClientUUID ?? "nil") → \(clientAtom.uuid) (\(clientAtom.title ?? clientName))")
-                }
-            }
-        }
-
-        // Return cached engine if available
-        if let cached = engineCache[contentUUID] {
-            engineCache[contentUUID] = (engine: cached.engine, lastUsed: Date())
-            return cached.engine
-        }
-
-        // Create and initialize new engine
-        guard let atom = try? await atomRepo.fetch(uuid: contentUUID) else {
-            return nil
-        }
-
-        let engine = UnifiedWritingEngine()
-        engine.onContextActivity = self.onToolActivity
-        await engine.initialize(contentAtom: atom)
-
-        // Evict oldest if at capacity
-        if engineCache.count >= maxCachedEngines {
-            let oldest = engineCache.min(by: { $0.value.lastUsed < $1.value.lastUsed })
-            if let key = oldest?.key {
-                engineCache.removeValue(forKey: key)
-            }
-        }
-
-        engineCache[contentUUID] = (engine: engine, lastUsed: Date())
-        return engine
-    }
+    // Writing engine cache removed — all writing now goes through CloudWritingClient.
+    // The cloud engine manages its own session cache per contentUUID.
+    // The getOrCreateEngine method has been replaced by cloud API calls in
+    // generateOutline, generateDraft, and reviseDraft.
 
     // MARK: - Execute
 
@@ -2037,132 +1977,40 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Writing Tools (Unified Writing Engine)
+    // MARK: - Writing Tools (Cloud Writing Engine — canonical)
+    // All writing goes through the cloud engine for guaranteed quality parity.
+    // The cloud engine has all craft modules, validators, scoring, and retry logic.
 
     private func generateOutline(_ args: [String: Any]) async throws -> String {
         guard let contentUUID = args["contentUUID"] as? String else {
             return jsonError("Missing or invalid contentUUID")
         }
 
-        let clientName = args["clientName"] as? String
-        let blueprintSwipeUUID = args["blueprintSwipeUUID"] as? String
-        let contentFormat = args["contentFormat"] as? String
+        print("☁️ [AgentToolExecutor] generate_outline → cloud engine for \(contentUUID)")
 
-        // If a specific blueprint swipe UUID or explicit format is provided, inject into atom metadata
-        // BEFORE the engine initializes, so selectSwipes() and detectContentFormat() see them
-        if (blueprintSwipeUUID != nil && !blueprintSwipeUUID!.isEmpty) || (contentFormat != nil && !contentFormat!.isEmpty) {
-            _ = try? await atomRepo.update(uuid: contentUUID) { atom in
-                var meta = atom.metadataDict ?? [:]
-                if let bpUUID = blueprintSwipeUUID, !bpUUID.isEmpty {
-                    var inherited = meta["inheritedSwipeUUIDs"] as? [String] ?? []
-                    if !inherited.contains(bpUUID) {
-                        inherited.insert(bpUUID, at: 0) // First = highest priority
-                        meta["inheritedSwipeUUIDs"] = inherited
+        do {
+            let result = try await CloudWritingClient.shared.generateOutline(
+                contentUUID: contentUUID,
+                blueprintTitles: args["blueprintTitles"] as? [String],
+                blueprintSwipeUUIDs: {
+                    var uuids = args["blueprintSwipeUUIDs"] as? [String] ?? []
+                    if let single = args["blueprintSwipeUUID"] as? String, !single.isEmpty, !uuids.contains(single) {
+                        uuids.insert(single, at: 0)
                     }
-                }
-                if let format = contentFormat, !format.isEmpty {
-                    meta["explicitFormat"] = format
-                    meta["contentFormat"] = format   // Persist in Codable ContentAtomMetadata
-                }
-                if let data = try? JSONSerialization.data(withJSONObject: meta),
-                   let str = String(data: data, encoding: .utf8) {
-                    atom.metadata = str
-                }
-            }
-            // Evict cached engine so it reinitializes with updated metadata (blueprint/format change)
-            engineCache.removeValue(forKey: contentUUID)
+                    return uuids.isEmpty ? nil : uuids
+                }(),
+                notes: args["notes"] as? String,
+                clientName: args["clientName"] as? String,
+                contentFormat: args["contentFormat"] as? String
+            )
+
+            // Re-encode as JSON string for the agent tool result format
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(result)
+            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode outline result")
+        } catch {
+            return jsonError("Cloud outline failed: \(error.localizedDescription)")
         }
-
-        guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-
-        // Build a blueprint-aware instruction that enforces the 6-step process from SECTION 1b
-        let userNotes = args["notes"] as? String ?? ""
-
-        // Look up the blueprint swipe title for explicit reference in the instruction
-        var blueprintReference = ""
-        if let bpUUID = blueprintSwipeUUID, !bpUUID.isEmpty {
-            if let bpAtom = try? await atomRepo.fetch(uuid: bpUUID) {
-                let bpTitle = bpAtom.title ?? "the specified swipe"
-                let bpHook = bpAtom.swipeAnalysis?.hookText ?? bpAtom.body?.components(separatedBy: "\n").first ?? ""
-                blueprintReference = """
-
-                PRIMARY BLUEPRINT SWIPE: "\(bpTitle)"
-                Blueprint hook: "\(String(bpHook.prefix(300)))"
-                Blueprint hook type: \(bpAtom.swipeAnalysis?.hookType?.displayName ?? "Unknown")
-                Blueprint beat pattern: \(bpAtom.swipeAnalysis?.beatFingerprint ?? "Unknown")
-
-                EMULATION MANDATE: Your hook MUST mirror the PRIMARY BLUEPRINT's hook structure. \
-                If the blueprint hook is "[Group] never [action] with [thing]" then your hook MUST follow \
-                the same syntactic pattern with the client's topic substituted in. Do NOT invent a new \
-                hook angle. The hook type, mechanism, and sentence structure must match the blueprint.
-                """
-            }
-        }
-
-        let instruction = """
-        Generate a structured outline for this content.\(userNotes.isEmpty ? "" : " User direction: \(userNotes)")
-        \(blueprintReference)
-        You MUST follow the BLUEPRINT-FIRST methodology (SECTION 1b). Use the think tool and execute these steps IN ORDER:
-
-        STEP 1: Identify the swipe examples in your context. The one marked [PRIMARY] is the structural blueprint.
-        STEP 2: EXTRACT the primary blueprint's skeleton — hook type, hook mechanism, beat pattern, \
-        section function sequence, emotional arc, pacing.
-        STEP 3: BUILD THE BRIEF — write a one-paragraph plan: "This outline will use [hook type] opening \
-        matching the blueprint, [beat pattern] structure, with the pivot at [position]."
-        STEP 4: Generate hook variants using add_hooks. Each hook MUST preserve the primary blueprint's \
-        hook TYPE and MECHANISM — same syntactic structure, same tension device, but with the client's \
-        topic, voice, and specifics. Do NOT invent a new hook angle.
-        STEP 5: Generate the outline sections using update_outline. The section count, function sequence, \
-        and emotional arc MUST match the primary blueprint's structure.
-
-        The outline must feel like it belongs in the same universe as the blueprint — same structural DNA.
-        """
-
-        let response = await engine.sendMessage(instruction, phase: .brainstorm)
-        let responseText = response?.content ?? ""
-
-        // Fetch the updated atom to get outline/hooks saved by the engine
-        let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
-        let meta = updatedAtom?.metadataDict ?? [:]
-        let outline = meta["outline"] as? [[String: Any]] ?? []
-        let hooks = meta["hooks"] as? [String] ?? []
-
-        // Build a detailed result so the agent can present it to the user
-        var outlineDetail: [String] = []
-        for (i, section) in outline.enumerated() {
-            let title = section["title"] as? String ?? "Untitled"
-            let beatLabel = section["beatLabel"] as? String
-            let desc = section["description"] as? String
-            var line = "\(i + 1). \(title)"
-            if let beat = beatLabel, !beat.isEmpty { line += " [\(beat)]" }
-            if let d = desc, !d.isEmpty { line += " — \(d)" }
-            outlineDetail.append(line)
-        }
-
-        // Surface swipe titles and intelligence from the inner writing engine
-        let swipeTitles = await engine.loadedContext.swipeTitles
-        let swipeCount = await engine.loadedContext.swipeCount
-        let swipeIntel = await engine.swipeIntelligenceSummary()
-
-        var result: [String: Any] = [
-            "success": true,
-            "contentUUID": contentUUID,
-            "message": "Outline generated via unified writing engine. IMPORTANT: Present the hooks and outline to the user for review before proceeding to draft.",
-            "outlineSections": outlineDetail,
-            "hookVariants": hooks,
-            "hookCount": hooks.count,
-            "sectionCount": outline.count,
-            "engineNotes": String(responseText.prefix(500)),
-            "blueprintUsed": blueprintReference.isEmpty ? "Auto-selected from swipe library" : "User-specified primary blueprint",
-            "swipesUsed": swipeTitles,
-            "swipeCount": swipeCount
-        ]
-        // Merge swipe intelligence into result
-        for (key, value) in swipeIntel { result[key] = value }
-
-        return jsonEncode(result)
     }
 
     private func generateDraft(_ args: [String: Any]) async throws -> String {
@@ -2170,82 +2018,28 @@ class AgentToolExecutor {
             return jsonError("Missing or invalid contentUUID")
         }
 
-        let clientName = args["clientName"] as? String
-        let contentFormat = args["contentFormat"] as? String
-
-        // Persist explicit format on the atom metadata before engine initializes
-        if let format = contentFormat, !format.isEmpty {
-            _ = try? await atomRepo.update(uuid: contentUUID) { atom in
-                var meta = atom.metadataDict ?? [:]
-                meta["explicitFormat"] = format
-                meta["contentFormat"] = format   // Persist in Codable ContentAtomMetadata
-                if let data = try? JSONSerialization.data(withJSONObject: meta),
-                   let str = String(data: data, encoding: .utf8) {
-                    atom.metadata = str
-                }
-            }
-            // Evict cached engine — it was initialized with old/default format
-            // and selected swipes for a different format family
-            engineCache.removeValue(forKey: contentUUID)
-        }
-
-        guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-
-        print("🚀 [AgentToolExecutor] generate_draft CALLED for \(contentUUID) — format: \(contentFormat ?? "auto") — inner engine will use Opus")
-
-        let userDirection = args["userDirection"] as? String
-
-        var instruction = ""
-        if let direction = userDirection, !direction.isEmpty {
-            instruction += "USER DIRECTION (MANDATORY — follow this exactly): \(direction)\n\n"
-        }
-        instruction += """
-        Write the full first draft following the outline beat-by-beat. \
-        Use the think tool first to plan your approach:
-        1. Re-read the PRIMARY blueprint swipe in your context. Your draft must mirror its structure.
-        2. Verify the hook matches the blueprint's hook type and mechanism — same syntactic pattern.
-        3. Confirm voice fingerprint requirements and format constraints.
-        4. Check failure rules to avoid.
-        Then use write_draft to output the complete draft. The draft must feel like it belongs in the \
-        same universe as the blueprint swipe — same structural DNA, same emotional mechanics, same pacing.
-        """
-
-        let response = await engine.sendMessage(instruction, phase: .draft)
-        let engineNotes = response?.content ?? ""
+        print("☁️ [AgentToolExecutor] generate_draft → cloud engine for \(contentUUID)")
 
         // Advance pipeline phase for XP
         _ = try? await ContentPipelineService().advancePhase(
             contentUUID: contentUUID,
-            notes: "Draft generated via unified writing engine"
+            notes: "Draft generated via cloud writing engine"
         )
 
-        // Fetch the actual draft content from the atom (engine writes to it via write_draft tool)
-        let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
-        let draftBody = updatedAtom?.body ?? ""
+        do {
+            let result = try await CloudWritingClient.shared.generateDraft(
+                contentUUID: contentUUID,
+                userDirection: args["userDirection"] as? String,
+                clientName: args["clientName"] as? String,
+                contentFormat: args["contentFormat"] as? String
+            )
 
-        // Surface swipe info and intelligence from the inner writing engine
-        let swipeCount = await engine.loadedContext.swipeCount
-        let swipeTitles = await engine.loadedContext.swipeTitles
-        let swipeIntel = await engine.swipeIntelligenceSummary()
-
-        // Detect draft format from body structure
-        let detectedFormat = Self.detectDraftFormat(draftBody)
-
-        var result: [String: Any] = [
-            "success": true,
-            "contentUUID": contentUUID,
-            "message": "Here is the draft. Display the text below to the user exactly as-is:",
-            "formattedDraft": Self.renderDraftForDisplay(draftBody),
-            "format": detectedFormat,
-            "engineNotes": String(engineNotes.prefix(300)),
-            "swipeCount": swipeCount,
-            "swipesUsed": swipeTitles
-        ]
-        for (key, value) in swipeIntel { result[key] = value }
-
-        return jsonEncode(result)
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(result)
+            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode draft result")
+        } catch {
+            return jsonError("Cloud draft failed: \(error.localizedDescription)")
+        }
     }
 
     /// Detect the structural format of a draft body (carousel JSON, thread JSON, or plaintext).
@@ -2374,84 +2168,22 @@ class AgentToolExecutor {
             return jsonError("Missing required parameter: feedback")
         }
 
-        // If the caller provides the current draft text inline (e.g. from conversation context
-        // when no content atom body exists yet), write it to the atom first so the engine sees it.
-        if let inlineDraft = args["currentDraft"] as? String, !inlineDraft.isEmpty {
-            _ = try? await atomRepo.update(uuid: contentUUID) { atom in
-                if (atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    atom.body = inlineDraft
-                }
-            }
+        print("☁️ [AgentToolExecutor] revise_draft → cloud engine for \(contentUUID)")
+
+        do {
+            let result = try await CloudWritingClient.shared.reviseDraft(
+                contentUUID: contentUUID,
+                feedback: feedback,
+                currentDraft: args["currentDraft"] as? String,
+                clientName: args["clientName"] as? String
+            )
+
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(result)
+            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode revision result")
+        } catch {
+            return jsonError("Cloud revision failed: \(error.localizedDescription)")
         }
-
-        // Get or create engine — reuses the same engine from generate_draft if available,
-        // so the engine has full conversation history of what was drafted and why
-        let clientName = args["clientName"] as? String
-        guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-
-        // Load the FULL current draft so the engine has complete context.
-        // Block 3 only shows 3000 chars which truncates carousels.
-        let currentAtom = try? await atomRepo.fetch(uuid: contentUUID)
-        let fullDraft = currentAtom?.body ?? ""
-        let focusState = currentAtom.flatMap { ContentFocusModeState.from(atom: $0) }
-        let draftText = focusState?.draftContent ?? fullDraft
-
-        // Build a revision instruction that includes the full draft and explicit anti-regression rules
-        var instruction = """
-        THE USER'S FEEDBACK:
-        \(feedback)
-
-        REVISION RULES — MANDATORY:
-        1. First use read_draft to read the COMPLETE current draft. Do NOT rely on the truncated \
-        version in your context — it may be incomplete.
-        2. Apply ONLY the changes the feedback asks for. Do NOT rewrite the entire draft from scratch.
-        3. Do NOT compress or reduce the number of slides/sections. If the current draft has 23 slides, \
-        your revision must have at least 23 slides (more is fine, fewer is NOT).
-        4. Do NOT introduce new hook patterns, frameworks, or structural templates that weren't in the \
-        original draft. Revise what exists — don't replace it.
-        5. Do NOT add generic motivational language ("Mindset broke, habits broke") unless the user \
-        specifically asked for it. Keep the specific, personal storytelling voice.
-        6. Preserve EVERY slide that the feedback didn't mention. Only change what was called out.
-        7. After making changes, use write_draft to output the COMPLETE revised draft — every single \
-        slide, including unchanged ones.
-        8. SWIPE CONTEXT: Your system prompt contains loaded swipe examples with structural patterns, \
-        data points, and statistics. Reference these swipes when revising — they are your permanent \
-        blueprint. If the user asks for stats or data, pull from the swipe examples in your context.
-        """
-
-        // If the draft is available, include it so the engine doesn't need to guess
-        if !draftText.isEmpty {
-            instruction += "\n\nCURRENT DRAFT FOR REFERENCE:\n\(draftText)"
-        }
-
-        let response = await engine.sendMessage(instruction, phase: .draft)
-        let engineNotes = response?.content ?? ""
-
-        // Fetch the revised draft from the atom
-        let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
-        let revisedDraft = updatedAtom?.body ?? ""
-
-        // Surface swipe info and intelligence from the inner writing engine
-        let swipeCount = await engine.loadedContext.swipeCount
-        let swipeTitles = await engine.loadedContext.swipeTitles
-        let swipeIntel = await engine.swipeIntelligenceSummary()
-
-        let revisedFormatted = Self.renderDraftForDisplay(revisedDraft)
-        var result: [String: Any] = [
-            "success": true,
-            "contentUUID": contentUUID,
-            "message": "Here is the revised draft. Display the text below to the user exactly as-is:",
-            "formattedDraft": revisedFormatted,
-            "format": Self.detectDraftFormat(revisedDraft),
-            "engineNotes": String(engineNotes.prefix(300)),
-            "swipeCount": swipeCount,
-            "swipesUsed": swipeTitles
-        ]
-        for (key, value) in swipeIntel { result[key] = value }
-
-        return jsonEncode(result)
     }
 
     private func generateHooks(_ args: [String: Any]) async throws -> String {
@@ -2459,40 +2191,21 @@ class AgentToolExecutor {
             return jsonError("Missing or invalid contentUUID")
         }
 
-        let clientName = args["clientName"] as? String
-        guard let engine = await getOrCreateEngine(for: contentUUID, clientName: clientName) else {
-            return jsonError("Content atom not found: \(contentUUID)")
+        print("☁️ [AgentToolExecutor] generate_hooks → cloud engine for \(contentUUID)")
+
+        // Route through cloud outline (hooks are generated as part of outline)
+        do {
+            let result = try await CloudWritingClient.shared.generateOutline(
+                contentUUID: contentUUID,
+                clientName: args["clientName"] as? String
+            )
+
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(result)
+            return String(data: data, encoding: .utf8) ?? jsonError("Failed to encode hooks result")
+        } catch {
+            return jsonError("Cloud hooks failed: \(error.localizedDescription)")
         }
-
-        let count = min(args["count"] as? Int ?? 5, 8)
-
-        let instruction = """
-        Generate \(count) hook variants for this content. \
-        Use the think tool first:
-        1. Identify the PRIMARY blueprint swipe in your context.
-        2. Extract its hook type, mechanism, and syntactic structure.
-        3. Each hook variant MUST preserve the blueprint's hook type and sentence structure — \
-        same tension device, same pattern (e.g., "[Group] never [action] with [thing]"), \
-        but with the client's topic and voice substituted in.
-        Do NOT invent entirely new hook angles that diverge from the blueprint's mechanism. \
-        Then use add_hooks to output the hook variants with scoring and reasoning.
-        """
-
-        let response = await engine.sendMessage(instruction, phase: .brainstorm)
-        let responseText = response?.content ?? ""
-
-        // Fetch hooks from the atom
-        let updatedAtom = try? await atomRepo.fetch(uuid: contentUUID)
-        let meta = updatedAtom?.metadataDict ?? [:]
-        let hooks = meta["hooks"] as? [String] ?? []
-
-        return jsonEncode([
-            "success": true,
-            "contentUUID": contentUUID,
-            "message": "Hooks generated via unified writing engine",
-            "hookVariants": hooks,
-            "engineNotes": String(responseText.prefix(500))
-        ] as [String: Any])
     }
 
     private func updateContent(_ args: [String: Any]) async throws -> String {

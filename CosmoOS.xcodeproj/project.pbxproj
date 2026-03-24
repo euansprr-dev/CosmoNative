@@ -514,6 +514,7 @@
 		EAFCBDAE960718293041C6FE /* UpcomingBoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBADCEBF071829304152D7AF /* UpcomingBoardView.swift */; };
 		EB9948DE5BDE892BF7F42878 /* LevelSystemVoicePatterns.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2102FEA4B0C930DF27F2DA7F /* LevelSystemVoicePatterns.swift */; };
 		ECA6C88E11888E28815DEBB8 /* PromptTemplateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34D6F15772B410608EF6018 /* PromptTemplateStore.swift */; };
+		82E271884213DEA5D73AC7C3 /* CloudWritingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC1CA5039DFD9754CA43D64 /* CloudWritingClient.swift */; };
 		ECF7A8B9CADB415263748596 /* SmartTaskCaptureRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBA7B8C9DAEB4152637485A7 /* SmartTaskCaptureRow.swift */; };
 		EE09AD9AB88131B0E4FCFADD /* EditorCommandBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E8B6D2EA422D93E1B4026AD /* EditorCommandBus.swift */; };
 		EE228576D2AB3A78906340D1 /* MetalWaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2FB10384F9CB4845F5F65BC /* MetalWaveformView.swift */; };
@@ -937,6 +938,7 @@
 		B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterCreationPopover.swift; sourceTree = "<group>"; };
 		B32C55DE13B666DEB0B398B7 /* GlassMaterial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassMaterial.swift; sourceTree = "<group>"; };
 		B34D6F15772B410608EF6018 /* PromptTemplateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplateStore.swift; sourceTree = "<group>"; };
+		3DC1CA5039DFD9754CA43D64 /* CloudWritingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudWritingClient.swift; sourceTree = "<group>"; };
 		B402B49E3F2075E2F3A20137 /* HealthKitSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitSyncService.swift; sourceTree = "<group>"; };
 		B410E07CE1A62B10A0BB2976 /* TaskRecommendationEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TaskRecommendationEngine.swift; path = AI/TaskRecommendationEngine.swift; sourceTree = SOURCE_ROOT; };
 		B498AE0D839F468212E853EA /* CosmoAIFocusModeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CosmoAIFocusModeView.swift; path = UI/FocusMode/CosmoAI/CosmoAIFocusModeView.swift; sourceTree = SOURCE_ROOT; };
@@ -1646,6 +1648,7 @@
 				4E1562073D0F5F4576BEC578 /* ContextDetectionEngine.swift */,
 				355E3DAAFE562542FEA94072 /* NetworkRetry.swift */,
 				B34D6F15772B410608EF6018 /* PromptTemplateStore.swift */,
+				3DC1CA5039DFD9754CA43D64 /* CloudWritingClient.swift */,
 				F7E3A91D04C82B6E9D3F1A47 /* WritingContextExporter.swift */,
 			);
 			path = Services;
@@ -2671,6 +2674,7 @@
 				2549BB0F68097A6706762EBA /* ContextDetectionEngine.swift in Sources */,
 				1A9974CAD679A00BF0D9B9E8 /* NetworkRetry.swift in Sources */,
 				ECA6C88E11888E28815DEBB8 /* PromptTemplateStore.swift in Sources */,
+				82E271884213DEA5D73AC7C3 /* CloudWritingClient.swift in Sources */,
 				A8F2B73C15D94E0FA61C8B29 /* WritingContextExporter.swift in Sources */,
 				4CCA13432F036DB9017236A2 /* CorrelationRequestBuilder.swift in Sources */,
 				F28BD17A6058A62FDB3B1C10 /* CosmicHaptics.swift in Sources */,

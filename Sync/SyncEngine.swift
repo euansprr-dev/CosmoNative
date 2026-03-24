@@ -175,7 +175,8 @@ class SyncEngine: ObservableObject {
             throw SyncError.invalidPayload
         }
 
-        // Remove local-only fields before pushing
+        // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
+        payload.removeValue(forKey: "id")
         payload.removeValue(forKey: "_local_version")
         payload.removeValue(forKey: "_server_version")
         payload.removeValue(forKey: "_sync_version")

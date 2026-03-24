@@ -120,7 +120,8 @@ class ChangeTracker: ObservableObject {
                 return
             }
 
-            // Remove local-only fields
+            // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
+            payload.removeValue(forKey: "id")
             payload.removeValue(forKey: "_local_version")
             payload.removeValue(forKey: "_server_version")
             payload.removeValue(forKey: "_sync_version")
@@ -164,7 +165,8 @@ class ChangeTracker: ObservableObject {
                     )
                 }
             } catch {
-                // Silent failure — sync_queue entry remains for batch retry by SyncEngine
+                print("⚠️ [Sync] immediatePush failed for \(table):\(uuid) (\(operation)): \(error)")
+                // sync_queue entry remains for batch retry by SyncEngine
             }
         }
     }

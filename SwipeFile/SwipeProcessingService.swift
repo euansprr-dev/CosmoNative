@@ -328,8 +328,9 @@ final class SwipeProcessingService {
             }
         }
 
-        // Set hook/title from first slide (skip if user is editing)
-        if !userIsEditing,
+        // Set hook/title from first slide (skip if user is editing AND has a real title)
+        let hasPlaceholderTitle = ["Instagram Post", "Instagram Reel", "Instagram", "YouTube Video", "X Post", "Threads Post", "Saved Content", "Saved Text"].contains(atom.title ?? "")
+        if (!userIsEditing || hasPlaceholderTitle),
            let firstText = finalSlides.first(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.text {
             let hook = firstText
                 .replacingOccurrences(of: "\n", with: " ")

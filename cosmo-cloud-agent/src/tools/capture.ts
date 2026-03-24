@@ -49,7 +49,7 @@ export async function captureSwipe(args: Record<string, any>): Promise<string> {
     links.push({ type: 'swipeToClient', uuid: clientUUID, entityType: 'client_profile' });
   }
 
-  // Create research atom
+  // Create research atom (must set isSwipeFile: true for swipe library visibility)
   const atom = await createAtom({
     type: 'research',
     title,
@@ -63,8 +63,9 @@ export async function captureSwipe(args: Record<string, any>): Promise<string> {
       processingStatus: 'pending_cloud',
     },
     metadata: {
-      contentSource: source,
-      sourceUrl: url,
+      isSwipeFile: true,
+      contentSource: source.toLowerCase(),
+      url,
       captureSource: 'telegram_cloud',
       ...(clientUUID ? { clientUUID } : {}),
     },
@@ -215,7 +216,17 @@ function buildSwipeTitle(url: string, source: string): string {
     const urlObj = new URL(url);
     const path = urlObj.pathname.split('/').filter(Boolean);
     if (source === 'YouTube' && path.length > 0) return `YouTube: ${path[path.length - 1]}`;
-    if (source === 'Instagram' && path.length >= 2) return `Instagram: @${path[0]}`;
+    if (source === 'Instagram') {
+      // Instagram paths: /p/POST_ID/, /reel/REEL_ID/, /username/p/POST_ID/, /username/reel/REEL_ID/
+      const routeKeywords = new Set(['p', 'reel', 'reels', 'stories', 'tv', 'explore']);
+      // If first segment is a route keyword (e.g. /p/ID), there's no username in the URL
+      if (path.length >= 1 && !routeKeywords.has(path[0])) {
+        return `Instagram: @${path[0]}`;
+      }
+      // /p/POST_ID or /reel/REEL_ID — no username, use content type
+      if (path[0] === 'reel' || path[0] === 'reels') return 'Instagram Reel';
+      return 'Instagram Post';
+    }
     if (source === 'TikTok' && path.length >= 1) return `TikTok: @${path[0].replace('@', '')}`;
     if (source === 'X' && path.length >= 1) return `X: @${path[0]}`;
     return `${source}: ${urlObj.hostname}`;

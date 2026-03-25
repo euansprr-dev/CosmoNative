@@ -42,10 +42,28 @@ export async function saveLessons(args: Record<string, any>): Promise<string> {
 
     const category = VALID_CATEGORIES.includes(lesson.category) ? lesson.category : 'general';
 
+    const lessonId = crypto.randomUUID().toUpperCase();
+    const now = new Date().toISOString();
+
     await createAtom({
       type: 'agent_learning',
       title: rule.substring(0, 100),
       body: rule,
+      // structured must match Swift's InferredLesson Codable struct for Mac app display
+      structured: {
+        id: lessonId,
+        clientUUID: clientUUID ?? null,
+        rule,
+        evidence: lesson.evidence ?? '',
+        category,
+        confidence: 0.9,
+        createdAt: now,
+        lastConfirmedAt: now,
+        source: 'explicit_user',
+        enforcement: 'hard',
+        targetModuleId: lesson.targetModule ?? null,
+        intent: lesson.intent ?? null,
+      },
       metadata: {
         subtype: 'lesson',
         lessonType: 'inferred_lesson',

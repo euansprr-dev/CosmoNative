@@ -598,21 +598,40 @@ async function extractLessonsFromConversation(chatId: string, userMessage: strin
     const rules = JSON.parse(match[0]);
     if (!Array.isArray(rules) || rules.length === 0) return;
 
-    // Store each rule as a lesson
+    // Store each rule as a lesson (with structured field for Mac app display)
     for (const rule of rules.slice(0, 3)) {
       if (!rule.rule) continue;
+
+      const lessonId = crypto.randomUUID().toUpperCase();
+      const now = new Date().toISOString();
+      const category = rule.category || 'general';
 
       await createAtom({
         type: 'agent_learning',
         title: (rule.rule as string).substring(0, 80),
         body: rule.rule,
+        // structured must match Swift's InferredLesson Codable struct for Mac app display
+        structured: {
+          id: lessonId,
+          clientUUID: null,
+          rule: rule.rule,
+          evidence: rule.evidence || '',
+          category,
+          confidence: 0.7,
+          createdAt: now,
+          lastConfirmedAt: now,
+          source: 'inferred_edit',  // Closest Swift enum value for conversation inference
+          enforcement: 'advisory',
+          targetModuleId: null,
+          intent: null,
+        },
         metadata: {
           subtype: 'lesson',
           lessonType: 'inferred_lesson',
-          category: rule.category || 'general',
+          category,
           confidence: 0.7,
           source: 'conversation_inference',
-          enforcement: 'advisory', // Inferred, not explicit — starts as advisory
+          enforcement: 'advisory',
           evidence: rule.evidence || null,
         },
       });

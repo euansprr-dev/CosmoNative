@@ -362,6 +362,7 @@ export class CloudWritingEngine {
             role: 'user',
             content: '[System] You have done 4 consecutive think calls without taking action. You MUST now call a tool to make progress — update_outline, add_hooks, or write_draft. Do NOT call think again.',
             timestamp: new Date().toISOString(),
+            isSystemNudge: true,
           });
           consecutiveThinks = 0;
         }
@@ -396,7 +397,9 @@ export class CloudWritingEngine {
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
           this.analysisDepth++;
-          // Capture analysis into writingContext for cross-phase persistence
+          // Always capture substantial analysis — no keyword gating
+          this.writingContext.latestAnalysis = thought.substring(0, 4000);
+          // Also capture into specific buckets IF keywords match (additive, not exclusive)
           if (/swipe|pattern|density|hook|voice|structure|transition|punctuation/i.test(thought)) {
             this.writingContext.swipePatternAnalysis = thought.substring(0, 4000);
           }
@@ -1116,9 +1119,12 @@ If ALL checks pass, present the draft.
   // ============================================================
 
   private async persistConversation(): Promise<void> {
-    // Save ALL messages including think tool calls — analysis must persist across phases
+    // Save ALL messages — tool calls persist for context continuity across phases
     const toSave = this.messages.map(m => {
-      // For think tool results, preserve full content
+      // Skip system nudges (they're ephemeral and confuse the LLM on restore)
+      if (m.isSystemNudge) return null;
+
+      // Tool results: preserve all (think results in full, others truncated)
       if (m.role === 'tool' && m.toolCallId) {
         const matchingCall = this.messages.find(
           msg => msg.toolCalls?.some(tc => tc.id === m.toolCallId)
@@ -1126,30 +1132,33 @@ If ALL checks pass, present the draft.
         const isThink = matchingCall?.toolCalls?.some(
           tc => tc.id === m.toolCallId && tc.name === 'think'
         );
-        if (isThink) {
-          return { id: m.id, role: m.role, content: m.content, timestamp: m.timestamp, toolCallId: m.toolCallId };
-        }
-        return null; // Skip non-think tool results
+        // Think results: full content. Other tool results: truncated to 500 chars
+        const content = isThink ? m.content : m.content.substring(0, 500);
+        return { id: m.id, role: m.role, content, timestamp: m.timestamp, toolCallId: m.toolCallId };
       }
 
-      // For assistant messages with think tool calls, preserve the full thought
-      if (m.toolCalls?.some(tc => tc.name === 'think')) {
+      // Assistant messages with tool calls: preserve ALL tool calls
+      if (m.toolCalls && m.toolCalls.length > 0) {
         return {
           id: m.id, role: m.role, content: m.content,
           timestamp: m.timestamp,
-          toolCalls: m.toolCalls.filter(tc => tc.name === 'think').map(tc => ({
-            id: tc.id, name: tc.name,
-            arguments: { thought: (tc.arguments as any)?.thought || '' },
-          })),
+          toolCalls: m.toolCalls.map(tc => {
+            if (tc.name === 'think') {
+              // Think: preserve full thought
+              return { id: tc.id, name: tc.name, arguments: { thought: (tc.arguments as any)?.thought || '' } };
+            }
+            // Other tools: keep name + truncated arguments for context
+            const args = tc.arguments || {};
+            const truncated: Record<string, any> = {};
+            for (const [key, val] of Object.entries(args)) {
+              truncated[key] = typeof val === 'string' ? val.substring(0, 500) : val;
+            }
+            return { id: tc.id, name: tc.name, arguments: truncated };
+          }),
         };
       }
 
-      // Skip assistant messages that only contain non-think tool calls
-      if (m.toolCalls && m.toolCalls.length > 0 && !m.toolCalls.some(tc => tc.name === 'think')) {
-        return null;
-      }
-
-      // For user + assistant text messages, keep with generous truncation
+      // User + assistant text messages: keep with generous truncation
       if (m.role === 'user' || m.role === 'assistant') {
         return { id: m.id, role: m.role, content: m.content.substring(0, 4000), timestamp: m.timestamp };
       }
@@ -1191,7 +1200,6 @@ If ALL checks pass, present the draft.
       tools.push(
         { name: 'write_draft', description: 'Write the full draft', parameters: { type: 'object', properties: { content: { type: 'string', description: 'Full draft text or JSON' }, format: { type: 'string', enum: ['plaintext', 'carousel_json', 'thread_json', 'script'] }, selfEvaluation: { type: 'object', properties: { confidenceScore: { type: 'number' }, voiceMatchScore: { type: 'number' }, weakAreas: { type: 'array', items: { type: 'string' } } } } }, required: ['content'] } },
         { name: 'read_draft', description: 'Read the current draft', parameters: { type: 'object', properties: {} } },
-        { name: 'edit_section', description: 'Edit a specific section', parameters: { type: 'object', properties: { sectionIdentifier: { type: 'string' }, newContent: { type: 'string' }, reasoning: { type: 'string' } }, required: ['sectionIdentifier', 'newContent'] } },
       );
     }
 
@@ -1266,8 +1274,11 @@ If ALL checks pass, present the draft.
       const isLesson = subtype === 'lesson' || !!lessonType;
       if (!isLesson) return false;
 
-      // Include ALL lessons regardless of client — writing lessons are universal.
-      // A lesson learned from one client's content applies to all content.
+      // Include universal lessons (no clientUUID) + lessons for this specific client
+      const lessonClientUUID = meta.clientUUID as string | undefined;
+      if (lessonClientUUID && this.clientAtom?.uuid && lessonClientUUID !== this.clientAtom.uuid) {
+        return false; // Skip lessons for OTHER clients
+      }
       return true;
     });
 
@@ -1447,22 +1458,57 @@ function runDeterministicValidators(
     }
   }
 
-  // 4. Lesson-derived banned phrases (extract "never use X" / "avoid X" from hard rules)
+  // 4. Lesson-derived rule enforcement (parse multiple rule formats from hard rules)
   const hardRules = lessons.filter(l => l.enforcement === 'hard');
   for (const rule of hardRules) {
-    const neverMatch = rule.rule.match(/never use ["'](.+?)["']/i);
-    const avoidMatch = rule.rule.match(/avoid ["'](.+?)["']/i);
-    const phrase = neverMatch?.[1] || avoidMatch?.[1];
-    if (phrase && lowerDraft.includes(phrase.toLowerCase())) {
-      violations.push({
-        type: 'banned_phrase',
-        message: `Learned rule violation: "${phrase}" found in draft (rule: ${rule.rule.substring(0, 80)})`,
-      });
+    const ruleText = rule.rule;
+    const bannedPhrases: string[] = [];
+
+    // Pattern 1: never use "X" / avoid "X" (quoted)
+    const quotedMatches = ruleText.matchAll(/(?:never use|avoid|don't use|do not use|stop using|ban|eliminate)\s+["'](.+?)["']/gi);
+    for (const m of quotedMatches) bannedPhrases.push(m[1]);
+
+    // Pattern 2: BAD: "X" (from RULE/BAD/GOOD format)
+    const badMatches = ruleText.matchAll(/BAD:\s*["'](.+?)["']/gi);
+    for (const m of badMatches) bannedPhrases.push(m[1]);
+
+    // Pattern 3: "X are NOT used" / "X is NOT used" / "X are never used"
+    const notUsedMatch = ruleText.match(/["']?(.+?)["']?\s+(?:are|is)\s+(?:NOT|never)\s+used/i);
+    if (notUsedMatch) bannedPhrases.push(notUsedMatch[1].replace(/^["']|["']$/g, ''));
+
+    // Pattern 4: "don't X" / "do not X" / "never X" (unquoted, extract subject)
+    if (bannedPhrases.length === 0) {
+      const unquotedBan = ruleText.match(/(?:don't|do not|never)\s+(?:use|start with|begin with|include|write)\s+(.+?)(?:\.|,|$)/i);
+      if (unquotedBan) {
+        const phrase = unquotedBan[1].trim().replace(/^["']|["']$/g, '');
+        if (phrase.length >= 3 && phrase.length <= 60) bannedPhrases.push(phrase);
+      }
+    }
+
+    // Check each extracted banned phrase against draft
+    for (const phrase of bannedPhrases) {
+      if (phrase.length < 2) continue;
+      if (lowerDraft.includes(phrase.toLowerCase())) {
+        violations.push({
+          type: 'banned_phrase',
+          message: `Learned rule violation: "${phrase}" found in draft (rule: ${ruleText.substring(0, 80)})`,
+        });
+      }
     }
   }
 
-  // 5. Em-dash detection (content lines only, not slide headers which use — structurally)
-  const contentLines = draft.split('\n').filter(l => !l.match(/^Slide \d+/i));
+  // 5. Em-dash detection — extract text content from JSON drafts to avoid false positives
+  let textToCheck = draft;
+  try {
+    const parsed = JSON.parse(draft);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      textToCheck = parsed.slides.map((s: any) => s.text || '').join('\n');
+    } else if (parsed.tweets && Array.isArray(parsed.tweets)) {
+      textToCheck = parsed.tweets.map((t: any) => t.text || t.content || '').join('\n');
+    }
+  } catch {} // Not JSON — check full draft
+
+  const contentLines = textToCheck.split('\n').filter(l => !l.match(/^Slide \d+/i));
   const emDashMatches = contentLines.join('\n').match(/[\u2014\u2013]/g);
   if (emDashMatches) {
     violations.push({
@@ -1485,14 +1531,47 @@ function checkVoiceCompliance(draft: string, clientAtom: Atom | null): string[] 
   const intel = clientAtom.structured?.intelligenceModel || {};
   const voice = intel.voiceFingerprint || {};
 
-  // Check blacklisted phrases
+  // Extract readable text from JSON drafts
+  let textContent = draft;
+  try {
+    const parsed = JSON.parse(draft);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      textContent = parsed.slides.map((s: any) => s.text || '').join('\n');
+    } else if (parsed.tweets && Array.isArray(parsed.tweets)) {
+      textContent = parsed.tweets.map((t: any) => t.text || t.content || '').join('\n');
+    }
+  } catch {} // Not JSON — use full draft
+
+  const lowerDraft = textContent.toLowerCase();
+
+  // 1. Blacklisted phrases
   const blacklisted = voice.blacklistedPhrases as string[] | undefined;
   if (blacklisted && blacklisted.length > 0) {
-    const lowerDraft = draft.toLowerCase();
     for (const phrase of blacklisted) {
       if (lowerDraft.includes(phrase.toLowerCase())) {
         violations.push(`Client-banned phrase detected: "${phrase}"`);
       }
+    }
+  }
+
+  // 2. Average sentence length check
+  const targetLength = voice.avgSentenceLength as number | undefined;
+  if (targetLength && targetLength > 0) {
+    const sentences = textContent.split(/[.!?]+/).filter(s => s.trim().length > 5);
+    if (sentences.length >= 3) {
+      const avgWords = sentences.reduce((sum, s) => sum + s.trim().split(/\s+/).length, 0) / sentences.length;
+      if (avgWords > targetLength * 1.5) {
+        violations.push(`Average sentence length (${avgWords.toFixed(0)} words) exceeds client target (${targetLength} words) by >50%. Shorten sentences.`);
+      }
+    }
+  }
+
+  // 3. Signature phrases — check at least one appears (if client has them)
+  const signaturePhrases = voice.signaturePhrases as string[] | undefined;
+  if (signaturePhrases && signaturePhrases.length > 0) {
+    const hasAny = signaturePhrases.some(p => lowerDraft.includes(p.toLowerCase()));
+    if (!hasAny) {
+      violations.push(`No signature phrases found. Client uses: ${signaturePhrases.slice(0, 3).map(p => `"${p}"`).join(', ')}. Try to incorporate at least one.`);
     }
   }
 

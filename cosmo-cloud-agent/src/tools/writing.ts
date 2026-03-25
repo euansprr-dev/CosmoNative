@@ -3,7 +3,7 @@
 // PORTING SOURCE: AgentToolExecutor.swift lines 2037-2500
 // Phase 3: Real engine implementation (replaces stubs)
 
-import { fetchAtom, updateAtom, fuzzyFindClient, searchAtoms, isSwipeFileAtom } from '../db/queries';
+import { Atom, fetchAtom, updateAtom, createAtom, fuzzyFindClient, searchAtoms, isSwipeFileAtom } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 import { getOrCreateEngine, evictEngine } from '../writing/engine';
 import { renderDraftForDisplay, detectContentFormat } from '../writing/types';
@@ -34,14 +34,18 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   }
 
   // Resolve blueprint TITLES to UUIDs (so agent doesn't need search_swipes)
+  const resolvedBlueprints: string[] = [];
+  const failedBlueprints: string[] = [];
   if (args.blueprintTitles && Array.isArray(args.blueprintTitles)) {
     for (const title of args.blueprintTitles) {
       const results = await searchAtoms(title, { types: ['research'], limit: 3 });
       const swipe = results.find(a => isSwipeFileAtom(a));
       if (swipe && !blueprintUUIDs.includes(swipe.uuid)) {
         blueprintUUIDs.push(swipe.uuid);
+        resolvedBlueprints.push(title);
         console.log(`    ✍️ Resolved blueprint: "${title}" → ${swipe.uuid}`);
       } else {
+        failedBlueprints.push(title);
         console.log(`    ⚠️ Blueprint not found: "${title}"`);
       }
     }
@@ -75,8 +79,23 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   // Get or create engine
   const engine = await getOrCreateEngine(contentUUID);
 
-  // Build instruction — include user's structural notes + blueprint context
-  let instruction = args.notes || 'Generate an outline for this content piece.';
+  // Load @ mentioned context atoms (connections, research, ideas, etc.)
+  let contextBlock = '';
+  const contextAtomUUIDs = args.contextAtomUUIDs as string[] | undefined;
+  if (contextAtomUUIDs && contextAtomUUIDs.length > 0) {
+    const blocks: string[] = [];
+    for (const uuid of contextAtomUUIDs) {
+      const ctxAtom = await fetchAtom(uuid);
+      if (ctxAtom) blocks.push(formatAtomAsContext(ctxAtom));
+    }
+    if (blocks.length > 0) {
+      contextBlock = `REFERENCED CONTEXT (from @ mentions — use this as raw material for the content):\n${blocks.join('\n\n')}\n\n`;
+      console.log(`    ✍️ Loaded ${blocks.length} context atoms from @ mentions`);
+    }
+  }
+
+  // Build instruction — include user's structural notes + blueprint context + @ context
+  let instruction = contextBlock + (args.notes || 'Generate an outline for this content piece.');
   if (blueprintUUIDs.length > 0) {
     instruction += `\n\n${blueprintUUIDs.length} blueprint swipes loaded as PRIMARY references. Study their structure and mirror it.`;
     instruction += ' Use BLUEPRINT-FIRST methodology.';
@@ -93,6 +112,9 @@ export async function generateOutline(args: Record<string, any>): Promise<string
       success: true,
       contentUUID,
       message: 'STOP HERE. Show this outline and hook variants to the user. Ask which hook they want. Do NOT call generate_draft until user confirms.',
+      blueprintStatus: failedBlueprints.length > 0
+        ? { resolved: resolvedBlueprints, failed: failedBlueprints, warning: `Could not find: ${failedBlueprints.join(', ')}. Tell the user.` }
+        : undefined,
       outlineSections: outline.map((o, i) => `${i + 1}. ${o.title}${o.beatLabel ? ` [${o.beatLabel}]` : ''}`),
       hookVariants: hooks,
       sectionCount: outline.length,
@@ -206,12 +228,13 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
   const feedback = args.feedback as string;
   if (!feedback) return jsonError('feedback is required');
 
+  // Capture before-state for experience creation
+  const beforeAtom = await fetchAtom(contentUUID);
+  const beforeBody = beforeAtom?.body || '';
+
   // If currentDraft provided and atom body is empty, seed it
-  if (args.currentDraft) {
-    const atom = await fetchAtom(contentUUID);
-    if (atom && (!atom.body || atom.body.length === 0)) {
-      await updateAtom(contentUUID, { body: args.currentDraft });
-    }
+  if (args.currentDraft && (!beforeBody || beforeBody.length === 0)) {
+    await updateAtom(contentUUID, { body: args.currentDraft });
   }
 
   const engine = await getOrCreateEngine(contentUUID);
@@ -231,6 +254,23 @@ export async function reviseDraft(args: Record<string, any>): Promise<string> {
       if (parsed.slides) format = 'carousel';
       else if (parsed.tweets) format = 'thread';
     } catch {}
+
+    // Capture experience: if draft changed significantly, save before/after for few-shot learning
+    if (beforeBody && draftBody && beforeBody !== draftBody) {
+      const beforeWords = beforeBody.split(/\s+/).length;
+      const afterWords = draftBody.split(/\s+/).length;
+      const wordDiff = Math.abs(afterWords - beforeWords);
+      const editRatio = wordDiff / Math.max(beforeWords, 1);
+      if (editRatio > 0.1 || wordDiff > 20) { // >10% changed or 20+ words different
+        try {
+          const clientUUID = beforeAtom?.metadata?.clientProfileUUID as string | undefined;
+          await createExperienceAtom(beforeBody, draftBody, feedback, editRatio, clientUUID);
+          console.log(`    ✍️ Experience captured (${(editRatio * 100).toFixed(0)}% edit distance)`);
+        } catch (e) {
+          console.log(`    ⚠️ Failed to capture experience: ${e}`);
+        }
+      }
+    }
 
     return jsonEncode({
       success: true,
@@ -312,5 +352,105 @@ export async function scoreDraft(args: Record<string, any>): Promise<string> {
     contentUUID,
     ...scorecard,
     wordCount,
+  });
+}
+
+// ============================================================
+// Context Atom Formatting (for @ mentions)
+// ============================================================
+
+/**
+ * Format an atom for injection into writing engine context.
+ * Special handling for connections (8-section structured content).
+ */
+function formatAtomAsContext(atom: Atom): string {
+  if (atom.type === 'connection') {
+    return formatConnectionForWriting(atom);
+  }
+
+  // Research/swipe: include full body
+  if (atom.type === 'research') {
+    const analysis = atom.structured?.swipeAnalysis || atom.structured;
+    const hookText = (analysis?.hookText as string) || '';
+    return `[${atom.type.toUpperCase()}: ${atom.title}]\nHook: ${hookText}\n${atom.body || ''}`;
+  }
+
+  // Default: title + body
+  return `[${atom.type.toUpperCase()}: ${atom.title}]\n${atom.body || ''}`;
+}
+
+/**
+ * Format a connection atom with all 8 structured sections as flexible building blocks.
+ * Any part can serve any beat — a belief can be a hook, a problem can be a CTA.
+ */
+function formatConnectionForWriting(atom: Atom): string {
+  const model = atom.structured || {};
+  const sections: string[] = [];
+  sections.push(`=== CONNECTION: ${atom.title} ===`);
+  if (model.idea) sections.push(`Core Idea: ${model.idea}`);
+  if (model.personalBelief) sections.push(`Personal Belief: ${model.personalBelief}`);
+
+  sections.push('\n--- CONTENT BUILDING BLOCKS ---');
+  sections.push('These are raw material. Any piece can serve ANY beat — a belief can be a hook,');
+  sections.push('a problem can be a CTA, an example can open the piece. Use them creatively.');
+
+  if (model.goal) sections.push(`\nGOAL:\n${model.goal}`);
+  if (model.problems) sections.push(`\nPROBLEMS:\n${model.problems}`);
+  if (model.benefit) sections.push(`\nBENEFITS:\n${model.benefit}`);
+  if (model.example) sections.push(`\nEXAMPLES:\n${model.example}`);
+  if (model.beliefsObjections) sections.push(`\nBELIEFS & OBJECTIONS:\n${model.beliefsObjections}`);
+  if (model.process) sections.push(`\nPROCESS:\n${model.process}`);
+  if (model.conceptName) sections.push(`\nCONCEPT NAME: "${model.conceptName}"`);
+
+  // References as evidence/authority sources
+  if (model.referencesData) {
+    try {
+      const raw = typeof model.referencesData === 'string' ? model.referencesData : JSON.stringify(model.referencesData);
+      const refs = JSON.parse(raw);
+      if (Array.isArray(refs) && refs.length > 0) {
+        sections.push(`\nREFERENCES:`);
+        for (const ref of refs as any[]) {
+          sections.push(`  • ${ref.title || ref.url || 'Source'}${ref.notes ? ': ' + ref.notes : ''}`);
+        }
+      }
+    } catch {}
+  }
+
+  return sections.join('\n');
+}
+
+/**
+ * Create an experience atom from a draft revision — captures before/after for few-shot learning.
+ * These are loaded by engine.loadExperiences() and injected into Block 3A as editing examples.
+ */
+async function createExperienceAtom(
+  beforeDraft: string,
+  afterDraft: string,
+  feedback: string,
+  editDistance: number,
+  clientUUID?: string,
+): Promise<void> {
+  // Truncate to reasonable size for few-shot examples
+  const maxChars = 2000;
+  const generated = beforeDraft.substring(0, maxChars);
+  const edited = afterDraft.substring(0, maxChars);
+
+  await createAtom({
+    type: 'agent_learning',
+    title: `Edit experience: ${feedback.substring(0, 80)}`,
+    body: `BEFORE:\n${generated}\n\nAFTER:\n${edited}\n\nFEEDBACK: ${feedback}`,
+    structured: {
+      generatedExcerpt: generated,
+      editedExcerpt: edited,
+      diffSummary: feedback.substring(0, 500),
+    },
+    metadata: {
+      subtype: 'experience',
+      lessonType: 'experience',
+      enforcement: 'advisory',
+      confidence: 0.8,
+      editDistance,
+      ...(clientUUID ? { clientUUID } : {}),
+    },
   });
 }

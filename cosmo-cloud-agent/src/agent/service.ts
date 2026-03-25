@@ -547,7 +547,7 @@ function compressOldToolResults(messages: AgentMessage[]): void {
           if (parsed.engineNotes) compressed.engineNotes = typeof parsed.engineNotes === 'string' ? parsed.engineNotes.substring(0, 200) : parsed.engineNotes;
           if (parsed.format) compressed.format = parsed.format;
           if (parsed.wordCount) compressed.wordCount = parsed.wordCount;
-          if (parsed.formattedDraft) compressed.formattedDraft = parsed.formattedDraft.substring(0, 200);
+          if (parsed.formattedDraft) compressed.formattedDraft = parsed.formattedDraft.substring(0, 2000);
           if (parsed.outlineSections) compressed.outlineSections = parsed.outlineSections;
           if (parsed.hookVariants) compressed.hookVariants = parsed.hookVariants;
           messages[i].content = JSON.stringify(compressed);

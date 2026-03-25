@@ -161,7 +161,7 @@ export async function assembleBlock2(
   if (failureRules && failureRules.length > 0) {
     sections.push('\n--- FAILURE FINGERPRINT (HARD RULES — never violate) ---');
     const highRules = failureRules.filter((r: any) => r.severity === 'HIGH');
-    const medRules = failureRules.filter((r: any) => r.severity === 'MEDIUM').slice(0, 3);
+    const medRules = failureRules.filter((r: any) => r.severity === 'MEDIUM');
     for (const rule of [...highRules, ...medRules]) {
       sections.push(`  [${rule.severity}] ${rule.rule || rule.description}`);
     }
@@ -395,8 +395,9 @@ export function assembleBlock3Stable(
 // ============================================================
 
 export interface WritingContext {
-  swipePatternAnalysis?: string;
-  structuralPlan?: string;
+  latestAnalysis?: string;          // Always captured for >200 word thinks (no keyword gate)
+  swipePatternAnalysis?: string;    // Keyword-matched subset (swipe/pattern/density/etc.)
+  structuralPlan?: string;          // Keyword-matched subset (plan/approach/strategy/etc.)
   keyDecisions?: string[];
   selfReviewFindings?: string;
   analysisDepth?: number;
@@ -471,8 +472,12 @@ export function assembleBlock3Dynamic(
   }
 
   // Prior analysis context (persisted across phases)
-  if (writingContext?.swipePatternAnalysis) {
-    sections.push('\n--- YOUR PRIOR ANALYSIS (from earlier phase) ---');
+  if (writingContext?.latestAnalysis) {
+    sections.push('\n--- YOUR LATEST ANALYSIS (persisted across phases) ---');
+    sections.push(writingContext.latestAnalysis);
+  }
+  if (writingContext?.swipePatternAnalysis && writingContext.swipePatternAnalysis !== writingContext.latestAnalysis) {
+    sections.push('\n--- SWIPE PATTERN ANALYSIS ---');
     sections.push(writingContext.swipePatternAnalysis);
   }
   if (writingContext?.structuralPlan) {

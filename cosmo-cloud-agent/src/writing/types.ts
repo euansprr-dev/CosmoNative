@@ -195,6 +195,7 @@ export interface WritingMessage {
     name: string;
     arguments: Record<string, any>;
   }>;
+  isSystemNudge?: boolean; // System-generated nudge — excluded from persistence
 }
 
 // ============================================================

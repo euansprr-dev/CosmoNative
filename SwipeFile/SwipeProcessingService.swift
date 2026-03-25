@@ -390,10 +390,30 @@ final class SwipeProcessingService {
         }
 
         // SINGLE WRITE: Persist all accumulated changes (transcript + NLP + classification + status) at once.
-        // This prevents version conflicts when SwipeStudyFocusModeView tries to update the same atom.
+        // On version conflict (common for cloud-captured swipes where sync bumps the version during
+        // processing), re-fetch the latest version and re-apply analysis results.
         atom.processingStatus = "complete"
         do {
             _ = try await AtomRepository.shared.update(atom)
+        } catch let error as AtomRepositoryError where error.isVersionConflict {
+            print("SwipeProcessingService: Version conflict for \(uuid), retrying with latest version")
+            if var latest = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                // Merge analysis results onto the latest version
+                latest.body = atom.body
+                latest.title = atom.title
+                latest.hook = atom.hook
+                latest.processingStatus = "complete"
+                latest.setRichContent(atom.richContent ?? ResearchRichContent())
+                if let sa = atom.swipeAnalysis {
+                    latest = latest.withSwipeAnalysis(sa)
+                }
+                do {
+                    _ = try await AtomRepository.shared.update(latest)
+                    print("SwipeProcessingService: Retry succeeded for \(uuid)")
+                } catch {
+                    print("SwipeProcessingService: Retry also failed for \(uuid): \(error)")
+                }
+            }
         } catch {
             print("SwipeProcessingService: Failed to persist final analysis: \(error)")
         }

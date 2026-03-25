@@ -70,6 +70,10 @@ class AgentToolExecutor {
 
     private init() {}
 
+    /// Context atom UUIDs from @ mentions — passed to cloud writing engine
+    /// so it can load full structured content (connections, research, etc.)
+    var contextAtomUUIDs: [String] = []
+
     // Writing engine cache removed — all writing now goes through CloudWritingClient.
     // The cloud engine manages its own session cache per contentUUID.
     // The getOrCreateEngine method has been replaced by cloud API calls in
@@ -2001,7 +2005,8 @@ class AgentToolExecutor {
                 }(),
                 notes: args["notes"] as? String,
                 clientName: args["clientName"] as? String,
-                contentFormat: args["contentFormat"] as? String
+                contentFormat: args["contentFormat"] as? String,
+                contextAtomUUIDs: contextAtomUUIDs.isEmpty ? nil : contextAtomUUIDs
             )
 
             // Re-encode as JSON string for the agent tool result format

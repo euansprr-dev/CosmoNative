@@ -501,6 +501,12 @@ class CosmoAgentService: ObservableObject {
             contextTrace.skillsSummary = byIntent.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
         }
 
+        // Extract @ mentioned atom UUIDs from enriched text for cloud writing engine context.
+        // The enriched text contains "(UUID: xxx)" patterns from MentionContextHelper.
+        let uuidPattern = /\(UUID: ([A-F0-9\-]{36})\)/
+        let mentionedUUIDs = text.matches(of: uuidPattern).map { String($0.1) }
+        toolExecutor.contextAtomUUIDs = mentionedUUIDs
+
         // Update failover chain for the current model tier (OpenRouter only)
         if let failoverProvider = provider as? FailoverLLMProvider {
             let tierChain = ModelFailoverChain.chain(for: modelTier)

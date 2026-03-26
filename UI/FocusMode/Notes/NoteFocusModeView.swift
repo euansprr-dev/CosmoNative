@@ -32,6 +32,7 @@ struct NoteFocusModeView: View {
     @State private var createdAt: Date = Date()
     @State private var showTagEditor = false
     @State private var autoSaveTask: Task<Void, Never>?
+    @State private var saveClosed = false
     @State private var observationCancellable: AnyCancellable?
     @State private var isInitialLoad = true
 
@@ -207,12 +208,14 @@ struct NoteFocusModeView: View {
         .onDisappear {
             // Force an immediate save before closing — don't lose unsaved edits
             autoSaveTask?.cancel()
+            saveClosed = true  // Block any in-flight async writes from overwriting
             saveAtomImmediately()
             floatingBlocksManager.saveImmediately()
             observationCancellable?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             autoSaveTask?.cancel()
+            saveClosed = true
             saveAtomImmediately()
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
@@ -754,7 +757,8 @@ struct NoteFocusModeView: View {
                         body = ?,
                         metadata = ?,
                         updated_at = ?,
-                        _local_version = _local_version + 1
+                        _local_version = _local_version + 1,
+                        _local_pending = 1
                     WHERE uuid = ?
                     """,
                     arguments: [
@@ -785,6 +789,14 @@ struct NoteFocusModeView: View {
                 object: nil,
                 userInfo: userInfo
             )
+            // Sync: queue for Supabase push
+            Task {
+                if let updatedAtom = try? await database.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == uuid).fetchOne(db)
+                }) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                }
+            }
         } catch {
             print("Failed to save note (sync): \(error)")
         }
@@ -799,6 +811,9 @@ struct NoteFocusModeView: View {
         let uuid = atom.uuid
 
         Task {
+            // Skip if sync save already ran on close — prevents stale async write
+            // from overwriting the final save
+            guard !saveClosed else { return }
             do {
                 try await database.asyncWrite { db in
                     var existingMetadata: String?
@@ -865,6 +880,12 @@ struct NoteFocusModeView: View {
                         object: nil,
                         userInfo: ["atomUUID": uuid]
                     )
+                }
+                // Sync: queue for Supabase push so notes sync to cloud
+                if let updatedAtom = try? await database.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == uuid).fetchOne(db)
+                }) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
                 }
                 if let completion {
                     await MainActor.run { completion(true) }

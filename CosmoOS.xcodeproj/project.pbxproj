@@ -38,6 +38,7 @@
 		1ABDCF89C426FDD12959C098 /* SupabaseAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8348D6EF2E4C6CE08CFDF9E /* SupabaseAuthService.swift */; };
 		E4DBACBA0C1E8442525AFA4F /* RealtimeSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62B6277370287619ADBDE64 /* RealtimeSyncService.swift */; };
 		CD2405DF5E552F887C0F0A35 /* CloudSyncSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */; };
+		E9A3F72B4D168C05B3E0FA91 /* ShortcutsSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C4E9F2A31D685049FE3A12 /* ShortcutsSettingsTab.swift */; };
 		0417B60B9903924A694BEAEF /* ThinkspaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D996BE37FFB4DB66FE27D2B /* ThinkspaceManager.swift */; };
 		04C8F8973F6F9DA315E0AB3F /* CelebrationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F37B0C21D9D09170605F201 /* CelebrationEngine.swift */; };
 		058417F833BA0BC4E1F58591 /* HubSearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E70521F56322ABF320B0A8 /* HubSearchBar.swift */; };
@@ -121,7 +122,6 @@
 		375F865E8D1AE2EF26281A1B /* CosmoAIFocusModeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69417390C813CD9255A1260D /* CosmoAIFocusModeViewModel.swift */; };
 		3A7654625526CC8E5E93F5F5 /* VoiceAtom.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC990BA782BF50921CD63431 /* VoiceAtom.swift */; };
 		3A9C5D71E4B28F063C1E7D42 /* ProfileManagementTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F2E9B4A3C8D51062E7A9F13 /* ProfileManagementTab.swift */; };
-		3AD1461D4DA2AE3A4AE61753 /* TelepathyEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A403CF4CBC09086FA2A736A /* TelepathyEngine.swift */; };
 		3D8B5CC1799FE3B9C20CD8CD /* CosmoDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 205A233119A70ADFD0F913C3 /* CosmoDatabase.swift */; };
 		3DB3B4259E99E84FD55FE01C /* SyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFEE39B0E0751F2B08503004 /* SyncStatusView.swift */; };
 		3E7A91B2D4C5F60E8A1B3C5D /* CanvasCluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */; };
@@ -733,7 +733,6 @@
 		493090644904674200147833 /* ImportedPostCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ImportedPostCard.swift; path = UI/FocusMode/SwipeStudy/ImportedPostCard.swift; sourceTree = SOURCE_ROOT; };
 		493172130E7D8A07FA4DCCF5 /* CommandHubEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHubEngine.swift; sourceTree = "<group>"; };
 		49E92D4FF3D3DBFAC9828187 /* ResearchProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchProcessor.swift; sourceTree = "<group>"; };
-		4A403CF4CBC09086FA2A736A /* TelepathyEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelepathyEngine.swift; sourceTree = "<group>"; };
 		4B6073A503A3B115DB224454 /* ContentScorecardEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentScorecardEngine.swift; path = AI/ContentScorecardEngine.swift; sourceTree = SOURCE_ROOT; };
 		4BBB2F51A36C8A2BB20EEE3F /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		4D24DEFFF6CE4768494F146C /* ConsoleLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleLog.swift; sourceTree = "<group>"; };
@@ -1038,6 +1037,7 @@
 		E8348D6EF2E4C6CE08CFDF9E /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
 		B62B6277370287619ADBDE64 /* RealtimeSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSyncService.swift; sourceTree = "<group>"; };
 		A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncSettingsTab.swift; sourceTree = "<group>"; };
+		B7C4E9F2A31D685049FE3A12 /* ShortcutsSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsTab.swift; sourceTree = "<group>"; };
 		D4ABDE7BDE08C944A998C417 /* ResizeBlockAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeBlockAction.swift; sourceTree = "<group>"; };
 		D4C2F9E4B380B479874300E8 /* ResearchFocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchFocusModeView.swift; sourceTree = "<group>"; };
 		D4E2B1C89A7F35E102AC6D71 /* ToolActivityStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityStreamView.swift; sourceTree = "<group>"; };
@@ -1730,6 +1730,7 @@
 				EE540F151E53E884BD71664F /* SettingsMenuButton.swift */,
 				508034948877066137948206 /* SanctuarySettingsView.swift */,
 				A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */,
+				B7C4E9F2A31D685049FE3A12 /* ShortcutsSettingsTab.swift */,
 				7F2E9B4A3C8D51062E7A9F13 /* ProfileManagementTab.swift */,
 				EDDECD501280E97686692692 /* ThemePickerView.swift */,
 			);
@@ -1925,7 +1926,6 @@
 				E04D4F7022A47F4EDF9656EC /* LegacyStubs.swift */,
 				46BFDFF392B5F3A8A79CA172 /* SwipeDraftEngine.swift */,
 				CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */,
-				4A403CF4CBC09086FA2A736A /* TelepathyEngine.swift */,
 				817A1CDFD7735D812AD670B6 /* VectorDatabase.swift */,
 				5012998108D55B7B75660727 /* BigBrain */,
 				6D3764D9040C1A6D93A05ACC /* MicroBrain */,
@@ -2638,6 +2638,7 @@
 				1ABDCF89C426FDD12959C098 /* SupabaseAuthService.swift in Sources */,
 				E4DBACBA0C1E8442525AFA4F /* RealtimeSyncService.swift in Sources */,
 				CD2405DF5E552F887C0F0A35 /* CloudSyncSettingsTab.swift in Sources */,
+				E9A3F72B4D168C05B3E0FA91 /* ShortcutsSettingsTab.swift in Sources */,
 				4C7B19C1151BCC3384648548 /* ClaudeAPIClient.swift in Sources */,
 				95B1D9236161386152289BA0 /* CognitiveMetadata.swift in Sources */,
 				7CADA7963ABFE8C31BF152D3 /* CommandHubCaptureController.swift in Sources */,
@@ -2902,7 +2903,6 @@
 				BEB494A100E59817C9C1D73D /* SyncIntegration.swift in Sources */,
 				3DB3B4259E99E84FD55FE01C /* SyncStatusView.swift in Sources */,
 				BF2356B89A2497C8F86B7EDC /* TaskBlockView.swift in Sources */,
-				3AD1461D4DA2AE3A4AE61753 /* TelepathyEngine.swift in Sources */,
 				C2A499778471F44F849AD3EC /* TextKitCoordinator.swift in Sources */,
 				B3F2A71E4D8C92A5F1E06B37 /* DesignSystem.swift in Sources */,
 				D2A8F63C4E1B57D9B3C40E95 /* FilmGrainOverlay.swift in Sources */,

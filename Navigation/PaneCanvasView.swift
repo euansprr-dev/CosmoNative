@@ -33,6 +33,13 @@ struct PaneCanvasView: View {
     @State private var isSpaceHeld = false
     @State private var spacePanOffset: CGSize = .zero
 
+    // Right-click radial menu
+    @State private var showRadialMenu = false
+    @State private var radialMenuPosition: CGPoint = .zero
+    @State private var rightClickMonitor: Any?
+    @State private var paneFrame: CGRect = .zero
+    @State private var paneSize: CGSize = .zero
+
     // MARK: - Computed Properties
 
     private var effectiveScale: CGFloat {
@@ -48,6 +55,21 @@ struct PaneCanvasView: View {
         return CGSize(
             width: combinedPan.width / effectiveScale,
             height: combinedPan.height / effectiveScale
+        )
+    }
+
+    private var paneViewportTransform: CanvasViewportTransform {
+        CanvasViewportTransform(
+            viewportSize: paneSize,
+            committedOffset: canvasOffset,
+            gesturePanOffset: CGSize(
+                width: panOffset.width + spacePanOffset.width,
+                height: panOffset.height + spacePanOffset.height
+            ),
+            committedScale: canvasScale,
+            gestureMagnification: magnificationState,
+            minScale: minScale,
+            maxScale: maxScale
         )
     }
 
@@ -120,6 +142,33 @@ struct PaneCanvasView: View {
                             spacePanOffset = .zero
                         }
                 }
+
+                // Radial menu overlay
+                if showRadialMenu {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.2)) {
+                                showRadialMenu = false
+                            }
+                        }
+
+                    RadialMenuView(
+                        position: radialMenuPosition,
+                        onSelect: { action in
+                            handleRadialAction(action)
+                            withAnimation(.spring(response: 0.2)) {
+                                showRadialMenu = false
+                            }
+                        },
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.2)) {
+                                showRadialMenu = false
+                            }
+                        }
+                    )
+                    .zIndex(500)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 zoomIndicator
@@ -128,27 +177,191 @@ struct PaneCanvasView: View {
                 await loadPaneThinkspace(in: geo.size)
             }
             .onChange(of: geo.size) { _, newSize in
+                paneSize = newSize
                 guard !hasInitializedViewport, hasRenderableContent else { return }
                 applyInitialViewport(in: newSize)
             }
-        }
-        .onAppear {
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
-                if event.keyCode == 49 { // space bar
-                    let pressed = event.type == .keyDown
-                    if pressed != isSpaceHeld {
-                        isSpaceHeld = pressed
-                    }
-                }
-                return event
+            .onAppear {
+                paneSize = geo.size
             }
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { paneFrame = geo.frame(in: .global) }
+                    .onChange(of: geo.size) { _, _ in paneFrame = geo.frame(in: .global) }
+            }
+        )
+        .onAppear {
+            setupKeyMonitor()
+            setupRightClickMonitor()
         }
         .onDisappear {
-            if let monitor = keyMonitor {
-                NSEvent.removeMonitor(monitor)
-                keyMonitor = nil
+            removeKeyMonitor()
+            removeRightClickMonitor()
+        }
+    }
+
+    // MARK: - Event Monitors
+
+    private func setupKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
+            if event.keyCode == 49 { // space bar
+                let pressed = event.type == .keyDown
+                if pressed != isSpaceHeld {
+                    isSpaceHeld = pressed
+                }
             }
-            isSpaceHeld = false
+            return event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+        isSpaceHeld = false
+    }
+
+    private func setupRightClickMonitor() {
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            guard let window = event.window else { return event }
+
+            let windowPoint = event.locationInWindow
+            let windowHeight = window.frame.height
+
+            // Convert to SwiftUI coordinates (flip Y)
+            let screenPoint = CGPoint(
+                x: windowPoint.x,
+                y: windowHeight - windowPoint.y
+            )
+
+            // Check if click is within this pane's frame (global coordinates)
+            // paneFrame uses SwiftUI's .global coordinate space (origin at top-left)
+            guard paneFrame.width > 0, paneFrame.height > 0 else { return event }
+
+            // Convert pane frame from SwiftUI global to window coordinates
+            // SwiftUI .global has origin at top-left of window content area
+            let inPane = screenPoint.x >= paneFrame.minX
+                && screenPoint.x <= paneFrame.maxX
+                && screenPoint.y >= paneFrame.minY
+                && screenPoint.y <= paneFrame.maxY
+
+            guard inPane else { return event }
+
+            // Convert to pane-local coordinates for menu positioning
+            let paneLocalPoint = CGPoint(
+                x: screenPoint.x - paneFrame.minX,
+                y: screenPoint.y - paneFrame.minY
+            )
+
+            radialMenuPosition = paneLocalPoint
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                showRadialMenu = true
+            }
+
+            return nil // Consume the event
+        }
+    }
+
+    private func removeRightClickMonitor() {
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitor = nil
+        }
+    }
+
+    // MARK: - Radial Menu Actions
+
+    private func handleRadialAction(_ action: RadialAction) {
+        let canvasPosition = paneViewportTransform.screenToCanvas(radialMenuPosition)
+
+        switch action.type {
+        case .createNote:
+            createNoteBlock(at: canvasPosition)
+        case .createStickyNote:
+            createStickyNoteBlock(at: canvasPosition)
+        case .createContent:
+            createEntityBlock(type: .content, at: canvasPosition)
+        case .createIdea:
+            createEntityBlock(type: .idea, at: canvasPosition)
+        case .createConnection:
+            createEntityBlock(type: .connection, at: canvasPosition)
+        case .createResearch:
+            createEntityBlock(type: .research, at: canvasPosition)
+        case .createTask:
+            createEntityBlock(type: .task, at: canvasPosition)
+        default:
+            break
+        }
+    }
+
+    // MARK: - Block Creation
+
+    private func createNoteBlock(at position: CGPoint) {
+        Task { @MainActor in
+            do {
+                let newAtom = Atom.new(type: .note)
+                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                    var mutableAtom = newAtom
+                    try mutableAtom.insert(db)
+                    return db.lastInsertedRowID
+                }
+                var block = CanvasBlock.noteBlock(position: position)
+                block.entityId = atomId
+                block.entityUuid = newAtom.uuid
+                await spatialEngine.addBlock(block, persist: true)
+            } catch {
+                // Fallback without DB
+                let block = CanvasBlock.noteBlock(position: position)
+                await spatialEngine.addBlock(block, persist: true)
+            }
+        }
+    }
+
+    private func createStickyNoteBlock(at position: CGPoint) {
+        Task { @MainActor in
+            let block = CanvasBlock.stickyNoteBlock(position: position)
+            await spatialEngine.addBlock(block, persist: true)
+        }
+    }
+
+    private func createEntityBlock(type: EntityType, at position: CGPoint) {
+        Task { @MainActor in
+            do {
+                let atomType: AtomType = {
+                    switch type {
+                    case .idea: return .idea
+                    case .content: return .content
+                    case .connection: return .connection
+                    case .research: return .research
+                    case .task: return .task
+                    default: return .note
+                    }
+                }()
+
+                let newAtom = Atom.new(type: atomType)
+                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                    var mutableAtom = newAtom
+                    try mutableAtom.insert(db)
+                    return db.lastInsertedRowID
+                }
+
+                let block = CanvasBlock(
+                    position: position,
+                    size: CGSize(width: 280, height: 200),
+                    entityType: type,
+                    entityId: atomId,
+                    entityUuid: newAtom.uuid,
+                    title: "New \(type)",
+                    subtitle: nil,
+                    metadata: ["created": ISO8601DateFormatter().string(from: Date())]
+                )
+                await spatialEngine.addBlock(block, persist: true)
+            } catch {
+                print("❌ PaneCanvasView: Failed to create \(type) block: \(error)")
+            }
         }
     }
 

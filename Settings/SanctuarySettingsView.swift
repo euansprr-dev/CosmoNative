@@ -199,7 +199,7 @@ struct SanctuarySettingsView: View {
                 case .cosmoAI:
                     CosmoAISettingsTab()
                 case .shortcuts:
-                    shortcutsTab
+                    ShortcutsSettingsTab()
                 case .about:
                     aboutTab
                 }
@@ -397,39 +397,6 @@ struct SanctuarySettingsView: View {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // MARK: - Shortcuts Tab
-    // ═══════════════════════════════════════════════════════════════
-
-    private var shortcutsTab: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Keyboard Shortcuts")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-
-            Text("Quick reference for all shortcuts")
-                .font(DS.navTitle)
-                .foregroundStyle(DS.textMuted)
-
-            VStack(spacing: 0) {
-                shortcutRow(keys: "\u{2318}K", description: "Open Command Palette")
-                shortcutRow(keys: HotkeyManager.shared.currentHotkey.displayName, description: "Activate Voice")
-                shortcutRow(keys: "\u{2318}N", description: "New Idea")
-                shortcutRow(keys: "\u{2318}T", description: "New Task")
-                shortcutRow(keys: "Esc", description: "Close Panel / Cancel")
-            }
-            .background(
-                RoundedRectangle(cornerRadius: DS.radiusMedium)
-                    .fill(DS.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusMedium)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    )
-            )
-            .clipShape(.rect(cornerRadius: DS.radiusMedium))
-
-            Spacer()
-        }
-    }
 
     // ═══════════════════════════════════════════════════════════════
     // MARK: - About Tab
@@ -947,33 +914,6 @@ struct SanctuarySettingsView: View {
         default: return ""
         }
     }
-    // MARK: - Shortcuts Tab Components
-    // ═══════════════════════════════════════════════════════════════
-
-    @ViewBuilder
-    private func shortcutRow(keys: String, description: String) -> some View {
-        HStack {
-            Text(keys)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(DS.accent)
-                .frame(width: 100, alignment: .leading)
-
-            Text(description)
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-
-            Spacer()
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.vertical, DS.space12)
-        .overlay(
-            Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // MARK: - Status Badge
     // ═══════════════════════════════════════════════════════════════

@@ -302,6 +302,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         guard let textView = scrollView.documentView as? CosmoTextView else { return }
         scrollView.forwardsScrollEvents = !scrollsInternally
         context.coordinator.parent = self
+        // Flag that we're inside SwiftUI's layout pass — delegate callbacks must not
+        // write @Binding values synchronously (causes "Modifying state during view update").
+        context.coordinator.isUpdatingFromSwiftUI = true
+        defer { context.coordinator.isUpdatingFromSwiftUI = false }
         configureTextView(textView, context: context, isInitial: false)
 
         // Skip text storage replacement when the change originated from user typing —
@@ -494,8 +498,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private var hasAppliedHighlights = false
         /// Guards against updateNSView round-trip when change originated from user typing
         var isUpdatingFromTextView = false
+        /// Guards against delegate callbacks writing bindings during SwiftUI's layout pass
+        var isUpdatingFromSwiftUI = false
         private var deferredSyncWorkItem: DispatchWorkItem?
         private var lastReportedHeight: CGFloat = 0
+        private var lastObservedFrameWidth: CGFloat = 0
         private var selectionChangeWorkItem: DispatchWorkItem?
         /// Grace period after opening a menu — ignores auto-scroll dismiss
         private var menuOpenedAt: CFAbsoluteTime = 0
@@ -575,8 +582,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         @objc private func handleFrameChange(_ notification: Notification) {
-            guard let textView = textViewReference else { return }
-            // Text reflows when width changes (e.g. pane open/close) — re-measure height
+            guard let textView = textViewReference,
+                  let scrollView = notification.object as? NSScrollView else { return }
+            let newWidth = scrollView.frame.width
+            guard abs(newWidth - lastObservedFrameWidth) > 0.5 else {
+                return
+            }
+            lastObservedFrameWidth = newWidth
             notifyContentHeightChange(for: textView)
         }
 
@@ -639,16 +651,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? CosmoTextView else { return }
+            // Skip when triggered by setAttributedString inside updateNSView —
+            // writing bindings here would cause "Modifying state during view update".
+            guard !isUpdatingFromSwiftUI else { return }
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
 
             let text = textView.string
             let cursorLocation = textView.selectedRange().location
-
-            Task {
-                await TelepathyEngine.shared.handleTypingInput(text, cursorPosition: cursorLocation)
-            }
 
             handleMentionState(in: textView, text: text, cursorLocation: cursorLocation)
             handleSlashState(in: textView, text: text, cursorLocation: cursorLocation)
@@ -728,6 +739,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard let textView = notification.object as? CosmoTextView else { return }
             normalizeSingleLineViewport(for: textView)
             let selectedRange = textView.selectedRange()
+
+            // Skip binding writes when called from updateNSView (e.g. setAttributedString
+            // triggers selection change) — writing state here causes "Modifying state
+            // during view update" and layout thrashing.
+            guard !isUpdatingFromSwiftUI else { return }
 
             parent.cursorPosition = selectedRange.location
 
@@ -1664,6 +1680,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             parent.plainText = textView.string
             parent.cursorPosition = textView.selectedRange().location
 
+            // Immediately resize AppKit frame so there's no visual gap
+            // between text insertion and container resize (the deferred
+            // notifyContentHeightChange fires 50ms later for the SwiftUI callback,
+            // but AppKit needs to match right now to prevent a visible glitch).
+            resizeAppKitFrameIfNeeded(for: textView)
+
             // Coalesce expensive attributedText sync + height measurement.
             // Fires after 50ms of inactivity — fast enough to feel instant,
             // slow enough to skip during rapid typing bursts.
@@ -1679,8 +1701,38 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
 
+        /// Lightweight AppKit-only resize — ensures the NSTextView + CosmoScrollView
+        /// frame matches the current text layout immediately, without firing the
+        /// SwiftUI height callback. This prevents visual glitches on newline insertion
+        /// where AppKit has already laid out the new line but SwiftUI's frame constraint
+        /// hasn't caught up yet (the SwiftUI callback is deferred to the next run loop
+        /// inside `notifyContentHeightChange`).
+        private func resizeAppKitFrameIfNeeded(for textView: NSTextView) {
+            guard !parent.scrollsInternally,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  let scrollView = textView.enclosingScrollView as? CosmoScrollView else { return }
+
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let measuredHeight = measuredSingleLineContentHeight(for: textView)
+                ?? ceil(usedRect.height + (textView.textContainerInset.height * 2))
+            let newHeight = max(0, measuredHeight)
+
+            let currentWidth = max(scrollView.contentSize.width, textView.frame.width)
+            if textView.frame.height != newHeight || abs(textView.frame.width - currentWidth) > 0.5 {
+                textView.setFrameSize(NSSize(width: currentWidth, height: newHeight))
+            }
+            if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
+                scrollView.intrinsicHeight = newHeight
+                scrollView.invalidateIntrinsicContentSize()
+            }
+        }
+
         fileprivate func notifyContentHeightChange(for textView: NSTextView) {
-            guard let callback = parent.onContentHeightChange else { return }
+            guard let callback = parent.onContentHeightChange else {
+                return
+            }
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer else {
                 return
@@ -1690,14 +1742,17 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if !parent.scrollsInternally,
                let scrollView = textView.enclosingScrollView as? CosmoScrollView {
                 let targetWidth = max(scrollView.contentSize.width, 1)
-                let targetContainerWidth = parent.singleLine ? CGFloat.greatestFiniteMagnitude : targetWidth
-                if abs(textContainer.containerSize.width - targetContainerWidth) > 0.5 {
-                    textContainer.containerSize = NSSize(
-                        width: targetContainerWidth,
-                        height: parent.singleLine
-                            ? parent.resolvedSingleLineHeight()
-                            : CGFloat.greatestFiniteMagnitude
-                    )
+                // For singleLine editors, override container width to prevent wrapping.
+                // For multi-line editors, widthTracksTextView handles the container width
+                // automatically — do NOT set it manually (the double-change breaks layout).
+                if parent.singleLine {
+                    let targetContainerWidth = CGFloat.greatestFiniteMagnitude
+                    if abs(textContainer.containerSize.width - targetContainerWidth) > 0.5 {
+                        textContainer.containerSize = NSSize(
+                            width: targetContainerWidth,
+                            height: parent.resolvedSingleLineHeight()
+                        )
+                    }
                 }
                 if abs(textView.frame.width - targetWidth) > 0.5 {
                     textView.setFrameSize(NSSize(width: targetWidth, height: max(textView.frame.height, 1)))
@@ -1706,8 +1761,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
             let measuredHeight = measuredSingleLineContentHeight(for: textView)
-                ?? ceil(layoutManager.usedRect(for: textContainer).height + (textView.textContainerInset.height * 2))
+                ?? ceil(usedRect.height + (textView.textContainerInset.height * 2))
             let minimum: CGFloat
             if parent.singleLine {
                 minimum = parent.resolvedSingleLineHeight()
@@ -1717,6 +1773,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 minimum = 0
             }
             let newHeight = max(minimum, measuredHeight)
+
             if !parent.scrollsInternally,
                let scrollView = textView.enclosingScrollView as? CosmoScrollView {
                 let currentWidth = nonScrollingViewportWidth ?? max(scrollView.contentSize.width, textView.frame.width)
@@ -1725,13 +1782,27 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 if abs((scrollView.intrinsicHeight ?? 0) - newHeight) > 1.0 {
                     scrollView.intrinsicHeight = newHeight
-                    scrollView.invalidateIntrinsicContentSize()
+                    // Defer invalidation when called during SwiftUI's layout pass
+                    // to avoid "Modifying state during view update" re-entrancy.
+                    if isUpdatingFromSwiftUI {
+                        DispatchQueue.main.async {
+                            scrollView.invalidateIntrinsicContentSize()
+                        }
+                    } else {
+                        scrollView.invalidateIntrinsicContentSize()
+                    }
                 }
             }
             // Only notify when height changes by >1pt to prevent sub-pixel jitter
-            guard abs(newHeight - lastReportedHeight) > 1.0 else { return }
+            guard abs(newHeight - lastReportedHeight) > 1.0 else {
+                return
+            }
             lastReportedHeight = newHeight
-            callback(newHeight)
+            // Defer callback to next run loop — notifyContentHeightChange may be called
+            // from makeNSView/updateNSView during SwiftUI's layout pass.
+            DispatchQueue.main.async {
+                callback(newHeight)
+            }
         }
 
         fileprivate func normalizeSingleLineViewport(for textView: NSTextView) {

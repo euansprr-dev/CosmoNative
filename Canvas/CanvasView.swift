@@ -723,9 +723,10 @@ struct CanvasView: View {
                     NotificationCenter.default.post(name: .blurAllBlocks, object: nil)
                 }
             }
-            .simultaneousGesture(
-                // Pan gesture — simultaneous so it doesn't block tap-to-deselect
-                // minimumDistance: 10 gives taps room to register before becoming drags
+            .gesture(
+                // Pan gesture — regular (not simultaneous) so ScrollViews inside
+                // clusters and block drag gestures take priority over canvas panning.
+                // Tap-to-deselect is a separate .onTapGesture and is unaffected.
                 DragGesture(minimumDistance: 10)
                     .updating($panOffset) { value, state, _ in
                         // Store raw translation - will be scaled when applied
@@ -1925,15 +1926,26 @@ struct CanvasView: View {
     // MARK: - Block Metadata Update Handler
     private func handleUpdateBlockMetadata(notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let blockId = userInfo["blockId"] as? String,
               let metadata = userInfo["metadata"] as? [String: String] else {
             return
         }
 
+        // Match by blockId or entityUuid (entityUuid used by SwipeProcessingService after analysis)
+        let blockId = userInfo["blockId"] as? String
+        let entityUuid = userInfo["entityUuid"] as? String
+        guard blockId != nil || entityUuid != nil else { return }
+
         Task { @MainActor in
-            guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-                return
+            let blockIndex: Int?
+            if let blockId {
+                blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId })
+            } else if let entityUuid {
+                blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == entityUuid })
+            } else {
+                blockIndex = nil
             }
+
+            guard let blockIndex else { return }
 
             for (key, value) in metadata {
                 spatialEngine.blocks[blockIndex].metadata[key] = value
@@ -2102,10 +2114,19 @@ struct CanvasView: View {
                 print("💡 Created idea in database: \(idea.title ?? "Untitled")")
 
             case .note:
-                // Notes are saved as metadata on the block, not as separate entities
+                // Notes now have backing atoms — update both block metadata and atom
                 if let index = spatialEngine.blocks.firstIndex(where: { $0.id == block.id }) {
                     spatialEngine.blocks[index].metadata["content"] = content
                     await spatialEngine.saveBlock(spatialEngine.blocks[index])
+                }
+                // Also update the backing atom if it exists
+                if block.entityId > 0 {
+                    try await CosmoDatabase.shared.asyncWrite { db in
+                        try db.execute(
+                            sql: "UPDATE atoms SET body = ?, updated_at = ?, _local_version = _local_version + 1 WHERE id = ?",
+                            arguments: [content, ISO8601DateFormatter().string(from: Date()), block.entityId]
+                        )
+                    }
                 }
                 print("📝 Saved note content")
 
@@ -2168,10 +2189,9 @@ struct CanvasView: View {
 
         var screenPosition = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
         if let pos = userInfo["position"] as? CGPoint {
-            // Convert from window coordinates to canvas-local coordinates
-            // by subtracting the full sidebar footprint (includes floating margins)
-            let sidebarWidth = crossDragManager.sidebarTotalWidth
-            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
+            // Position is already in window coordinates, which matches the canvas
+            // coordinate space (canvas fills full window width, extending behind sidebar)
+            screenPosition = pos
         }
 
         // Convert screen position to canvas position (accounting for zoom)
@@ -2744,8 +2764,7 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            let sidebarWidth = crossDragManager.sidebarTotalWidth
-            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
+            screenPosition = pos
         }
 
         // Convert screen position to canvas position (accounting for zoom)
@@ -2774,21 +2793,35 @@ struct CanvasView: View {
 
         if let userInfo = notification.userInfo,
            let pos = userInfo["position"] as? CGPoint {
-            let sidebarWidth = crossDragManager.sidebarTotalWidth
-            screenPosition = CGPoint(x: pos.x - sidebarWidth, y: pos.y)
+            screenPosition = pos
         }
 
         // Convert screen position to canvas position (accounting for zoom)
         let canvasPosition = screenToCanvasPosition(screenPosition)
 
-        // Create the note block
-        let block = CanvasBlock.noteBlock(position: canvasPosition)
-
         Task {
-            await spatialEngine.addBlock(block, persist: true)
-        }
+            do {
+                // Always create a backing atom so saveNote() UPDATE never silently fails
+                let newAtom = Atom.new(type: .note)
+                let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
+                    var mutableAtom = newAtom
+                    try mutableAtom.insert(db)
+                    return db.lastInsertedRowID
+                }
 
-        print("📝 Created note block at \(canvasPosition)")
+                var block = CanvasBlock.noteBlock(position: canvasPosition)
+                block.entityId = atomId
+                block.entityUuid = newAtom.uuid
+
+                await spatialEngine.addBlock(block, persist: true)
+                print("📝 Created note block at \(canvasPosition) with atom \(newAtom.uuid)")
+            } catch {
+                // Fallback: create without atom (legacy behavior)
+                let block = CanvasBlock.noteBlock(position: canvasPosition)
+                await spatialEngine.addBlock(block, persist: true)
+                print("📝 Created note block at \(canvasPosition) (no atom: \(error))")
+            }
+        }
     }
 
     // MARK: - Block Removal
@@ -3605,15 +3638,16 @@ struct CanvasView: View {
             )
             let metadataJson = try? JSONEncoder().encode(imageMeta)
             let metadataString = metadataJson.flatMap { String(data: $0, encoding: .utf8) }
-            let atom = Atom.new(
+            let atomToInsert = Atom.new(
                 type: .image,
                 title: originalFilename ?? "Image",
                 body: result.path,
                 metadata: metadataString
             )
-            try await CosmoDatabase.shared.asyncWrite { db in
-                var mutableAtom = atom
-                try mutableAtom.insert(db)
+            let atom = try await CosmoDatabase.shared.asyncWrite { db in
+                var inserted = atomToInsert
+                try inserted.insert(db)
+                return inserted
             }
             let position = CGPoint(
                 x: canvasSize.width / 2 - canvasOffset.width,
@@ -3622,7 +3656,7 @@ struct CanvasView: View {
             let block = CanvasBlock.fromAtom(atom, position: position)
             await spatialEngine.addBlock(block, persist: true)
             selectedBlockId = block.id
-            
+
             print("📋 Pasted image → canvas block (uuid: \(atom.uuid))")
         } catch {
             print("⚠️ [CanvasView] Failed to paste image: \(error)")

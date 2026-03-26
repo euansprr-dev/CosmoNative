@@ -184,6 +184,8 @@ struct RichTextEditor: View {
             )
             .frame(maxWidth: .infinity)
             .frame(height: (!scrollsInternally && measuredContentHeight > 1) ? measuredContentHeight : nil)
+            // Prevent overlay show/hide animations from spring-animating the editor frame
+            .transaction { $0.animation = nil }
             // Ensure the entire editor area is clickable, even when empty
             .contentShape(Rectangle())
 

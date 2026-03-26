@@ -27,6 +27,7 @@ struct NoteBlockView: View {
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
+    @State private var saveClosed = false
 
     // Prevents GRDB observation updates from triggering auto-save
     @State private var isSyncingFromDB = false
@@ -70,6 +71,7 @@ struct NoteBlockView: View {
         }
         .onDisappear {
             autoSaveTask?.cancel()
+            saveClosed = true  // Block any in-flight async writes from overwriting sync save
             saveNoteSync()
             observationCancellable?.cancel()
         }
@@ -425,36 +427,97 @@ struct NoteBlockView: View {
         // Also update the atom in the database (for blocks linked to entities)
         let uuid = trackedEntityUuid
         if !uuid.isEmpty {
+            let titleDoc = noteTitleDocument
+            let bodyDoc = noteBodyDocument
+            let titleText = noteTitleText
+            let bodyText = noteText
+            let blockId = block.id
             Task {
+                // Skip if sync save already ran on close
+                guard !saveClosed else { return }
                 do {
-                    try await CosmoDatabase.shared.asyncWrite { db in
+                    let createdAtomId: Int64? = try await CosmoDatabase.shared.asyncWrite { db in
                         var existingMetadata: String?
-                        if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                            existingMetadata = row["metadata"]
-                        }
+                        let atomExists = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
+                        existingMetadata = atomExists?["metadata"]
+
                         let fields = RichDocumentPersistence.writeAtomDocuments(
                             existingMetadata: existingMetadata,
-                            titleDocument: noteTitleDocument,
-                            bodyDocument: noteBodyDocument
+                            titleDocument: titleDoc,
+                            bodyDocument: bodyDoc
                         )
-                        try db.execute(
-                            sql: """
-                            UPDATE atoms
-                            SET title = ?,
-                                body = ?,
-                                metadata = ?,
-                                updated_at = ?,
-                                _local_version = _local_version + 1
-                            WHERE uuid = ?
-                            """,
-                            arguments: [
-                                fields.title,
-                                fields.body ?? "",
-                                fields.metadata,
-                                ISO8601DateFormatter().string(from: Date()),
-                                uuid
-                            ]
-                        )
+                        let now = ISO8601DateFormatter().string(from: Date())
+
+                        if atomExists != nil {
+                            // Atom exists — update it
+                            try db.execute(
+                                sql: """
+                                UPDATE atoms
+                                SET title = ?,
+                                    body = ?,
+                                    metadata = ?,
+                                    updated_at = ?,
+                                    _local_version = _local_version + 1,
+                                    _local_pending = 1
+                                WHERE uuid = ?
+                                """,
+                                arguments: [
+                                    fields.title,
+                                    fields.body ?? "",
+                                    fields.metadata,
+                                    now,
+                                    uuid
+                                ]
+                            )
+                            return nil
+                        } else {
+                            // No atom yet (legacy freeform block) — create one
+                            try db.execute(
+                                sql: """
+                                INSERT INTO atoms (uuid, type, title, body, metadata, created_at, updated_at, is_deleted, _local_version, _server_version, _sync_version)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0)
+                                """,
+                                arguments: [
+                                    uuid,
+                                    AtomType.note.rawValue,
+                                    fields.title ?? titleText,
+                                    fields.body ?? bodyText,
+                                    fields.metadata,
+                                    now,
+                                    now
+                                ]
+                            )
+                            let atomId = db.lastInsertedRowID
+                            try db.execute(
+                                sql: "UPDATE canvas_blocks SET entity_id = ? WHERE entity_uuid = ?",
+                                arguments: [atomId, uuid]
+                            )
+                            return atomId
+                        }
+                    }
+                    // If a new atom was created, update in-memory tracking
+                    if let atomId = createdAtomId {
+                        await MainActor.run {
+                            trackedEntityId = atomId
+                            NotificationCenter.default.post(
+                                name: .updateBlockEntity,
+                                object: nil,
+                                userInfo: [
+                                    "blockId": blockId,
+                                    "entityId": atomId,
+                                    "entityUuid": uuid
+                                ]
+                            )
+                        }
+                    }
+                    // Sync: queue for Supabase push so notes don't only live locally
+                    if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                        let operation = createdAtomId != nil ? "INSERT" : "UPDATE"
+                        if operation == "INSERT" {
+                            await ChangeTracker.shared.trackInsert(table: "atoms", entity: updatedAtom)
+                        } else {
+                            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                        }
                     }
                 } catch {
                     print("NoteBlock: Failed to save to atom: \(error)")
@@ -471,33 +534,59 @@ struct NoteBlockView: View {
 
         do {
             try CosmoDatabase.shared.write { db in
-                var existingMetadata: String?
-                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                    existingMetadata = row["metadata"]
-                }
+                let atomExists = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
+                let existingMetadata: String? = atomExists?["metadata"]
+
                 let fields = RichDocumentPersistence.writeAtomDocuments(
                     existingMetadata: existingMetadata,
                     titleDocument: noteTitleDocument,
                     bodyDocument: noteBodyDocument
                 )
-                try db.execute(
-                    sql: """
-                    UPDATE atoms
-                    SET title = ?,
-                        body = ?,
-                        metadata = ?,
-                        updated_at = ?,
-                        _local_version = _local_version + 1
-                    WHERE uuid = ?
-                    """,
-                    arguments: [
-                        fields.title,
-                        fields.body ?? "",
-                        fields.metadata,
-                        ISO8601DateFormatter().string(from: Date()),
-                        uuid
-                    ]
-                )
+                let now = ISO8601DateFormatter().string(from: Date())
+
+                if atomExists != nil {
+                    try db.execute(
+                        sql: """
+                        UPDATE atoms
+                        SET title = ?,
+                            body = ?,
+                            metadata = ?,
+                            updated_at = ?,
+                            _local_version = _local_version + 1
+                        WHERE uuid = ?
+                        """,
+                        arguments: [
+                            fields.title,
+                            fields.body ?? "",
+                            fields.metadata,
+                            now,
+                            uuid
+                        ]
+                    )
+                } else {
+                    // Legacy freeform block — create atom on close
+                    try db.execute(
+                        sql: """
+                        INSERT INTO atoms (uuid, type, title, body, metadata, created_at, updated_at, is_deleted, _local_version, _server_version, _sync_version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, 0)
+                        """,
+                        arguments: [
+                            uuid,
+                            AtomType.note.rawValue,
+                            fields.title ?? noteTitleText,
+                            fields.body ?? noteText,
+                            fields.metadata,
+                            now,
+                            now
+                        ]
+                    )
+                }
+            }
+            // Sync: queue for Supabase push
+            Task {
+                if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                }
             }
         } catch {
             print("NoteBlock: sync save failed: \(error)")

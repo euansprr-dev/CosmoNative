@@ -95,6 +95,9 @@ final class RealtimeSyncService {
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
             guard isFromCloud(data) else { return }
             guard !isLocallyPending(uuid: uuid) else { return }
+            // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
+            guard !hasSyncFence(uuid: uuid) else { return }
+            guard !AtomRepository.shared.isBeingEdited(uuid) else { return }
             let localData = convertJSONFieldsFromPostgres(data)
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
@@ -116,6 +119,9 @@ final class RealtimeSyncService {
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
             guard isFromCloud(data) else { return }
             guard !isLocallyPending(uuid: uuid) else { return }
+            // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
+            guard !hasSyncFence(uuid: uuid) else { return }
+            guard !AtomRepository.shared.isBeingEdited(uuid) else { return }
             let localData = convertJSONFieldsFromPostgres(data)
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
@@ -160,8 +166,6 @@ final class RealtimeSyncService {
     /// Skip changes for atoms that have pending local modifications.
     /// The local version is authoritative until it's pushed and confirmed.
     private func isLocallyPending(uuid: String) -> Bool {
-        // Check sync fence
-        // Check _local_pending flag
         let hasPending = try? CosmoDatabase.shared.dbQueue.read { db in
             try Row.fetchOne(
                 db,
@@ -170,6 +174,20 @@ final class RealtimeSyncService {
             )
         }
         return hasPending != nil
+    }
+
+    /// FIX 3: Check if a sync fence is active for this atom.
+    /// Prevents Realtime from overwriting atoms we just pushed (echo loop protection).
+    private func hasSyncFence(uuid: String) -> Bool {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let fence = try? CosmoDatabase.shared.dbQueue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",
+                arguments: [uuid, now]
+            )
+        }
+        return fence != nil
     }
 
     // MARK: - Converters

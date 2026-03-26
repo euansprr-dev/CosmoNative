@@ -282,7 +282,6 @@ enum CosmoNotification {
 
     // MARK: - AI Notifications
     enum AI {
-        static let hotContextUpdated = Notification.Name("com.cosmo.ai.hotContextUpdated")
         static let liveFlashTriggered = Notification.Name("com.cosmo.ai.liveFlashTriggered")
         static let liveFlashResults = Notification.Name("com.cosmo.ai.liveFlashResults")
 

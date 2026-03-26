@@ -736,12 +736,11 @@ class IdeaFocusModeViewModel: ObservableObject {
     func updateStatus(_ status: IdeaStatus) async {
         selectedStatus = status
 
-        var updatedAtom = idea.withUpdatedIdeaMetadata { meta in
+        let updatedAtom = idea.withUpdatedIdeaMetadata { meta in
             meta.ideaStatus = status
             meta.statusChangedAt = ISO8601DateFormatter().string(from: Date())
         }
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
-        updatedAtom.localVersion += 1
+        // Note: AtomRepository.update() handles updatedAt and localVersion internally
 
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -766,9 +765,7 @@ class IdeaFocusModeViewModel: ObservableObject {
             meta.hooks = editableHooks.isEmpty ? nil : editableHooks
             meta.ideaDescription = editableDescription.isEmpty ? nil : editableDescription
         }
-
-        updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
-        updatedAtom.localVersion += 1
+        // Note: AtomRepository.update() handles updatedAt and localVersion internally
 
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
@@ -809,6 +806,12 @@ class IdeaFocusModeViewModel: ObservableObject {
 
         do {
             idea = try AtomRepository.shared.updateSync(updatedAtom)
+            // Sync: queue for Supabase push so idea data syncs to cloud
+            Task {
+                if let savedAtom = try? await AtomRepository.shared.fetch(uuid: idea.uuid) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: savedAtom)
+                }
+            }
         } catch {
             print("IdeaFocusMode: sync save failed: \(error)")
         }

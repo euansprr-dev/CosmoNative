@@ -424,6 +424,34 @@ final class SwipeProcessingService {
             await SwipeFileEngine.cacheCarouselThumbnail(items: items, shortcode: shortcode)
         }
 
+        // Update canvas block metadata with analysis results (hookType, hookScore)
+        // so the block on the canvas reflects the completed analysis
+        var blockMetadataUpdate: [String: String] = [:]
+        if let hookType = atom.swipeAnalysis?.hookType?.rawValue {
+            blockMetadataUpdate["hookType"] = hookType
+        }
+        if let hookScore = atom.swipeAnalysis?.hookScore {
+            blockMetadataUpdate["hookScore"] = String(format: "%.1f", hookScore)
+        }
+        if let hook = atom.hook {
+            blockMetadataUpdate["hook"] = hook
+        }
+        if !blockMetadataUpdate.isEmpty {
+            // Find the canvas block for this atom and update its metadata
+            NotificationCenter.default.post(
+                name: .updateBlockMetadata,
+                object: nil,
+                userInfo: [
+                    "entityUuid": uuid,
+                    "metadata": blockMetadataUpdate
+                ]
+            )
+        }
+
+        // Notify gallery to reload — the atom now has complete analysis data
+        // (hookType, framework, emotional arc, etc.) replacing the "Pending" state
+        NotificationCenter.default.post(name: .researchCreated, object: nil)
+
         print("SwipeProcessingService: Processing complete for \(uuid) — \(finalSlides.count) slides")
     }
 }

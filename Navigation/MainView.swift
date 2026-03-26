@@ -1372,10 +1372,10 @@ struct MainView: View {
             }
 
             // Don't intercept right-clicks in the pane column — let the pane's own monitor handle them
+            // SplitPaneContainer fills the full window width (canvas extends behind sidebar),
+            // so pane column starts at windowWidth * mainSplitRatio + divider
             if paneManager.isActive {
-                let containerWidth = window.frame.width - sidebarTotalWidth
-                let mainContentWidth = containerWidth * paneManager.mainSplitRatio
-                let paneColumnStart = sidebarTotalWidth + mainContentWidth
+                let paneColumnStart = window.frame.width * paneManager.mainSplitRatio + 6
                 if screenPoint.x > paneColumnStart {
                     return event
                 }
@@ -1386,11 +1386,8 @@ struct MainView: View {
                 return event
             }
 
-            // Hit-test against tracked block frames (canvas-local coordinates)
-            let canvasLocalPoint = CGPoint(
-                x: screenPoint.x - sidebarTotalWidth,
-                y: screenPoint.y
-            )
+            // Hit-test against tracked block frames (canvas fills full window width)
+            let canvasLocalPoint = screenPoint
             if let hitBlockId = blockFrameTracker.hitTest(at: canvasLocalPoint) {
                 // Show block context menu
                 rightClickedBlockId = hitBlockId

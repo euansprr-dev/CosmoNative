@@ -749,9 +749,10 @@ struct FocusCanvasView: View {
                 entityId = atom.id ?? -1
                 entityUUID = atom.uuid
             case .note:
-                // Notes don't have a separate entity - they're just canvas blocks
-                entityId = -1
-                entityUUID = UUID().uuidString
+                // Notes always get a backing atom for reliable persistence
+                let atom = try await AtomRepository.shared.create(type: .note, title: title)
+                entityId = atom.id ?? -1
+                entityUUID = atom.uuid
             default:
                 entityId = -1
                 entityUUID = UUID().uuidString

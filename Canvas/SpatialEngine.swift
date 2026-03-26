@@ -98,7 +98,12 @@ class SpatialEngine: ObservableObject {
             var enrichedBlocks: [CanvasBlock] = []
             for block in loadedBlocks {
                 if block.entityType == .research || block.entityType == .image || block.entityType == .note {
-                    if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                    // Fetch atom by ID first, fall back to UUID (fixes blocks saved with entityId = -1)
+                    var atom = try? await AtomRepository.shared.fetch(id: block.entityId)
+                    if atom == nil, !block.entityUuid.isEmpty {
+                        atom = try? await AtomRepository.shared.fetch(uuid: block.entityUuid)
+                    }
+                    if let atom {
                         // Rebuild with proper metadata from atom, preserving DB position/id/pin state/size
                         let fromAtom = CanvasBlock.fromAtom(atom, position: block.position)
                         let enriched = CanvasBlock(

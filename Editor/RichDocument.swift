@@ -130,7 +130,14 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             case .bulletList:
                 prefix = "• "
             case .numberedList:
-                prefix = "\(index + 1). "
+                // Compute list-relative position (count consecutive .numberedList blocks before this one)
+                var listPosition = 1
+                var j = index - 1
+                while j >= 0 && blocks[j].kind == .numberedList {
+                    listPosition += 1
+                    j -= 1
+                }
+                prefix = "\(listPosition). "
             case .checklist:
                 prefix = (block.checked ?? false) ? "☑ " : "☐ "
             case .image:
@@ -280,7 +287,16 @@ enum RichDocumentSerializer {
                 )))
             }
 
-            let prefix = blockPrefix(for: block, listIndex: index)
+            // Compute list-relative position for numbered lists
+            var listPosition = 1
+            if block.kind == .numberedList {
+                var j = index - 1
+                while j >= 0 && document.blocks[j].kind == .numberedList {
+                    listPosition += 1
+                    j -= 1
+                }
+            }
+            let prefix = blockPrefix(for: block, listPosition: listPosition)
             if !prefix.isEmpty {
                 result.append(NSAttributedString(string: prefix, attributes: blockPrefixAttributes(
                     for: block,
@@ -569,7 +585,7 @@ enum RichDocumentSerializer {
         ])
     }
 
-    private static func blockPrefix(for block: RichBlock, listIndex: Int) -> String {
+    private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
         case .paragraph, .image:
             return ""
@@ -582,7 +598,7 @@ enum RichDocumentSerializer {
         case .bulletList:
             return "• "
         case .numberedList:
-            return "\(listIndex + 1). "
+            return "\(listPosition). "
         case .checklist:
             return (block.checked ?? false) ? "☑ " : "☐ "
         }

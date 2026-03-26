@@ -289,12 +289,16 @@ struct ConnectionBlockView: View {
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
                 await MainActor.run {
                     atom = loaded
-                    titleDocument = RichDocumentPersistence.loadAtomDocument(
-                        field: .title,
-                        metadata: loaded.metadata,
-                        fallbackPlainText: loaded.title ?? block.title
-                    )
-                    editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
+                    // Only update title if user hasn't started editing yet —
+                    // otherwise the async load overwrites what the user is typing
+                    if !isEditingTitle {
+                        titleDocument = RichDocumentPersistence.loadAtomDocument(
+                            field: .title,
+                            metadata: loaded.metadata,
+                            fallbackPlainText: loaded.title ?? block.title
+                        )
+                        editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
+                    }
                     parseSections(from: loaded)
                 }
             }
@@ -403,9 +407,13 @@ struct ConnectionBlockView: View {
         Task {
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
-                    sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
                     arguments: [json, flattenedBodyText, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
+            }
+            // Sync: queue for Supabase push
+            if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
             }
         }
 
@@ -441,9 +449,13 @@ struct ConnectionBlockView: View {
                     titleDocument: document
                 )
                 try db.execute(
-                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
                     arguments: [fields.title ?? newTitle, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
+            }
+            // Sync: queue for Supabase push
+            if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
             }
         }
     }

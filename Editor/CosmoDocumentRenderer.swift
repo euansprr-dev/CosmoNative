@@ -16,14 +16,14 @@ struct CosmoDocumentRenderer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(document.blocks) { block in
-                blockView(block)
+            ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
+                blockView(block, at: index)
             }
         }
     }
 
     @ViewBuilder
-    private func blockView(_ block: RichBlock) -> some View {
+    private func blockView(_ block: RichBlock, at index: Int) -> some View {
         switch block.kind {
         case .divider:
             Rectangle()
@@ -43,7 +43,7 @@ struct CosmoDocumentRenderer: View {
                     .foregroundColor(secondaryTextColor)
             }
         default:
-            inlineText(for: block)
+            inlineText(for: block, at: index)
                 .font(font(for: block))
                 .foregroundColor(textColor)
                 .lineLimit(lineLimit)
@@ -51,7 +51,7 @@ struct CosmoDocumentRenderer: View {
         }
     }
 
-    private func inlineText(for block: RichBlock) -> Text {
+    private func inlineText(for block: RichBlock, at index: Int) -> Text {
         let prefix: Text
         switch block.kind {
         case .quote:
@@ -59,7 +59,14 @@ struct CosmoDocumentRenderer: View {
         case .bulletList:
             prefix = Text("• ")
         case .numberedList:
-            prefix = Text("1. ")
+            // Compute list-relative position
+            var listPosition = 1
+            var j = index - 1
+            while j >= 0 && document.blocks[j].kind == .numberedList {
+                listPosition += 1
+                j -= 1
+            }
+            prefix = Text("\(listPosition). ")
         case .checklist:
             prefix = Text((block.checked ?? false) ? "☑ " : "☐ ")
         default:

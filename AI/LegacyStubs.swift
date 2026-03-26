@@ -700,49 +700,46 @@ enum SwipeStructureType: String, Codable, CaseIterable, Sendable {
     var displayName: String { rawValue.capitalized }
 }
 
-// MARK: - StreamingGardener Stub
+// MARK: - HotContext (retained from deleted TelepathyEngine — used by IntentClassifier, GeminiSynthesisEngine)
 
-/// Stub for deleted StreamingGardener
-@MainActor
-public class StreamingGardener: ObservableObject {
-    public static let shared = StreamingGardener()
+/// Observable state containing related entities from vector search
+public struct HotContext: Sendable {
+    public var relatedConnections: [VectorSearchResult] = []
+    public var relatedProjects: [VectorSearchResult] = []
+    public var relatedIdeas: [VectorSearchResult] = []
+    public var relatedTasks: [VectorSearchResult] = []
+    public var lastQuery: String = ""
+    public var lastUpdateTime: Date = Date()
+    public var searchLatencyMs: Double = 0
 
-    public init() {}
-
-    public func process(_ text: String) async -> String {
-        return text
+    public var topBeliefs: [String] {
+        relatedConnections.prefix(3).compactMap { $0.metadata?["beliefs"] }
     }
 
-    /// Process a chunk of streaming text with context
-    public func processChunk(_ chunk: Any, hotContext: Any?) async {
-        // Stub - no-op
+    public var topGoals: [String] {
+        relatedConnections.prefix(3).compactMap { $0.metadata?["goal"] }
     }
 
-    /// Execute hypotheses based on processed chunks with context
-    public func executeHypotheses(hotContext: Any?) async {
-        // Stub - no-op
-    }
-}
-
-// MARK: - AutocompleteService Stub
-
-/// Stub for deleted AutocompleteService
-@MainActor
-public class AutocompleteService: ObservableObject {
-    public static let shared = AutocompleteService()
-
-    @Published public var suggestions: [String] = []
-    @Published public var isLoading: Bool = false
-
-    public init() {}
-
-    public func getSuggestions(for text: String) async -> [String] {
-        return []
+    public var topProblems: [String] {
+        relatedConnections.prefix(3).compactMap { $0.metadata?["problem"] }
     }
 
-    /// Handle typing input for autocomplete with context
-    public func onTypingInput(_ text: String, cursorPosition: Int, hotContext: Any?) async {
-        // Stub - no-op
+    public var mostRelevantProject: VectorSearchResult? { relatedProjects.first }
+    public var mostRelevantConnection: VectorSearchResult? { relatedConnections.first }
+
+    public var hasRelatedEntities: Bool {
+        !relatedConnections.isEmpty || !relatedProjects.isEmpty ||
+        !relatedIdeas.isEmpty || !relatedTasks.isEmpty
+    }
+
+    public func entityIds(for type: String) -> [Int64] {
+        switch type.lowercased() {
+        case "connection": return relatedConnections.map { $0.entityId }
+        case "project": return relatedProjects.map { $0.entityId }
+        case "idea": return relatedIdeas.map { $0.entityId }
+        case "task": return relatedTasks.map { $0.entityId }
+        default: return []
+        }
     }
 }
 

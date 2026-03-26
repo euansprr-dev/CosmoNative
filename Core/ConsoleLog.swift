@@ -8,7 +8,6 @@ import os.log
 // MARK: - Console Log Subsystems
 
 public enum LogSubsystem: String, Sendable {
-    case telepathy = "TELEPATHY"
     case gardener = "GARDENER"
     case autocomplete = "AUTOCOMPLETE"
     case notification = "NOTIFICATION"

@@ -1133,9 +1133,15 @@ class ConnectionFocusModeViewModel: ObservableObject {
                     titleDocument: titleDocument
                 )
                 try db.execute(
-                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1 WHERE uuid = ?",
+                    sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
                     arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
+            }
+            // Sync: queue for Supabase push
+            Task {
+                if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                }
             }
         } catch {
             print("❌ Connection title flush failed: \(error)")
@@ -1162,7 +1168,12 @@ class ConnectionFocusModeViewModel: ObservableObject {
             var updatedAtom = atom
             updatedAtom.structured = json
             updatedAtom.body = state.flattenedBodyText
-            _ = try? AtomRepository.shared.updateSync(updatedAtom)
+            if let saved = try? AtomRepository.shared.updateSync(updatedAtom) {
+                // Sync: queue for Supabase push
+                Task {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: saved)
+                }
+            }
         }
     }
 

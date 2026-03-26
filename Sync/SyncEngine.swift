@@ -93,6 +93,9 @@ class SyncEngine: ObservableObject {
         // Refresh auth token before sync to prevent JWT expired errors
         await SupabaseAuthService.shared.refreshSessionIfNeeded()
 
+        // FIX 5: Housekeeping — remove expired sync fences to prevent unbounded table growth
+        await cleanupExpiredFences()
+
         syncState = .syncing
 
         // 1. Push local changes
@@ -114,7 +117,7 @@ class SyncEngine: ObservableObject {
             try SyncQueueItem
                 .filter(Column("status") == "pending")
                 .order(Column("created_at").asc)
-                .limit(50)
+                .limit(500)
                 .fetchAll(db)
         }
 
@@ -148,6 +151,16 @@ class SyncEngine: ObservableObject {
                         sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
                         arguments: [newStatus, newRetryCount, error.localizedDescription, item.id]
                     )
+
+                    // FIX 2 [P0]: If permanently failed, unblock remote updates.
+                    // Without this, _local_pending stays 1 forever and ALL future
+                    // Realtime/pull updates for this atom are silently dropped.
+                    if newStatus == "failed" {
+                        try db.execute(
+                            sql: "UPDATE \(item.tableName) SET _local_pending = 0 WHERE uuid = ?",
+                            arguments: [item.uuid]
+                        )
+                    }
                 }
             }
         }

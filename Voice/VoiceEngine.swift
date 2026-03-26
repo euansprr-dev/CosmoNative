@@ -73,8 +73,6 @@ class VoiceEngine: ObservableObject {
             guard let chunk = notification.userInfo?["chunk"] as? L1TranscriptChunk else { return }
             Task { @MainActor in
                 self?.partialTranscript = chunk.text
-                // Feed to TelepathyEngine for shadow search
-                await TelepathyEngine.shared.handleVoiceChunk(chunk)
             }
         }
 
@@ -372,8 +370,6 @@ class VoiceEngine: ObservableObject {
                                 } else {
                                     self?.partialTranscript = chunk.text
                                 }
-                                // Feed to TelepathyEngine for shadow search
-                                await TelepathyEngine.shared.handleVoiceChunk(chunk)
                             }
                         },
                         onSpeechStart: { print("🎙️ Speech detected") },

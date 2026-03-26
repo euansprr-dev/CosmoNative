@@ -327,6 +327,12 @@ struct ContentFocusModeView: View {
                 lastAIGeneratedDraft = content
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
+            // Flush View-local state to ViewModel before the ViewModel's termination
+            // handler calls writeToAtomSync() — onDisappear doesn't fire on app quit
+            viewModel.state.draftContent = localDraftContent
+            viewModel.state.richDraftDocument = draftDocument
+        }
         .onChange(of: viewModel.state.draftContent) { _, newValue in
             // Sync external draft updates (AI engine, tool executor) back to local state
             if newValue != localDraftContent {
@@ -1246,6 +1252,7 @@ class ContentFocusModeViewModel: ObservableObject {
             .publisher(for: .cosmoAppWillTerminate)
             .sink { [weak self] _ in
                 guard let self, !self.isClosed else { return }
+                self.writeSequence += 1  // Invalidate in-flight async writes
                 self.writeToAtomSync()
             }
     }
@@ -1456,7 +1463,8 @@ class ContentFocusModeViewModel: ObservableObject {
                         SET body = ?,
                             metadata = COALESCE(?, metadata),
                             updated_at = ?,
-                            _local_version = _local_version + 1
+                            _local_version = _local_version + 1,
+                            _local_pending = 1
                         WHERE uuid = ?
                         """,
                         arguments: [
@@ -1467,6 +1475,12 @@ class ContentFocusModeViewModel: ObservableObject {
                         ]
                     )
                     print("💾 Content focus: wrote to atom \(atomUUID) seq \(mySequence), rows affected: \(db.changesCount)")
+                }
+                // Sync: queue for Supabase push so content drafts don't only live locally
+                if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+                }) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
                 }
             } catch {
                 print("❌ Content focus: failed to write to atom: \(error)")
@@ -1499,7 +1513,8 @@ class ContentFocusModeViewModel: ObservableObject {
                     SET body = ?,
                         metadata = COALESCE(?, metadata),
                         updated_at = ?,
-                        _local_version = _local_version + 1
+                        _local_version = _local_version + 1,
+                        _local_pending = 1
                     WHERE uuid = ?
                     """,
                     arguments: [
@@ -1510,6 +1525,14 @@ class ContentFocusModeViewModel: ObservableObject {
                     ]
                 )
                 print("💾 Content focus: sync wrote to atom \(atomUUID), rows affected: \(db.changesCount)")
+            }
+            // Sync: queue for Supabase push
+            Task {
+                if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+                }) {
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                }
             }
         } catch {
             print("❌ Content focus: sync write failed: \(error)")
@@ -1527,6 +1550,7 @@ class ContentFocusModeViewModel: ObservableObject {
         phaseChangeCancellable?.cancel()
         phaseChangeCancellable = nil
         toolNotificationCancellables.removeAll()
+        writeSequence += 1  // Invalidate any in-flight async writes from writeToAtom()
         writeToAtomSync()
     }
 
@@ -1580,6 +1604,12 @@ class ContentFocusModeViewModel: ObservableObject {
                 }
             }
             print("💾 Content focus: persisted conversation (\(recentMessages.count) msgs) for \(atomUUID)")
+            // Sync: queue conversation history for Supabase push
+            if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
+                try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+            }) {
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+            }
         } catch {
             print("❌ Content focus: persistConversationDirect failed: \(error)")
         }

@@ -1589,6 +1589,29 @@ class CosmoDatabase: ObservableObject {
             print("✅ automation_rules table created")
         }
 
+        // FIX 1 [P0]: Create sync support tables that SyncEngine depends on
+        // sync_fence prevents echo loops; user_settings stores last pull timestamps
+        migrator.registerMigration("create_sync_support_tables") { db in
+            print("🔨 Creating sync support tables...")
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS sync_fence (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    expires_at INTEGER NOT NULL
+                )
+            """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_sync_fence_expires
+                ON sync_fence(expires_at)
+            """)
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT
+                )
+            """)
+            print("✅ sync_fence + user_settings tables created")
+        }
+
         return migrator
     }
 

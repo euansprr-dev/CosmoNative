@@ -92,6 +92,7 @@ struct StickyNoteBlockView: View {
 
     // Auto-save debouncing
     @State private var autoSaveTask: Task<Void, Never>?
+    @State private var saveClosed = false
 
     // Prevents GRDB observation updates from triggering auto-save
     @State private var isSyncingFromDB = false
@@ -210,6 +211,9 @@ struct StickyNoteBlockView: View {
             }
         }
         .onDisappear {
+            autoSaveTask?.cancel()
+            saveClosed = true
+            saveNoteSync()
             observationCancellable?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
@@ -375,6 +379,7 @@ struct StickyNoteBlockView: View {
         let uuid = block.entityUuid
         if !uuid.isEmpty {
             Task {
+                guard !saveClosed else { return }
                 do {
                     try await CosmoDatabase.shared.asyncWrite { db in
                         var existingMetadata: String?
@@ -392,7 +397,8 @@ struct StickyNoteBlockView: View {
                             SET body = ?,
                                 metadata = ?,
                                 updated_at = ?,
-                                _local_version = _local_version + 1
+                                _local_version = _local_version + 1,
+                                _local_pending = 1
                             WHERE uuid = ?
                             """,
                             arguments: [
@@ -407,6 +413,46 @@ struct StickyNoteBlockView: View {
                     print("StickyNote: Failed to save to atom: \(error)")
                 }
             }
+        }
+    }
+
+    /// Synchronous save — blocks until DB write completes.
+    /// Used on close to guarantee data is persisted before the block exits.
+    private func saveNoteSync() {
+        let uuid = block.entityUuid
+        guard !uuid.isEmpty else { return }
+
+        do {
+            try CosmoDatabase.shared.write { db in
+                var existingMetadata: String?
+                if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
+                    existingMetadata = row["metadata"]
+                }
+                let fields = RichDocumentPersistence.writeAtomDocuments(
+                    existingMetadata: existingMetadata,
+                    titleDocument: nil,
+                    bodyDocument: noteBodyDocument
+                )
+                try db.execute(
+                    sql: """
+                    UPDATE atoms
+                    SET body = ?,
+                        metadata = ?,
+                        updated_at = ?,
+                        _local_version = _local_version + 1,
+                        _local_pending = 1
+                    WHERE uuid = ?
+                    """,
+                    arguments: [
+                        fields.body ?? "",
+                        fields.metadata,
+                        ISO8601DateFormatter().string(from: Date()),
+                        uuid
+                    ]
+                )
+            }
+        } catch {
+            print("StickyNote: sync save failed: \(error)")
         }
     }
 

@@ -61,8 +61,9 @@ export function classifyIntent(text: string): AgentIntent {
     return 'plan';
   }
 
-  // Correct (non-task corrections — task delete/remove handled by plan above)
-  if (/delete|remove|rename|fix the/i.test(lower)) {
+  // Correct — only for atom/entity operations, not content revision feedback
+  // Narrow: requires "delete/remove [entity]" pattern, not bare "remove" anywhere
+  if (/^(delete|remove)\s+(this|the|that|my)\s+(atom|block|note|research|task|idea|content|connection|thinkspace)/i.test(lower) || /^rename\s/i.test(lower) || /^fix the (title|name|link)/i.test(lower)) {
     return 'correct';
   }
 

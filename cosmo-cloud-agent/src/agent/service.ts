@@ -69,13 +69,41 @@ async function summarizeOlderMessages(messages: AgentMessage[], chatId: string):
 // ============================================================
 
 function escalateIntent(intent: AgentIntent, messages: AgentMessage[]): AgentIntent {
-  if (intent !== 'query') return intent;
+  // Already draft/brainstorm — no escalation needed
+  if (intent === 'draft' || intent === 'brainstorm') return intent;
   if (messages.length === 0) return intent;
+
+  const recentMessages = messages.slice(-10);
+
+  // Session-aware escalation: if there's an active writing session (recent writing tool usage),
+  // ANY intent escalates to draft. This handles ALL revision wordings without keyword matching.
+  const writingToolNames = ['generate_outline', 'generate_draft', 'generate_hooks', 'revise_draft', 'create_content'];
+  const hasActiveWritingSession = recentMessages.some(m => {
+    // Check tool call results for writing tool output
+    if (m.role === 'tool' && typeof m.content === 'string') {
+      return m.content.includes('formattedDraft') || m.content.includes('outlineSections')
+        || m.content.includes('hookVariants') || m.content.includes('"contentUUID"');
+    }
+    // Check if agent called writing tools
+    if (m.tool_calls) {
+      return m.tool_calls.some((tc: any) => {
+        const name = tc.function?.name || tc.name || '';
+        return writingToolNames.includes(name);
+      });
+    }
+    return false;
+  });
+
+  if (hasActiveWritingSession && intent !== 'capture') {
+    console.log(`🧠 Escalated ${intent} → draft (active writing session detected)`);
+    return 'draft';
+  }
+
+  // Fallback: creative signal escalation for query intent only
+  if (intent !== 'query') return intent;
 
   const creativeSignals = ['write', 'draft', 'reel', 'thread', 'carousel', 'hook', 'outline', 'brainstorm', 'punchier', 'rewrite', 'make it', 'too formal', 'too long'];
   const creativeTools = new Set(['generate_outline', 'generate_draft', 'generate_hooks', 'revise_draft', 'search_swipes', 'find_similar_swipes', 'create_content', 'get_client_profile', 'get_beat_patterns']);
-
-  const recentMessages = messages.slice(-10);
 
   const hasCreativeText = recentMessages.some(m => {
     if (m.role !== 'user') return false;

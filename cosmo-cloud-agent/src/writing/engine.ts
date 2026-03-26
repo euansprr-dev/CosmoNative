@@ -201,6 +201,9 @@ export class CloudWritingEngine {
     // Refresh content atom for latest state
     this.contentAtom = await fetchAtom(this.contentUUID) || this.contentAtom;
 
+    // Log context state for every phase (not just init)
+    console.log(`  ✍️ Phase: ${phase}, messages: ${this.messages.length}, client: ${this.clientAtom?.title || 'none'}, analysisDepth: ${this.analysisDepth}, swipes: ${this.selectedSwipes.length}`);
+
     // Reset self-review flag for new draft requests
     if (phase === 'draft') {
       this.hasCompletedSelfReview = false;
@@ -1515,6 +1518,29 @@ function runDeterministicValidators(
       type: 'em_dash',
       message: `${emDashMatches.length} em-dash(es) found in content. Replace ALL with commas, periods, colons, semicolons, or parentheses. Em-dashes are NEVER used in your loaded swipes.`,
     });
+  }
+
+  // 6. Split sentence detection — periods mid-line creating short fragments
+  // BAD: "dropped out. went full-time in a restaurant. hated every second of it."
+  // GOOD: "dropped out and went full-time in a restaurant, hated every second of it"
+  // BAD: "head chef threw his cigarette on the floor. told me to clean it."
+  // GOOD: "head chef threw his cigarette on the floor and told me to clean it"
+  for (const line of contentLines) {
+    const trimmed = line.trim();
+    if (trimmed.length < 10) continue;
+    // Split on ". " (period + space) — not end-of-line periods
+    const fragments = trimmed.split(/\.\s+/).filter(f => f.trim().length > 0);
+    if (fragments.length >= 2) {
+      // Check if all fragments are short (≤10 words each) — indicates split sentence, not legitimate multiple sentences
+      const allShort = fragments.every(f => f.trim().split(/\s+/).length <= 10);
+      if (allShort) {
+        violations.push({
+          type: 'cadence',
+          message: `Split sentence detected: "${trimmed.substring(0, 80)}..." — merge into one flowing sentence. Periods mid-slide break conversational rhythm. Use commas or "and" instead.`,
+        });
+        break; // One warning is enough to trigger auto-refinement
+      }
+    }
   }
 
   return violations;

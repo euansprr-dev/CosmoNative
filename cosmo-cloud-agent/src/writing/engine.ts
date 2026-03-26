@@ -96,6 +96,9 @@ export class CloudWritingEngine {
   // Auto-refinement counter (max 2 passes)
   private refinementCount = 0;
 
+  // 3-phase pipeline: writing plan created in Phase 1, used in Phases 2-3
+  private writingPlan: string | null = null;
+
   // Deep analysis tracking — gates outline/draft/hooks behind substantive thinking
   // Uses analysisDepth as single gate (no boolean flags — they caused bypass-on-revision bugs)
   private analysisDepth = 0;
@@ -145,6 +148,7 @@ export class CloudWritingEngine {
     if (structured.writingContext) {
       this.writingContext = structured.writingContext as import('./contextAssembler').WritingContext;
       this.analysisDepth = this.writingContext.analysisDepth || 0;
+      this.writingPlan = this.writingContext.writingPlan || null;
       // analysisDepth persists across phases — no boolean flags needed
       // If LLM did deep analysis in outline phase, gates stay open for draft phase
     }
@@ -209,16 +213,14 @@ export class CloudWritingEngine {
       this.hasCompletedSelfReview = false;
     }
 
-    // Build dynamic block (includes prior analysis context)
-    const block3b = assembleBlock3Dynamic(
-      this.contentAtom,
-      this.outline.length > 0 ? this.outline : null,
-      this.hooks.length > 0 ? this.hooks : null,
-      this.conversationSummary,
-      this.writingContext,
-    );
+    // Draft phase uses 3-phase pipeline (Plan → Write → Self-Edit)
+    if (phase === 'draft' && !this.writingPlan) {
+      return this.runDraftPipeline(instruction);
+    }
 
-    // Add user message
+    // Brainstorm/polish/revision use normal conversation loop
+    const block3b = this.buildDynamicBlock();
+
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
@@ -226,20 +228,202 @@ export class CloudWritingEngine {
       timestamp: new Date().toISOString(),
     });
 
-    // Run conversation loop
     const result = await this.runConversationLoop(phase, block3b);
-
-    // Persist conversation to atom
     await this.persistConversation();
-
     return result;
+  }
+
+  private buildDynamicBlock(): WritingBlock {
+    return assembleBlock3Dynamic(
+      this.contentAtom!,
+      this.outline.length > 0 ? this.outline : null,
+      this.hooks.length > 0 ? this.hooks : null,
+      this.conversationSummary,
+      this.writingContext,
+    );
+  }
+
+  // ============================================================
+  // 3-Phase Draft Pipeline (Plan → Write → Self-Edit)
+  // ============================================================
+
+  private async runDraftPipeline(instruction: string): Promise<string> {
+    // PHASE 1: PLAN — full context, create comprehensive writing plan
+    console.log('  ✍️ Draft Pipeline Phase 1: PLAN (full context → writing plan)');
+    await this.runPlanPhase(instruction);
+
+    if (!this.writingPlan) {
+      console.log('  ⚠️ No writing plan created — falling back to normal conversation loop');
+      const block3b = this.buildDynamicBlock();
+      this.messages.push({ id: crypto.randomUUID(), role: 'user', content: instruction, timestamp: new Date().toISOString() });
+      const result = await this.runConversationLoop('draft', block3b);
+      await this.persistConversation();
+      return result;
+    }
+
+    // PHASE 2: WRITE — plan + swipe examples context, focused draft
+    console.log('  ✍️ Draft Pipeline Phase 2: WRITE (plan + examples → focused draft)');
+    await this.runWritePhase();
+
+    // PHASE 3: SELF-EDIT — plan + skill modules + lessons, quality pass
+    console.log('  ✍️ Draft Pipeline Phase 3: SELF-EDIT (plan + quality tools → final pass)');
+    const result = await this.runSelfEditPhase();
+
+    await this.persistConversation();
+    return result;
+  }
+
+  private async runPlanPhase(instruction: string): Promise<string> {
+    const planInstruction = `${instruction}
+
+═══ PHASE 1: CREATE YOUR WRITING PLAN ═══
+
+Before writing anything, you MUST create a comprehensive writing plan. This plan will be your ONLY guide during the writing phase — make it so detailed that someone who never saw the swipes could write a perfect draft from it alone.
+
+Study ALL loaded swipes (read their FULL BODIES in your context), the client profile, skill modules, and lessons. Then call create_writing_plan with a plan that covers EVERY section below. Do not skip any section. Be EXHAUSTIVE.
+
+SECTION A — CONTENT ANALYSIS (what you learned from studying the swipes)
+• Content type: What type are the loaded swipes? (tutorial, story, listicle, case study, news reaction)
+• Slide architecture: Internal structure of each slide? How many sentences? Bullet points (-- dashes)? Headers?
+• Density targets: Exact words per slide and sentences per slide (COUNT from 3-5 swipes — don't guess)
+• Specificity level: How many numbers, dollar amounts, percentages, resources per slide? (COUNT them)
+• Transition style: How do slides connect? (implied causal chain? numbered steps? chronological?)
+• CTA pattern: Exact CTA format from the best swipes (keyword + what they get)
+• Formatting: Do they use -- dashes? • bullets? ALL CAPS? Line breaks within slides?
+
+SECTION B — VOICE & STYLE (how to sound)
+• Sentence length target (from client voice fingerprint if available)
+• Contraction usage
+• Tone: direct, conversational, poetic, authoritative — based on client + swipes
+• Signature phrases to include (from client profile)
+• Banned phrases (from lessons + voice DNA)
+• Punctuation rules
+
+SECTION C — SLIDE-BY-SLIDE BLUEPRINT (what to write — THE MOST IMPORTANT SECTION)
+For EACH slide in the outline, specify:
+• Slide N: [function — what this slide DOES: hook, teach, prove, reveal, reframe, CTA]
+• Content: What specific information goes here (use client's REAL details from brand story — names, numbers, dates, places)
+• Target length: X words, Y sentences
+• Format: paragraph / bullet list / numbered steps
+• Key details to include: pull specific facts, numbers, stories from the loaded client profile
+
+SECTION D — RULES CHECKLIST (what NOT to do)
+• List ALL hard lessons that apply to this content
+• List ALL advisory lessons
+• Voice compliance rules from client profile
+• Format-specific rules (carousel density, etc.)
+
+SECTION E — QUALITY TARGETS
+• Each slide must [teach/prove/reveal] something — no empty narrative slides
+• Match the loaded swipes' density EXACTLY (cite the word counts you measured)
+• Use the client's real story details (cite specific facts from brand story)
+• Sound conversational — pass the dinner table test
+• No em-dashes, no split sentences with periods, no banned phrases
+
+Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan drives everything.`;
+
+    this.messages.push({ id: crypto.randomUUID(), role: 'user', content: planInstruction, timestamp: new Date().toISOString() });
+
+    // Run with plan-phase tools (think + create_writing_plan + swipe tools — NO write_draft)
+    const block3b = this.buildDynamicBlock();
+    return this.runConversationLoop('draft', block3b, 'plan');
+  }
+
+  private async runWritePhase(): Promise<string> {
+    // Swap system prompt to plan + swipe examples (focused context)
+    const originalBlocks = this.blocks;
+
+    const planBlock: WritingBlock = {
+      label: 'Writing Plan',
+      content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}`,
+      cacheControl: true,
+    };
+
+    const examplesBlock: WritingBlock = {
+      label: 'Reference Examples',
+      content: this.buildSwipeReferenceBlock(),
+      cacheControl: true,
+    };
+
+    this.blocks = [planBlock, examplesBlock];
+
+    this.messages.push({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: 'Your writing plan is ready. Now write the draft following it EXACTLY. Study the [GOOD EXAMPLE] posts for style and copy quality — match their density, specificity, and structure. Call write_draft with the complete content.',
+      timestamp: new Date().toISOString(),
+    });
+
+    const block3b = this.buildDynamicBlock();
+    const result = await this.runConversationLoop('draft', block3b, 'write');
+
+    this.blocks = originalBlocks;
+    return result;
+  }
+
+  private async runSelfEditPhase(): Promise<string> {
+    const originalBlocks = this.blocks;
+
+    // Load methodology for quality criteria
+    const methodology = await loadPromptTemplate('methodology');
+
+    const qualityBlock: WritingBlock = {
+      label: 'Self-Edit Context',
+      content: [
+        '═══ SELF-EDIT PASS ═══',
+        'Review the draft against your writing plan and quality rules.',
+        'Run all self-edit checks. Fix any issues. Call write_draft with the corrected version.',
+        '',
+        '--- WRITING PLAN (reference) ---',
+        this.writingPlan || '',
+        '',
+        '--- QUALITY RULES ---',
+        this.buildCriticalRulesReminder(),
+        '',
+        ...(methodology ? ['--- SKILL MODULES (quality criteria) ---', methodology, ''] : []),
+        '--- CURRENT DRAFT ---',
+        this.contentAtom?.body || '[no draft yet]',
+      ].join('\n'),
+      cacheControl: false,
+    };
+
+    this.blocks = [qualityBlock];
+
+    this.messages.push({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: 'Self-edit pass: review your draft against the plan and quality rules. Check density (does each slide match the word count targets in your plan?), voice, transitions, specificity, and conversationality. Fix any issues and call write_draft with the corrected version. If everything passes, respond with a brief summary.',
+      timestamp: new Date().toISOString(),
+    });
+
+    const block3b = this.buildDynamicBlock();
+    const result = await this.runConversationLoop('draft', block3b, 'edit');
+
+    this.blocks = originalBlocks;
+    return result;
+  }
+
+  private buildSwipeReferenceBlock(): string {
+    const sections: string[] = [];
+    sections.push('═══ GOOD EXAMPLES ═══');
+    sections.push('Study these real high-performing posts for structure and style, but create ORIGINAL content.');
+    sections.push('Use these to nail down copy quality, density, transitions, and how viral posts actually read.\n');
+
+    for (const swipe of this.selectedSwipes) {
+      if (swipe.fullBody) {
+        sections.push('[GOOD EXAMPLE]');
+        sections.push(swipe.fullBody);
+        sections.push('');
+      }
+    }
+    return sections.join('\n');
   }
 
   // ============================================================
   // Conversation Loop
   // ============================================================
 
-  private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock): Promise<string> {
+  private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock, pipelineStep?: 'plan' | 'write' | 'edit'): Promise<string> {
     let lastAssistantText = '';
     let emptyResponseCount = 0;
     let consecutiveThinks = 0;
@@ -249,8 +433,8 @@ export class CloudWritingEngine {
       // Build API messages
       const apiMessages = this.buildAPIMessages();
 
-      // Available tools for this phase
-      const tools = this.getToolDefinitions(phase);
+      // Available tools for this phase (pipeline step overrides if present)
+      const tools = this.getToolDefinitions(phase, pipelineStep);
 
       // Call LLM (pass dynamic block separately — it changes each iteration)
       const response = await this.callWritingLLM(block3b, apiMessages, tools);
@@ -620,6 +804,18 @@ If ALL checks pass, present the draft.
         }
 
         return result;
+      }
+
+      case 'create_writing_plan': {
+        const plan = (args.plan as string) || '';
+        const planWords = plan.split(/\s+/).length;
+        if (planWords < 200) {
+          return `[REJECTED] Writing plan is too short (${planWords} words). The plan must cover ALL 5 sections: Content Analysis, Voice & Style, Slide-by-Slide Blueprint, Rules Checklist, and Quality Targets. Make it detailed enough that someone who never saw the swipes could write a perfect draft from it alone.`;
+        }
+        this.writingPlan = plan;
+        this.writingContext.writingPlan = plan;
+        console.log(`  ✍️ Writing plan created (${planWords} words)`);
+        return `Writing plan created (${planWords} words). The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }
 
       case 'read_draft': {
@@ -1191,7 +1387,35 @@ If ALL checks pass, present the draft.
   // Tool Definitions
   // ============================================================
 
-  private getToolDefinitions(phase: WritingPhase): any[] {
+  private getToolDefinitions(phase: WritingPhase, pipelineStep?: 'plan' | 'write' | 'edit'): any[] {
+    // Pipeline-specific tool sets
+    if (pipelineStep === 'plan') {
+      return [
+        { name: 'think', description: 'Internal reasoning — use before complex decisions', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
+        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan. Must cover: content analysis, voice & style, slide-by-slide blueprint, rules checklist, quality targets. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' } }, required: ['plan'] } },
+        { name: 'search_swipes', description: 'Search loaded swipe library', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+        { name: 'read_swipe_body', description: 'Load full swipe text', parameters: { type: 'object', properties: { swipe_id: { type: 'string' } }, required: ['swipe_id'] } },
+        { name: 'analyze_swipe_patterns', description: 'Analyze patterns across swipe library', parameters: { type: 'object', properties: { focus: { type: 'string', enum: ['hooks', 'persuasion', 'emotional_arc', 'engagement', 'all'] } } } },
+      ];
+    }
+
+    if (pipelineStep === 'write') {
+      return [
+        { name: 'think', description: 'Internal reasoning', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
+        { name: 'write_draft', description: 'Write the full draft following your writing plan', parameters: { type: 'object', properties: { content: { type: 'string', description: 'Full draft text or JSON' }, format: { type: 'string', enum: ['plaintext', 'carousel_json', 'thread_json', 'script'] }, selfEvaluation: { type: 'object', properties: { confidenceScore: { type: 'number' }, voiceMatchScore: { type: 'number' }, weakAreas: { type: 'array', items: { type: 'string' } } } } }, required: ['content'] } },
+        { name: 'read_draft', description: 'Read the current draft', parameters: { type: 'object', properties: {} } },
+      ];
+    }
+
+    if (pipelineStep === 'edit') {
+      return [
+        { name: 'think', description: 'Internal reasoning for self-edit review', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
+        { name: 'write_draft', description: 'Submit corrected draft after self-edit', parameters: { type: 'object', properties: { content: { type: 'string', description: 'Full draft text or JSON' }, format: { type: 'string', enum: ['plaintext', 'carousel_json', 'thread_json', 'script'] }, selfEvaluation: { type: 'object', properties: { confidenceScore: { type: 'number' }, voiceMatchScore: { type: 'number' }, weakAreas: { type: 'array', items: { type: 'string' } } } } }, required: ['content'] } },
+        { name: 'read_draft', description: 'Read the current draft', parameters: { type: 'object', properties: {} } },
+      ];
+    }
+
+    // Default: brainstorm phase tools
     const tools: any[] = [
       { name: 'think', description: 'Internal reasoning — use before complex decisions', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
       { name: 'update_outline', description: 'Set the content outline sections', parameters: { type: 'object', properties: { sections: { type: 'array', items: { type: 'object', properties: { beatLabel: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, estimatedSeconds: { type: 'number' } }, required: ['title'] } }, reasoning: { type: 'string' } }, required: ['sections'] } },

@@ -453,6 +453,7 @@ export interface WritingContext {
   latestAnalysis?: string;          // Always captured for >200 word thinks (no keyword gate)
   swipePatternAnalysis?: string;    // Keyword-matched subset (swipe/pattern/density/etc.)
   structuralPlan?: string;          // Keyword-matched subset (plan/approach/strategy/etc.)
+  writingPlan?: string;             // Comprehensive writing plan from Phase 1 of draft pipeline
   keyDecisions?: string[];
   selfReviewFindings?: string;
   analysisDepth?: number;

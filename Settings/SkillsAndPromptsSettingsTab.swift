@@ -1073,9 +1073,16 @@ struct SkillsAndPromptsSettingsTab: View {
 
             let repo = AtomRepository.shared
             let atoms = try? await repo.fetchAll(type: .agentLearning)
+            let skillIdStr = skill.id.uuidString
             if var atom = atoms?.first(where: { atom in
-                guard let meta = atom.metadataDict else { return false }
-                return meta["lessonID"] as? String == skill.id.uuidString
+                let meta = atom.metadataDict
+                var structuredId: String?
+                if let s = atom.structured, let d = s.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                    structuredId = dict["id"] as? String
+                }
+                return meta?["lessonID"] as? String == skillIdStr
+                    || structuredId == skillIdStr
             }) {
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .iso8601

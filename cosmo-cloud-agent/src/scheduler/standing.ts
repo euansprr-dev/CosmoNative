@@ -87,7 +87,12 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
       return true;
     });
 
-    // Separate into overdue / today (using whenDate > focusDate > dueDate priority)
+    // Separate into overdue / today / anytime
+    // Only show recent overdue (last 3 days) — ancient tasks are stale, not actionable
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const overdueCutoff = threeDaysAgo.toISOString().split('T')[0];
+
     const overdueTasks: Atom[] = [];
     const todayTasks: Atom[] = [];
 
@@ -95,11 +100,19 @@ async function sendHeartbeat(slot: TimeSlot): Promise<void> {
       const meta = task.metadata || {};
       const taskDate = getTaskDate(meta);
 
-      if (taskDate && taskDate < todayStr) {
-        overdueTasks.push(task);
-      } else if (taskDate === todayStr) {
+      if (taskDate === todayStr) {
         todayTasks.push(task);
+      } else if (taskDate && taskDate < todayStr && taskDate >= overdueCutoff) {
+        // Only recent overdue — not weeks-old stale tasks
+        overdueTasks.push(task);
+      } else if (!taskDate) {
+        // Unscheduled tasks — include "anytime" tasks (matches Mac app Today view)
+        const state = meta.schedulingState as string | undefined;
+        if (state === 'anytime') {
+          todayTasks.push(task);
+        }
       }
+      // Tasks older than 3 days with no dueDate: silently ignored
     }
 
     // Completed today

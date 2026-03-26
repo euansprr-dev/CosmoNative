@@ -169,8 +169,8 @@ export async function assembleBlock2(
 
   // Learned lesson rules (RULE/BAD/GOOD/WHY format matching Swift's optimized instructions)
   if (lessons.length > 0) {
-    const hardRules = lessons.filter(l => l.enforcement === 'hard').slice(0, 10);
-    const advisoryRules = lessons.filter(l => l.enforcement !== 'hard').slice(0, 5);
+    const hardRules = lessons.filter(l => l.enforcement === 'hard');
+    const advisoryRules = lessons.filter(l => l.enforcement !== 'hard');
 
     if (hardRules.length > 0) {
       sections.push('\n--- LEARNED WRITING RULES — MANDATORY (HARD) ---');

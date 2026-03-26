@@ -427,7 +427,12 @@ export class CloudWritingEngine {
           return `Analysis received (${wordCount} words). Before writing, ensure you've analyzed your loaded swipes through EVERY lens: density patterns, punctuation usage, hook mechanics, voice characteristics, transition patterns, CTA structure. Reference the Slide Density, Dinner Table Test, Voice Matching, Hook Craft, Causal Chaining, and CTA Craft modules in your context for what to look for.`;
         }
 
-        return `Analysis received (${wordCount} words). ${this.analysisDepth >= 2 ? 'Deep analysis complete. You may proceed when ready.' : 'Continue analyzing — check remaining skill module dimensions.'}`;
+        if (this.analysisDepth >= 2) {
+          const ruleReminder = this.buildCriticalRulesReminder();
+          return `Analysis received (${wordCount} words). Deep analysis complete.\n\nBEFORE YOU WRITE — review these rules (violations trigger automatic rewrite):\n${ruleReminder}\n\nYou may now call write_draft.`;
+        }
+
+        return `Analysis received (${wordCount} words). Continue analyzing — check remaining skill module dimensions.`;
       }
 
       case 'update_outline': {
@@ -1250,6 +1255,50 @@ If ALL checks pass, present the draft.
       });
     }
     return swipes;
+  }
+
+  /**
+   * Build a compact summary of ALL loaded rules for injection right before write_draft.
+   * Recency effect: rules at the END of context get the most attention from the LLM.
+   * Pulls from actual saved lessons + client voice data — nothing hardcoded, no caps.
+   */
+  private buildCriticalRulesReminder(): string {
+    const rules: string[] = [];
+
+    // ALL hard-enforcement lessons (no cap — designed to accumulate over time)
+    const hardLessons = this.lessons.filter(l => l.enforcement === 'hard');
+    for (const lesson of hardLessons) {
+      const core = lesson.rule.split('\n')[0].replace(/^RULE:\s*/i, '').substring(0, 120);
+      rules.push(`• [HARD] ${core}`);
+    }
+
+    // Client voice constraints (from loaded profile)
+    if (this.clientAtom) {
+      const voice = (this.clientAtom.structured?.intelligenceModel as any)?.voiceFingerprint || {};
+      if (voice.avgSentenceLength) {
+        rules.push(`• [VOICE] Target sentence length: ~${voice.avgSentenceLength} words`);
+      }
+      const blacklisted = voice.blacklistedPhrases as string[] | undefined;
+      if (blacklisted && blacklisted.length > 0) {
+        rules.push(`• [VOICE] Banned phrases: ${blacklisted.map((p: string) => `"${p}"`).join(', ')}`);
+      }
+      const signaturePhrases = voice.signaturePhrases as string[] | undefined;
+      if (signaturePhrases && signaturePhrases.length > 0) {
+        rules.push(`• [VOICE] Use signature phrases: ${signaturePhrases.map((p: string) => `"${p}"`).join(', ')}`);
+      }
+    }
+
+    // ALL advisory lessons (no cap)
+    const advisoryLessons = this.lessons.filter(l => l.enforcement !== 'hard');
+    for (const lesson of advisoryLessons) {
+      const core = lesson.rule.split('\n')[0].replace(/^RULE:\s*/i, '').substring(0, 120);
+      rules.push(`• [ADVISORY] ${core}`);
+    }
+
+    // Write directive
+    rules.push('• WRITE the draft using loaded context. Do NOT ask for more information.');
+
+    return rules.join('\n');
   }
 
   private async loadLessons(): Promise<Array<{ rule: string; enforcement: string; evidence?: string; category?: string; clientUUID?: string }>> {

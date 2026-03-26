@@ -99,6 +99,10 @@ export class CloudWritingEngine {
   // 3-phase pipeline: writing plan created in Phase 1, used in Phases 2-3
   private writingPlan: string | null = null;
 
+  // Blueprint anchor — resolved in initialize() (true primary or highest-scoring fallback)
+  private blueprintAnchor: CompressedSwipe | null = null;
+  private hasTruePrimaryBlueprint = false;
+
   // Deep analysis tracking — gates outline/draft/hooks behind substantive thinking
   // Uses analysisDepth as single gate (no boolean flags — they caused bypass-on-revision bugs)
   private analysisDepth = 0;
@@ -166,6 +170,19 @@ export class CloudWritingEngine {
       // Persist selection for future re-initialization
       const selectedUUIDs = this.selectedSwipes.map(s => s.uuid);
       await updateAtom(this.contentUUID, { metadata: { selectedSwipeUUIDs: selectedUUIDs } });
+    }
+
+    // Resolve blueprint anchor — true primary or highest-scoring fallback
+    const primary = this.selectedSwipes.find(s => s.isPrimary);
+    if (primary && primary.fullBody) {
+      this.blueprintAnchor = primary;
+      this.hasTruePrimaryBlueprint = true;
+    } else {
+      const fallback = this.selectedSwipes
+        .filter(s => s.fullBody)
+        .reduce<CompressedSwipe | null>((best, s) => (!best || s.hookScore > best.hookScore) ? s : best, null);
+      this.blueprintAnchor = fallback;
+      this.hasTruePrimaryBlueprint = false;
     }
 
     // Load lessons for this client (also cached for deterministic validation in write_draft)
@@ -274,6 +291,13 @@ export class CloudWritingEngine {
   }
 
   private async runPlanPhase(instruction: string): Promise<string> {
+    const label = this.getBlueprintLabel();
+    const mirrorVerb = this.hasTruePrimaryBlueprint ? 'must mirror' : 'should use as your primary structural reference';
+    const mirrorAction = this.hasTruePrimaryBlueprint ? 'mirror' : 'use as a starting point for';
+    const beatSummary = this.blueprintAnchor?.beatSequence.length
+      ? this.blueprintAnchor.beatSequence.join(' > ')
+      : 'analyze from body';
+
     const planInstruction = `${instruction}
 
 ═══ PHASE 1: CREATE YOUR WRITING PLAN ═══
@@ -283,6 +307,10 @@ Before writing anything, you MUST create a comprehensive writing plan. This plan
 Study ALL loaded swipes (read their FULL BODIES in your context), the client profile, skill modules, and lessons. Then call create_writing_plan with a plan that covers EVERY section below. Do not skip any section. Be EXHAUSTIVE.
 
 SECTION A — CONTENT ANALYSIS (what you learned from studying the swipes)
+• ${label}: The first loaded swipe marked [${label}] is your structural anchor.
+  Study its beat pattern, slide count, density per slide, and visual format MORE CAREFULLY than the others.
+  Your outline and draft ${mirrorVerb} THIS swipe's structure while adapting the content.
+  The other swipes are for style/formatting reference only.
 • Content type: What type are the loaded swipes? (tutorial, story, listicle, case study, news reaction)
 • Slide architecture: Internal structure of each slide? How many sentences? Bullet points (-- dashes)? Headers?
 • Density targets: Exact words per slide and sentences per slide (COUNT from 3-5 swipes — don't guess)
@@ -300,11 +328,12 @@ SECTION B — VOICE & STYLE (how to sound)
 • Punctuation rules
 
 SECTION C — SLIDE-BY-SLIDE BLUEPRINT (what to write — THE MOST IMPORTANT SECTION)
+Your slide count and beat sequence should ${mirrorAction} the ${label}'s structure. Adapt the content, but keep the same number of slides and the same beat functions.
 For EACH slide in the outline, specify:
-• Slide N: [function — what this slide DOES: hook, teach, prove, reveal, reframe, CTA]
+• Slide N: [function — what this slide DOES: hook, teach, prove, reveal, reframe, CTA] (match the ${label}'s beat for this position)
 • Content: What specific information goes here (use client's REAL details from brand story — names, numbers, dates, places)
-• Target length: X words, Y sentences
-• Visual format: Does this slide use bullet points (-- dashes)? Line breaks between sentences? LOOK at the swipe examples and copy their visual rhythm exactly.
+• Target length: X words, Y sentences (match the ${label}'s density for this slide position)
+• Visual format: Does this slide use bullet points (-- dashes)? Line breaks between sentences? LOOK at the ${label} and copy its visual rhythm exactly.
 • Key details to include: pull specific facts, numbers, stories from the loaded client profile
 
 IMPORTANT: Look at how slides are FORMATTED in the loaded swipes. They use:
@@ -318,6 +347,7 @@ SECTION D — RULES CHECKLIST (what NOT to do)
 • List ALL advisory lessons
 • Voice compliance rules from client profile
 • Format-specific rules (carousel density, etc.)
+• ${label} structural rules: List the ${label}'s hook format (case, perspective, structure), beat sequence (${beatSummary}), slide count, and density per slide as RULES your draft must follow. These structural rules have the SAME enforcement level as hard lessons.
 
 SECTION E — QUALITY TARGETS
 • Each slide must [teach/prove/reveal] something — no empty narrative slides
@@ -358,7 +388,7 @@ Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan dri
       role: 'user',
       content: `Your writing plan is ready. Now write the draft.
 
-CRITICAL FORMATTING RULES — your draft MUST visually look like the [GOOD EXAMPLE] slides:
+CRITICAL FORMATTING RULES — your draft MUST visually look like the ${this.getBlueprintLabel()} and example slides:
 1. Use line breaks WITHIN slides — NOT one big paragraph block
 2. Use -- dashes for any lists or multiple points (look how the examples do it)
 3. Sentences: 8-15 words max. Short and punchy. No long compound sentences.
@@ -367,7 +397,13 @@ CRITICAL FORMATTING RULES — your draft MUST visually look like the [GOOD EXAMP
 6. Match the VISUAL RHYTHM of the examples — whitespace, bullets, short lines
 7. Each slide should look like it could be an Instagram carousel image, not a blog paragraph
 
-Follow your writing plan for CONTENT but match the EXAMPLES for FORMAT.
+Follow your writing plan for CONTENT.
+${this.blueprintAnchor
+  ? this.hasTruePrimaryBlueprint
+    ? `Mirror the PRIMARY BLUEPRINT for STRUCTURE (beat pattern, slide count, pacing).`
+    : `Use the STRUCTURAL ANCHOR as your structural guide (beat pattern, slide count, pacing), adapting where the content demands.`
+  : ''}
+Match ALL examples for FORMAT (bullets, line breaks, sentence length).
 Call write_draft with the complete content.`,
       timestamp: new Date().toISOString(),
     });
@@ -385,6 +421,8 @@ Call write_draft with the complete content.`,
     // Load methodology for quality criteria
     const methodology = await loadPromptTemplate('methodology');
 
+    const blueprintSummary = this.getBlueprintStructuralSummary();
+
     const qualityBlock: WritingBlock = {
       label: 'Self-Edit Context',
       content: [
@@ -395,6 +433,7 @@ Call write_draft with the complete content.`,
         '--- WRITING PLAN (reference) ---',
         this.writingPlan || '',
         '',
+        ...(blueprintSummary ? [blueprintSummary, ''] : []),
         '--- QUALITY RULES ---',
         this.buildCriticalRulesReminder(),
         '',
@@ -407,10 +446,14 @@ Call write_draft with the complete content.`,
 
     this.blocks = [qualityBlock];
 
+    const structuralCheck = blueprintSummary
+      ? ` Also verify structural fidelity: does your draft's beat sequence match the ${this.getBlueprintLabel()}? Does slide count match? Does hook format match?`
+      : '';
+
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
-      content: 'Self-edit pass: review your draft against the plan and quality rules. Check density (does each slide match the word count targets in your plan?), voice, transitions, specificity, and conversationality. Fix any issues and call write_draft with the corrected version. If everything passes, respond with a brief summary.',
+      content: `Self-edit pass: review your draft against the plan and quality rules. Check density (does each slide match the word count targets in your plan?), voice, transitions, specificity, and conversationality.${structuralCheck} Fix any issues and call write_draft with the corrected version. If everything passes, respond with a brief summary.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -421,23 +464,101 @@ Call write_draft with the complete content.`,
     return result;
   }
 
+  private getBlueprintLabel(): string {
+    return this.hasTruePrimaryBlueprint ? 'PRIMARY BLUEPRINT' : 'STRUCTURAL ANCHOR';
+  }
+
+  private getBlueprintStructuralSummary(): string {
+    const bp = this.blueprintAnchor;
+    if (!bp) return '';
+    const label = this.getBlueprintLabel();
+    const lines: string[] = [];
+    lines.push(`--- ${label} STRUCTURAL SUMMARY ---`);
+    if (bp.beatSequence.length > 0) {
+      lines.push(`Beat sequence: ${bp.beatSequence.join(' > ')}`);
+    }
+    const slideCount = this.countSlidesInBody(bp.fullBody);
+    if (slideCount > 0) {
+      lines.push(`Slide count: ${slideCount}`);
+    }
+    lines.push(`Hook: "${bp.hookText?.substring(0, 150) || bp.title}"`);
+    lines.push(`Hook type: ${bp.hookType} (score: ${bp.hookScore}/10)`);
+    if (bp.hookMechanism) {
+      lines.push(`Hook mechanism: ${bp.hookMechanism}`);
+    }
+    if (bp.framework && bp.framework !== 'Original') {
+      lines.push(`Framework: ${bp.framework}`);
+    }
+    return lines.join('\n');
+  }
+
+  private countSlidesInBody(body: string): number {
+    if (!body) return 0;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.slides) return parsed.slides.length;
+    } catch { /* not JSON */ }
+    const slideMatches = body.match(/^Slide \d+/gim);
+    if (slideMatches) return slideMatches.length;
+    const separators = body.split(/^[-=]{3,}$/m).filter(s => s.trim().length > 0);
+    if (separators.length > 1) return separators.length;
+    return 0;
+  }
+
   private buildSwipeReferenceBlock(): string {
     const sections: string[] = [];
-    sections.push('═══ GOOD EXAMPLES — YOUR FORMAT TEMPLATE ═══');
-    sections.push('These are real viral posts. Your draft must VISUALLY LOOK like these.');
-    sections.push('NOTICE:');
-    sections.push('• How they use line breaks WITHIN each slide (not one big paragraph)');
-    sections.push('• How they use -- dashes for bullet point lists');
-    sections.push('• How short their sentences are (8-15 words each)');
-    sections.push('• How they break up text with whitespace between points');
-    sections.push('• How each slide has a clear visual RHYTHM — not a wall of text');
-    sections.push('');
-    sections.push('Your slides must LOOK like these. Same line breaks, same bullet style, same sentence lengths.');
-    sections.push('If your slide is a big paragraph and the examples use bullets — rewrite it.\n');
+    const bp = this.blueprintAnchor;
+
+    // Blueprint anchor first — structural guide for the draft
+    if (bp && bp.fullBody) {
+      if (this.hasTruePrimaryBlueprint) {
+        sections.push('═══ PRIMARY BLUEPRINT — YOUR STRUCTURAL ANCHOR ═══');
+        sections.push('This is the post you must structurally mirror. Match its:');
+      } else {
+        sections.push('═══ INFERRED STRUCTURAL ANCHOR (highest-scoring example) ═══');
+        sections.push('No explicit primary blueprint was provided. This is the highest-scoring swipe — use as your primary structural reference, adapting as needed. Match its:');
+      }
+      sections.push('• Beat pattern (how it opens, builds, and closes)');
+      sections.push('• Slide architecture (sentence count, bullet usage, line breaks per slide)');
+      sections.push('• Density and visual rhythm');
+      sections.push('• Hook format and perspective');
+      if (bp.beatSequence.length > 0) {
+        sections.push(`\nBeat Pattern: ${bp.beatSequence.join(' > ')}`);
+      }
+      sections.push(`Hook: "${bp.hookText?.substring(0, 200) || bp.title}"`);
+      // Metadata — preserved from plan phase analysis
+      if (bp.hookType) {
+        sections.push(`Hook Type: ${bp.hookType} (score: ${bp.hookScore}/10)`);
+      }
+      if (bp.hookMechanism) {
+        sections.push(`Hook Mechanism: ${bp.hookMechanism}`);
+      }
+      if (bp.framework && bp.framework !== 'Original') {
+        sections.push(`Framework: ${bp.framework}`);
+      }
+      if (bp.structuralBreakdown) {
+        sections.push(`Structural Breakdown: ${bp.structuralBreakdown}`);
+      }
+      if (bp.keyTransitions.length > 0) {
+        sections.push(`Key Transitions: ${bp.keyTransitions.join(', ')}`);
+      }
+      if (bp.structuralRecipe) {
+        sections.push(`Structural Recipe: ${bp.structuralRecipe}`);
+      }
+      sections.push('');
+      sections.push(bp.fullBody);
+      sections.push('');
+    }
+
+    // Supporting examples
+    sections.push('═══ SUPPORTING EXAMPLES — STYLE REFERENCE ═══');
+    sections.push('Study these for copy quality, transitions, and formatting patterns.');
+    sections.push('NOTICE: line breaks within slides, -- bullet lists, short sentences.\n');
 
     for (const swipe of this.selectedSwipes) {
+      if (bp && swipe.uuid === bp.uuid) continue; // Already shown above
       if (swipe.fullBody) {
-        sections.push('[GOOD EXAMPLE]');
+        sections.push('[EXAMPLE]');
         sections.push(swipe.fullBody);
         sections.push('');
       }

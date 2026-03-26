@@ -25,7 +25,8 @@ export function classifyIntent(text: string): AgentIntent {
   }
 
   // Draft (before capture — long messages with URLs shouldn't be capture)
-  if (/draft|write a thread|write a reel|write about|reel for|carousel for|feedback on slide|revise|rewrite/i.test(lower)) {
+  // Broad: "write a [anything]", "let's write", any format mention + "for [client]"
+  if (/draft|write a |let.s write|reel for|carousel for|thread for|post for|feedback on slide|revise|rewrite/i.test(lower)) {
     return 'draft';
   }
 

@@ -48,6 +48,13 @@ export async function getClientProfile(args: Record<string, any>): Promise<strin
   const meta = client.metadata || {};
   const structured = client.structured || {};
 
+  // Load profile documents (brand story, voice guides, top posts)
+  // Stored in structured.documents array, NOT flat fields like structured.brandStory
+  const documents = (structured.documents || meta.documents) as any[] || [];
+  const storyDocs = documents.filter((d: any) => d.category === 'story');
+  const voiceGuides = documents.filter((d: any) => d.category === 'voiceGuide');
+  const topContent = documents.filter((d: any) => ['reel', 'thread'].includes(d.category));
+
   return jsonEncode({
     uuid: client.uuid,
     name: client.title,
@@ -55,10 +62,11 @@ export async function getClientProfile(args: Record<string, any>): Promise<strin
     platforms: meta.preferredPlatforms ?? [],
     handle: meta.handles ?? null,
     brandVoice: meta.brandVoice ?? null,
-    brandStory: structured.brandStory ?? null,
+    // Use documents array first (where Mac app stores it), fall back to flat field
+    brandStory: storyDocs[0]?.content ?? structured.brandStory ?? null,
     brandVision: structured.brandVision ?? null,
     uniqueAngle: structured.uniqueAngle ?? null,
-    voiceNotes: structured.voiceNotes ?? null,
+    voiceNotes: voiceGuides[0]?.content ?? structured.voiceNotes ?? null,
     coreBeliefs: structured.coreBeliefs ?? [],
     signaturePhrases: structured.signaturePhrases ?? [],
     targetAudience: structured.targetAudience ?? null,
@@ -68,6 +76,13 @@ export async function getClientProfile(args: Record<string, any>): Promise<strin
     topPerformingPosts: structured.topPerformingPosts ?? [],
     topPerformingTranscripts: structured.topPerformingTranscripts ?? [],
     intelligenceModel: structured.intelligenceModel ?? null,
+    // Document availability
+    profileDocuments: {
+      stories: storyDocs.length,
+      voiceGuides: voiceGuides.length,
+      topContent: topContent.length,
+      total: documents.length,
+    },
   });
 }
 

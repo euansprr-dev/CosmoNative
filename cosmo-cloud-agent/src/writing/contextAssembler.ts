@@ -42,7 +42,47 @@ export async function assembleBlock1(format: ContentFormat): Promise<WritingBloc
     content = content.replace('{PLATFORM_CONSTRAINTS}', '');
   }
 
+  // Inject format-specific density override AFTER the system prompt
+  // This overrides the generic "1-2 sentences" Voice DNA rule with format-appropriate density
+  content += '\n\n' + getFormatDensityOverride(format);
+
   return { label: 'Block 1: Methodology', content, cacheControl: true };
+}
+
+function getFormatDensityOverride(format: ContentFormat): string {
+  switch (format) {
+    case 'carousel':
+    case 'thread':
+      return `═══════════════════════════════════════════════════════════════
+FORMAT OVERRIDE: CAROUSEL/THREAD DENSITY (overrides Section 4b paragraph rules for this piece)
+═══════════════════════════════════════════════════════════════
+This is a CAROUSEL/THREAD, NOT a reel. These formats are DENSE and INFORMATION-RICH.
+• Each slide: 3-6 sentences, 50-100 words minimum
+• Use bullet points (-- or •) for lists, steps, and key points
+• Include specific numbers, dollar amounts, percentages, and concrete details in EVERY slide
+• Each slide must TEACH something, PROVE something, or provide ACTIONABLE information
+• Study the loaded swipe examples — they show EXACTLY the right density. COUNT their words per slide and MATCH it.
+• The "1-2 sentences default" and "3 max" rules from Voice DNA do NOT apply to carousels
+• The "flag carousel slide > 20 words" self-edit rule is WRONG — ignore it for carousels
+• If your slides have fewer words than the loaded swipes, you're writing too thin. Add detail.`;
+
+    case 'reel':
+    case 'voiceoverReel':
+    case 'oneSliderReel':
+    case 'multiSliderReel':
+    case 'twoStepCTA':
+      return `═══════════════════════════════════════════════════════════════
+FORMAT OVERRIDE: REEL DENSITY
+═══════════════════════════════════════════════════════════════
+This is a REEL. Reel slides are SHORT and PUNCHY.
+• Each slide: 1-2 sentences max, 10-25 words
+• No bullet points — clean, flowing text
+• One thought per slide, conversational tone
+• Study the loaded swipe examples for the right density`;
+
+    default:
+      return '';
+  }
 }
 
 // ============================================================
@@ -574,7 +614,7 @@ These rules override all other style guidance. Every word of output must comply.
 WRITING RULES:
 - Write like a sharp human, not a language model.
 - Use contractions naturally (don't, can't, won't).
-- Short paragraphs. 1-3 sentences max.
+- Paragraph length depends on FORMAT: reels = 1-2 sentences/slide, carousels = 3-6 sentences/slide with bullet points. Match your loaded swipe examples.
 - Get to the point. No throat-clearing, no preamble.
 - If making a claim, be specific. Use numbers, names, concrete details.
 - Vary sentence length. Mix short punchy lines with longer ones.
@@ -586,7 +626,7 @@ WRITING RULES:
 - Parenthetical asides are good. Use them for editorial commentary, honest reactions, quick tangents, and deflating your own seriousness (like this).
 
 FORMATTING RULES:
-- Short paragraphs (1-2 sentences default, 3 max).
+- Paragraph length: match your loaded swipe examples. Reels = short (1-2 sentences). Carousels = dense (3-6 sentences, bullet points).
 - Numbers as digits.
 - Contractions always.
 - NO em dashes ever. Use commas, periods, colons, semicolons, or parentheses.
@@ -726,7 +766,7 @@ Construction rules:
 Run all 6 steps after every draft, before presenting. Not optional.
 
 1. Read-aloud: Every slide at speaking pace. Flag stumbles, rhythm breaks, "content voice," or lost thread.
-2. Density: Flag any carousel slide > 20 words, reel slide > 12 words. Split or cut.
+2. Density: Match your loaded swipe examples' density EXACTLY. Reels: 10-25 words/slide. Carousels: 50-100 words/slide with bullet points. Count words in your swipes and match.
 3. Chain: Insert "so/but/that's when" between every slide pair. Bad fit = broken transition.
 4. Perspective: Who speaks to whom on slide 1? Must stay consistent.
 5. Scroll test: Read slides 3-5 as the SPECIFIC target audience. Would they feel seen?

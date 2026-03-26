@@ -441,13 +441,14 @@ export class CloudWritingEngine {
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before creating an outline:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe:
-   • HOOKS: What hook mechanisms do the top-scoring swipes use? How are they structured? (Hook Craft module)
-   • STRUCTURE: What beat patterns do the swipes follow? How many sections? (Beat Patterns in methodology)
-   • DENSITY: How many sentences per slide? Words per sentence? (Slide Density module)
-   • VOICE: What's the tone, formality, sentence length patterns? (Voice Matching module)
-   • TRANSITIONS: How do slides connect? (Causal Chaining module)
-   • CTA: What CTA patterns work? (CTA Craft module)
-   • DINNER TABLE: Would these sound natural spoken aloud? (Dinner Table Test)
+   • CONTENT TYPE: Are these tutorials, stories, listicles, case studies? What does each slide DO? What type should your outline follow?
+   • SLIDE ARCHITECTURE: What's the internal structure of each slide? Bullet points? Numbered steps? How many sentences per slide?
+   • HOOKS: What hook mechanisms do the top-scoring swipes use? How are they structured?
+   • STRUCTURE: What beat patterns do the swipes follow? How many sections?
+   • DENSITY: How many words per slide? (Carousels = 50-100, Reels = 10-25)
+   • VOICE: What's the tone, formality, sentence length patterns?
+   • TRANSITIONS: How do slides connect?
+   • CTA: What CTA patterns work?
 
 2. Call think to study the CLIENT PROFILE — their voice targets, brand story, beliefs, audience, positioning, failure fingerprint, top performing content patterns
 
@@ -526,15 +527,19 @@ Only after this analysis can you call add_hooks.`;
           return `[BLOCKED] You haven't analyzed your context deeply enough yet. Before writing:
 
 1. Call think to study ALL loaded swipes — read their full bodies in your context. For EACH dimension below, note what patterns you observe across the swipes:
-   • DENSITY: How many sentences per slide? How many words per sentence? (Slide Density module)
-   • VOICE: What's the tone? Contractions? Sentence fragments vs full sentences? Formality level? (Voice Matching module)
-   • HOOKS: What hook mechanisms do the top-scoring swipes use? How long are hooks? (Hook Craft module)
-   • TRANSITIONS: How do slides connect? Implied "so/but/that's when"? (Causal Chaining module)
-   • PUNCTUATION: Do they use em-dashes? Ellipses? Exclamation marks? What's ABSENT? (Voice DNA)
-   • CTA: What CTA pattern do they use? Keyword + action? (CTA Craft module)
-   • DINNER TABLE: Would these swipes sound natural spoken aloud at dinner? What makes them conversational? (Dinner Table Test)
+   • CONTENT TYPE: Are these tutorials, personal stories, listicles, case studies, news reactions? What does each slide DO — teach, prove, reveal, connect? What type should YOUR draft be?
+   • SLIDE ARCHITECTURE: What's the internal structure of each slide? Count sentences per slide. Do they use bullet points (-- dashes)? Numbered steps? Headers?
+   • SPECIFICITY: How many specific numbers, dollar amounts, percentages, resources, or proper nouns appear per slide? Count them. Your draft must match this density.
+   • VALUE PER SLIDE: Does every slide teach something, prove something, or advance the argument? What's the ratio of teaching slides vs narrative slides?
+   • DENSITY: How many sentences per slide? How many words per slide? (FORMAT-SPECIFIC: carousels = 50-100 words, reels = 10-25 words)
+   • VOICE: What's the tone? Contractions? Sentence fragments vs full sentences? Formality level?
+   • HOOKS: What hook mechanisms do the top-scoring swipes use? How long are hooks?
+   • TRANSITIONS: How do slides connect? Implied "so/but/that's when"?
+   • PUNCTUATION: Do they use em-dashes? Ellipses? Exclamation marks? What's ABSENT?
+   • CTA: What CTA pattern do they use? Keyword + action?
+   • DINNER TABLE: Would these swipes sound natural spoken aloud at dinner?
 
-2. Call think again to plan your writing approach — how will you apply these patterns to THIS content for THIS client?
+2. Call think again to plan your writing approach — how will you match the CONTENT TYPE, DENSITY, SPECIFICITY, and SLIDE ARCHITECTURE of your loaded swipes?
 
 Only after thorough analysis can you call write_draft.`;
         }
@@ -1293,6 +1298,15 @@ If ALL checks pass, present the draft.
     for (const lesson of advisoryLessons) {
       const core = lesson.rule.split('\n')[0].replace(/^RULE:\s*/i, '').substring(0, 120);
       rules.push(`• [ADVISORY] ${core}`);
+    }
+
+    // Format-specific content guidance
+    if (this.targetFormat === 'carousel' || this.targetFormat === 'thread') {
+      rules.push('• [FORMAT] CAROUSEL: 3-6 sentences/slide, 50-100 words, bullet points (--), specific numbers in EVERY slide');
+      rules.push('• [FORMAT] Each slide must TEACH or PROVE something — no empty narrative slides');
+      rules.push('• [FORMAT] Count specifics (numbers, $, %, names) in your loaded swipes and MATCH that density');
+    } else {
+      rules.push('• [FORMAT] REEL: 1-2 sentences/slide, 10-25 words, punchy conversational tone');
     }
 
     // Write directive

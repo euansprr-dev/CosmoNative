@@ -67,6 +67,7 @@ export async function saveLessons(args: Record<string, any>): Promise<string> {
       metadata: {
         subtype: 'lesson',
         lessonType: 'inferred_lesson',
+        lessonID: lessonId, // Must match what Mac's deleteLearnedSkill() looks for
         category,
         evidence: lesson.evidence ?? null,
         intent: lesson.intent ?? null,

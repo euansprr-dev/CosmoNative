@@ -638,6 +638,7 @@ If the user corrected the agent, stated a preference, or explicitly said "rememb
         metadata: {
           subtype: 'lesson',
           lessonType: 'inferred_lesson',
+          lessonID: lessonId, // Must match what Mac's deleteLearnedSkill() looks for
           category,
           confidence: 0.7,
           source: 'conversation_inference',

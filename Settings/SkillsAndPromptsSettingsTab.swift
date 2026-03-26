@@ -818,8 +818,13 @@ struct SkillsAndPromptsSettingsTab: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 10))
                             .foregroundStyle(DS.textMuted)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .onHover { hovering in
+                        if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
                 }
             }
         }
@@ -1098,9 +1103,18 @@ struct SkillsAndPromptsSettingsTab: View {
         Task {
             let repo = AtomRepository.shared
             let atoms = try? await repo.fetchAll(type: .agentLearning)
+            let skillIdStr = skill.id.uuidString
+            // Match by metadata.lessonID (Mac-created) OR structured.id (cloud-created)
             if var atom = atoms?.first(where: { atom in
-                guard let meta = atom.metadataDict else { return false }
-                return meta["lessonID"] as? String == skill.id.uuidString
+                let meta = atom.metadataDict
+                // Parse structured JSON for cloud-created lessons
+                var structuredId: String?
+                if let s = atom.structured, let d = s.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                    structuredId = dict["id"] as? String
+                }
+                return meta?["lessonID"] as? String == skillIdStr
+                    || structuredId == skillIdStr
             }) {
                 atom.isDeleted = true
                 _ = try? await repo.update(atom)

@@ -286,6 +286,21 @@ export async function assembleBlock2(
     }
   }
 
+  // Log what profile data is loaded for debugging
+  const storyCount = documents?.filter((d: any) => d.category === 'story').length || 0;
+  const guideCount = documents?.filter((d: any) => d.category === 'voiceGuide').length || 0;
+  const topCount = documents?.filter((d: any) => ['reel', 'thread'].includes(d.category)).length || 0;
+  const hasBrandStory = !!(structured.brandStory);
+  console.log(`    ✍️ Profile context: ${storyCount} stories, ${guideCount} voice guides, ${topCount} top posts, ${documents?.length || 0} total docs${hasBrandStory ? ', brandStory: yes' : ''}`);
+  if (!documents?.length && !hasBrandStory) {
+    console.log(`    ⚠️ No profile documents loaded — engine may ask user for context`);
+  }
+
+  // If profile docs are loaded, explicitly tell LLM to USE them instead of asking
+  if (storyCount > 0 || hasBrandStory) {
+    sections.push('\n⚠️ IMPORTANT: The brand story, backstory details, and real numbers are loaded above. Do NOT ask the user for this information — WRITE the draft using what you have. Fill any small gaps with plausible specifics based on the loaded context.');
+  }
+
   const content = sections.join('\n');
 
   // Cap at 200K chars (matching Swift)

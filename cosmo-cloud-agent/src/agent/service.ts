@@ -561,7 +561,8 @@ function compressOldToolResults(messages: AgentMessage[]): void {
 // Auto-Lesson Extraction
 // ============================================================
 
-const TEACHABLE_PATTERN = /remember|always|never|from now on|don't use|stop using|I prefer|I like when|rule:|lesson:|not like that|that's wrong|that's not what|you should|next time/i;
+// Require directive framing — bare "never" matches hook text like "he's never suffered"
+const TEACHABLE_PATTERN = /\b(remember this|always use|never use|from now on|don't use|do not use|stop using|I prefer|I like when|rule:|lesson:|not like that|that's wrong|that's not what|you should always|next time|I want you to|please don't|going forward|here's what I changed|here's what i changed)\b/i;
 
 async function extractLessonsFromConversation(chatId: string, userMessage: string, agentResponse: string): Promise<void> {
   // Skip if no teachable signals
@@ -576,7 +577,16 @@ async function extractLessonsFromConversation(chatId: string, userMessage: strin
         messages: [
           {
             role: 'system',
-            content: `You analyze conversations to extract learning rules. If the user taught, corrected, or stated a preference, extract it as a JSON array of rules. Each rule: {"rule": "clear instruction", "category": "hook_style|voice|structure|format|cta|scheduling|productivity|general", "evidence": "what the user said"}. If nothing teachable, return empty array []. ONLY return JSON, nothing else.`,
+            content: `You analyze conversations to extract learning rules. ONLY extract rules that the USER explicitly taught, corrected, or stated as a preference.
+
+Do NOT extract:
+- Generic writing advice the agent already knows (hook structures, blueprint usage, outline generation)
+- The agent's own operational decisions (asking questions, generating variations, using tools)
+- Content from hook text, titles, quotes, or creative writing (these are content, not rules)
+- Anything the user didn't explicitly correct or request as a rule
+- Patterns the agent used during its work process
+
+If the user corrected the agent, stated a preference, or explicitly said "remember/never/always", extract it. Each rule: {"rule": "clear instruction", "category": "hook_style|voice|structure|format|cta|scheduling|productivity|general", "evidence": "what the user said"}. If nothing genuinely teachable, return empty array []. ONLY return JSON.`,
           },
           {
             role: 'user',

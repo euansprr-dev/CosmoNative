@@ -13,6 +13,7 @@ enum TelegramError: Error, LocalizedError {
     case fileNotFound
     case sendFailed(String)
     case rateLimited(retryAfter: TimeInterval)
+    case webhookConflict // Cloud webhook is active — stop local polling
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +22,7 @@ enum TelegramError: Error, LocalizedError {
         case .fileNotFound: return "Telegram file not found"
         case .sendFailed(let msg): return "Failed to send message: \(msg)"
         case .rateLimited(let seconds): return "Rate limited. Retry after \(Int(seconds))s"
+        case .webhookConflict: return "Cloud webhook active — local polling stopped"
         }
     }
 }
@@ -448,6 +450,13 @@ class TelegramBridgeService: ObservableObject {
             } catch {
                 if Task.isCancelled { break }
 
+                // Webhook conflict = cloud agent is active, stop polling entirely
+                if let telegramError = error as? TelegramError, case .webhookConflict = telegramError {
+                    isConnected = true // Mark as connected (cloud handles it)
+                    lastError = nil
+                    return // Exit poll loop gracefully
+                }
+
                 lastError = error.localizedDescription
                 print("[Telegram] Polling error: \(error). Retrying in \(backoffInterval)s")
 
@@ -483,6 +492,12 @@ class TelegramBridgeService: ObservableObject {
         // Check HTTP status first
         if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
             let body = String(data: data, encoding: .utf8) ?? "unknown"
+            // 409 = webhook is active (cloud agent is handling messages)
+            // Stop polling gracefully instead of retrying forever
+            if httpResponse.statusCode == 409 {
+                print("[Telegram] Cloud webhook is active (409 conflict) — stopping local polling. Cloud agent handles messages.")
+                throw TelegramError.webhookConflict
+            }
             print("[Telegram] HTTP \(httpResponse.statusCode): \(body)")
             throw TelegramError.sendFailed("HTTP \(httpResponse.statusCode): \(body)")
         }

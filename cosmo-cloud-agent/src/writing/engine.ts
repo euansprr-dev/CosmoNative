@@ -304,8 +304,14 @@ For EACH slide in the outline, specify:
 • Slide N: [function — what this slide DOES: hook, teach, prove, reveal, reframe, CTA]
 • Content: What specific information goes here (use client's REAL details from brand story — names, numbers, dates, places)
 • Target length: X words, Y sentences
-• Format: paragraph / bullet list / numbered steps
+• Visual format: Does this slide use bullet points (-- dashes)? Line breaks between sentences? LOOK at the swipe examples and copy their visual rhythm exactly.
 • Key details to include: pull specific facts, numbers, stories from the loaded client profile
+
+IMPORTANT: Look at how slides are FORMATTED in the loaded swipes. They use:
+-- Line breaks between separate points (not paragraph blocks)
+-- Short sentences (8-15 words)
+-- Bullet points with -- dashes for lists
+Your plan must specify this per slide. If you write "paragraph" for format, look again at the swipes — they almost never use plain paragraphs.
 
 SECTION D — RULES CHECKLIST (what NOT to do)
 • List ALL hard lessons that apply to this content
@@ -350,7 +356,19 @@ Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan dri
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
-      content: 'Your writing plan is ready. Now write the draft following it EXACTLY. Study the [GOOD EXAMPLE] posts for style and copy quality — match their density, specificity, and structure. Call write_draft with the complete content.',
+      content: `Your writing plan is ready. Now write the draft.
+
+CRITICAL FORMATTING RULES — your draft MUST visually look like the [GOOD EXAMPLE] slides:
+1. Use line breaks WITHIN slides — NOT one big paragraph block
+2. Use -- dashes for any lists or multiple points (look how the examples do it)
+3. Sentences: 8-15 words max. Short and punchy. No long compound sentences.
+4. MAX 40-60 words per slide for reels, 60-100 for carousels
+5. If a slide has more than 2 sentences without a line break — add breaks
+6. Match the VISUAL RHYTHM of the examples — whitespace, bullets, short lines
+7. Each slide should look like it could be an Instagram carousel image, not a blog paragraph
+
+Follow your writing plan for CONTENT but match the EXAMPLES for FORMAT.
+Call write_draft with the complete content.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -405,9 +423,17 @@ Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan dri
 
   private buildSwipeReferenceBlock(): string {
     const sections: string[] = [];
-    sections.push('═══ GOOD EXAMPLES ═══');
-    sections.push('Study these real high-performing posts for structure and style, but create ORIGINAL content.');
-    sections.push('Use these to nail down copy quality, density, transitions, and how viral posts actually read.\n');
+    sections.push('═══ GOOD EXAMPLES — YOUR FORMAT TEMPLATE ═══');
+    sections.push('These are real viral posts. Your draft must VISUALLY LOOK like these.');
+    sections.push('NOTICE:');
+    sections.push('• How they use line breaks WITHIN each slide (not one big paragraph)');
+    sections.push('• How they use -- dashes for bullet point lists');
+    sections.push('• How short their sentences are (8-15 words each)');
+    sections.push('• How they break up text with whitespace between points');
+    sections.push('• How each slide has a clear visual RHYTHM — not a wall of text');
+    sections.push('');
+    sections.push('Your slides must LOOK like these. Same line breaks, same bullet style, same sentence lengths.');
+    sections.push('If your slide is a big paragraph and the examples use bullets — rewrite it.\n');
 
     for (const swipe of this.selectedSwipes) {
       if (swipe.fullBody) {

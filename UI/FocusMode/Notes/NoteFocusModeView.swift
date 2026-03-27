@@ -125,6 +125,8 @@ struct NoteFocusModeView: View {
                                 bodyEditorHeight = max(400, newHeight)
                             },
                             onDocumentChange: { _, plainText in
+                                let changed = plainText != plainContent
+                                print("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                                 plainContent = plainText
                                 if !isInitialLoad { triggerAutoSave() }
                             }
@@ -206,6 +208,7 @@ struct NoteFocusModeView: View {
             }
         }
         .onDisappear {
+            print("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
             // Force an immediate save before closing — don't lose unsaved edits
             autoSaveTask?.cancel()
             saveClosed = true  // Block any in-flight async writes from overwriting
@@ -387,6 +390,7 @@ struct NoteFocusModeView: View {
                             }
                         },
                         onStructuredDocumentChange: { document, plainText in
+                            print("[FOCUS-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
                             titleDocument = document
                             titlePlainText = plainText
                             withAnimation(ProMotionSprings.bouncy) {
@@ -651,12 +655,15 @@ struct NoteFocusModeView: View {
                     )
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
+                    print("[FOCUS-NOTE] 🔔 GRDB observation fired — uuid=\(atom.uuid) isInitialLoad=\(isInitialLoad) isEditingTitle=\(isEditingTitle) dbBodyLen=\(nextBodyPlainText.count) localBodyLen=\(plainContent.count) dbBodyPreview=\"\(String(nextBodyPlainText.prefix(60)))\" localBodyPreview=\"\(String(plainContent.prefix(60)))\"")
 
                     if !isEditingTitle,
                        (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
+                        print("[FOCUS-NOTE] 🔔 observation APPLYING title — uuid=\(atom.uuid)")
                         applyObservedTitleDocument(nextTitleDocument)
                     } else if isEditingTitle,
                               (nextTitlePlainText != titlePlainText || nextTitleDocument != titleDocument) {
+                        print("[FOCUS-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(atom.uuid)")
                         pendingObservedTitleDocument = nextTitleDocument
                     }
 
@@ -665,8 +672,11 @@ struct NoteFocusModeView: View {
                     // from auto-save would overwrite text typed since save started.
                     if isInitialLoad,
                        nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
+                        print("[FOCUS-NOTE] 🔔 observation APPLYING body (initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count)")
                         bodyDocument = nextBodyDocument
                         plainContent = nextBodyPlainText
+                    } else if !isInitialLoad, nextBodyPlainText != plainContent {
+                        print("[FOCUS-NOTE] 🔔 observation SKIPPED body (not initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count) localLen=\(plainContent.count) ⚠️ DIVERGED=\(nextBodyPlainText != plainContent)")
                     }
 
                     tags = fetchedAtom.tagsList
@@ -686,11 +696,16 @@ struct NoteFocusModeView: View {
     // MARK: - Auto-Save
 
     private func triggerAutoSave() {
+        print("[FOCUS-NOTE] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid)")
         autoSaveTask?.cancel()
         autoSaveTask = Task {
             do {
                 try await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    print("[FOCUS-NOTE] triggerAutoSave() CANCELLED uuid=\(atom.uuid)")
+                    return
+                }
+                print("[FOCUS-NOTE] triggerAutoSave() debounce elapsed, calling saveAtom() uuid=\(atom.uuid)")
                 await MainActor.run { saveAtom() }
             } catch {
                 // Cancelled
@@ -700,6 +715,8 @@ struct NoteFocusModeView: View {
 
     /// Debounced save with UI feedback (used during editing)
     private func saveAtom() {
+        print("[FOCUS-NOTE] saveAtom() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+
         withAnimation(ProMotionSprings.snappy) {
             saveState = .saving
         }
@@ -724,6 +741,7 @@ struct NoteFocusModeView: View {
     /// Immediate synchronous save (used on close) — blocks until DB write completes.
     /// Guarantees data is persisted before the view/app exits.
     private func saveAtomImmediately() {
+        print("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
         let titleDocumentCopy = titleDocument
         let bodyDocumentCopy = bodyDocument
         let uuid = atom.uuid
@@ -813,11 +831,16 @@ struct NoteFocusModeView: View {
         let titleCopy = titlePlainText
         let contentCopy = plainContent
         let uuid = atom.uuid
+        print("[FOCUS-NOTE] performSave() — uuid=\(uuid) titleLen=\(titleCopy.count) bodyLen=\(contentCopy.count) bodyPreview=\"\(String(contentCopy.prefix(80)))\"")
 
         Task {
             // Skip if sync save already ran on close — prevents stale async write
             // from overwriting the final save
-            guard !saveClosed else { return }
+            guard !saveClosed else {
+                print("[FOCUS-NOTE] performSave() SKIPPED — saveClosed=true uuid=\(uuid)")
+                return
+            }
+            print("[FOCUS-NOTE] performSave() async DB write starting — uuid=\(uuid)")
             do {
                 try await database.asyncWrite { db in
                     var existingMetadata: String?

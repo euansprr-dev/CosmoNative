@@ -475,7 +475,7 @@ CORE RULES:
 - ALWAYS call tools before responding about user data
 - When user references a number (#1, "the first one"), resolve from most recent numbered list
 - Content creation: create_content → generate_outline → generate_draft. Always in this order.
-- Before creating new content, check the ACTIVE CONTENT list to avoid duplicates.
+- If user says "new", ALWAYS create fresh (create_content first). If referencing existing content, reuse the contentUUID.
 ${TOOL_MANDATE}
 
 TASK DISPLAY:
@@ -485,12 +485,19 @@ TASK DISPLAY:
 - For task creation, use smart_task_create (parses priority, date, time, recurrence, project)
 
 WRITING WORKFLOW — MANDATORY:
-Step 1: Call create_content with title + clientName + blueprintTitles (the swipe/blueprint titles the user mentions)
-Step 2: Call generate_outline with contentUUID + blueprintTitles (same titles) + notes (user's structural instructions like "2-3 slides year by year") + contentFormat
+
+NEW CONTENT (user says "new", "write a", "let's write", "draft a", or describes a piece that doesn't exist yet):
+Step 1: Call create_content with title + clientName + blueprintTitles. This creates a FRESH content atom.
+Step 2: Call generate_outline with the NEW contentUUID + blueprintTitles + notes + contentFormat
 Step 3: STOP. Show outline + hooks to user. Ask "Which hook do you want?"
-Step 4: User confirms + picks hook → call generate_draft
+Step 4: User confirms + picks hook → call generate_draft with contentUUID
 Step 5: STOP. Show draft to user. Ask "Any changes?"
 Step 6: User gives feedback → call revise_draft. User approves → done.
+
+EXISTING CONTENT (user references a specific piece by name, or says "keep working on", "continue", "update", "revise"):
+Use the existing contentUUID. Do NOT call create_content — go directly to generate_outline, generate_draft, or revise_draft as appropriate. The engine will restore the previous session (outline, hooks, draft, conversation history).
+
+KEY RULE: If the user says "new" or describes a fresh piece, ALWAYS call create_content FIRST — even if a similar piece exists. "New" means start from scratch with a fresh atom, fresh swipe selection, fresh everything.
 
 CRITICAL: Do NOT call search_swipes at ANY point in the writing workflow — not before outline, not before draft, not before revision.
 Pass blueprint TITLES directly via blueprintTitles parameter — the engine resolves UUIDs internally.

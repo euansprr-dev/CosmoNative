@@ -70,6 +70,7 @@ struct NoteBlockView: View {
             startObservingAtom()
         }
         .onDisappear {
+            print("[BLOCK-NOTE] onDisappear — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
             saveClosed = true  // Block any in-flight async writes from overwriting sync save
             saveNoteSync()
@@ -177,6 +178,8 @@ struct NoteBlockView: View {
                 isEditable: isEditingBody,
                 scrollsInternally: true,
                 onDocumentChange: { _, plainText in
+                    let changed = plainText != noteText
+                    print("[BLOCK-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                     noteText = plainText
                     noteWordCount = plainText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
                     if !isSyncingFromDB { scheduleAutoSave() }
@@ -232,6 +235,7 @@ struct NoteBlockView: View {
                         noteTitleText = plainText
                     },
                     onStructuredDocumentChange: { document, plainText in
+                        print("[BLOCK-NOTE] onDocumentChange(title) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(trackedEntityUuid)")
                         noteTitleDocument = document
                         noteTitleText = plainText
                         if !isSyncingFromDB { scheduleAutoSave() }
@@ -350,14 +354,17 @@ struct NoteBlockView: View {
                     )
                     let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
                     let newBody = newBodyDocument.plainText
+                    print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
                     var didApplyDatabaseState = false
 
                     if !isEditingTitle,
                        newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                        print("[BLOCK-NOTE] 🔔 observation APPLYING title — uuid=\(uuid)")
                         didApplyDatabaseState = true
                         applyObservedTitleDocument(newTitleDocument)
                     } else if isEditingTitle,
                               newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                        print("[BLOCK-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(uuid)")
                         pendingObservedTitleDocument = newTitleDocument
                     }
 
@@ -366,9 +373,12 @@ struct NoteBlockView: View {
                     // text the user typed since the save was initiated.
                     if !isEditingBody,
                        newBody != noteText || newBodyDocument != noteBodyDocument {
+                        print("[BLOCK-NOTE] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
                         didApplyDatabaseState = true
                         noteBodyDocument = newBodyDocument
                         noteText = newBody
+                    } else if isEditingBody, newBody != noteText {
+                        print("[BLOCK-NOTE] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
                     }
 
                     guard didApplyDatabaseState else { return }
@@ -388,19 +398,24 @@ struct NoteBlockView: View {
     // MARK: - Auto-save
 
     private func scheduleAutoSave() {
+        print("[BLOCK-NOTE] scheduleAutoSave() — 1s debounce starting uuid=\(trackedEntityUuid)")
         autoSaveTask?.cancel()
 
         autoSaveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled {
+                print("[BLOCK-NOTE] scheduleAutoSave() — debounce elapsed, calling saveNote() uuid=\(trackedEntityUuid)")
                 await MainActor.run {
                     saveNote()
                 }
+            } else {
+                print("[BLOCK-NOTE] scheduleAutoSave() — CANCELLED (new keystroke) uuid=\(trackedEntityUuid)")
             }
         }
     }
 
     private func saveNote() {
+        print("[BLOCK-NOTE] saveNote() — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\" saveClosed=\(saveClosed)")
         // Update block metadata (for SpatialEngine persistence)
         NotificationCenter.default.post(
             name: .updateBlockContent,
@@ -438,7 +453,11 @@ struct NoteBlockView: View {
             let blockId = block.id
             Task {
                 // Skip if sync save already ran on close
-                guard !saveClosed else { return }
+                guard !saveClosed else {
+                    print("[BLOCK-NOTE] saveNote() async SKIPPED — saveClosed=true uuid=\(uuid)")
+                    return
+                }
+                print("[BLOCK-NOTE] saveNote() async DB write starting — uuid=\(uuid) bodyLen=\(bodyText.count)")
                 do {
                     let createdAtomId: Int64? = try await CosmoDatabase.shared.asyncWrite { db in
                         var existingMetadata: String?
@@ -534,7 +553,8 @@ struct NoteBlockView: View {
     /// Used on close to guarantee data is persisted before the block/app exits.
     private func saveNoteSync() {
         let uuid = trackedEntityUuid
-        guard !uuid.isEmpty else { return }
+        print("[BLOCK-NOTE] saveNoteSync() — uuid=\(uuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\"")
+        guard !uuid.isEmpty else { print("[BLOCK-NOTE] saveNoteSync() SKIPPED — empty uuid"); return }
 
         do {
             try CosmoDatabase.shared.write { db in

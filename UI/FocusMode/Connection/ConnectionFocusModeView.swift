@@ -201,6 +201,7 @@ struct ConnectionFocusModeView: View {
             }
         )
         .onDisappear {
+            print("[FOCUS-CONN] onDisappear — uuid=\(atom.uuid) title=\"\(String(editableTitle.prefix(60)))\" sectionsCount=\(viewModel.state.sections.count)")
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             viewModel.flushTitleSave(titleDocument, plainTitle: editableTitle)
             viewModel.saveToAtom()
@@ -1069,6 +1070,7 @@ class ConnectionFocusModeViewModel: ObservableObject {
     }
 
     func saveState() {
+        print("[FOCUS-CONN-VM] saveState() — uuid=\(atom.uuid) sectionsCount=\(state.sections.count) totalItems=\(state.sections.flatMap(\.items).count)")
         state.lastModified = Date()
         state.save()
 
@@ -1084,12 +1086,13 @@ class ConnectionFocusModeViewModel: ObservableObject {
 
     func updateTitleDocument(_ document: RichDocument, plainTitle: String) {
         let atomUUID = atom.uuid
+        print("[FOCUS-CONN-VM] updateTitleDocument() — uuid=\(atomUUID) title=\"\(String(plainTitle.prefix(60)))\" 0.5s debounce starting")
 
         // Cancel previous debounced save
         titleSaveTask?.cancel()
         titleSaveTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { print("[FOCUS-CONN-VM] updateTitleDocument() CANCELLED uuid=\(atomUUID)"); return }
             do {
                 let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
                     document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
@@ -1108,15 +1111,16 @@ class ConnectionFocusModeViewModel: ObservableObject {
                         arguments: [fields.title, fields.metadata, ISO8601DateFormatter().string(from: Date()), atomUUID]
                     )
                 }
-                print("✅ Connection title saved")
+                print("[FOCUS-CONN-VM] updateTitleDocument() DB write DONE — uuid=\(atomUUID)")
             } catch {
-                print("❌ Connection title save failed: \(error)")
+                print("[FOCUS-CONN-VM] updateTitleDocument() DB write FAILED — uuid=\(atomUUID) error=\(error)")
             }
         }
     }
 
     /// Force immediate synchronous title save (called on view disappear) — blocks until DB write completes.
     func flushTitleSave(_ document: RichDocument, plainTitle: String) {
+        print("[FOCUS-CONN-VM] flushTitleSave() — uuid=\(atom.uuid) title=\"\(String(plainTitle.prefix(60)))\"")
         titleSaveTask?.cancel()
         let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
             document.isEmpty ? RichDocument.migrateLegacy(plainTitle) : document
@@ -1168,18 +1172,25 @@ class ConnectionFocusModeViewModel: ObservableObject {
             var updatedAtom = atom
             updatedAtom.structured = json
             updatedAtom.body = state.flattenedBodyText
+            print("[FOCUS-CONN-VM] saveToAtom() — uuid=\(atom.uuid) bodyLen=\(state.flattenedBodyText.count) structuredLen=\(json.count) bodyPreview=\"\(String(state.flattenedBodyText.prefix(80)))\"")
             if let saved = try? AtomRepository.shared.updateSync(updatedAtom) {
+                print("[FOCUS-CONN-VM] saveToAtom() DONE — uuid=\(atom.uuid) newVersion=\(saved.localVersion)")
                 // Sync: queue for Supabase push
                 Task {
                     await ChangeTracker.shared.trackUpdate(table: "atoms", entity: saved)
                 }
+            } else {
+                print("[FOCUS-CONN-VM] saveToAtom() FAILED — updateSync threw uuid=\(atom.uuid)")
             }
+        } else {
+            print("[FOCUS-CONN-VM] saveToAtom() SKIPPED — JSON serialization failed uuid=\(atom.uuid)")
         }
     }
 
     // MARK: - Item Management
 
     func addItem(document: RichDocument, plainText: String, toSection type: ConnectionSectionType) {
+        print("[FOCUS-CONN-VM] addItem() — section=\(type.rawValue) textLen=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
         let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
         state.addItem(item, toSection: type)
         saveState()

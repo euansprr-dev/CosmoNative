@@ -305,10 +305,12 @@ struct ContentFocusModeView: View {
             )
         }
         .onDisappear {
+            print("[FOCUS-CONTENT] onDisappear — uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count) vmDraftLen=\(viewModel.state.draftContent.count) draftDocPlainLen=\(draftDocument.plainText.count) draftPreview=\"\(String(localDraftContent.prefix(80)))\"")
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             // If the rich document is stale (debounced serialization hasn't flushed),
             // rebuild it from the authoritative plain text to avoid saving stale content
             if draftDocument.plainText != localDraftContent && !localDraftContent.isEmpty {
+                print("[FOCUS-CONTENT] onDisappear — rebuilding stale draftDocument from localDraftContent (docLen=\(draftDocument.plainText.count) vs localLen=\(localDraftContent.count))")
                 draftDocument = RichDocument.migrateLegacy(localDraftContent)
             }
             // Sync local draft to viewModel state before closing
@@ -340,8 +342,11 @@ struct ContentFocusModeView: View {
             // Skip if user has edited locally — prevents auto-save observation echo
             // from overwriting text typed since the save started.
             if newValue != localDraftContent, !draftEditedLocally {
+                print("[FOCUS-CONTENT] onChange(vmDraftContent) APPLYING external update — uuid=\(atom.uuid) newLen=\(newValue.count) localLen=\(localDraftContent.count) preview=\"\(String(newValue.prefix(60)))\"")
                 localDraftContent = newValue
                 draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(newValue)
+            } else if newValue != localDraftContent, draftEditedLocally {
+                print("[FOCUS-CONTENT] onChange(vmDraftContent) SKIPPED — draftEditedLocally=true uuid=\(atom.uuid) vmLen=\(newValue.count) localLen=\(localDraftContent.count)")
             }
         }
         .onChange(of: viewModel.state.currentStep) { oldStep, newStep in
@@ -583,6 +588,8 @@ struct ContentFocusModeView: View {
                                 triggerCustomPrompt(prompt)
                             },
                             onDocumentChange: { document, plainText in
+                                let changed = plainText != localDraftContent
+                                print("[FOCUS-CONTENT] onDocumentChange(draft) — changed=\(changed) len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
                                 localDraftContent = plainText
                                 draftDocument = document
                                 draftEditedLocally = true
@@ -1089,11 +1096,16 @@ struct ContentFocusModeView: View {
     // MARK: - Auto-save
 
     private func triggerAutoSave() {
+        print("[FOCUS-CONTENT] triggerAutoSave() — \(autoSaveDelay)s debounce starting uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count)")
         autoSaveTask?.cancel()
         autoSaveTask = Task {
             do {
                 try await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    print("[FOCUS-CONTENT] triggerAutoSave() CANCELLED uuid=\(atom.uuid)")
+                    return
+                }
+                print("[FOCUS-CONTENT] triggerAutoSave() debounce elapsed — uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count) draftPreview=\"\(String(localDraftContent.prefix(80)))\"")
                 await MainActor.run {
                     withAnimation(ProMotionSprings.snappy) { saveState = .saving }
                     // Sync local draft to viewModel state only at save time (avoids per-keystroke @Published churn)
@@ -1442,12 +1454,12 @@ class ContentFocusModeViewModel: ObservableObject {
         writeSequence += 1
         let mySequence = writeSequence
 
-        print("💾 Content focus: writing to atom \(atomUUID) (step: \(stateCopy.currentStep.rawValue), seq: \(mySequence), desc: \(stateCopy.contentDescription.prefix(30)), outline: \(stateCopy.outline.count) items)")
+        print("[FOCUS-CONTENT-VM] writeToAtom() — uuid=\(atomUUID) seq=\(mySequence) step=\(stateCopy.currentStep.rawValue) draftLen=\(stateCopy.draftContent.count) draftPreview=\"\(String(stateCopy.draftContent.prefix(80)))\" outline=\(stateCopy.outline.count)items")
 
         Task {
             // Check if a newer write has been queued — if so, skip this one
             guard mySequence == self.writeSequence else {
-                print("💾 Content focus: skipping stale write seq \(mySequence) (latest: \(self.writeSequence))")
+                print("[FOCUS-CONTENT-VM] writeToAtom() SKIPPED stale — uuid=\(atomUUID) seq=\(mySequence) latest=\(self.writeSequence)")
                 return
             }
 
@@ -1479,7 +1491,7 @@ class ContentFocusModeViewModel: ObservableObject {
                             atomUUID
                         ]
                     )
-                    print("💾 Content focus: wrote to atom \(atomUUID) seq \(mySequence), rows affected: \(db.changesCount)")
+                    print("[FOCUS-CONTENT-VM] writeToAtom() DB write DONE — uuid=\(atomUUID) seq=\(mySequence) rows=\(db.changesCount)")
                 }
                 // Sync: queue for Supabase push so content drafts don't only live locally
                 if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
@@ -1488,7 +1500,7 @@ class ContentFocusModeViewModel: ObservableObject {
                     await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
                 }
             } catch {
-                print("❌ Content focus: failed to write to atom: \(error)")
+                print("[FOCUS-CONTENT-VM] writeToAtom() FAILED — uuid=\(atomUUID) error=\(error)")
             }
         }
     }
@@ -1500,7 +1512,7 @@ class ContentFocusModeViewModel: ObservableObject {
         let stateCopy = state
         let atomUUID = atom.uuid
 
-        print("💾 Content focus: sync writing to atom \(atomUUID)")
+        print("[FOCUS-CONTENT-VM] writeToAtomSync() — uuid=\(atomUUID) step=\(stateCopy.currentStep.rawValue) draftLen=\(stateCopy.draftContent.count) draftPreview=\"\(String(stateCopy.draftContent.prefix(80)))\"")
 
         do {
             try CosmoDatabase.shared.write { db in
@@ -1529,7 +1541,7 @@ class ContentFocusModeViewModel: ObservableObject {
                         atomUUID
                     ]
                 )
-                print("💾 Content focus: sync wrote to atom \(atomUUID), rows affected: \(db.changesCount)")
+                print("[FOCUS-CONTENT-VM] writeToAtomSync() DONE — uuid=\(atomUUID) rows=\(db.changesCount)")
             }
             // Sync: queue for Supabase push
             Task {
@@ -1540,13 +1552,13 @@ class ContentFocusModeViewModel: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Content focus: sync write failed: \(error)")
+            print("[FOCUS-CONTENT-VM] writeToAtomSync() FAILED — uuid=\(atomUUID) error=\(error)")
         }
     }
 
     /// Called when view disappears — force immediate synchronous save
     func saveOnClose() {
-        print("💾 Content focus: saveOnClose for atom \(atom.uuid)")
+        print("[FOCUS-CONTENT-VM] saveOnClose() — uuid=\(atom.uuid) draftLen=\(state.draftContent.count) draftPreview=\"\(String(state.draftContent.prefix(80)))\" step=\(state.currentStep.rawValue)")
         isClosed = true
         autoSaveTask?.cancel()
         // Cancel debounced notification subscription to prevent stale writes after close

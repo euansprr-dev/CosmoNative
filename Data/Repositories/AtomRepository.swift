@@ -288,6 +288,7 @@ class AtomRepository: ObservableObject {
     /// Create a new atom
     @discardableResult
     func create(_ atom: Atom) async throws -> Atom {
+        print("[PERSIST] create() called — uuid=\(atom.uuid) type=\(atom.type.rawValue) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0)")
         var preparedAtom = atom
         preparedAtom.createdAt = ISO8601DateFormatter().string(from: Date())
         preparedAtom.updatedAt = preparedAtom.createdAt
@@ -300,6 +301,7 @@ class AtomRepository: ObservableObject {
             insertingAtom.id = db.lastInsertedRowID
             return insertingAtom
         }
+        print("[PERSIST] create() DONE — uuid=\(savedAtom.uuid) id=\(savedAtom.id ?? -1) version=\(savedAtom.localVersion)")
 
         // Track for sync
         await changeTracker.trackInsert(table: Atom.databaseTableName, entity: savedAtom)
@@ -342,6 +344,7 @@ class AtomRepository: ObservableObject {
     /// since the caller's copy was fetched.
     @discardableResult
     func update(_ atom: Atom) async throws -> Atom {
+        print("[PERSIST] update() called — uuid=\(atom.uuid) expectedVersion=\(atom.localVersion) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
         var updatedAtom = atom
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
         updatedAtom.localVersion += 1
@@ -377,8 +380,9 @@ class AtomRepository: ObservableObject {
             return db.changesCount
         }
 
+        print("[PERSIST] update() rows=\(rowsAffected) uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)")
         if rowsAffected == 0 {
-            print("⚠️ AtomRepository: Version conflict for \(atom.uuid) (expected v\(expectedVersion))")
+            print("[PERSIST] ⚠️ VERSION CONFLICT — uuid=\(atom.uuid) expectedVersion=\(expectedVersion) — another writer bumped _local_version")
             throw AtomRepositoryError.versionConflict(
                 uuid: atom.uuid,
                 expectedVersion: expectedVersion
@@ -405,6 +409,7 @@ class AtomRepository: ObservableObject {
     /// Use this in save-on-close paths where the app may terminate before an async write finishes.
     @discardableResult
     func updateSync(_ atom: Atom) throws -> Atom {
+        print("[PERSIST] updateSync() called — uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"")
         var updatedAtom = atom
         updatedAtom.updatedAt = ISO8601DateFormatter().string(from: Date())
         updatedAtom.localVersion += 1
@@ -413,6 +418,7 @@ class AtomRepository: ObservableObject {
         try database.write { db in
             try atomToUpdate.save(db)
         }
+        print("[PERSIST] updateSync() DONE — uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)")
 
         return updatedAtom
     }
@@ -434,6 +440,7 @@ class AtomRepository: ObservableObject {
         uuid: String,
         columns: [String: (any DatabaseValueConvertible)?]
     ) async throws -> Atom {
+        print("[PERSIST] updateFields() called — uuid=\(uuid) columns=\(Array(columns.keys))")
         guard !columns.isEmpty else {
             guard let atom = try await fetch(uuid: uuid) else {
                 throw AtomRepositoryError.notFound(uuid)
@@ -482,6 +489,7 @@ class AtomRepository: ObservableObject {
 
     /// Acquire an editing lock. Call when opening a focus mode view.
     func acquireEditingLock(uuid: String) {
+        print("[PERSIST] 🔒 acquireEditingLock — uuid=\(uuid)")
         editingLocks[uuid] = Date()
     }
 
@@ -493,6 +501,7 @@ class AtomRepository: ObservableObject {
 
     /// Release the editing lock. Call when closing a focus mode view.
     func releaseEditingLock(uuid: String) {
+        print("[PERSIST] 🔓 releaseEditingLock — uuid=\(uuid)")
         editingLocks.removeValue(forKey: uuid)
     }
 
@@ -500,6 +509,7 @@ class AtomRepository: ObservableObject {
     func isBeingEdited(_ uuid: String) -> Bool {
         guard let lockTime = editingLocks[uuid] else { return false }
         if Date().timeIntervalSince(lockTime) > editingLockExpiry {
+            print("[PERSIST] 🔓 editingLock EXPIRED — uuid=\(uuid) age=\(Date().timeIntervalSince(lockTime))s")
             editingLocks.removeValue(forKey: uuid)
             return false
         }

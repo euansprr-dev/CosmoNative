@@ -68,6 +68,19 @@ export function evictEngine(contentUUID: string): void {
   engineCache.delete(contentUUID);
 }
 
+/**
+ * Full fresh start — evict engine cache AND clear persisted conversation state on the atom.
+ * Use when the user wants to start from scratch on an existing content atom.
+ */
+export async function freshStartEngine(contentUUID: string): Promise<void> {
+  evictEngine(contentUUID);
+  await updateAtom(contentUUID, {
+    structured: { writingConversation: null, writingContext: null },
+    metadata: { selectedSwipeUUIDs: null, outline: null, hooks: null },
+  });
+  console.log(`  ✍️ Fresh start: cleared engine cache + conversation + swipes + outline + hooks for ${contentUUID}`);
+}
+
 // ============================================================
 // Cloud Writing Engine
 // ============================================================
@@ -230,12 +243,18 @@ export class CloudWritingEngine {
       this.hasCompletedSelfReview = false;
     }
 
-    // Draft phase uses 3-phase pipeline (Plan → Write → Self-Edit)
+    // Draft phase uses 3-phase pipeline (Plan → Write → Self-Edit) on first draft
+    // Subsequent draft requests reuse the existing plan and go through normal conversation loop
     if (phase === 'draft' && !this.writingPlan) {
       return this.runDraftPipeline(instruction);
     }
+    if (phase === 'draft' && this.writingPlan) {
+      console.log(`  ✍️ Draft request with existing plan (${this.writingPlan.split(/\s+/).length} words) — using conversation loop, not 3-phase pipeline`);
+      console.log(`  ✍️ To force fresh 3-phase pipeline: evict the engine cache for this content atom`);
+    }
 
     // Brainstorm/polish/revision use normal conversation loop
+    console.log(`  ✍️ Conversation loop mode: ${phase} (${this.messages.length} existing messages, analysisDepth: ${this.analysisDepth})`);
     const block3b = this.buildDynamicBlock();
 
     this.messages.push({

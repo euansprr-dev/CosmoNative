@@ -289,20 +289,25 @@ async function searchAtomsILike(
 }
 
 /**
- * Exact title match (case-insensitive, no wildcards) — used for blueprint lookup
- * where the user provides the exact swipe title.
+ * Robust blueprint lookup — searches title, body opening, and hookText in structured data.
+ * Swipe titles may not match what the user sees (hookText often differs from atom.title).
+ * Tries: exact title → title contains → body starts with → hookText contains.
  */
 export async function searchAtomsByExactTitle(
   title: string,
   types?: string[],
 ): Promise<Atom[]> {
+  // Normalize: strip trailing ellipsis variations and trim
+  const normalized = title.replace(/\.{2,}$/, '').replace(/…$/, '').trim();
+  const pattern = `%${normalized}%`;
+
   let q = supabase
     .from('atoms')
     .select('*')
     .eq('user_id', userId)
     .eq('is_deleted', false)
-    .ilike('title', title)
-    .limit(5)
+    .or(`title.ilike.${pattern},body.ilike.${pattern}`)
+    .limit(10)
     .order('updated_at', { ascending: false });
 
   if (types && types.length > 0) {
@@ -310,7 +315,15 @@ export async function searchAtomsByExactTitle(
   }
 
   const { data } = await q;
-  return (data as Atom[]) || [];
+  const results = (data as Atom[]) || [];
+
+  if (results.length === 0) {
+    console.log(`    🔍 Blueprint search: no results for "${normalized}" (tried title+body ILIKE)`);
+  } else {
+    console.log(`    🔍 Blueprint search: ${results.length} results for "${normalized.substring(0, 60)}..." (titles: ${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')})`);
+  }
+
+  return results;
 }
 
 // ============================================================

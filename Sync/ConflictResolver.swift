@@ -15,6 +15,9 @@ class ConflictResolver {
         uuid: String,
         data: [String: Any]
     ) async {
+        let remoteSource = data["_source"] as? String ?? "unknown"
+        let remoteBody = (data["body"] as? String)?.prefix(80) ?? "nil"
+        print("[SYNC-RESOLVE] applyRemoteChange — table=\(table) uuid=\(uuid) source=\(remoteSource) remoteBodyPreview=\"\(remoteBody)\"")
         do {
             let local = try await database.asyncRead { db in
                 try Row.fetchOne(
@@ -30,14 +33,15 @@ class ConflictResolver {
                 let localPending = local["_local_pending"] as? Int ?? 0
 
                 let remoteVersion = data["_version"] as? Int ?? data["_server_version"] as? Int ?? data["version"] as? Int ?? 0
+                print("[SYNC-RESOLVE] local state — uuid=\(uuid) localVersion=\(localVersion) serverVersion=\(serverVersion) localPending=\(localPending) remoteVersion=\(remoteVersion)")
 
                 if localPending == 1 {
-                    print("🛡️ Skipping remote update for \(uuid) - local pending")
+                    print("[SYNC-RESOLVE] SKIPPED — localPending=1 uuid=\(uuid)")
                     return
                 }
 
                 if remoteVersion <= serverVersion && remoteVersion > 0 {
-                    print("⏭️ Skipping older remote version for \(uuid)")
+                    print("[SYNC-RESOLVE] SKIPPED — stale remote version uuid=\(uuid) remote=\(remoteVersion) <= server=\(serverVersion)")
                     return
                 }
 
@@ -54,11 +58,12 @@ class ConflictResolver {
                 }
 
             } else {
+                print("[SYNC-RESOLVE] applying as INSERT — uuid=\(uuid)")
                 await applyRemoteInsert(table: table, data: data)
             }
 
         } catch {
-            print("❌ Conflict resolution error: \(error)")
+            print("[SYNC-RESOLVE] ❌ error — uuid=\(uuid) error=\(error)")
         }
     }
 

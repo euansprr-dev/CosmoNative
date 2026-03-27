@@ -121,6 +121,7 @@ struct StickyNoteBlockView: View {
             isEditable: isEditingBody,
             scrollsInternally: true,
             onDocumentChange: { _, plainText in
+                print("[BLOCK-STICKY] onDocumentChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" isSyncingFromDB=\(isSyncingFromDB) uuid=\(block.entityUuid)")
                 noteText = plainText
                 if !isSyncingFromDB { scheduleAutoSave() }
             },
@@ -211,6 +212,7 @@ struct StickyNoteBlockView: View {
             }
         }
         .onDisappear {
+            print("[BLOCK-STICKY] onDisappear — uuid=\(block.entityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
             saveClosed = true
             saveNoteSync()
@@ -324,7 +326,10 @@ struct StickyNoteBlockView: View {
                         fallbackPlainText: atom.body
                     )
                     let newBody = newBodyDocument.plainText
-                    guard newBody != noteText || newBodyDocument != noteBodyDocument else { return }
+                    let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
+                    print("[BLOCK-STICKY] 🔔 GRDB observation fired — uuid=\(uuid) isEditingBody=\(isEditingBody) bodyChanged=\(bodyChanged) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbPreview=\"\(String(newBody.prefix(60)))\"")
+                    guard bodyChanged else { return }
+                    print("[BLOCK-STICKY] 🔔 observation APPLYING body — uuid=\(uuid) ⚠️ NO isEditingBody guard — overwriting local with dbLen=\(newBody.count)")
                     isSyncingFromDB = true
                     noteBodyDocument = newBodyDocument
                     noteText = newBody
@@ -338,11 +343,13 @@ struct StickyNoteBlockView: View {
     // MARK: - Auto-save
 
     private func scheduleAutoSave() {
+        print("[BLOCK-STICKY] scheduleAutoSave() — 1s debounce uuid=\(block.entityUuid)")
         autoSaveTask?.cancel()
 
         autoSaveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled {
+                print("[BLOCK-STICKY] scheduleAutoSave() debounce elapsed, calling saveNote() uuid=\(block.entityUuid)")
                 await MainActor.run {
                     saveNote()
                 }
@@ -351,6 +358,7 @@ struct StickyNoteBlockView: View {
     }
 
     private func saveNote() {
+        print("[BLOCK-STICKY] saveNote() — uuid=\(block.entityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\" saveClosed=\(saveClosed)")
         // Update block metadata (for SpatialEngine persistence)
         NotificationCenter.default.post(
             name: .updateBlockContent,
@@ -379,7 +387,11 @@ struct StickyNoteBlockView: View {
         let uuid = block.entityUuid
         if !uuid.isEmpty {
             Task {
-                guard !saveClosed else { return }
+                guard !saveClosed else {
+                    print("[BLOCK-STICKY] saveNote() async SKIPPED — saveClosed=true uuid=\(uuid)")
+                    return
+                }
+                print("[BLOCK-STICKY] saveNote() async DB write starting — uuid=\(uuid)")
                 do {
                     try await CosmoDatabase.shared.asyncWrite { db in
                         var existingMetadata: String?
@@ -409,8 +421,9 @@ struct StickyNoteBlockView: View {
                             ]
                         )
                     }
+                    print("[BLOCK-STICKY] saveNote() async DB write DONE — uuid=\(uuid) ⚠️ NOTE: ChangeTracker NOT called (missing)")
                 } catch {
-                    print("StickyNote: Failed to save to atom: \(error)")
+                    print("[BLOCK-STICKY] saveNote() async DB write FAILED — uuid=\(uuid) error=\(error)")
                 }
             }
         }
@@ -420,7 +433,8 @@ struct StickyNoteBlockView: View {
     /// Used on close to guarantee data is persisted before the block exits.
     private func saveNoteSync() {
         let uuid = block.entityUuid
-        guard !uuid.isEmpty else { return }
+        print("[BLOCK-STICKY] saveNoteSync() — uuid=\(uuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(80)))\"")
+        guard !uuid.isEmpty else { print("[BLOCK-STICKY] saveNoteSync() SKIPPED — empty uuid"); return }
 
         do {
             try CosmoDatabase.shared.write { db in

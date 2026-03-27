@@ -20,9 +20,10 @@ class ChangeTracker: ObservableObject {
         entity: T
     ) async {
         guard let uuid = entity.getUUID() else {
-            print("⚠️ Cannot track entity without UUID")
+            print("[SYNC] ⚠️ Cannot track entity without UUID")
             return
         }
+        print("[SYNC] trackInsert — table=\(table) uuid=\(uuid)")
 
         // Mark as pending locally
         await markAsPending(table: table, uuid: uuid)
@@ -47,6 +48,7 @@ class ChangeTracker: ObservableObject {
         changedFields: [String]? = nil
     ) async {
         guard let uuid = entity.getUUID() else { return }
+        print("[SYNC] trackUpdate — table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"])")
 
         // Increment local version
         await incrementLocalVersion(table: table, uuid: uuid)
@@ -110,8 +112,12 @@ class ChangeTracker: ObservableObject {
         entity: T,
         operation: String
     ) async {
+        print("[SYNC] immediatePush — table=\(table) uuid=\(uuid) op=\(operation)")
         Task.detached { @MainActor in
-            guard let client = SupabaseClient.shared, client.isAuthenticated else { return }
+            guard let client = SupabaseClient.shared, client.isAuthenticated else {
+                print("[SYNC] immediatePush SKIPPED — no client or not authenticated uuid=\(uuid)")
+                return
+            }
             guard let userId = client.currentUserId else { return }
 
             // Serialize entity
@@ -164,8 +170,9 @@ class ChangeTracker: ObservableObject {
                         arguments: [uuid]
                     )
                 }
+                print("[SYNC] immediatePush SUCCESS — table=\(table) uuid=\(uuid) op=\(operation)")
             } catch {
-                print("⚠️ [Sync] immediatePush failed for \(table):\(uuid) (\(operation)): \(error)")
+                print("[SYNC] ⚠️ immediatePush FAILED — table=\(table) uuid=\(uuid) op=\(operation) error=\(error)")
                 // sync_queue entry remains for batch retry by SyncEngine
             }
         }
@@ -230,6 +237,7 @@ class ChangeTracker: ObservableObject {
 
     // MARK: - Mark as Pending
     private func markAsPending(table: String, uuid: String) async {
+        print("[SYNC] markAsPending — table=\(table) uuid=\(uuid)")
         try? await database.asyncWrite { db in
             try db.execute(
                 sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?",
@@ -240,6 +248,7 @@ class ChangeTracker: ObservableObject {
 
     // MARK: - Increment Local Version
     private func incrementLocalVersion(table: String, uuid: String) async {
+        print("[SYNC] incrementLocalVersion — table=\(table) uuid=\(uuid)")
         try? await database.asyncWrite { db in
             try db.execute(
                 sql: "UPDATE \(table) SET _local_version = _local_version + 1 WHERE uuid = ?",

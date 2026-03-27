@@ -57,6 +57,7 @@ struct ConnectionBlockView: View {
             titleEditorHeight = titleMinHeight
         }
         .onDisappear {
+            print("[BLOCK-CONN] onDisappear — entityId=\(block.entityId) uuid=\(atom?.uuid ?? "nil") isEditingTitle=\(isEditingTitle) sectionsCount=\(sections.count)")
             // Defer by one frame so the editor's flushPendingSync updates titleDocument first
             if isEditingTitle {
                 DispatchQueue.main.async {
@@ -245,6 +246,7 @@ struct ConnectionBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { atom in
                     guard let atom else { return }
+                    print("[BLOCK-CONN] 🔔 GRDB observation fired — uuid=\(atom.uuid) isEditingTitle=\(self.isEditingTitle) sectionsModifiedLocally=\(self.sectionsModifiedLocally) dbBodyLen=\(atom.body?.count ?? 0) dbStructuredLen=\(atom.structured?.count ?? 0)")
                     self.atom = atom
                     let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
@@ -253,16 +255,21 @@ struct ConnectionBlockView: View {
                     )
                     if self.isEditingTitle {
                         if newTitleDocument != self.titleDocument {
+                            print("[BLOCK-CONN] 🔔 observation DEFERRED title (editing) — uuid=\(atom.uuid)")
                             self.pendingObservedTitleDocument = newTitleDocument
                         }
                     } else {
+                        print("[BLOCK-CONN] 🔔 observation APPLYING title — uuid=\(atom.uuid)")
                         self.applyObservedTitleDocument(newTitleDocument)
                     }
                     // Only re-parse sections from DB if user hasn't made local edits.
                     // After local edits, saveChanges() is the authority — observation echoes
                     // from auto-save would overwrite in-progress edits.
                     if !self.sectionsModifiedLocally {
+                        print("[BLOCK-CONN] 🔔 observation APPLYING sections from DB — uuid=\(atom.uuid)")
                         self.parseSections(from: atom)
+                    } else {
+                        print("[BLOCK-CONN] 🔔 observation SKIPPED sections (locally modified) — uuid=\(atom.uuid)")
                     }
                 }
             )
@@ -415,24 +422,28 @@ struct ConnectionBlockView: View {
     // MARK: - Persistence
 
     private func saveChanges() {
+        print("[BLOCK-CONN] saveChanges() — uuid=\(atom?.uuid ?? "nil") sectionsCount=\(sections.count) totalItems=\(sections.flatMap(\.items).count)")
         sectionsModifiedLocally = true
         let structuredData = ConnectionStructuredData(sections: sections)
-        guard let json = structuredData.toJSON() else { return }
+        guard let json = structuredData.toJSON() else { print("[BLOCK-CONN] saveChanges() FAILED — JSON serialization failed"); return }
         let flattenedBodyText = flattenedSectionBodyText()
+        print("[BLOCK-CONN] saveChanges() — bodyLen=\(flattenedBodyText.count) structuredLen=\(json.count) bodyPreview=\"\(String(flattenedBodyText.prefix(80)))\"")
 
         persistBlockSnapshot(structuredJSON: json, flattenedBodyText: flattenedBodyText)
 
-        guard let atom = atom else { return }
+        guard let atom = atom else { print("[BLOCK-CONN] saveChanges() SKIPPED DB — no atom loaded"); return }
         let atomUUID = atom.uuid
 
         // 1. Write to atom.structured
         Task {
+            print("[BLOCK-CONN] saveChanges() async DB write starting — uuid=\(atomUUID)")
             try? await CosmoDatabase.shared.asyncWrite { db in
                 try db.execute(
                     sql: "UPDATE atoms SET structured = ?, body = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
                     arguments: [json, flattenedBodyText, ISO8601DateFormatter().string(from: Date()), atomUUID]
                 )
             }
+            print("[BLOCK-CONN] saveChanges() async DB write DONE — uuid=\(atomUUID)")
             // Sync: queue for Supabase push
             if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                 await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
@@ -445,12 +456,14 @@ struct ConnectionBlockView: View {
         focusState.sections = sections
         focusState.lastModified = Date()
         focusState.save()
+        print("[BLOCK-CONN] saveChanges() UserDefaults saved — uuid=\(atomUUID)")
     }
 
     // MARK: - Title Editing
 
     private func commitTitleEdit(document: RichDocument) {
         let newTitle = RichDocumentPersistence.titlePlainText(from: document)
+        print("[BLOCK-CONN] commitTitleEdit() — uuid=\(atom?.uuid ?? "nil") newTitle=\"\(String(newTitle.prefix(60)))\"")
         applyObservedTitleDocument(document)
         persistBlockSnapshot(
             structuredJSON: ConnectionStructuredData(sections: sections).toJSON(),
@@ -461,6 +474,7 @@ struct ConnectionBlockView: View {
         guard let atom = atom else { return }
         let atomUUID = atom.uuid
         Task {
+            print("[BLOCK-CONN] commitTitleEdit() async DB write — uuid=\(atomUUID)")
             try? await CosmoDatabase.shared.asyncWrite { db in
                 var existingMetadata: String?
                 if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {

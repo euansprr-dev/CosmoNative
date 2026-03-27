@@ -3,7 +3,7 @@
 // PORTING SOURCE: AgentToolExecutor.swift lines 2037-2500
 // Phase 3: Real engine implementation (replaces stubs)
 
-import { Atom, fetchAtom, updateAtom, createAtom, fuzzyFindClient, searchAtoms, isSwipeFileAtom } from '../db/queries';
+import { Atom, fetchAtom, updateAtom, createAtom, fuzzyFindClient, searchAtoms, searchAtomsByExactTitle, isSwipeFileAtom } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 import { getOrCreateEngine, evictEngine } from '../writing/engine';
 import { renderDraftForDisplay, detectContentFormat } from '../writing/types';
@@ -38,15 +38,21 @@ export async function generateOutline(args: Record<string, any>): Promise<string
   const failedBlueprints: string[] = [];
   if (args.blueprintTitles && Array.isArray(args.blueprintTitles)) {
     for (const title of args.blueprintTitles) {
-      const results = await searchAtoms(title, { types: ['research'], limit: 3 });
+      // Try exact title match first, then fall back to fuzzy search
+      let results = await searchAtomsByExactTitle(title, ['research']);
+      if (results.length === 0) {
+        results = await searchAtoms(title, { types: ['research'], limit: 5 });
+      }
       const swipe = results.find(a => isSwipeFileAtom(a));
       if (swipe && !blueprintUUIDs.includes(swipe.uuid)) {
         blueprintUUIDs.push(swipe.uuid);
         resolvedBlueprints.push(title);
         console.log(`    ✍️ Resolved blueprint: "${title}" → ${swipe.uuid}`);
       } else {
+        const found = results.length;
+        const swipeCount = results.filter(isSwipeFileAtom).length;
         failedBlueprints.push(title);
-        console.log(`    ⚠️ Blueprint not found: "${title}"`);
+        console.log(`    ⚠️ Blueprint not found: "${title}" (${found} search results, ${swipeCount} were swipe files)`);
       }
     }
   }

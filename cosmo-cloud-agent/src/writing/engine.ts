@@ -289,9 +289,6 @@ export class CloudWritingEngine {
       return result;
     }
 
-    const planPreview = this.writingPlan.substring(0, 300).replace(/\n/g, ' ');
-    console.log(`  ✍️ Plan preview: "${planPreview}..."`);
-
     // PHASE 2: WRITE — plan + swipe examples context, focused draft
     console.log(`\n  ✍️ ─── Phase 2: WRITE ───`);
     console.log(`  ✍️ Tools: think, write_draft, read_draft`);
@@ -806,12 +803,18 @@ After all 6 checks: fix failures and call write_draft, or respond with a summary
         if (text.length > 0) {
           // Has content — accept
           if (response.finishReason === 'length') {
-            // Truncated by max_tokens — accept with warning
             lastAssistantText = text + '\n\n[System] The model hit its output limit before finishing. Ask me to continue from where it left off.';
             console.log(`  ⚠️ Accepted truncated response (finish_reason=length)`);
           } else {
             lastAssistantText = text;
           }
+          // Log full assistant response
+          console.log(`    🤖 Assistant response (${text.length} chars):`);
+          console.log(`    ────────────────────────────────────────`);
+          for (const line of text.split('\n')) {
+            console.log(`    🤖 ${line}`);
+          }
+          console.log(`    ────────────────────────────────────────`);
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'assistant',
@@ -941,8 +944,7 @@ After all 6 checks: fix failures and call write_draft, or respond with a summary
         const thought = (args.thought as string) || '';
         const wordCount = thought.split(/\s+/).length;
 
-        // Log think content — first 200 chars for context
-        const thinkPreview = thought.substring(0, 200).replace(/\n/g, ' ');
+        // Log full think content — essential for debugging and optimizing the writing system
         const thinkTopics: string[] = [];
         if (/slide|density|word.?count/i.test(thought)) thinkTopics.push('density');
         if (/beat|hook|structure/i.test(thought)) thinkTopics.push('structure');
@@ -951,7 +953,13 @@ After all 6 checks: fix failures and call write_draft, or respond with a summary
         if (/rule|lesson|ban/i.test(thought)) thinkTopics.push('rules');
         if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
         if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
-        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]: "${thinkPreview}..."`);
+        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]:`);
+        console.log(`    ────────────────────────────────────────`);
+        // Log full thought with indentation for readability
+        for (const line of thought.split('\n')) {
+          console.log(`    💭 ${line}`);
+        }
+        console.log(`    ────────────────────────────────────────`);
 
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
@@ -1111,16 +1119,20 @@ Only after thorough analysis can you call write_draft.`;
         const validation = validateDraft(content, this.targetFormat);
         const wordCount = content.split(/\s+/).filter(Boolean).length;
 
-        // Log draft details
+        // Log full draft details
         const slideMarkers = content.match(/^Slide \d+/gim) || [];
         const slideCount = slideMarkers.length || (content.match(/^[-=]{3,}$/gm) || []).length + 1;
-        const firstSlide = content.split(/^Slide \d+/im)[1]?.trim().substring(0, 100) || content.substring(0, 100);
         console.log(`    📝 write_draft: ${wordCount} words, ${slideCount} slides, format: ${format}`);
-        console.log(`    📝 Slide 1 preview: "${firstSlide.replace(/\n/g, ' ')}..."`);
         if (this.blueprintAnchor) {
           const bpSlides = this.countSlidesInBody(this.blueprintAnchor.fullBody);
           console.log(`    📝 Blueprint comparison: draft=${slideCount} slides vs blueprint=${bpSlides} slides ${slideCount === bpSlides ? '✅' : '⚠️ MISMATCH'}`);
         }
+        // Log full draft for debugging
+        console.log(`    📝 ════════ FULL DRAFT ════════`);
+        for (const line of content.split('\n')) {
+          console.log(`    📝 ${line}`);
+        }
+        console.log(`    📝 ════════ END DRAFT ════════`);
 
         let result = `Draft written (${wordCount} words, format: ${format})`;
         if (!validation.isValid) {
@@ -1213,6 +1225,12 @@ If ALL checks pass, present the draft.
         console.log(`    📋 Plan quality: ${hasSlideEntries} slide entries, ${hasWordCounts} word count targets, ${hasBeatLabels} beat labels, banned section: ${hasBannedSection ? 'yes' : 'NO'}, hook spec: ${hasHookSpec ? 'yes' : 'NO'}`);
         if (hasSlideEntries < 3) console.log(`    ⚠️ Plan has few slide entries (${hasSlideEntries}) — may not have per-slide detail`);
         if (hasWordCounts < 2) console.log(`    ⚠️ Plan has few word count targets (${hasWordCounts}) — density may be vague`);
+        // Log full plan for debugging
+        console.log(`    📋 ════════ FULL WRITING PLAN ════════`);
+        for (const line of plan.split('\n')) {
+          console.log(`    📋 ${line}`);
+        }
+        console.log(`    📋 ════════ END WRITING PLAN ════════`);
 
         return `Writing plan created (${planWords} words). The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }

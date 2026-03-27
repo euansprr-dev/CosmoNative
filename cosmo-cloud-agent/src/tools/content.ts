@@ -2,7 +2,7 @@
 // Content tools — 6 tools ported from AgentToolExecutor.swift
 // PORTING SOURCE: AgentToolExecutor.swift lines 1412-1570
 
-import { fetchAtom, fetchAllByType, createAtom, updateAtom, fuzzyFindClient, atomToDict, searchAtoms, isSwipeFileAtom } from '../db/queries';
+import { fetchAtom, fetchAllByType, createAtom, updateAtom, fuzzyFindClient, atomToDict, searchAtoms, searchAtomsByExactTitle, isSwipeFileAtom } from '../db/queries';
 import { jsonEncode, jsonError } from '../agent/toolExecutor';
 
 // ============================================================
@@ -121,11 +121,19 @@ export async function createContent(args: Record<string, any>): Promise<string> 
   if (blueprintTitles && blueprintTitles.length > 0) {
     const resolved: string[] = [];
     for (const title of blueprintTitles) {
-      const results = await searchAtoms(title, { types: ['research'], limit: 3 });
+      // Try exact title match first, then fall back to fuzzy search
+      let results = await searchAtomsByExactTitle(title, ['research']);
+      if (results.length === 0) {
+        results = await searchAtoms(title, { types: ['research'], limit: 5 });
+      }
       const swipe = results.find(a => isSwipeFileAtom(a));
       if (swipe) {
         resolved.push(swipe.uuid);
         console.log(`    📎 Blueprint linked: "${title}" → ${swipe.uuid}`);
+      } else {
+        const found = results.length;
+        const swipeCount = results.filter(isSwipeFileAtom).length;
+        console.log(`    ⚠️ Blueprint not found: "${title}" (${found} results, ${swipeCount} swipes)`);
       }
     }
     if (resolved.length > 0) {

@@ -12,6 +12,7 @@
 
 import { Atom, fetchAllByType, fetchAtom, isSwipeFileAtom } from '../db/queries';
 import { CompressedSwipe, ContentFormat, FormatFamily, getFormatFamily } from './types';
+import { config } from '../config';
 
 const TARGET_SWIPE_COUNT = 20; // Match Swift's count for full pattern diversity
 const MAX_SWIPE_POOL = 200;
@@ -56,12 +57,9 @@ export async function selectSwipes(
 
     const isPrimary = primarySwipeUUIDs.includes(swipe.uuid);
 
-    // Axis 1: Format match — HARD EXCLUDE wrong-format (matching Swift guard behavior)
+    // Axis 1: Format match — soft penalty for wrong format (was hard exclude, but that killed pool diversity)
     const swipeFormat = detectSwipeFormat(swipe);
-    const formatScore = swipeFormat === targetFamily ? 1.0 : 0.0;
-
-    // Skip wrong-format swipes entirely (primary swipes bypass — user chose them)
-    if (formatScore === 0 && !isPrimary) continue;
+    const formatScore = swipeFormat === targetFamily ? 1.0 : 0.15;
 
     // Axis 2: Structural — beat pattern quality (check against top patterns)
     const fingerprint = analysis.beatFingerprint as string;
@@ -87,11 +85,46 @@ export async function selectSwipes(
     scored.push({ atom: swipe, score: finalScore, isPrimary });
   }
 
+  // Phase 2b: Recency diversity — deprioritize swipes recently used in other content atoms
+  const recentlyUsed = await getRecentlySelectedSwipeUUIDs(15);
+  if (recentlyUsed.size > 0) {
+    let penalized = 0;
+    for (const entry of scored) {
+      if (recentlyUsed.has(entry.atom.uuid) && !entry.isPrimary) {
+        entry.score *= 0.5; // 50% penalty, not exclusion
+        penalized++;
+      }
+    }
+    if (penalized > 0) {
+      console.log(`    ✍️ Swipe diversity: penalized ${penalized}/${scored.length} recently-used swipes`);
+    }
+  }
+
   // Phase 3: Weighted random sampling
   const selected = weightedRandomSample(scored, TARGET_SWIPE_COUNT);
 
   // Phase 4: Compress selected swipes
   return selected.map(({ atom, isPrimary }) => compressSwipe(atom, isPrimary));
+}
+
+/**
+ * Get UUIDs of swipes recently selected for other content atoms.
+ * Used to penalize (not exclude) repetition across different content pieces.
+ */
+async function getRecentlySelectedSwipeUUIDs(limit: number): Promise<Set<string>> {
+  try {
+    const contentAtoms = await fetchAllByType('content', { limit });
+    const uuids = new Set<string>();
+    for (const atom of contentAtoms) {
+      const selected = atom.metadata?.selectedSwipeUUIDs as string[] | undefined;
+      if (selected) {
+        for (const uuid of selected) uuids.add(uuid);
+      }
+    }
+    return uuids;
+  } catch {
+    return new Set();
+  }
 }
 
 /**

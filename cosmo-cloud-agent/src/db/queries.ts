@@ -288,6 +288,31 @@ async function searchAtomsILike(
   return (data as Atom[]) || [];
 }
 
+/**
+ * Exact title match (case-insensitive, no wildcards) — used for blueprint lookup
+ * where the user provides the exact swipe title.
+ */
+export async function searchAtomsByExactTitle(
+  title: string,
+  types?: string[],
+): Promise<Atom[]> {
+  let q = supabase
+    .from('atoms')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_deleted', false)
+    .ilike('title', title)
+    .limit(5)
+    .order('updated_at', { ascending: false });
+
+  if (types && types.length > 0) {
+    q = q.in('type', types);
+  }
+
+  const { data } = await q;
+  return (data as Atom[]) || [];
+}
+
 // ============================================================
 // Client Resolution
 // ============================================================

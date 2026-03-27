@@ -29,6 +29,8 @@ struct ContentFocusModeView: View {
 
     /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
     @State private var localDraftContent: String = ""
+    /// Tracks whether the user has edited the draft — blocks observation overwrites
+    @State private var draftEditedLocally = false
 
     /// Typewriter mode — cursor stays vertically centered while typing
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
@@ -334,8 +336,10 @@ struct ContentFocusModeView: View {
             viewModel.state.richDraftDocument = draftDocument
         }
         .onChange(of: viewModel.state.draftContent) { _, newValue in
-            // Sync external draft updates (AI engine, tool executor) back to local state
-            if newValue != localDraftContent {
+            // Sync external draft updates (AI engine, tool executor) back to local state.
+            // Skip if user has edited locally — prevents auto-save observation echo
+            // from overwriting text typed since the save started.
+            if newValue != localDraftContent, !draftEditedLocally {
                 localDraftContent = newValue
                 draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(newValue)
             }
@@ -581,6 +585,7 @@ struct ContentFocusModeView: View {
                             onDocumentChange: { document, plainText in
                                 localDraftContent = plainText
                                 draftDocument = document
+                                draftEditedLocally = true
                                 triggerAutoSave()
                                 if isPolishModeActive { debouncedPolishUpdate() }
                             }

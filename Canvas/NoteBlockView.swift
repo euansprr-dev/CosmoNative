@@ -361,7 +361,11 @@ struct NoteBlockView: View {
                         pendingObservedTitleDocument = newTitleDocument
                     }
 
-                    if newBody != noteText || newBodyDocument != noteBodyDocument {
+                    // Only overwrite body from DB when NOT actively editing —
+                    // otherwise the observation echo from auto-save overwrites
+                    // text the user typed since the save was initiated.
+                    if !isEditingBody,
+                       newBody != noteText || newBodyDocument != noteBodyDocument {
                         didApplyDatabaseState = true
                         noteBodyDocument = newBodyDocument
                         noteText = newBody

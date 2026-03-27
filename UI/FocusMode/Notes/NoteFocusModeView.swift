@@ -660,7 +660,11 @@ struct NoteFocusModeView: View {
                         pendingObservedTitleDocument = nextTitleDocument
                     }
 
-                    if nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
+                    // Only overwrite body from DB during initial load —
+                    // after that, the user is always editing and observation echoes
+                    // from auto-save would overwrite text typed since save started.
+                    if isInitialLoad,
+                       nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
                         bodyDocument = nextBodyDocument
                         plainContent = nextBodyPlainText
                     }

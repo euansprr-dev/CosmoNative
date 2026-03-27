@@ -350,6 +350,41 @@ export async function assembleBlock2(
 }
 
 // ============================================================
+// Shared: Swipe Application Rules (used in Block 3A and in write-phase examples block)
+// ============================================================
+
+export function getSwipeApplicationRules(swipeCount: number, primarySwipe?: CompressedSwipe): string {
+  const lines: string[] = [];
+  lines.push('--- SWIPE APPLICATION RULES (apply on EVERY turn, including revisions) ---');
+  if (primarySwipe) {
+    lines.push(`PRIMARY BLUEPRINT: "${primarySwipe.title}"`);
+    lines.push(`  Beat pattern: ${primarySwipe.beatSequence.join(' > ')}`);
+    lines.push(`  Hook type: ${primarySwipe.hookType} (score: ${primarySwipe.hookScore}/10)`);
+    if (primarySwipe.hookText) {
+      const hookPreview = primarySwipe.hookText.length > 200 ? primarySwipe.hookText.substring(0, 200) : primarySwipe.hookText;
+      lines.push(`  Hook text: "${hookPreview}"`);
+      lines.push(`  → All generated hooks MUST match this format exactly (case, perspective, structure)`);
+    }
+    if (primarySwipe.beatSequence.length > 0) {
+      lines.push('  Beat functions (apply these structural roles, NOT the blueprint\'s topic):');
+      primarySwipe.beatSequence.forEach((beat, i) => {
+        const transition = primarySwipe.keyTransitions && i < primarySwipe.keyTransitions.length
+          ? ` — ${primarySwipe.keyTransitions[i]}` : '';
+        lines.push(`    ${i + 1}. [${beat}]${transition}`);
+      });
+    }
+  }
+  lines.push('RULES:');
+  lines.push(`1. These ${swipeCount} swipes are your PERMANENT reference library. Their full bodies are loaded — read and absorb them.`);
+  lines.push('2. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook type, and emotional arc.');
+  lines.push('3. On EVERY revision, maintain the PRIMARY swipe\'s structural DNA — beat pattern, section count, and emotional arc.');
+  lines.push('4. When shortening/lengthening, REDISTRIBUTE content to preserve the beat pattern — don\'t flatten the structure.');
+  lines.push('5. NEVER copy phrases or examples from swipes — only steal STRUCTURE.');
+  lines.push('6. Study how the top-scoring swipes write transitions, hooks, and CTAs — match their energy and mechanics.');
+  return lines.join('\n');
+}
+
+// ============================================================
 // Block 3A: Stable Session Context (Swipes + Rules)
 // ============================================================
 
@@ -380,34 +415,9 @@ export function assembleBlock3Stable(
     sections.push(''); // Blank line separator
   }
 
-  // Application rules
+  // Application rules (shared function — also used in write-phase examples block)
   const primarySwipe = swipes.find(s => s.isPrimary);
-  sections.push('--- SWIPE APPLICATION RULES (apply on EVERY turn, including revisions) ---');
-  if (primarySwipe) {
-    sections.push(`PRIMARY BLUEPRINT: "${primarySwipe.title}"`);
-    sections.push(`  Beat pattern: ${primarySwipe.beatSequence.join(' > ')}`);
-    sections.push(`  Hook type: ${primarySwipe.hookType} (score: ${primarySwipe.hookScore}/10)`);
-    if (primarySwipe.hookText) {
-      const hookPreview = primarySwipe.hookText.length > 200 ? primarySwipe.hookText.substring(0, 200) : primarySwipe.hookText;
-      sections.push(`  Hook text: "${hookPreview}"`);
-      sections.push(`  → All generated hooks MUST match this format exactly (case, perspective, structure)`);
-    }
-    if (primarySwipe.beatSequence.length > 0) {
-      sections.push('  Beat functions (apply these structural roles, NOT the blueprint\'s topic):');
-      primarySwipe.beatSequence.forEach((beat, i) => {
-        const transition = primarySwipe.keyTransitions && i < primarySwipe.keyTransitions.length
-          ? ` — ${primarySwipe.keyTransitions[i]}` : '';
-        sections.push(`    ${i + 1}. [${beat}]${transition}`);
-      });
-    }
-  }
-  sections.push('RULES:');
-  sections.push(`1. These ${swipes.length} swipes are your PERMANENT reference library. Their full bodies are loaded — read and absorb them.`);
-  sections.push('2. The PRIMARY swipe is your closest structural anchor — mirror its beat pattern, hook type, and emotional arc.');
-  sections.push('3. On EVERY revision, maintain the PRIMARY swipe\'s structural DNA — beat pattern, section count, and emotional arc.');
-  sections.push('4. When shortening/lengthening, REDISTRIBUTE content to preserve the beat pattern — don\'t flatten the structure.');
-  sections.push('5. NEVER copy phrases or examples from swipes — only steal STRUCTURE.');
-  sections.push('6. Study how the top-scoring swipes write transitions, hooks, and CTAs — match their energy and mechanics.');
+  sections.push(getSwipeApplicationRules(swipes.length, primarySwipe));
 
   // Pattern intelligence (aggregated)
   if (swipes.length > 0) {

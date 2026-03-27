@@ -19,6 +19,7 @@ struct ConnectionBlockView: View {
     @State private var pendingObservedTitleDocument: RichDocument?
     @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
+    @State private var sectionsModifiedLocally = false
     // Purple accent for connections
     private let accentColor = DS.entityConnection
     private let titleStyle = SharedTitleSurfaceStyle.connectionCanvas
@@ -56,8 +57,11 @@ struct ConnectionBlockView: View {
             titleEditorHeight = titleMinHeight
         }
         .onDisappear {
+            // Defer by one frame so the editor's flushPendingSync updates titleDocument first
             if isEditingTitle {
-                commitTitleEdit(document: titleDocument)
+                DispatchQueue.main.async {
+                    commitTitleEdit(document: titleDocument)
+                }
             }
             observationCancellable?.cancel()
         }
@@ -76,12 +80,18 @@ struct ConnectionBlockView: View {
                 pendingObservedTitleDocument = nil
                 titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, titleEditorHeight))
             } else {
-                if titleDocument != titleDocumentAtEditStart {
-                    commitTitleEdit(document: titleDocument)
-                } else if let pendingObservedTitleDocument {
-                    applyObservedTitleDocument(pendingObservedTitleDocument)
+                // Defer commit by one frame so CosmoDocumentEditor's flushPendingSync()
+                // has time to update titleDocument via the binding before we read it.
+                // Without this, commitTitleEdit reads a stale titleDocument (the last
+                // debounced sync, not the final text) and saves partial content.
+                DispatchQueue.main.async {
+                    if titleDocument != titleDocumentAtEditStart {
+                        commitTitleEdit(document: titleDocument)
+                    } else if let pendingObservedTitleDocument {
+                        applyObservedTitleDocument(pendingObservedTitleDocument)
+                    }
+                    pendingObservedTitleDocument = nil
                 }
-                pendingObservedTitleDocument = nil
             }
         }
     }
@@ -162,12 +172,13 @@ struct ConnectionBlockView: View {
                     onContentHeightChange: { newHeight in
                         titleEditorHeight = min(titleEditingMaxHeight, max(titleMinHeight, newHeight))
                     },
-                    onPlainTextChange: { plainText in
-                        editableTitle = plainText
+                    onPlainTextChange: { _ in
+                        // Don't update editableTitle during editing — it changes displayTitle
+                        // which triggers a CosmoBlockWrapper re-render that can reset the NSTextView.
+                        // editableTitle is set from commitTitleEdit when editing ends.
                     },
-                    onStructuredDocumentChange: { document, plainText in
+                    onStructuredDocumentChange: { document, _ in
                         titleDocument = document
-                        editableTitle = plainText
                     },
                     onActivate: { isEditingTitle = true },
                     onDeactivate: { isEditingTitle = false },
@@ -247,7 +258,12 @@ struct ConnectionBlockView: View {
                     } else {
                         self.applyObservedTitleDocument(newTitleDocument)
                     }
-                    self.parseSections(from: atom)
+                    // Only re-parse sections from DB if user hasn't made local edits.
+                    // After local edits, saveChanges() is the authority — observation echoes
+                    // from auto-save would overwrite in-progress edits.
+                    if !self.sectionsModifiedLocally {
+                        self.parseSections(from: atom)
+                    }
                 }
             )
     }
@@ -386,7 +402,12 @@ struct ConnectionBlockView: View {
     private func editItem(id: UUID, document: RichDocument, plainText: String, inSectionIndex index: Int) {
         guard !plainText.isEmpty else { return }
         if let itemIndex = sections[index].items.firstIndex(where: { $0.id == id }) {
-            sections[index].items[itemIndex].applyDocument(document)
+            // Use plainText directly — the document may be stale due to CDE's 150ms debounce.
+            // applyDocument() would read document.plainText which is behind.
+            sections[index].items[itemIndex].document = document
+            sections[index].items[itemIndex].plainText = plainText
+            sections[index].items[itemIndex].content = plainText
+            sections[index].items[itemIndex].updatedAt = Date()
             saveChanges()
         }
     }
@@ -394,6 +415,7 @@ struct ConnectionBlockView: View {
     // MARK: - Persistence
 
     private func saveChanges() {
+        sectionsModifiedLocally = true
         let structuredData = ConnectionStructuredData(sections: sections)
         guard let json = structuredData.toJSON() else { return }
         let flattenedBodyText = flattenedSectionBodyText()
@@ -686,6 +708,9 @@ private struct CompactSectionRow: View {
                                 allowMentions: true,
                                 allowSelectionMenu: false,
                                 allowImages: false,
+                                onPlainTextChange: { plainText in
+                                    newItemText = plainText
+                                },
                                 onDocumentChange: { _, plainText in
                                     newItemText = plainText
                                 }
@@ -800,6 +825,9 @@ private struct CompactItemRow: View {
                     allowMentions: true,
                     allowSelectionMenu: false,
                     allowImages: false,
+                    onPlainTextChange: { plainText in
+                        editText = plainText
+                    },
                     onDocumentChange: { _, plainText in
                         editText = plainText
                     }

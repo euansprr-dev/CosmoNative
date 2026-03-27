@@ -9,7 +9,7 @@
 import { config } from '../config';
 import { Atom, fetchAtom, updateAtom, fetchAllByType, fuzzyFindClient, loadPromptTemplate } from '../db/queries';
 import { selectSwipes } from './swipeSelector';
-import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, WritingBlock } from './contextAssembler';
+import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dynamic, getSwipeApplicationRules, WritingBlock } from './contextAssembler';
 import {
   WritingPhase, WritingMessage, CompressedSwipe, OutlineItem, HookVariant,
   ContentFormat, detectContentFormat, renderDraftForDisplay, validateDraft,
@@ -381,7 +381,10 @@ Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan dri
       cacheControl: true,
     };
 
-    this.blocks = [planBlock, examplesBlock];
+    // Keep Block 1 (methodology + system prompt + density override) and Block 2 (client intelligence)
+    // as prefix — they're already cached from Phase 1 (Anthropic prefix caching = cache hit).
+    // Without these, the LLM has no writing methodology, no client voice, no brand story.
+    this.blocks = [originalBlocks[0], originalBlocks[1], planBlock, examplesBlock];
 
     this.messages.push({
       id: crypto.randomUUID(),
@@ -444,7 +447,9 @@ Call write_draft with the complete content.`,
       cacheControl: false,
     };
 
-    this.blocks = [qualityBlock];
+    // Keep Block 1 (system prompt + density override) and Block 2 (client intelligence) as prefix
+    // for cache hit + full writing context during self-edit
+    this.blocks = [originalBlocks[0], originalBlocks[1], qualityBlock];
 
     const structuralCheck = blueprintSummary
       ? ` Also verify structural fidelity: does your draft's beat sequence match the ${this.getBlueprintLabel()}? Does slide count match? Does hook format match?`
@@ -563,6 +568,11 @@ Call write_draft with the complete content.`,
         sections.push('');
       }
     }
+
+    // Application rules — critical structural enforcement from Block 3A
+    sections.push('');
+    sections.push(getSwipeApplicationRules(this.selectedSwipes.length, bp || undefined));
+
     return sections.join('\n');
   }
 

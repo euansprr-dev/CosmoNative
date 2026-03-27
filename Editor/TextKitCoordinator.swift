@@ -356,6 +356,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             coordinator?.parent.onActivate?()
         }
         textView.onResignFirstResponder = { [weak coordinator = context.coordinator] in
+            // Flush the deferred attributedText sync BEFORE firing onDeactivate.
+            // syncBindings() debounces attributedText writes by 50ms — if the user
+            // blurs before the deferred sync fires, flushPendingSync reads a stale
+            // attributedText and the final keystrokes are lost.
+            if let coordinator, let tv = coordinator.textViewReference {
+                coordinator.deferredSyncWorkItem?.cancel()
+                coordinator.parent.attributedText = tv.attributedString()
+                coordinator.isUpdatingFromTextView = false
+            }
             coordinator?.parent.onDeactivate?()
         }
         textView.scrollsInternally = scrollsInternally
@@ -500,7 +509,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var isUpdatingFromTextView = false
         /// Guards against delegate callbacks writing bindings during SwiftUI's layout pass
         var isUpdatingFromSwiftUI = false
-        private var deferredSyncWorkItem: DispatchWorkItem?
+        /// Deferred attributedText sync — 50ms debounce for performance.
+        /// Must be cancellable from resignFirstResponder to flush final state.
+        var deferredSyncWorkItem: DispatchWorkItem?
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0
         private var selectionChangeWorkItem: DispatchWorkItem?

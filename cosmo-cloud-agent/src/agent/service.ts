@@ -8,7 +8,7 @@ import { config } from '../config';
 import { classifyIntent, modelTierForIntent, maxToolIterations, AgentIntent, ModelTier } from './intentClassifier';
 import { assembleSystemPrompt } from './contextAssembler';
 import { executeTool, jsonEncode } from './toolExecutor';
-import { loadConversation, saveConversation, logApiUsage, createAtom } from '../db/queries';
+import { loadConversation, saveConversation, logApiUsage, createAtom, fetchAtom } from '../db/queries';
 import { getToolDefinitions } from './toolRegistry';
 
 interface AgentMessage {
@@ -371,7 +371,18 @@ export async function processMessage(
   });
 
   // Fire-and-forget: extract lessons from conversation if teachable moment detected
-  extractLessonsFromConversation(chatId, text, finalResponse).catch(() => {});
+  // Try to find active client from tool results (get_client_profile, create_content, generate_outline)
+  let activeClientUUID: string | null = null;
+  for (const uuid of createdAtomUUIDs) {
+    try {
+      const atom = await fetchAtom(uuid);
+      if (atom?.metadata?.clientProfileUUID) {
+        activeClientUUID = atom.metadata.clientProfileUUID as string;
+        break;
+      }
+    } catch {}
+  }
+  extractLessonsFromConversation(chatId, text, finalResponse, activeClientUUID).catch(() => {});
 
   return {
     response: finalResponse || 'I processed your request but had no final response.',
@@ -592,7 +603,7 @@ function compressOldToolResults(messages: AgentMessage[]): void {
 // Require directive framing — bare "never" matches hook text like "he's never suffered"
 const TEACHABLE_PATTERN = /\b(remember this|always use|never use|from now on|don't use|do not use|stop using|I prefer|I like when|rule:|lesson:|not like that|that's wrong|that's not what|you should always|next time|I want you to|please don't|going forward|here's what I changed|here's what i changed)\b/i;
 
-async function extractLessonsFromConversation(chatId: string, userMessage: string, agentResponse: string): Promise<void> {
+async function extractLessonsFromConversation(chatId: string, userMessage: string, agentResponse: string, activeClientUUID?: string | null): Promise<void> {
   // Skip if no teachable signals
   if (!TEACHABLE_PATTERN.test(userMessage)) return;
 
@@ -605,16 +616,26 @@ async function extractLessonsFromConversation(chatId: string, userMessage: strin
         messages: [
           {
             role: 'system',
-            content: `You analyze conversations to extract learning rules. ONLY extract rules that the USER explicitly taught, corrected, or stated as a preference.
+            content: `You analyze conversations to extract reusable writing rules. ONLY extract rules that:
+1. The USER explicitly taught, corrected, or stated as a preference
+2. Are REUSABLE across different content pieces (not specific to one story or topic)
+3. Are about HOW to write, not WHAT to write
 
 Do NOT extract:
-- Generic writing advice the agent already knows (hook structures, blueprint usage, outline generation)
-- The agent's own operational decisions (asking questions, generating variations, using tools)
-- Content from hook text, titles, quotes, or creative writing (these are content, not rules)
-- Anything the user didn't explicitly correct or request as a rule
-- Patterns the agent used during its work process
+- Story-specific feedback (e.g., "add a down slide after the success part" — that's about THIS specific story, not a general rule)
+- Content-specific details (names, dates, topics, story beats for one particular piece)
+- Generic writing advice the agent already knows (hook structures, blueprint usage)
+- The agent's own operational decisions
+- Content from hook text, titles, quotes, or creative writing
 
-If the user corrected the agent, stated a preference, or explicitly said "remember/never/always", extract it. Each rule: {"rule": "clear instruction", "category": "hook_style|voice|structure|format|cta|scheduling|productivity|general", "evidence": "what the user said"}. If nothing genuinely teachable, return empty array []. ONLY return JSON.`,
+GOOD rules (reusable): "Always include an emotional bridge before a major life change", "Don't reference roles/jobs without establishing them first", "Keep the dialogue format consistent throughout"
+BAD rules (too specific): "Add a 'down' slide after the $6k/month success slide", "Mention Vietnam after the ghostwriting part"
+
+For each rule, classify scope:
+- "client": This is about a specific client's voice, style, or preferences
+- "universal": This is a general writing principle that applies to all clients
+
+Each rule: {"rule": "clear reusable instruction", "scope": "client|universal", "category": "hook_style|voice|structure|format|cta|general", "evidence": "what the user said"}. If nothing genuinely reusable, return empty array []. ONLY return JSON.`,
           },
           {
             role: 'user',
@@ -643,6 +664,9 @@ If the user corrected the agent, stated a preference, or explicitly said "rememb
       const lessonId = crypto.randomUUID().toUpperCase();
       const now = new Date().toISOString();
       const category = rule.category || 'general';
+      // Scope: LLM classifies as "client" or "universal". Client-scoped lessons get clientUUID.
+      const scope = rule.scope || 'universal';
+      const clientUUID = scope === 'client' && activeClientUUID ? activeClientUUID : null;
 
       await createAtom({
         type: 'agent_learning',
@@ -651,7 +675,7 @@ If the user corrected the agent, stated a preference, or explicitly said "rememb
         // structured must match Swift's InferredLesson Codable struct for Mac app display
         structured: {
           id: lessonId,
-          clientUUID: null,
+          clientUUID,
           rule: rule.rule,
           evidence: rule.evidence || '',
           category,
@@ -672,10 +696,11 @@ If the user corrected the agent, stated a preference, or explicitly said "rememb
           source: 'conversation_inference',
           enforcement: 'advisory',
           evidence: rule.evidence || null,
+          clientUUID,
         },
       });
 
-      console.log(`\u{1F4DA} Auto-learned: ${(rule.rule as string).substring(0, 60)}`);
+      console.log(`\u{1F4DA} Auto-learned [${scope}${clientUUID ? ', client=' + clientUUID.substring(0, 8) : ''}]: ${(rule.rule as string).substring(0, 60)}`);
     }
   } catch (error) {
     // Silent failure — learning is best-effort, never blocks

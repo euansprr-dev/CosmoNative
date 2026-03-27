@@ -525,13 +525,13 @@ This plan is your construction blueprint. Phase 2 will follow it slide by slide.
     const planBlock: WritingBlock = {
       label: 'Writing Plan',
       content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}`,
-      cacheControl: true,
+      cacheControl: false, // Covered by message-level cache breakpoint — saves a cache slot
     };
 
     const examplesBlock: WritingBlock = {
       label: 'Reference Examples',
       content: this.buildSwipeReferenceBlock(),
-      cacheControl: true,
+      cacheControl: false, // Covered by message-level cache breakpoint — saves a cache slot
     };
 
     // Keep Block 1 (methodology + system prompt + density override) and Block 2 (client intelligence)
@@ -1813,6 +1813,26 @@ If ALL checks pass, present the draft.
         } else {
           result.push({ role: 'assistant', content: msg.content });
         }
+      }
+    }
+
+    // Add cache_control to the last user message — caches the ENTIRE conversation prefix
+    // (system blocks + all messages up to this point). Only new messages after this are uncached.
+    // Anthropic allows up to 4 cache breakpoints. We use: Block1 + Block2 (system) + this message = 3.
+    for (let i = result.length - 1; i >= 0; i--) {
+      if (result[i].role === 'user') {
+        const content = result[i].content;
+        if (typeof content === 'string') {
+          result[i].content = [{
+            type: 'text',
+            text: content,
+            cache_control: { type: 'ephemeral' },
+          }];
+        } else if (Array.isArray(content) && content.length > 0) {
+          // Add cache_control to the last content block (tool_result or text)
+          content[content.length - 1].cache_control = { type: 'ephemeral' };
+        }
+        break; // Only mark the LAST user message
       }
     }
 

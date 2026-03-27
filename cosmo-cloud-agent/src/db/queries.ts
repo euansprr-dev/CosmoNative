@@ -271,12 +271,13 @@ async function searchAtomsILike(
   const limit = options?.limit ?? 20;
   const pattern = `%${query}%`;
 
+  // Search title first — avoid .or() which breaks on commas/special chars in the pattern
   let q = supabase
     .from('atoms')
     .select('*')
     .eq('user_id', userId)
     .eq('is_deleted', false)
-    .or(`title.ilike.${pattern},body.ilike.${pattern}`)
+    .ilike('title', pattern)
     .limit(limit)
     .order('updated_at', { ascending: false });
 
@@ -284,46 +285,111 @@ async function searchAtomsILike(
     q = q.in('type', options.types);
   }
 
-  const { data } = await q;
-  return (data as Atom[]) || [];
+  const { data: titleData } = await q;
+  if (titleData && titleData.length > 0) return titleData as Atom[];
+
+  // Fallback: search body
+  let bodyQ = supabase
+    .from('atoms')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_deleted', false)
+    .ilike('body', pattern)
+    .limit(limit)
+    .order('updated_at', { ascending: false });
+
+  if (options?.types && options.types.length > 0) {
+    bodyQ = bodyQ.in('type', options.types);
+  }
+
+  const { data: bodyData } = await bodyQ;
+  return (bodyData as Atom[]) || [];
 }
 
 /**
- * Robust blueprint lookup — searches title, body opening, and hookText in structured data.
- * Swipe titles may not match what the user sees (hookText often differs from atom.title).
- * Tries: exact title → title contains → body starts with → hookText contains.
+ * Single-field ILIKE helper — avoids .or() PostgREST comma bug.
+ * Each call searches ONE field with ONE pattern.
  */
-export async function searchAtomsByExactTitle(
-  title: string,
-  types?: string[],
-): Promise<Atom[]> {
-  // Normalize: strip trailing ellipsis variations and trim
-  const normalized = title.replace(/\.{2,}$/, '').replace(/…$/, '').trim();
-  const pattern = `%${normalized}%`;
-
+async function singleFieldILike(field: string, pattern: string, types?: string[], limit = 10): Promise<Atom[]> {
   let q = supabase
     .from('atoms')
     .select('*')
     .eq('user_id', userId)
     .eq('is_deleted', false)
-    .or(`title.ilike.${pattern},body.ilike.${pattern}`)
-    .limit(10)
+    .ilike(field, pattern)
+    .limit(limit)
     .order('updated_at', { ascending: false });
-
   if (types && types.length > 0) {
     q = q.in('type', types);
   }
-
   const { data } = await q;
-  const results = (data as Atom[]) || [];
+  return (data as Atom[]) || [];
+}
 
-  if (results.length === 0) {
-    console.log(`    🔍 Blueprint search: no results for "${normalized}" (tried title+body ILIKE)`);
-  } else {
-    console.log(`    🔍 Blueprint search: ${results.length} results for "${normalized.substring(0, 60)}..." (titles: ${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')})`);
+/**
+ * Robust blueprint lookup — multi-strategy progressive search.
+ *
+ * Swipe atom.title is truncated to 120 chars. The agent may pass a longer or
+ * slightly different version. This search tries progressively broader strategies:
+ *   1. Full text → title ILIKE, body ILIKE
+ *   2. First 60 chars → title ILIKE, body ILIKE  (handles 120-char truncation)
+ *   3. First 25 chars → title ILIKE, body ILIKE  (catches partial matches)
+ *
+ * Each step uses .ilike(field, pattern) directly (NOT .or()) to avoid PostgREST
+ * comma parsing bug where commas in the search text break the query.
+ */
+export async function searchAtomsByExactTitle(
+  title: string,
+  types?: string[],
+): Promise<Atom[]> {
+  const normalized = title.replace(/\.{2,}$/, '').replace(/…$/, '').trim();
+
+  // Strategy 1: Full text → title
+  let results = await singleFieldILike('title', `%${normalized}%`, types);
+  if (results.length > 0) {
+    console.log(`    🔍 Blueprint: ${results.length} title matches (full) for "${normalized.substring(0, 50)}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+    return results;
   }
 
-  return results;
+  // Strategy 2: Full text → body (transcript)
+  results = await singleFieldILike('body', `%${normalized}%`, types);
+  if (results.length > 0) {
+    console.log(`    🔍 Blueprint: ${results.length} body matches (full) for "${normalized.substring(0, 50)}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+    return results;
+  }
+
+  // Strategy 3: First 60 chars → title (handles 120-char title truncation + agent text differences)
+  if (normalized.length > 60) {
+    const short = normalized.substring(0, 60);
+    results = await singleFieldILike('title', `%${short}%`, types);
+    if (results.length > 0) {
+      console.log(`    🔍 Blueprint: ${results.length} title matches (60-char) for "${short}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+      return results;
+    }
+    results = await singleFieldILike('body', `%${short}%`, types);
+    if (results.length > 0) {
+      console.log(`    🔍 Blueprint: ${results.length} body matches (60-char) for "${short}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+      return results;
+    }
+  }
+
+  // Strategy 4: First 25 chars → title, body (broad catch — "2011: Dad, I got kicked")
+  if (normalized.length > 25) {
+    const shorter = normalized.substring(0, 25);
+    results = await singleFieldILike('title', `%${shorter}%`, types);
+    if (results.length > 0) {
+      console.log(`    🔍 Blueprint: ${results.length} title matches (25-char) for "${shorter}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+      return results;
+    }
+    results = await singleFieldILike('body', `%${shorter}%`, types);
+    if (results.length > 0) {
+      console.log(`    🔍 Blueprint: ${results.length} body matches (25-char) for "${shorter}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+      return results;
+    }
+  }
+
+  console.log(`    🔍 Blueprint: NO MATCH after 4 strategies for "${normalized.substring(0, 60)}" (tried full/60-char/25-char on title+body)`);
+  return [];
 }
 
 // ============================================================

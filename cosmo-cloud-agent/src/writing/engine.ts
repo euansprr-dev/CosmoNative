@@ -402,6 +402,26 @@ Find the swipe labeled [${label}] in your loaded examples. This is the post your
 
     Do this for 3-4 consecutive slide pairs. Note the pattern — this is how your draft will flow between slides.
 
+1g. COLD AUDIENCE TEST
+    Read the ${label} slide by slide as if you're a STRANGER who has NEVER heard of this person.
+    For each slide, ask: "Does this make sense if I know NOTHING except what the previous slides told me?"
+
+    Common failures to look for:
+    - Referencing a job, role, or relationship not yet established ("my head chef" when the audience doesn't know they're a chef)
+    - Emotional jumps without bridges (going from rock bottom to "I quit" without showing WHY they decided to change)
+    - Inside knowledge the audience doesn't have ("the attic" when they don't know the person lives with parents)
+
+    Note any slides that require prior knowledge. In your plan, you'll add a "Prerequisites" field per slide
+    so you never write a slide that assumes knowledge the audience doesn't have yet.
+
+1h. FORMAT CONSISTENCY
+    Look at the ${label}'s voice pattern. Does it maintain a consistent format throughout?
+    Examples: always "Mom, I..." dialogue, or always third-person narration, or always year markers.
+
+    Note the pattern. Your draft must maintain it on EVERY slide. If even one slide breaks the pattern,
+    the audience feels the shift and it breaks immersion. In your plan, write a "Voice pattern" rule:
+    e.g., "Every slide addresses Mom directly. No narration slides. No third-person."
+
 ────────────────────────────────────────
 STEP 2: CROSS-REFERENCE OTHER SWIPES
 ────────────────────────────────────────
@@ -456,16 +476,28 @@ Now you have all the data. Call create_writing_plan with a plan structured EXACT
 STRUCTURAL TEMPLATE
 For EACH slide (same count as ${label}), write:
   Slide N: [beat function from your beat map]
+  Prerequisites: [what the audience must already know from previous slides for this to make sense — if none, write "none"]
   Words: [target from your density measurement] | Sentences: [target] | Lines: [target]
   Format: [from your visual format analysis — bullets? breaks? fragments?]
   Content: [what specific information goes here — cite real client details by name]
   Transition to next: [the connector type you identified]
+
+If a slide has prerequisites that aren't met by earlier slides, either add a bridge slide before it or rewrite to be self-contained. A stranger who has NEVER seen this person must understand every slide.
+
+VOICE PATTERN
+  [The consistent format the draft must maintain on EVERY slide — from your Step 1h analysis]
+  Example: "Every slide addresses Mom directly with 'Mom, I...' No narration. No third-person."
 
 VOICE RULES
   Target sentence length: ___
   Signature phrases to include: ___
   BANNED (instant rewrite): ___
   Tone match: [describe based on the client's real posts, not generic adjectives]
+
+COLD AUDIENCE FLOW
+  For each slide: what does the audience already know at this point?
+  Flag any slide that references something not yet established.
+  Flag any emotional jump that needs a bridge slide (e.g., "I quit" needs "I realized I had to change" before it).
 
 HARD RULES THAT APPLY
   List every hard lesson. For each one, note how it applies to THIS draft specifically.
@@ -612,7 +644,7 @@ FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this
       role: 'user',
       content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed. You have the writing plan, the ${this.getBlueprintLabel()} structural summary, the quality rules, and the current draft.
 
-Use the think tool to run each of these 6 checks. For each check, write down your finding and whether it PASSES or FAILS. Then fix everything that fails and call write_draft with the corrected version. If all 6 pass, respond with a brief summary listing each check and its result.
+Use the think tool to run each of these 8 checks. For each check, write down your finding and whether it PASSES or FAILS. Then fix everything that fails and call write_draft with the corrected version. If all 8 pass, respond with a brief summary listing each check and its result.
 
 ────────────────────────────────────────
 CHECK 1: SLIDE COUNT
@@ -670,7 +702,35 @@ Procedure:
 Pass: All 5 match. Fail: Any mismatch → rewrite the hook to match.
 
 ────────────────────────────────────────
-After all 6 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
+CHECK 7: COLD AUDIENCE FLOW
+────────────────────────────────────────
+Procedure:
+- Read your draft from slide 1 to the end as a COMPLETE STRANGER who has never seen this person.
+- For each slide, ask: "Do I understand this based ONLY on what the previous slides told me?"
+- Flag any slide that:
+  • References a role, relationship, or place not yet established (e.g., "my head chef" before saying they worked as a chef)
+  • Makes an emotional jump without a bridge (e.g., "I want to destroy myself" → "I quit everything" with no reason WHY)
+  • Uses inside knowledge the audience doesn't have yet
+
+Pass: Every slide is self-contained or builds on what came before. A stranger follows the entire story.
+Fail: Any slide references unestablished context or makes an unexplained jump.
+Fix: Add a bridge slide before the confusing one, or rewrite to be self-explanatory.
+Example fix: "My head chef threw his cigarette on the floor" → either cut it, or add "Mom, I started working in a kitchen..." before it.
+
+────────────────────────────────────────
+CHECK 8: FORMAT CONSISTENCY
+────────────────────────────────────────
+Procedure:
+- Identify the voice pattern established in slides 1-3 (e.g., "Mom, I..." dialogue, year markers, first-person narration).
+- Read every slide. Does each one maintain that exact pattern?
+- Flag any slide that breaks it (switches to narration, drops the address, changes person/tense).
+
+Pass: Every slide matches the established pattern. The voice never breaks.
+Fail: Any slide breaks the pattern (e.g., switches from "Mom, I..." to third-person narration).
+Fix: Rewrite the breaking slide to match. If the pattern is "Mom, I..." then EVERY slide must be addressed to Mom.
+
+────────────────────────────────────────
+After all 8 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
       timestamp: new Date().toISOString(),
     });
 

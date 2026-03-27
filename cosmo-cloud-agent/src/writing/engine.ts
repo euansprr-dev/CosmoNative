@@ -265,8 +265,19 @@ export class CloudWritingEngine {
   // ============================================================
 
   private async runDraftPipeline(instruction: string): Promise<string> {
+    const bp = this.blueprintAnchor;
+    console.log(`\n  ═══ DRAFT PIPELINE START ═══`);
+    console.log(`  📋 Client: ${this.clientAtom?.title || 'none'} | Format: ${this.targetFormat} | Swipes: ${this.selectedSwipes.length}`);
+    console.log(`  📋 Blueprint: ${bp ? `"${bp.title.substring(0, 60)}" (${this.hasTruePrimaryBlueprint ? 'TRUE PRIMARY' : 'INFERRED — highest hookScore'}, score: ${bp.hookScore}/10)` : 'NONE'}`);
+    if (bp?.beatSequence.length) console.log(`  📋 Blueprint beats: ${bp.beatSequence.join(' > ')}`);
+    console.log(`  📋 Lessons: ${this.lessons.length} (${this.lessons.filter(l => l.enforcement === 'hard').length} hard, ${this.lessons.filter(l => l.enforcement !== 'hard').length} advisory)`);
+    console.log(`  📋 Blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB${b.cacheControl ? ',cached' : ''})`).join(' + ')}`);
+
     // PHASE 1: PLAN — full context, create comprehensive writing plan
-    console.log('  ✍️ Draft Pipeline Phase 1: PLAN (full context → writing plan)');
+    console.log(`\n  ✍️ ─── Phase 1: PLAN ───`);
+    console.log(`  ✍️ System blocks: ${this.blocks.length} (${this.blocks.map(b => b.label).join(', ')})`);
+    console.log(`  ✍️ Tools: think, create_writing_plan, search_swipes, read_swipe_body, analyze_swipe_patterns`);
+    console.log(`  ✍️ Goal: LLM studies swipes (beat map, density, format, hook anatomy) → absorbs client → creates writing plan`);
     await this.runPlanPhase(instruction);
 
     if (!this.writingPlan) {
@@ -278,13 +289,31 @@ export class CloudWritingEngine {
       return result;
     }
 
+    const planPreview = this.writingPlan.substring(0, 300).replace(/\n/g, ' ');
+    console.log(`  ✍️ Plan preview: "${planPreview}..."`);
+
     // PHASE 2: WRITE — plan + swipe examples context, focused draft
-    console.log('  ✍️ Draft Pipeline Phase 2: WRITE (plan + examples → focused draft)');
+    console.log(`\n  ✍️ ─── Phase 2: WRITE ───`);
+    console.log(`  ✍️ Tools: think, write_draft, read_draft`);
+    console.log(`  ✍️ Goal: LLM follows plan slide-by-slide, matches blueprint shape, checks word counts ±10%`);
     await this.runWritePhase();
 
+    const draftBody = this.contentAtom?.body || '';
+    const draftWords = draftBody.split(/\s+/).filter(Boolean).length;
+    const draftSlides = (draftBody.match(/^Slide \d+/gim) || []).length || (draftBody.match(/^[-=]{3,}$/gm) || []).length + 1;
+    console.log(`  ✍️ Draft written: ${draftWords} words, ~${draftSlides} slides`);
+
     // PHASE 3: SELF-EDIT — plan + skill modules + lessons, quality pass
-    console.log('  ✍️ Draft Pipeline Phase 3: SELF-EDIT (plan + quality tools → final pass)');
+    console.log(`\n  ✍️ ─── Phase 3: SELF-EDIT ───`);
+    console.log(`  ✍️ Tools: think, write_draft, read_draft`);
+    console.log(`  ✍️ Goal: LLM runs 6-check scorecard (slide count, density, visual format, voice, specificity, hook format)`);
     const result = await this.runSelfEditPhase();
+
+    const finalBody = this.contentAtom?.body || '';
+    const finalWords = finalBody.split(/\s+/).filter(Boolean).length;
+    console.log(`\n  ═══ DRAFT PIPELINE COMPLETE ═══`);
+    console.log(`  📋 Final draft: ${finalWords} words`);
+    console.log(`  📋 Messages in conversation: ${this.messages.length}`);
 
     await this.persistConversation();
     return result;
@@ -292,71 +321,147 @@ export class CloudWritingEngine {
 
   private async runPlanPhase(instruction: string): Promise<string> {
     const label = this.getBlueprintLabel();
-    const mirrorVerb = this.hasTruePrimaryBlueprint ? 'must mirror' : 'should use as your primary structural reference';
-    const mirrorAction = this.hasTruePrimaryBlueprint ? 'mirror' : 'use as a starting point for';
-    const beatSummary = this.blueprintAnchor?.beatSequence.length
-      ? this.blueprintAnchor.beatSequence.join(' > ')
-      : 'analyze from body';
+    const clientName = this.clientAtom?.title || 'the client';
 
     const planInstruction = `${instruction}
 
-═══ PHASE 1: CREATE YOUR WRITING PLAN ═══
+═══ PHASE 1: STUDY & PLAN ═══
 
-Before writing anything, you MUST create a comprehensive writing plan. This plan will be your ONLY guide during the writing phase — make it so detailed that someone who never saw the swipes could write a perfect draft from it alone.
+You're about to write a ${this.targetFormat} for ${clientName}. Before you write a single word, you need to reverse-engineer what makes the loaded reference posts work. You're not reading for enjoyment — you're dissecting a machine to understand how each part creates the output. Then you'll build a plan so detailed that writing becomes mechanical execution.
 
-Study ALL loaded swipes (read their FULL BODIES in your context), the client profile, skill modules, and lessons. Then call create_writing_plan with a plan that covers EVERY section below. Do not skip any section. Be EXHAUSTIVE.
+Use the think tool for each step below. Do not skip steps or combine them — each builds on the last.
 
-SECTION A — CONTENT ANALYSIS (what you learned from studying the swipes)
-• ${label}: The first loaded swipe marked [${label}] is your structural anchor.
-  Study its beat pattern, slide count, density per slide, and visual format MORE CAREFULLY than the others.
-  Your outline and draft ${mirrorVerb} THIS swipe's structure while adapting the content.
-  The other swipes are for style/formatting reference only.
-• Content type: What type are the loaded swipes? (tutorial, story, listicle, case study, news reaction)
-• Slide architecture: Internal structure of each slide? How many sentences? Bullet points (-- dashes)? Headers?
-• Density targets: Exact words per slide and sentences per slide (COUNT from 3-5 swipes — don't guess)
-• Specificity level: How many numbers, dollar amounts, percentages, resources per slide? (COUNT them)
-• Transition style: How do slides connect? (implied causal chain? numbered steps? chronological?)
-• CTA pattern: Exact CTA format from the best swipes (keyword + what they get)
-• Formatting: Do they use -- dashes? • bullets? ALL CAPS? Line breaks within slides?
+────────────────────────────────────────
+STEP 1: DISSECT THE ${label}
+────────────────────────────────────────
 
-SECTION B — VOICE & STYLE (how to sound)
-• Sentence length target (from client voice fingerprint if available)
-• Contraction usage
-• Tone: direct, conversational, poetic, authoritative — based on client + swipes
-• Signature phrases to include (from client profile)
-• Banned phrases (from lessons + voice DNA)
-• Punctuation rules
+Find the swipe labeled [${label}] in your loaded examples. This is the post your draft must structurally ${this.hasTruePrimaryBlueprint ? 'mirror' : 'use as its primary reference'}. Open it and work through this analysis:
 
-SECTION C — SLIDE-BY-SLIDE BLUEPRINT (what to write — THE MOST IMPORTANT SECTION)
-Your slide count and beat sequence should ${mirrorAction} the ${label}'s structure. Adapt the content, but keep the same number of slides and the same beat functions.
-For EACH slide in the outline, specify:
-• Slide N: [function — what this slide DOES: hook, teach, prove, reveal, reframe, CTA] (match the ${label}'s beat for this position)
-• Content: What specific information goes here (use client's REAL details from brand story — names, numbers, dates, places)
-• Target length: X words, Y sentences (match the ${label}'s density for this slide position)
-• Visual format: Does this slide use bullet points (-- dashes)? Line breaks between sentences? LOOK at the ${label} and copy its visual rhythm exactly.
-• Key details to include: pull specific facts, numbers, stories from the loaded client profile
+1a. SLIDE COUNT
+    Go through the ${label}'s body text. Each "Slide N" marker (or separator like ---) is a new slide.
+    Write down the total: "The ${label} has N slides."
 
-IMPORTANT: Look at how slides are FORMATTED in the loaded swipes. They use:
--- Line breaks between separate points (not paragraph blocks)
--- Short sentences (8-15 words)
--- Bullet points with -- dashes for lists
-Your plan must specify this per slide. If you write "paragraph" for format, look again at the swipes — they almost never use plain paragraphs.
+1b. BEAT MAP
+    For each slide, identify its FUNCTION — what job does this slide do in the post?
+    Common beat functions: Hook (grabs attention), Context (sets the scene), Teach (delivers a lesson), Prove (gives evidence/numbers), Story (personal narrative), Reframe (shifts perspective), Reveal (surprise/twist), CTA (call to action).
 
-SECTION D — RULES CHECKLIST (what NOT to do)
-• List ALL hard lessons that apply to this content
-• List ALL advisory lessons
-• Voice compliance rules from client profile
-• Format-specific rules (carousel density, etc.)
-• ${label} structural rules: List the ${label}'s hook format (case, perspective, structure), beat sequence (${beatSummary}), slide count, and density per slide as RULES your draft must follow. These structural rules have the SAME enforcement level as hard lessons.
+    Write it out like this:
+      Slide 1 = [Hook] — opens with a surprising claim
+      Slide 2 = [Context] — explains how they got here
+      Slide 3 = [Teach] — first actionable point
+      ...
 
-SECTION E — QUALITY TARGETS
-• Each slide must [teach/prove/reveal] something — no empty narrative slides
-• Match the loaded swipes' density EXACTLY (cite the word counts you measured)
-• Use the client's real story details (cite specific facts from brand story)
-• Sound conversational — pass the dinner table test
-• No em-dashes, no split sentences with periods, no banned phrases
+    This beat map is the skeleton of your draft. Your draft will have the SAME number of slides with the SAME beat functions in the SAME order.
 
-Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan drives everything.`;
+1c. DENSITY MEASUREMENT
+    For slides 1, 3, the middle slide, and the last slide of the ${label}, count:
+    - Words: split the text by spaces and count. Write the number.
+    - Sentences: count the periods, question marks, and exclamation marks. Write the number.
+    - Lines: count the line breaks within the slide. Write the number.
+
+    This gives you your density target per slide position. These aren't guidelines — they're exact targets your draft must hit (±10%).
+
+1d. VISUAL FORMAT
+    Look at the ${label}'s slides as if they were images. For each slide, note:
+    - Does it use bullet points (-- dashes or • bullets)? How many?
+    - Are there line breaks WITHIN the slide separating ideas? How many?
+    - Are sentences short fragments (5-8 words) or longer flowing sentences (15+ words)?
+    - Is anything in ALL CAPS?
+    - Is it one dense paragraph, or does it breathe with whitespace?
+
+    Write a format tag for each slide: e.g., "Slide 3 = 4 bullet points with -- dashes, short fragments, line break between each"
+
+1e. HOOK ANATOMY
+    Look at the ${label}'s slide 1 (the hook) and answer EXACTLY:
+    - Case: Is it ALL CAPS, Title Case, or lowercase?
+    - Person: Is it first-person ("I did X"), third-person ("Man does X"), or second-person ("You can X")?
+    - Structure: What's the sentence skeleton? (e.g., "SUBJECT + VERB + SPECIFIC METRIC + TIMEFRAME")
+    - Word count: How many words?
+    - Does it end with a period, no punctuation, or an ellipsis?
+
+    Your hook must match ALL of these properties. Different words, same skeleton.
+
+1f. TRANSITIONS
+    Read slide 2, then slide 3. What's the invisible connector? Try inserting "so...", "but...", "and that's when...", or "here's the thing..." between them. One of those should fit naturally. If none fits, the slides might use a different chaining method (numbered list, chronological, or emotional escalation).
+
+    Do this for 3-4 consecutive slide pairs. Note the pattern — this is how your draft will flow between slides.
+
+────────────────────────────────────────
+STEP 2: CROSS-REFERENCE OTHER SWIPES
+────────────────────────────────────────
+
+Now scan 3-5 of the other loaded swipes. You're not studying them as deeply — you're CALIBRATING.
+
+2a. DENSITY RANGE
+    Pick 3 swipes. Count words in their slide 1, middle slide, and last slide.
+    Now you have a range. The ${label}'s density is your TARGET. The range tells you what's acceptable vs what's too thin or too dense.
+
+2b. FORMAT DNA
+    Look across all swipes. What formatting patterns appear in MOST of them?
+    - Do most use line breaks within slides? → That's a format requirement.
+    - Do most use -- dashes for lists? → That's a format requirement.
+    - Do most keep sentences under 15 words? → That's a format requirement.
+    Things that only appear in 1-2 swipes are that author's style. Things that appear in 5+ swipes are the FORMAT'S DNA — your draft must have them.
+
+2c. WHAT SWIPES TEACH ABOUT THE RULES
+    The swipes are the best demonstration of how all the rules in your system context (Voice DNA, methodology, banned phrases, density guidelines) actually look in practice. When a rule says "use physical verbs" — look at the swipes to see WHICH physical verbs real authors use. When Voice DNA says "vary sentence length" — look at the swipes to see the ACTUAL range (e.g., 4-word fragments mixed with 18-word sentences). The swipes are the answer key for every abstract rule in your system prompt.
+
+────────────────────────────────────────
+STEP 3: ABSORB THE CLIENT
+────────────────────────────────────────
+
+Now look at the CLIENT PROFILE section in your context. This is who you're writing AS.
+
+3a. REAL DETAILS
+    Read the brand story. Pull out every specific detail you'll use in the draft:
+    - Names (people, businesses, places)
+    - Numbers (revenue, properties, years, ages, dollar amounts)
+    - Dates and timeframes
+    - Locations
+    Write them down. These are MANDATORY inclusions — a draft without the client's real details is generic and fails. Don't make up details when real ones are loaded.
+
+3b. VOICE FINGERPRINT
+    Read the voice targets. The key numbers:
+    - Target sentence length: ____ words. This is your average — some shorter, some longer.
+    - Banned phrases: List them. Memorize them. If even ONE appears in your draft, rewrite.
+    - Signature phrases: These should appear 2-3 times naturally in the draft.
+
+    Now read the client's TOP PERFORMING POSTS (also in the client profile). Read them as if you're the client. Notice how THEY talk — their rhythm, their word choices, their level of formality. Your draft must sound like the same person wrote it on the same day.
+
+3c. LESSONS
+    Read the LEARNED WRITING RULES. Hard rules are non-negotiable — violating them means an automatic rewrite. Advisory rules are strong preferences. For each hard rule, think about how it applies specifically to THIS draft. A rule like "never use more than 2 rhetorical questions per post" means you need to COUNT your rhetorical questions.
+
+────────────────────────────────────────
+STEP 4: BUILD THE WRITING PLAN
+────────────────────────────────────────
+
+Now you have all the data. Call create_writing_plan with a plan structured EXACTLY like this:
+
+STRUCTURAL TEMPLATE
+For EACH slide (same count as ${label}), write:
+  Slide N: [beat function from your beat map]
+  Words: [target from your density measurement] | Sentences: [target] | Lines: [target]
+  Format: [from your visual format analysis — bullets? breaks? fragments?]
+  Content: [what specific information goes here — cite real client details by name]
+  Transition to next: [the connector type you identified]
+
+VOICE RULES
+  Target sentence length: ___
+  Signature phrases to include: ___
+  BANNED (instant rewrite): ___
+  Tone match: [describe based on the client's real posts, not generic adjectives]
+
+HARD RULES THAT APPLY
+  List every hard lesson. For each one, note how it applies to THIS draft specifically.
+
+HOOK SPECIFICATION
+  Case: ___ | Person: ___ | Structure: ___ | Words: ___ | Ending: ___
+  (from your Step 1e analysis)
+
+DENSITY TARGETS
+  [List the exact word count per slide position from your Step 1c measurement]
+
+This plan is your construction blueprint. Phase 2 will follow it slide by slide.`;
 
     this.messages.push({ id: crypto.randomUUID(), role: 'user', content: planInstruction, timestamp: new Date().toISOString() });
 
@@ -385,29 +490,59 @@ Call create_writing_plan with the complete plan. Be EXHAUSTIVE — this plan dri
     // as prefix — they're already cached from Phase 1 (Anthropic prefix caching = cache hit).
     // Without these, the LLM has no writing methodology, no client voice, no brand story.
     this.blocks = [originalBlocks[0], originalBlocks[1], planBlock, examplesBlock];
+    console.log(`  ✍️ Write phase blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')}`);
 
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
       content: `Your writing plan is ready. Now write the draft.
 
-CRITICAL FORMATTING RULES — your draft MUST visually look like the ${this.getBlueprintLabel()} and example slides:
-1. Use line breaks WITHIN slides — NOT one big paragraph block
-2. Use -- dashes for any lists or multiple points (look how the examples do it)
-3. Sentences: 8-15 words max. Short and punchy. No long compound sentences.
-4. MAX 40-60 words per slide for reels, 60-100 for carousels
-5. If a slide has more than 2 sentences without a line break — add breaks
-6. Match the VISUAL RHYTHM of the examples — whitespace, bullets, short lines
-7. Each slide should look like it could be an Instagram carousel image, not a blog paragraph
+You are a ghostwriter. Your job is to produce a draft that LOOKS and FEELS like the loaded reference posts, but talks about ${this.clientAtom?.title || 'the client'}'s topic using their voice. The plan you created tells you exactly what to write in each slide. Follow it mechanically.
 
-Follow your writing plan for CONTENT.
-${this.blueprintAnchor
-  ? this.hasTruePrimaryBlueprint
-    ? `Mirror the PRIMARY BLUEPRINT for STRUCTURE (beat pattern, slide count, pacing).`
-    : `Use the STRUCTURAL ANCHOR as your structural guide (beat pattern, slide count, pacing), adapting where the content demands.`
-  : ''}
-Match ALL examples for FORMAT (bullets, line breaks, sentence length).
-Call write_draft with the complete content.`,
+────────────────────────────────────────
+HOW TO WRITE EACH SLIDE
+────────────────────────────────────────
+
+Work through your plan slide by slide. For each slide:
+
+1. READ YOUR PLAN ENTRY for this slide. It tells you: the beat function, the target word count, the target sentence count, the visual format, and the specific content.
+
+2. LOOK AT THE CORRESPONDING SLIDE in the ${this.getBlueprintLabel()}. Your slide must MATCH ITS SHAPE:
+   - If the ${this.getBlueprintLabel()}'s slide 3 has 4 short lines separated by line breaks → yours has 4 short lines separated by line breaks
+   - If the ${this.getBlueprintLabel()}'s slide 5 is a dense paragraph with 3 sentences → yours is a dense paragraph with 3 sentences
+   - If the ${this.getBlueprintLabel()} uses -- dashes for a list → you use -- dashes for a list
+   The shape is the blueprint. You're filling it with different words.
+
+3. WRITE THE SLIDE using the client's voice. Use their real details from the brand story (names, numbers, places — from your plan). Use their signature phrases where they fit naturally. Keep sentences close to the target length from the voice fingerprint.
+
+4. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
+
+5. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
+
+────────────────────────────────────────
+THE VISUAL SHAPE TEST
+────────────────────────────────────────
+
+After writing the full draft, imagine printing your draft and the ${this.getBlueprintLabel()} side by side. Squint so you can't read the words — you can only see the SHAPES. The blocks of text, the whitespace, the line breaks, the bullet indentation.
+
+They should look like the same document. Same number of sections. Same density per section. Same rhythm of short-lines-then-long-lines or dense-paragraph-then-breathing-space.
+
+The words are different. The visual shape is identical.
+
+────────────────────────────────────────
+WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
+────────────────────────────────────────
+
+- PARAGRAPH SLIDES: Your slide is a paragraph but the ${this.getBlueprintLabel()}'s equivalent slide uses line breaks and bullet points. Fix: break it up to match the visual format.
+- GENERIC CLAIMS: You wrote "this changed everything" or "the results were incredible." The swipes use SPECIFIC numbers: "$47K in 11 days", "17 properties", "quit at 28." Fix: replace every generic claim with a specific detail from the client's brand story.
+- WRONG SLIDE COUNT: You wrote 8 slides but the ${this.getBlueprintLabel()} has 12. Your plan specified 12. Fix: add the missing slides.
+- HOOK FORMAT MISMATCH: Your hook doesn't match the ${this.getBlueprintLabel()}'s format (case, person, structure, word count). Fix: rewrite matching the hook specification from your plan.
+- BANNED PHRASES: If any phrase from the BANNED list appears ANYWHERE, replace it immediately. Common traps: "in today's", "leverage", "game-changer", "let that sink in", "this isn't X, this is Y."
+- AI VOICE DRIFT: Sentences getting longer and more sophisticated. Vocabulary feels elevated. Hedging with "perhaps" and "it might be." Fix: rewrite as shorter, more direct, more like the client's real posts.
+
+Call write_draft with the complete content.
+
+FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this.getBlueprintLabel()}? Count words in slide 1. Does it match your plan target (±10%)? If not, fix it now.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -450,6 +585,7 @@ Call write_draft with the complete content.`,
     // Keep Block 1 (system prompt + density override) and Block 2 (client intelligence) as prefix
     // for cache hit + full writing context during self-edit
     this.blocks = [originalBlocks[0], originalBlocks[1], qualityBlock];
+    console.log(`  ✍️ Self-edit blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')}`);
 
     const structuralCheck = blueprintSummary
       ? ` Also verify structural fidelity: does your draft's beat sequence match the ${this.getBlueprintLabel()}? Does slide count match? Does hook format match?`
@@ -458,7 +594,67 @@ Call write_draft with the complete content.`,
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
-      content: `Self-edit pass: review your draft against the plan and quality rules. Check density (does each slide match the word count targets in your plan?), voice, transitions, specificity, and conversationality.${structuralCheck} Fix any issues and call write_draft with the corrected version. If everything passes, respond with a brief summary.`,
+      content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed. You have the writing plan, the ${this.getBlueprintLabel()} structural summary, the quality rules, and the current draft.
+
+Use the think tool to run each of these 6 checks. For each check, write down your finding and whether it PASSES or FAILS. Then fix everything that fails and call write_draft with the corrected version. If all 6 pass, respond with a brief summary listing each check and its result.
+
+────────────────────────────────────────
+CHECK 1: SLIDE COUNT
+────────────────────────────────────────
+Procedure:
+- Look at the ${this.getBlueprintLabel()} STRUCTURAL SUMMARY in your context. It says "Slide count: N".
+- Count the slides in your draft (look for "Slide N" markers or --- separators).
+- Compare.
+Pass: Same number. Fail: Different number → add missing slides or merge extras.
+
+────────────────────────────────────────
+CHECK 2: DENSITY PER SLIDE
+────────────────────────────────────────
+Procedure:
+- Open your writing plan. It has word count targets for each slide position.
+- For your draft's slide 1, split the text by spaces and count words.
+- Compare to the plan's target for slide 1.
+- Repeat for slides 3, the middle slide, and the last slide (minimum 4 spot checks).
+Pass: Each checked slide is within ±10% of the plan target (e.g., 47-word target → 42-52 is pass).
+Fail: Outside ±10% → cut words from too-dense slides or add specific details to too-thin slides.
+
+────────────────────────────────────────
+CHECK 3: VISUAL FORMAT
+────────────────────────────────────────
+Procedure:
+- Pick slide 3 from your draft and slide 3 from the ${this.getBlueprintLabel()} (in the loaded examples).
+- Compare: same number of lines? Same formatting (bullets, line breaks, fragments vs paragraphs)?
+- Repeat for slide 1 and one other slide.
+Pass: Your slides look like they came from the same template. Fail: Different format → reformat to match.
+
+────────────────────────────────────────
+CHECK 4: VOICE MATCH
+────────────────────────────────────────
+Procedure:
+- Read your slide 5 as if reading aloud at dinner.
+- Compare to the client's TOP PERFORMING POSTS from the client profile.
+- Do they sound like the same person?
+What voice drift looks like: sentences getting longer/more complex, sophisticated vocabulary, hedging ("perhaps", "it might be"), sounds "written" instead of "spoken."
+Pass: Same person, same day. Fail: Voice drift → rewrite with shorter sentences, client's vocabulary, their signature phrases.
+
+────────────────────────────────────────
+CHECK 5: SPECIFICITY
+────────────────────────────────────────
+Procedure:
+- Count every specific detail in your draft: numbers, names, dates, places, dollar amounts, percentages.
+- Count the same in the ${this.getBlueprintLabel()}.
+Pass: Your count is within 50% of the ${this.getBlueprintLabel()}'s count. Fail: Too few → replace generic claims with real details from the brand story.
+
+────────────────────────────────────────
+CHECK 6: HOOK FORMAT
+────────────────────────────────────────
+Procedure:
+- Compare your hook (slide 1) to the ${this.getBlueprintLabel()}'s hook on 5 properties:
+  Case (ALL CAPS/lowercase/Title), Person (first/third/second), Structure (sentence skeleton), Length (±5 words), Ending punctuation.
+Pass: All 5 match. Fail: Any mismatch → rewrite the hook to match.
+
+────────────────────────────────────────
+After all 6 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -587,6 +783,8 @@ Call write_draft with the complete content.`,
     let truncatedResponseCount = 0;
 
     for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
+      console.log(`    🔄 Iteration ${iteration + 1}/${MAX_INNER_ITERATIONS} [${pipelineStep || phase}] (${this.messages.length} messages)`);
+
       // Build API messages
       const apiMessages = this.buildAPIMessages();
 
@@ -595,6 +793,11 @@ Call write_draft with the complete content.`,
 
       // Call LLM (pass dynamic block separately — it changes each iteration)
       const response = await this.callWritingLLM(block3b, apiMessages, tools);
+
+      // Log response shape
+      const toolNames = response.toolCalls?.map(tc => tc.name).join(', ') || 'none';
+      const respPreview = (response.content || '').substring(0, 120).replace(/\n/g, ' ');
+      console.log(`    🔄 Response: tools=[${toolNames}], text=${(response.content || '').length} chars, finish=${response.finishReason || '--'}${respPreview ? `, preview: "${respPreview}..."` : ''}`);
 
       // No tool calls — classify response (ported from Swift classifyLoopResponse)
       if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -737,6 +940,18 @@ Call write_draft with the complete content.`,
       case 'think': {
         const thought = (args.thought as string) || '';
         const wordCount = thought.split(/\s+/).length;
+
+        // Log think content — first 200 chars for context
+        const thinkPreview = thought.substring(0, 200).replace(/\n/g, ' ');
+        const thinkTopics: string[] = [];
+        if (/slide|density|word.?count/i.test(thought)) thinkTopics.push('density');
+        if (/beat|hook|structure/i.test(thought)) thinkTopics.push('structure');
+        if (/voice|client|brand|tone/i.test(thought)) thinkTopics.push('voice');
+        if (/swipe|example|blueprint|primary/i.test(thought)) thinkTopics.push('swipes');
+        if (/rule|lesson|ban/i.test(thought)) thinkTopics.push('rules');
+        if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
+        if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
+        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]: "${thinkPreview}..."`);
 
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
@@ -896,6 +1111,17 @@ Only after thorough analysis can you call write_draft.`;
         const validation = validateDraft(content, this.targetFormat);
         const wordCount = content.split(/\s+/).filter(Boolean).length;
 
+        // Log draft details
+        const slideMarkers = content.match(/^Slide \d+/gim) || [];
+        const slideCount = slideMarkers.length || (content.match(/^[-=]{3,}$/gm) || []).length + 1;
+        const firstSlide = content.split(/^Slide \d+/im)[1]?.trim().substring(0, 100) || content.substring(0, 100);
+        console.log(`    📝 write_draft: ${wordCount} words, ${slideCount} slides, format: ${format}`);
+        console.log(`    📝 Slide 1 preview: "${firstSlide.replace(/\n/g, ' ')}..."`);
+        if (this.blueprintAnchor) {
+          const bpSlides = this.countSlidesInBody(this.blueprintAnchor.fullBody);
+          console.log(`    📝 Blueprint comparison: draft=${slideCount} slides vs blueprint=${bpSlides} slides ${slideCount === bpSlides ? '✅' : '⚠️ MISMATCH'}`);
+        }
+
         let result = `Draft written (${wordCount} words, format: ${format})`;
         if (!validation.isValid) {
           result += `\nValidation issues:\n${validation.violations.map(v => `  - ${v}`).join('\n')}`;
@@ -904,6 +1130,7 @@ Only after thorough analysis can you call write_draft.`;
         // Deterministic validation (ported from Swift DeterministicWritingValidators)
         const deterministicViolations = runDeterministicValidators(content, this.lessons);
         if (deterministicViolations.length > 0) {
+          console.log(`    ⚠️ Deterministic violations (${deterministicViolations.length}): ${deterministicViolations.map(v => `[${v.type}] ${v.message.substring(0, 60)}`).join('; ')}`);
           result += `\n\n⚠️ DETERMINISTIC RULE VIOLATIONS (fix before presenting):`;
           for (const v of deterministicViolations) {
             result += `\n  - [${v.type}] ${v.message}`;
@@ -913,10 +1140,13 @@ Only after thorough analysis can you call write_draft.`;
         // Voice compliance check
         const voiceViolations = checkVoiceCompliance(content, this.clientAtom);
         if (voiceViolations.length > 0) {
+          console.log(`    ⚠️ Voice violations (${voiceViolations.length}): ${voiceViolations.map(v => v.substring(0, 60)).join('; ')}`);
           result += `\n\n⚠️ VOICE COMPLIANCE:`;
           for (const v of voiceViolations) {
             result += `\n  - ${v}`;
           }
+        } else {
+          console.log(`    ✅ Voice compliance passed`);
         }
 
         // Self-evaluation
@@ -967,11 +1197,23 @@ If ALL checks pass, present the draft.
         const plan = (args.plan as string) || '';
         const planWords = plan.split(/\s+/).length;
         if (planWords < 200) {
-          return `[REJECTED] Writing plan is too short (${planWords} words). The plan must cover ALL 5 sections: Content Analysis, Voice & Style, Slide-by-Slide Blueprint, Rules Checklist, and Quality Targets. Make it detailed enough that someone who never saw the swipes could write a perfect draft from it alone.`;
+          console.log(`    ⚠️ Plan REJECTED: only ${planWords} words (minimum 200)`);
+          return `[REJECTED] Writing plan is too short (${planWords} words). The plan must cover: Structural Template (per-slide beat/density/format), Voice Rules, Hard Rules, Hook Specification, and Density Targets. Make it detailed enough that writing becomes mechanical execution.`;
         }
         this.writingPlan = plan;
         this.writingContext.writingPlan = plan;
-        console.log(`  ✍️ Writing plan created (${planWords} words)`);
+
+        // Log plan quality signals
+        const hasSlideEntries = (plan.match(/Slide \d+/gi) || []).length;
+        const hasWordCounts = (plan.match(/\d+ words/gi) || []).length;
+        const hasBeatLabels = (plan.match(/\[(Hook|Context|Teach|Prove|Story|Reframe|Reveal|CTA)\]/gi) || []).length;
+        const hasBannedSection = /banned|ban list/i.test(plan);
+        const hasHookSpec = /hook.*(case|person|structure|caps)/i.test(plan);
+        console.log(`    📋 Plan created: ${planWords} words`);
+        console.log(`    📋 Plan quality: ${hasSlideEntries} slide entries, ${hasWordCounts} word count targets, ${hasBeatLabels} beat labels, banned section: ${hasBannedSection ? 'yes' : 'NO'}, hook spec: ${hasHookSpec ? 'yes' : 'NO'}`);
+        if (hasSlideEntries < 3) console.log(`    ⚠️ Plan has few slide entries (${hasSlideEntries}) — may not have per-slide detail`);
+        if (hasWordCounts < 2) console.log(`    ⚠️ Plan has few word count targets (${hasWordCounts}) — density may be vague`);
+
         return `Writing plan created (${planWords} words). The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }
 

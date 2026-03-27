@@ -388,7 +388,28 @@ export async function searchAtomsByExactTitle(
     }
   }
 
-  console.log(`    🔍 Blueprint: NO MATCH after 4 strategies for "${normalized.substring(0, 60)}" (tried full/60-char/25-char on title+body)`);
+  // Strategy 5: Search structured->>hookText (JSONB text extraction) — the hook text
+  // often differs from atom.title. Swipes store their hook in structured.hookText.
+  // Try full, then 25-char prefix.
+  try {
+    results = await singleFieldILike('structured->>hookText' as any, `%${normalized}%`, types);
+    if (results.length > 0) {
+      console.log(`    🔍 Blueprint: ${results.length} hookText matches (full) for "${normalized.substring(0, 50)}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+      return results;
+    }
+    if (normalized.length > 25) {
+      results = await singleFieldILike('structured->>hookText' as any, `%${normalized.substring(0, 25)}%`, types);
+      if (results.length > 0) {
+        console.log(`    🔍 Blueprint: ${results.length} hookText matches (25-char) for "${normalized.substring(0, 25)}..." → [${results.map(a => `"${(a.title || '').substring(0, 40)}"`).join(', ')}]`);
+        return results;
+      }
+    }
+  } catch (e) {
+    // JSONB text extraction may not be supported on all Supabase instances — non-fatal
+    console.log(`    🔍 Blueprint: hookText JSONB search failed (${e instanceof Error ? e.message : 'unknown'})`);
+  }
+
+  console.log(`    🔍 Blueprint: NO MATCH after 5 strategies for "${normalized.substring(0, 60)}" (tried full/60/25 on title+body+hookText)`);
   return [];
 }
 

@@ -32,6 +32,13 @@ export async function selectSwipes(
   const allResearch = await fetchAllByType('research', { limit: MAX_SWIPE_POOL * 2 });
   const allSwipes = allResearch.filter(isSwipeFileAtom);
 
+  console.log(`    ✍️ Swipe pool: ${allSwipes.length} swipes from ${allResearch.length} research atoms`);
+  // Log first 5 swipe titles for debugging blueprint search mismatches
+  if (allSwipes.length > 0) {
+    const sample = allSwipes.slice(0, 5).map(s => `"${(s.title || '').substring(0, 60)}"`);
+    console.log(`    ✍️ Sample titles: ${sample.join(', ')}`);
+  }
+
   if (allSwipes.length === 0) return [];
 
   // Build top fingerprints index (top 10 patterns by frequency for structural scoring)
@@ -85,18 +92,18 @@ export async function selectSwipes(
     scored.push({ atom: swipe, score: finalScore, isPrimary });
   }
 
-  // Phase 2b: Recency diversity — deprioritize swipes recently used in other content atoms
-  const recentlyUsed = await getRecentlySelectedSwipeUUIDs(15);
+  // Phase 2b: Recency diversity — light deprioritization of swipes used in the last 3 content atoms
+  const recentlyUsed = await getRecentlySelectedSwipeUUIDs(3);
   if (recentlyUsed.size > 0) {
     let penalized = 0;
     for (const entry of scored) {
       if (recentlyUsed.has(entry.atom.uuid) && !entry.isPrimary) {
-        entry.score *= 0.5; // 50% penalty, not exclusion
+        entry.score *= 0.8; // Light 20% penalty — enough for variety, not enough to distort selection
         penalized++;
       }
     }
     if (penalized > 0) {
-      console.log(`    ✍️ Swipe diversity: penalized ${penalized}/${scored.length} recently-used swipes`);
+      console.log(`    ✍️ Swipe diversity: lightly penalized ${penalized}/${scored.length} swipes (from last 3 content atoms, ${recentlyUsed.size} unique UUIDs)`);
     }
   }
 

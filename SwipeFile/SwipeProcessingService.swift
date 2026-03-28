@@ -34,6 +34,39 @@ final class SwipeProcessingService {
 
     private init() {}
 
+    // MARK: - Pending Swipe Scanner
+
+    /// Scan for cloud-captured swipes that arrived while offline and process them.
+    /// Safe to call multiple times — inFlightUUIDs prevents double-processing.
+    func scanForPendingSwipes() {
+        Task {
+            let pendingUUIDs = await fetchPendingSwipeUUIDs()
+            guard !pendingUUIDs.isEmpty else { return }
+            print("SwipeProcessingService: Found \(pendingUUIDs.count) pending swipes from cloud sync")
+            processBatch(uuids: pendingUUIDs)
+        }
+    }
+
+    private nonisolated func fetchPendingSwipeUUIDs() async -> [String] {
+        do {
+            return try await CosmoDatabase.shared.asyncRead { db in
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT uuid FROM atoms
+                    WHERE type = 'research'
+                    AND is_deleted = 0
+                    AND metadata LIKE '%"isSwipeFile":true%'
+                    AND metadata NOT LIKE '%"processingStatus":"complete"%'
+                    AND metadata NOT LIKE '%"processingStatus":"error"%'
+                    LIMIT 50
+                    """)
+                return rows.compactMap { $0["uuid"] as? String }
+            }
+        } catch {
+            print("SwipeProcessingService: Failed to scan pending swipes: \(error)")
+            return []
+        }
+    }
+
     /// Check if a swipe is currently being processed
     func isProcessing(uuid: String) -> Bool {
         inFlightUUIDs.contains(uuid)

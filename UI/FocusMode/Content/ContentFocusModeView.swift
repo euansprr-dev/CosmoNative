@@ -307,8 +307,10 @@ struct ContentFocusModeView: View {
         .onDisappear {
             print("[FOCUS-CONTENT] onDisappear — uuid=\(atom.uuid) localDraftLen=\(localDraftContent.count) vmDraftLen=\(viewModel.state.draftContent.count) draftDocPlainLen=\(draftDocument.plainText.count) draftPreview=\"\(String(localDraftContent.prefix(80)))\"")
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
-            // If the rich document is stale (debounced serialization hasn't flushed),
-            // rebuild it from the authoritative plain text to avoid saving stale content
+            // Snapshot current state — CosmoDocumentEditor's flushPendingSync may not have
+            // propagated yet (child onDisappear order is not guaranteed). Save immediately
+            // with what we have, then the deferred onDocumentChange from flushPendingSync
+            // will trigger another save via triggerAutoSave if the text was stale.
             if draftDocument.plainText != localDraftContent && !localDraftContent.isEmpty {
                 print("[FOCUS-CONTENT] onDisappear — rebuilding stale draftDocument from localDraftContent (docLen=\(draftDocument.plainText.count) vs localLen=\(localDraftContent.count))")
                 draftDocument = RichDocument.migrateLegacy(localDraftContent)
@@ -1497,7 +1499,8 @@ class ContentFocusModeViewModel: ObservableObject {
                 if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
                     try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
                 }) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             } catch {
                 print("[FOCUS-CONTENT-VM] writeToAtom() FAILED — uuid=\(atomUUID) error=\(error)")
@@ -1548,7 +1551,8 @@ class ContentFocusModeViewModel: ObservableObject {
                 if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
                     try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
                 }) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             }
         } catch {

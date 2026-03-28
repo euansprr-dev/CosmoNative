@@ -72,6 +72,11 @@ final class FlashLiteRouter {
     /// Attempts to route a message to a direct tool call via Flash-Lite classification.
     /// Returns (response, toolName) if handled, nil if the message needs the full agent.
     func tryRoute(_ text: String) async -> (response: String, toolName: String)? {
+        // Explicit inbox prefix — zero latency, no LLM needed
+        if let inboxText = extractInboxPrefix(text) {
+            return await executeInboxCapture(arguments: ["text": inboxText])
+        }
+
         if Self.shouldForceAgentFallback(text) {
             return nil
         }
@@ -249,6 +254,20 @@ final class FlashLiteRouter {
     }
 
     // MARK: - Inbox Capture
+
+    /// Detects `inbox:` or `inbox ` prefix for zero-latency inbox capture.
+    private func extractInboxPrefix(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        for prefix in ["inbox:", "inbox "] {
+            if lower.hasPrefix(prefix) {
+                let content = String(trimmed.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespaces)
+                return content.isEmpty ? nil : content
+            }
+        }
+        return nil
+    }
 
     @MainActor
     private func executeInboxCapture(arguments: [String: Any]) async -> (response: String, toolName: String)? {

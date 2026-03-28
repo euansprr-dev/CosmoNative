@@ -21,12 +21,14 @@ struct CosmoDocumentEditor: View {
     @State private var isApplyingExternalUpdate = false
     @State private var isSyncingFromEditor = false
     @State private var documentSyncWorkItem: DispatchWorkItem?
+    @State private var directChangeWorkItem: DispatchWorkItem?
     @State private var lastEmittedPlainText = ""
 
     var fontSize: CGFloat = 16
     var compact: Bool = false
     var placeholder: String = "Start typing..."
     var darkMode: Bool = false
+    var overrideTextColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
@@ -59,6 +61,7 @@ struct CosmoDocumentEditor: View {
             compact: compact,
             placeholder: placeholder,
             darkMode: darkMode,
+            overrideTextColor: overrideTextColor,
             allowSlashCommands: allowSlashCommands,
             allowMentions: allowMentions,
             allowSelectionMenu: allowSelectionMenu,
@@ -78,6 +81,12 @@ struct CosmoDocumentEditor: View {
             onActivate: onActivate,
             onDeactivate: onDeactivate,
             onCommit: onCommit,
+            onPlainTextDidChange: { plainText in
+                // Direct per-keystroke callback from the NSTextView coordinator.
+                // This bypasses the SwiftUI @Binding→onChange chain which can
+                // coalesce/skip updates when mutations come from AppKit.
+                handleDirectPlainTextChange(plainText)
+            },
             autoFocus: autoFocus,
             onSave: { _ in syncDocumentFromEditor() }
         )
@@ -119,11 +128,44 @@ struct CosmoDocumentEditor: View {
     }
 
     private func handlePlainTextMirrorChange(_ plainText: String) {
-        guard !isApplyingExternalUpdate else { return }
+        // NO guards on isSyncingFromEditor or isApplyingExternalUpdate.
+        // Both flags use async resets that create one-tick dead windows where
+        // keystrokes are silently dropped. The lastEmittedPlainText dedup below
+        // is sufficient to prevent echo loops.
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
         guard resolvedPlainText != lastEmittedPlainText else { return }
         lastEmittedPlainText = resolvedPlainText
         onPlainTextChange?(resolvedPlainText)
+        // Don't fire onDocumentChange here — it's handled by handleDirectPlainTextChange
+        // with throttling. Firing it here too would double the callbacks and cause jitter.
+    }
+
+    /// Direct per-keystroke callback from the NSTextView coordinator.
+    /// This is the PRIMARY path for propagating text changes to consumers.
+    /// The SwiftUI @Binding→onChange chain (handlePlainTextMirrorChange) is unreliable
+    /// because SwiftUI can coalesce/skip onChange when @Binding is mutated from AppKit.
+    private func handleDirectPlainTextChange(_ plainText: String) {
+        // NO guards on isSyncingFromEditor or isApplyingExternalUpdate here.
+        // Both flags use async resets (DispatchQueue.main.async) which create
+        // one-tick dead windows where keystrokes arriving from the NSTextView
+        // delegate are silently dropped. The lastEmittedPlainText dedup below
+        // is sufficient to prevent echo loops.
+        let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
+        guard resolvedPlainText != lastEmittedPlainText else { return }
+        lastEmittedPlainText = resolvedPlainText
+        plainTextMirror = resolvedPlainText
+        // Fire onPlainTextChange per-keystroke — it's lightweight (sets a String @State).
+        // This keeps noteText/newItemText accurate for saves.
+        onPlainTextChange?(resolvedPlainText)
+        // Throttle onDocumentChange to ~100ms — it triggers SwiftUI view body re-evaluation
+        // and updateNSView, which causes visible text jitter if fired per-keystroke.
+        directChangeWorkItem?.cancel()
+        let capturedPlainText = resolvedPlainText
+        let workItem = DispatchWorkItem {
+            onDocumentChange?(document, capturedPlainText)
+        }
+        directChangeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
     }
 
     private func syncDocumentFromEditor() {
@@ -151,7 +193,7 @@ struct CosmoDocumentEditor: View {
             document = updated
             onStructuredDocumentChange?(updated, updated.plainText)
             onDocumentChange?(updated, updated.plainText)
-            DispatchQueue.main.async { isSyncingFromEditor = false }
+            isSyncingFromEditor = false
         }
         documentSyncWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
@@ -190,30 +232,52 @@ struct CosmoDocumentEditor: View {
         }
     }
 
-    /// Force-sync any pending document changes immediately (called before view disappears)
+    /// Force-sync any pending document changes immediately (called before view disappears).
+    ///
+    /// TextKitCoordinator syncs `plainText` immediately on every keystroke but defers
+    /// `attributedText` by 50ms. If the view disappears within that window, `attributedText`
+    /// is stale while `plainTextMirror` is current. We use `plainTextMirror` as the
+    /// authoritative plain-text source to avoid losing the last keystrokes.
     private func flushPendingSync() {
         documentSyncWorkItem?.cancel()
+        // Fire any pending throttled direct change immediately before disappearing
+        if let pending = directChangeWorkItem {
+            pending.cancel()
+            directChangeWorkItem = nil
+            onDocumentChange?(document, plainTextMirror)
+        }
         guard !isApplyingExternalUpdate else { return }
+
+        // plainTextMirror is synced immediately from NSTextView on every keystroke.
+        // attributedText may be 50ms stale (deferred sync for performance).
+        let latestPlainText = plainTextMirror
 
         if titleConfiguration != nil {
             let payload = TitleDocumentChangePayloadFactory.payload(from: attributedText)
-            guard payload.document != document else { return }
+            // Also check if plain text diverged from what attributedText reports
+            let plainTextDiverged = latestPlainText != payload.plainText && latestPlainText != lastEmittedPlainText
+            guard payload.document != document || plainTextDiverged else { return }
             isSyncingFromEditor = true
             document = payload.document
-            plainTextMirror = payload.plainText
-            onStructuredDocumentChange?(payload.document, payload.plainText)
-            onDocumentChange?(payload.document, payload.plainText)
+            let emitPlainText = plainTextDiverged ? latestPlainText : payload.plainText
+            plainTextMirror = emitPlainText
+            onStructuredDocumentChange?(payload.document, emitPlainText)
+            onDocumentChange?(payload.document, emitPlainText)
             isSyncingFromEditor = false
             return
         }
 
         let updated = RichDocumentSerializer.document(from: attributedText)
-        guard updated != document else { return }
+        // Check if plain text advanced beyond what attributedText contains
+        // (i.e. user typed but the 50ms deferred sync hasn't fired yet)
+        let plainTextDiverged = latestPlainText != updated.plainText && latestPlainText != lastEmittedPlainText
+        guard updated != document || plainTextDiverged else { return }
         isSyncingFromEditor = true
         document = updated
-        plainTextMirror = updated.plainText
-        onStructuredDocumentChange?(updated, updated.plainText)
-        onDocumentChange?(updated, updated.plainText)
+        let emitPlainText = plainTextDiverged ? latestPlainText : updated.plainText
+        plainTextMirror = emitPlainText
+        onStructuredDocumentChange?(updated, emitPlainText)
+        onDocumentChange?(updated, emitPlainText)
         isSyncingFromEditor = false
     }
 

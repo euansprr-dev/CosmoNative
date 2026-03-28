@@ -72,9 +72,15 @@ struct NoteBlockView: View {
         .onDisappear {
             print("[BLOCK-NOTE] onDisappear — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
-            saveClosed = true  // Block any in-flight async writes from overwriting sync save
-            saveNoteSync()
             observationCancellable?.cancel()
+            // Defer sync save by one frame so CosmoDocumentEditor's flushPendingSync()
+            // can propagate the latest text via onDocumentChange first.
+            // Without this, the 50ms attributedText debounce can cause us to save stale content.
+            DispatchQueue.main.async {
+                saveClosed = true
+                print("[BLOCK-NOTE] onDisappear(deferred) — saving uuid=\(trackedEntityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
+                saveNoteSync()
+            }
         }
         .onChange(of: isEditingTitle) { _, isEditing in
             if isEditing {
@@ -338,6 +344,12 @@ struct NoteBlockView: View {
         }
         observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
             .receive(on: DispatchQueue.main)
+            .removeDuplicates(by: { prev, next in
+                guard let prev, let next else { return prev == nil && next == nil }
+                return prev.title == next.title
+                    && prev.body == next.body
+                    && prev.metadata == next.metadata
+            })
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { fetchedAtom in
@@ -447,7 +459,13 @@ struct NoteBlockView: View {
         let uuid = trackedEntityUuid
         if !uuid.isEmpty {
             let titleDoc = noteTitleDocument
-            let bodyDoc = noteBodyDocument
+            // Use the CURRENT plain text to build the body document for metadata.
+            // noteBodyDocument is from the 150ms debounced RichDocument serialization
+            // and may lag behind noteText. If we use the stale document, the metadata
+            // will contain truncated text, and loadAtomDocument reads from metadata first.
+            let bodyDoc = noteBodyDocument.plainText == noteText
+                ? noteBodyDocument
+                : RichDocument.migrateLegacy(noteText)
             let titleText = noteTitleText
             let bodyText = noteText
             let blockId = block.id
@@ -473,6 +491,8 @@ struct NoteBlockView: View {
 
                         if atomExists != nil {
                             // Atom exists — update it
+                            // Use bodyText (per-keystroke) instead of fields.body (from RichDocument
+                            // which lags 150ms behind due to serialization debounce)
                             try db.execute(
                                 sql: """
                                 UPDATE atoms
@@ -485,8 +505,8 @@ struct NoteBlockView: View {
                                 WHERE uuid = ?
                                 """,
                                 arguments: [
-                                    fields.title,
-                                    fields.body ?? "",
+                                    fields.title ?? titleText,
+                                    bodyText,
                                     fields.metadata,
                                     now,
                                     uuid
@@ -504,7 +524,7 @@ struct NoteBlockView: View {
                                     uuid,
                                     AtomType.note.rawValue,
                                     fields.title ?? titleText,
-                                    fields.body ?? bodyText,
+                                    bodyText,
                                     fields.metadata,
                                     now,
                                     now
@@ -539,7 +559,8 @@ struct NoteBlockView: View {
                         if operation == "INSERT" {
                             await ChangeTracker.shared.trackInsert(table: "atoms", entity: updatedAtom)
                         } else {
-                            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                            // skipVersionIncrement: raw SQL already did _local_version + 1
+                            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                         }
                     }
                 } catch {
@@ -561,10 +582,15 @@ struct NoteBlockView: View {
                 let atomExists = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid])
                 let existingMetadata: String? = atomExists?["metadata"]
 
+                // Use current plain text for the body document to avoid stale metadata.
+                // noteBodyDocument may lag behind noteText (150ms RichDocument debounce).
+                let currentBodyDoc = noteBodyDocument.plainText == noteText
+                    ? noteBodyDocument
+                    : RichDocument.migrateLegacy(noteText)
                 let fields = RichDocumentPersistence.writeAtomDocuments(
                     existingMetadata: existingMetadata,
                     titleDocument: noteTitleDocument,
-                    bodyDocument: noteBodyDocument
+                    bodyDocument: currentBodyDoc
                 )
                 let now = ISO8601DateFormatter().string(from: Date())
 
@@ -580,8 +606,8 @@ struct NoteBlockView: View {
                         WHERE uuid = ?
                         """,
                         arguments: [
-                            fields.title,
-                            fields.body ?? "",
+                            fields.title ?? noteTitleText,
+                            noteText,
                             fields.metadata,
                             now,
                             uuid
@@ -598,7 +624,7 @@ struct NoteBlockView: View {
                             uuid,
                             AtomType.note.rawValue,
                             fields.title ?? noteTitleText,
-                            fields.body ?? noteText,
+                            noteText,
                             fields.metadata,
                             now,
                             now
@@ -609,7 +635,8 @@ struct NoteBlockView: View {
             // Sync: queue for Supabase push
             Task {
                 if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             }
         } catch {

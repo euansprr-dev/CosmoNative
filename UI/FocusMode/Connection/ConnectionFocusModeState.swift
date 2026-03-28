@@ -186,7 +186,18 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
     }
 
     var resolvedDocument: RichDocument {
-        document ?? RichDocument.migrateLegacy(plainText ?? content)
+        // Prefer content/plainText when the document's text doesn't match —
+        // the document may be stale from CosmoDocumentEditor's 150ms serialization debounce
+        if let doc = document {
+            let docText = doc.plainText
+            let authoritative = plainText ?? content
+            if docText == authoritative {
+                return doc
+            }
+            // Document is stale — rebuild from authoritative plain text
+            return RichDocument.migrateLegacy(authoritative)
+        }
+        return RichDocument.migrateLegacy(plainText ?? content)
     }
 
     var resolvedPlainText: String {

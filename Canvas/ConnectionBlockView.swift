@@ -242,6 +242,13 @@ struct ConnectionBlockView: View {
         }
         observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
             .receive(on: DispatchQueue.main)
+            .removeDuplicates(by: { prev, next in
+                guard let prev, let next else { return prev == nil && next == nil }
+                return prev.title == next.title
+                    && prev.body == next.body
+                    && prev.structured == next.structured
+                    && prev.metadata == next.metadata
+            })
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { atom in
@@ -262,14 +269,27 @@ struct ConnectionBlockView: View {
                         print("[BLOCK-CONN] 🔔 observation APPLYING title — uuid=\(atom.uuid)")
                         self.applyObservedTitleDocument(newTitleDocument)
                     }
-                    // Only re-parse sections from DB if user hasn't made local edits.
-                    // After local edits, saveChanges() is the authority — observation echoes
-                    // from auto-save would overwrite in-progress edits.
+                    // Only re-parse sections from DB if user hasn't made local edits,
+                    // OR if the DB section count differs from local (focus mode changed them).
                     if !self.sectionsModifiedLocally {
                         print("[BLOCK-CONN] 🔔 observation APPLYING sections from DB — uuid=\(atom.uuid)")
                         self.parseSections(from: atom)
                     } else {
-                        print("[BLOCK-CONN] 🔔 observation SKIPPED sections (locally modified) — uuid=\(atom.uuid)")
+                        // Check if focus mode changed sections — if DB item count differs
+                        // from local, accept the update and reset the local-modified flag
+                        let localItemCount = self.sections.flatMap(\.items).count
+                        let dbItemCount: Int = {
+                            guard let json = atom.structured,
+                                  let data = ConnectionStructuredData.fromJSON(json) else { return 0 }
+                            return data.sections.flatMap(\.items).count
+                        }()
+                        if dbItemCount != localItemCount {
+                            print("[BLOCK-CONN] 🔔 observation APPLYING sections (focus mode changed items: local=\(localItemCount) db=\(dbItemCount)) — uuid=\(atom.uuid)")
+                            self.sectionsModifiedLocally = false
+                            self.parseSections(from: atom)
+                        } else {
+                            print("[BLOCK-CONN] 🔔 observation SKIPPED sections (locally modified) — uuid=\(atom.uuid)")
+                        }
                     }
                 }
             )
@@ -331,6 +351,29 @@ struct ConnectionBlockView: View {
     private func parseSections(from atom: Atom) {
         // 1. Try ConnectionFocusModeState from UserDefaults (fastest, most up-to-date)
         if let state = ConnectionFocusModeState.load(atomUUID: atom.uuid) {
+            let udItems = state.sections.flatMap(\.items).count
+            let dbItems: Int = {
+                guard let json = atom.structured, let data = ConnectionStructuredData.fromJSON(json) else { return 0 }
+                return data.sections.flatMap(\.items).count
+            }()
+            print("[BLOCK-CONN] parseSections — USING UserDefaults for uuid=\(atom.uuid) udSections=\(state.sections.count) udItems=\(udItems) dbStructuredLen=\(atom.structured?.count ?? 0) dbItems=\(dbItems)")
+            // If UserDefaults has FEWER items than DB, prefer DB (UserDefaults may be stale)
+            if udItems < dbItems, let json = atom.structured, let data = ConnectionStructuredData.fromJSON(json) {
+                print("[BLOCK-CONN] parseSections — ⚠️ UserDefaults STALE (udItems=\(udItems) < dbItems=\(dbItems)), falling through to DB")
+                sections = data.sections
+                    .sorted { $0.type.sortOrder < $1.type.sortOrder }
+                    .map { section in
+                        var s = section
+                        if let existing = sections.first(where: { $0.type == section.type }) {
+                            s.isExpanded = existing.isExpanded
+                        } else {
+                            s.isExpanded = !section.items.isEmpty
+                        }
+                        return s
+                    }
+                deduplicateItemsAcrossSections()
+                return
+            }
             sections = state.sections
                 .sorted { $0.type.sortOrder < $1.type.sortOrder }
                 .map { section in
@@ -348,8 +391,10 @@ struct ConnectionBlockView: View {
         }
 
         // 2. Fall back to atom.structured JSON
+        print("[BLOCK-CONN] parseSections — UserDefaults empty/nil for uuid=\(atom.uuid), trying atom.structured (len=\(atom.structured?.count ?? 0))")
         if let json = atom.structured,
            let data = ConnectionStructuredData.fromJSON(json) {
+            print("[BLOCK-CONN] parseSections — USING atom.structured for uuid=\(atom.uuid) sections=\(data.sections.count) items=\(data.sections.flatMap(\.items).count)")
             sections = data.sections
                 .sorted { $0.type.sortOrder < $1.type.sortOrder }
                 .map { section in
@@ -366,6 +411,7 @@ struct ConnectionBlockView: View {
         }
 
         // 3. Initialize empty sections (collapsed)
+        print("[BLOCK-CONN] parseSections — NO data source for uuid=\(atom.uuid), using empty sections")
         if sections.isEmpty {
             sections = ConnectionSectionType.allCases
                 .sorted { $0.sortOrder < $1.sortOrder }
@@ -446,7 +492,8 @@ struct ConnectionBlockView: View {
             print("[BLOCK-CONN] saveChanges() async DB write DONE — uuid=\(atomUUID)")
             // Sync: queue for Supabase push
             if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                // skipVersionIncrement: raw SQL already did _local_version + 1
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
             }
         }
 
@@ -491,7 +538,8 @@ struct ConnectionBlockView: View {
             }
             // Sync: queue for Supabase push
             if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                // skipVersionIncrement: raw SQL already did _local_version + 1
+                await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
             }
         }
     }
@@ -640,6 +688,7 @@ private struct CompactSectionRow: View {
     @State private var isAddingItem = false
     @State private var newItemText = ""
     @State private var newItemDocument: RichDocument = .empty
+    @State private var addItemEditorHeight: CGFloat = 22
     @FocusState private var isAddFieldFocused: Bool
 
     var body: some View {
@@ -722,14 +771,23 @@ private struct CompactSectionRow: View {
                                 allowMentions: true,
                                 allowSelectionMenu: false,
                                 allowImages: false,
+                                onContentHeightChange: { height in
+                                    addItemEditorHeight = height
+                                },
                                 onPlainTextChange: { plainText in
+                                    print("[CONN-SECTION] onPlainTextChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(40)))\"")
                                     newItemText = plainText
                                 },
                                 onDocumentChange: { _, plainText in
+                                    print("[CONN-SECTION] onDocumentChange — len=\(plainText.count) preview=\"\(String(plainText.prefix(40)))\" newItemTextBefore=\(newItemText.count)")
                                     newItemText = plainText
+                                },
+                                onCommit: {
+                                    print("[CONN-SECTION] onCommit — newItemText=\"\(newItemText)\" newItemDocPlain=\"\(newItemDocument.plainText)\"")
+                                    commitAddItem()
                                 }
                             )
-                            .frame(minHeight: 24)
+                            .frame(height: max(22, addItemEditorHeight))
 
                             Button {
                                 cancelAddItem()
@@ -741,6 +799,7 @@ private struct CompactSectionRow: View {
                             .buttonStyle(.plain)
 
                             Button {
+                                print("[CONN-SECTION] checkmark button tapped — newItemText=\"\(newItemText)\"")
                                 commitAddItem()
                             } label: {
                                 Image(systemName: "checkmark")
@@ -792,12 +851,15 @@ private struct CompactSectionRow: View {
 
     private func commitAddItem() {
         let text = newItemText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let docText = newItemDocument.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("[CONN-SECTION] commitAddItem — newItemText=\"\(text)\" (\(text.count) chars) docPlainText=\"\(docText)\" (\(docText.count) chars)")
         if !text.isEmpty {
             onAddItem(newItemDocument, text)
         }
+        // Clear and keep input open for the next item
         newItemText = ""
         newItemDocument = .empty
-        isAddingItem = false
+        addItemEditorHeight = 22
     }
 
     private func cancelAddItem() {

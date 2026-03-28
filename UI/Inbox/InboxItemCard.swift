@@ -1,5 +1,6 @@
 // CosmoOS/UI/Inbox/InboxItemCard.swift
-// Individual inbox item card with classification badge and action buttons
+// Rich inbox item card with entity bar, confidence meter, expandable content,
+// hover actions, selection state, stale nudge, and classification progress
 // March 2026
 
 import SwiftUI
@@ -7,75 +8,88 @@ import SwiftUI
 struct InboxItemCard: View {
     let item: InboxItem
     let isProcessing: Bool
+    let isExpanded: Bool
+    let isSelected: Bool
+    let isFocused: Bool
+    let insight: String?
     let onAccept: () -> Void
     let onOverride: () -> Void
     let onDismiss: () -> Void
+    let onToggleExpand: () -> Void
+    let onToggleSelect: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Top row: badge + source icon + timestamp
-            HStack(spacing: 8) {
-                classificationBadge
-                sourceIcon
-                Spacer()
-                timestampLabel
-            }
-
-            // Title
-            if let title = item.title, !title.isEmpty {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.text)
-                    .lineLimit(1)
-            }
-
-            // Raw text preview
-            Text(item.rawText)
-                .font(.system(size: 13))
-                .foregroundColor(DS.textSecondary)
-                .lineLimit(3)
-
-            // Suggestion line
-            suggestionLine
-
-            // Action buttons
-            if isProcessing {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Processing...")
-                        .font(.system(size: 12))
-                        .foregroundColor(DS.textMuted)
-                }
-                .padding(.top, 4)
-            } else {
-                actionButtons
-            }
+        HStack(spacing: 0) {
+            entityBar
+            cardContent
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(DS.surfaceCard)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isHovered ? DS.accent.opacity(0.2) : DS.border, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
+        .background { styledBackground }
+        .overlay(cardBorder)
+        .dsRestingShadow()
         .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityDescription)
     }
 
-    // MARK: - Classification Badge
+    // MARK: - Entity Bar
 
-    @ViewBuilder
+    private var entityBar: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(item.entityColor)
+            .frame(width: 3)
+            .padding(.vertical, DS.space8)
+    }
+
+    // MARK: - Card Content
+
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            topRow
+            titleRow
+            textPreview
+            confidenceMeter
+            suggestionLine
+            insightLine
+            staleNudge
+            actionRow
+        }
+        .padding(DS.space16)
+    }
+
+    // MARK: - Top Row: Badge + Source + Timestamp
+
+    private var topRow: some View {
+        HStack(spacing: DS.space6) {
+            if isSelected {
+                selectionCheckbox
+            }
+            classificationBadge
+            if !item.isRead {
+                unreadDot
+            }
+            sourceIcon
+            Spacer()
+            timestampLabel
+        }
+    }
+
+    private var selectionCheckbox: some View {
+        Button(action: onToggleSelect) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 14))
+                .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var classificationBadge: some View {
         let (label, bg, fg) = badgeStyle
-
-        Text(label)
+        return Text(label)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(fg)
+            .foregroundStyle(fg)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(bg, in: Capsule())
@@ -94,30 +108,331 @@ struct InboxItemCard: View {
         }
     }
 
-    // MARK: - Source Icon
+    private var unreadDot: some View {
+        Circle()
+            .fill(DS.accent)
+            .frame(width: 6, height: 6)
+    }
 
-    @ViewBuilder
     private var sourceIcon: some View {
-        let icon: String = {
+        let (icon, label): (String, String) = {
             switch item.source {
-            case .telegramVoice: return "mic.fill"
-            case .telegramText: return "message.fill"
-            case .quickCapture: return "bolt.fill"
+            case .telegramVoice: return ("mic.fill", "Voice message")
+            case .telegramText: return ("paperplane.fill", "Telegram")
+            case .quickCapture: return ("bolt.fill", "Quick capture")
             }
         }()
 
-        Image(systemName: icon)
+        return Image(systemName: icon)
             .font(.system(size: 10))
-            .foregroundColor(DS.textMuted)
+            .foregroundStyle(DS.textMuted)
+            .help(label)
     }
-
-    // MARK: - Timestamp
 
     private var timestampLabel: some View {
         Text(relativeTime)
-            .font(.system(size: 11))
-            .foregroundColor(DS.textMuted)
+            .font(DS.footnote)
+            .foregroundStyle(DS.textMuted)
     }
+
+    // MARK: - Title
+
+    @ViewBuilder
+    private var titleRow: some View {
+        if let title = item.title, !title.isEmpty {
+            Text(title)
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+        }
+    }
+
+    // MARK: - Text Preview (Expandable)
+
+    private var textPreview: some View {
+        Button(action: onToggleExpand) {
+            Text(item.rawText)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(isExpanded ? nil : 3)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(reduceMotion ? nil : BlockAnimations.expand, value: isExpanded)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Confidence Meter
+
+    @ViewBuilder
+    private var confidenceMeter: some View {
+        if item.classification == .merge || item.classification == .place {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(DS.border)
+                        .frame(height: 3)
+
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(confidenceColor)
+                        .frame(width: geo.size.width * item.confidence, height: 3)
+                        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: item.confidence)
+                }
+            }
+            .frame(height: 3)
+        }
+    }
+
+    private var confidenceColor: Color {
+        if item.confidence > 0.75 { return DS.accent }
+        if item.confidence > 0.5 { return DS.orange }
+        return DS.textMuted
+    }
+
+    // MARK: - Suggestion Line
+
+    @ViewBuilder
+    private var suggestionLine: some View {
+        switch item.classification {
+        case .merge:
+            mergeSuggestion
+        case .place:
+            placeSuggestion
+        case .new:
+            newSuggestion
+        case .none:
+            classificationProgress
+        }
+    }
+
+    @ViewBuilder
+    private var mergeSuggestion: some View {
+        if let targetTitle = item.mergeTargetTitle {
+            let pct = Int(item.confidence * 100)
+            HStack(spacing: DS.space4) {
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 10))
+                Text("Merge with:")
+                    .font(.system(size: 12))
+                Text(targetTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text("(\(pct)%)")
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .foregroundStyle(DS.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var placeSuggestion: some View {
+        if let tsName = item.placeThinkspaceName {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "rectangle.3.group")
+                    .font(.system(size: 10))
+                Text("Place in:")
+                    .font(.system(size: 12))
+                Text(tsName)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(DS.accent)
+        }
+    }
+
+    private var newSuggestion: some View {
+        let typeName = item.placeAtomType?.capitalized ?? "Note"
+        return HStack(spacing: DS.space4) {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 10))
+            Text("Create as:")
+                .font(.system(size: 12))
+            Text(typeName)
+                .font(.system(size: 12, weight: .medium))
+        }
+        .foregroundStyle(Color(hex: "818CF8"))
+    }
+
+    private var classificationProgress: some View {
+        HStack(spacing: DS.space6) {
+            progressDot(label: "Searching", filled: true)
+            progressDot(label: "Matching", filled: false)
+            progressDot(label: "Ready", filled: false)
+        }
+    }
+
+    private func progressDot(label: String, filled: Bool) -> some View {
+        HStack(spacing: DS.space2) {
+            Circle()
+                .fill(filled ? DS.accent : DS.border)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(filled ? DS.textSecondary : DS.textMuted)
+        }
+    }
+
+    // MARK: - Insight Line
+
+    @ViewBuilder
+    private var insightLine: some View {
+        if let insight {
+            Text(insight)
+                .font(.system(size: 12).italic())
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(2)
+                .transition(.opacity)
+        }
+    }
+
+    // MARK: - Stale Nudge
+
+    @ViewBuilder
+    private var staleNudge: some View {
+        if item.isStale {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 11))
+                Text("Captured \(item.ageInDays) days ago — still relevant?")
+                    .font(.system(size: 11))
+                Spacer()
+                Button("Dismiss") {
+                    onDismiss()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(DS.orange)
+            .padding(DS.space8)
+            .background(DS.orangeSoft, in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
+        }
+    }
+
+    // MARK: - Action Row
+
+    @ViewBuilder
+    private var actionRow: some View {
+        if isProcessing {
+            processingIndicator
+        } else {
+            actionButtons
+        }
+    }
+
+    private var processingIndicator: some View {
+        HStack(spacing: DS.space6) {
+            ProgressView()
+                .scaleEffect(0.7)
+            Text("Processing...")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+        }
+        .padding(.top, DS.space4)
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: DS.space8) {
+            acceptButton
+            overrideButton
+            Spacer()
+            dismissButton
+        }
+        .padding(.top, DS.space4)
+        .opacity(isHovered ? 1.0 : 0.85)
+        .animation(ProMotionSprings.hover, value: isHovered)
+    }
+
+    private var acceptButton: some View {
+        Button(action: onAccept) {
+            acceptButtonLabel
+        }
+        .buttonStyle(.plain)
+        .help("Accept suggestion (\u{21A9})")
+    }
+
+    @ViewBuilder
+    private var acceptButtonLabel: some View {
+        let label: String = {
+            switch item.classification {
+            case .merge: return "Merge"
+            case .place: return "Place"
+            case .new, .none: return "Create"
+            }
+        }()
+
+        HStack(spacing: DS.space4) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .bold))
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .foregroundStyle(DS.textOnAccent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(DS.accent, in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
+    }
+
+    private var overrideButton: some View {
+        Button(action: onOverride) {
+            Text("Change")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, 7)
+                .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                        .stroke(DS.border, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var dismissButton: some View {
+        Button(action: onDismiss) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .frame(width: 28, height: 28)
+                .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Dismiss (Delete)")
+    }
+
+    // MARK: - Card Chrome
+
+    private var cardBackground: some Shape {
+        RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+    }
+
+    @ViewBuilder
+    private func cardBackgroundFill() -> some View {
+        if isSelected {
+            cardBackground.fill(DS.accentSoft.opacity(0.3))
+        } else {
+            cardBackground.fill(DS.surfaceCard)
+        }
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+            .stroke(borderColor, lineWidth: borderWidth)
+    }
+
+    private var borderColor: Color {
+        if isFocused { return DS.accent.opacity(0.5) }
+        if isSelected { return DS.accent.opacity(0.35) }
+        if isHovered { return DS.accent.opacity(0.2) }
+        return DS.border
+    }
+
+    private var borderWidth: CGFloat {
+        (isFocused || isSelected) ? 2 : 1
+    }
+
+    // MARK: - Helpers
 
     private var relativeTime: String {
         let formatter = ISO8601DateFormatter()
@@ -129,124 +444,24 @@ struct InboxItemCard: View {
         return "\(Int(interval / 86400))d ago"
     }
 
-    // MARK: - Suggestion Line
-
-    @ViewBuilder
-    private var suggestionLine: some View {
-        switch item.classification {
-        case .merge:
-            if let targetTitle = item.mergeTargetTitle {
-                let pct = Int(item.confidence * 100)
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.triangle.merge")
-                        .font(.system(size: 10))
-                    Text("Merge with:")
-                        .font(.system(size: 12))
-                    Text(targetTitle)
-                        .font(.system(size: 12, weight: .medium))
-                    Text("(\(pct)%)")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
-                }
-                .foregroundColor(DS.orange)
-            }
-
-        case .place:
-            if let tsName = item.placeThinkspaceName {
-                HStack(spacing: 4) {
-                    Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 10))
-                    Text("Place in:")
-                        .font(.system(size: 12))
-                    Text(tsName)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(DS.accent)
-            }
-
-        case .new:
-            let typeName = item.placeAtomType?.capitalized ?? "Note"
-            HStack(spacing: 4) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 10))
-                Text("Create as:")
-                    .font(.system(size: 12))
-                Text(typeName)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(Color(hex: "818CF8"))
-
-        case .none:
-            HStack(spacing: 4) {
-                ProgressView()
-                    .scaleEffect(0.6)
-                Text("Analyzing...")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
-            }
-        }
+    private var accessibilityDescription: String {
+        let type = item.classification?.rawValue ?? "pending"
+        let title = item.title ?? String(item.rawText.prefix(50))
+        return "\(type) inbox item: \(title)"
     }
+}
 
-    // MARK: - Action Buttons
+// MARK: - Background Shape Conformance
 
-    private var actionButtons: some View {
-        HStack(spacing: 8) {
-            // Accept button
-            Button(action: onAccept) {
-                acceptButtonLabel
-            }
-            .buttonStyle(.plain)
-
-            // Override button
-            Button(action: onOverride) {
-                Text("Change")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(DS.border, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Dismiss button
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.top, 4)
-    }
-
+extension InboxItemCard {
     @ViewBuilder
-    private var acceptButtonLabel: some View {
-        let label: String = {
-            switch item.classification {
-            case .merge: return "Merge"
-            case .place: return "Place"
-            case .new: return "Create"
-            case .none: return "Create"
-            }
-        }()
-
-        HStack(spacing: 4) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .bold))
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
+    var styledBackground: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(DS.accentSoft.opacity(0.3))
+        } else {
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(DS.surfaceCard)
         }
-        .foregroundStyle(DS.textOnAccent)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(DS.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

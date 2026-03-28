@@ -80,6 +80,24 @@ struct CosmoApp: App {
             }
         }
 
+        // Process cloud-captured swipes that arrived while app was closed
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            SwipeProcessingService.shared.scanForPendingSwipes()
+        }
+
+        // Observe system wake to process swipes captured while asleep
+        NotificationCenter.default.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(10))
+                SwipeProcessingService.shared.scanForPendingSwipes()
+            }
+        }
+
         // Observe app termination to flush pending saves before exit
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,

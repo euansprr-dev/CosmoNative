@@ -6,7 +6,7 @@ import SwiftUI
 
 struct InboxOverrideSheet: View {
     let item: InboxItem
-    @ObservedObject var viewModel: InboxViewModel
+    @Bindable var viewModel: InboxViewModel
 
     @State private var selectedTab: OverrideTab = .merge
     @State private var searchQuery = ""
@@ -22,7 +22,7 @@ struct InboxOverrideSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             sheetHeader
-            Divider().foregroundColor(DS.border)
+            Divider().foregroundStyle(DS.border)
 
             // Tab picker
             tabPicker
@@ -50,17 +50,17 @@ struct InboxOverrideSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Change Action")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                 Text(item.title ?? String(item.rawText.prefix(50)))
                     .font(.system(size: 12))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             }
             Spacer()
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                     .frame(width: 28, height: 28)
                     .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
             }
@@ -89,7 +89,7 @@ struct InboxOverrideSheet: View {
         } label: {
             Text(tab.rawValue)
                 .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
-                .foregroundColor(selectedTab == tab ? DS.text : DS.textMuted)
+                .foregroundStyle(selectedTab == tab ? DS.text : DS.textMuted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .background(
@@ -109,11 +109,11 @@ struct InboxOverrideSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
                 TextField("Search atoms to merge into...", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
                     .onChange(of: searchQuery) { _, query in
                         Task { await viewModel.searchAtoms(query: query) }
                     }
@@ -146,18 +146,18 @@ struct InboxOverrideSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: result.entityType.icon)
                     .font(.system(size: 12))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .frame(width: 24, height: 24)
                     .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 6))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.title)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.text)
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
                     Text(result.preview)
                         .font(.system(size: 11))
-                        .foregroundColor(DS.textMuted)
+                        .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
                 }
 
@@ -166,7 +166,7 @@ struct InboxOverrideSheet: View {
                 let pct = Int(result.combinedScore * 100)
                 Text("\(pct)%")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(10)
             .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -184,7 +184,7 @@ struct InboxOverrideSheet: View {
         VStack(spacing: 12) {
             Text("Choose a thinkspace")
                 .font(.system(size: 13))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             ScrollView {
@@ -208,19 +208,19 @@ struct InboxOverrideSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: "rectangle.3.group")
                     .font(.system(size: 12))
-                    .foregroundColor(DS.accent)
+                    .foregroundStyle(DS.accent)
                     .frame(width: 24, height: 24)
                     .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 6))
 
                 Text(ts.name)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.text)
+                    .foregroundStyle(DS.text)
 
                 Spacer()
 
                 Text("\(ts.blockCount) blocks")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(10)
             .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -238,7 +238,7 @@ struct InboxOverrideSheet: View {
         VStack(spacing: 16) {
             Text("Create as a new atom")
                 .font(.system(size: 13))
-                .foregroundColor(DS.textMuted)
+                .foregroundStyle(DS.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             atomTypePicker
@@ -286,7 +286,7 @@ struct InboxOverrideSheet: View {
         } label: {
             Text(type.rawValue.capitalized)
                 .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                .foregroundColor(isSelected ? DS.accent : DS.textSecondary)
+                .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(

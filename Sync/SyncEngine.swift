@@ -293,6 +293,9 @@ class SyncEngine: ObservableObject {
                     userInfo: ["atomUUIDs": pulledAtomUUIDs]
                 )
             }
+
+            // Auto-process any cloud-captured swipes that arrived via batch pull
+            SwipeProcessingService.shared.scanForPendingSwipes()
         }
     }
 

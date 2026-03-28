@@ -24,6 +24,7 @@ struct RichTextEditor: View {
     var fontSize: CGFloat = 16
     var compact: Bool = false  // Compact mode for notes
     var darkMode: Bool = false  // Dark mode for Thinkspace blocks
+    var overrideTextColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowSelectionMenu: Bool = true
@@ -43,6 +44,7 @@ struct RichTextEditor: View {
     var onActivate: (() -> Void)? = nil
     var onDeactivate: (() -> Void)? = nil
     var onCommit: (() -> Void)? = nil
+    var onPlainTextDidChange: ((String) -> Void)? = nil
     var autoFocus: Bool = false
 
     // Geometry for menu clamping
@@ -69,6 +71,7 @@ struct RichTextEditor: View {
         compact: Bool = false,
         placeholder: String = "Start typing...",
         darkMode: Bool = false,
+        overrideTextColor: NSColor? = nil,
         allowSlashCommands: Bool = true,
         allowMentions: Bool = true,
         allowSelectionMenu: Bool = true,
@@ -88,6 +91,7 @@ struct RichTextEditor: View {
         onActivate: (() -> Void)? = nil,
         onDeactivate: (() -> Void)? = nil,
         onCommit: (() -> Void)? = nil,
+        onPlainTextDidChange: ((String) -> Void)? = nil,
         autoFocus: Bool = false,
         onSave: ((NSAttributedString) -> Void)? = nil
     ) {
@@ -97,6 +101,7 @@ struct RichTextEditor: View {
         self.compact = compact
         self.placeholder = placeholder
         self.darkMode = darkMode
+        self.overrideTextColor = overrideTextColor
         self.allowSlashCommands = allowSlashCommands
         self.allowMentions = allowMentions
         self.allowSelectionMenu = allowSelectionMenu
@@ -116,6 +121,7 @@ struct RichTextEditor: View {
         self.onActivate = onActivate
         self.onDeactivate = onDeactivate
         self.onCommit = onCommit
+        self.onPlainTextDidChange = onPlainTextDidChange
         self.autoFocus = autoFocus
         self.onSave = onSave
     }
@@ -131,6 +137,7 @@ struct RichTextEditor: View {
                 fontSize: fontSize,
                 compact: compact,
                 darkMode: darkMode,
+                overrideTextColor: overrideTextColor,
                 allowSlashCommands: allowSlashCommands,
                 allowMentions: allowMentions,
                 allowImages: allowImages,
@@ -180,7 +187,8 @@ struct RichTextEditor: View {
                 },
                 onActivate: onActivate,
                 onDeactivate: onDeactivate,
-                onCommit: onCommit
+                onCommit: onCommit,
+                onPlainTextDidChange: onPlainTextDidChange
             )
             .frame(maxWidth: .infinity)
             .frame(height: (!scrollsInternally && measuredContentHeight > 1) ? measuredContentHeight : nil)

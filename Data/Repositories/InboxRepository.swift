@@ -172,6 +172,31 @@ class InboxRepository: ObservableObject {
         }
     }
 
+    /// Fetch recently triaged items for empty state display
+    func fetchRecentHistory(limit: Int = 3) async throws -> [InboxItem] {
+        try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.actioned.rawValue ||
+                        Column("status") == InboxItemStatus.dismissed.rawValue)
+                .order(Column("actionedAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Count items triaged this week
+    func countTriagedThisWeek() async throws -> Int {
+        let calendar = Calendar.current
+        let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())) ?? Date()
+        let weekStartStr = ISO8601DateFormatter().string(from: weekStart)
+        return try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.actioned.rawValue)
+                .filter(Column("actionedAt") >= weekStartStr)
+                .fetchCount(db)
+        }
+    }
+
     /// Delete old actioned/dismissed items (housekeeping)
     func pruneOldItems(olderThanDays days: Int = 30) async throws {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()

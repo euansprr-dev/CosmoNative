@@ -1041,6 +1041,10 @@ class ConnectionFocusModeViewModel: ObservableObject {
 
     private let atom: Atom
     private var terminationCancellable: AnyCancellable?
+    /// Tracks whether sections were actually modified in this focus mode session.
+    /// Prevents saveToAtom() from overwriting DB sections with stale state
+    /// when the user only viewed but didn't edit in focus mode.
+    private(set) var sectionsModifiedInFocusMode = false
 
     // MARK: - Initialization
 
@@ -1144,7 +1148,8 @@ class ConnectionFocusModeViewModel: ObservableObject {
             // Sync: queue for Supabase push
             Task {
                 if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             }
         } catch {
@@ -1167,6 +1172,13 @@ class ConnectionFocusModeViewModel: ObservableObject {
     }
 
     func saveToAtom() {
+        // Only write structured/body to atom if sections were actually modified
+        // in this focus mode session. Otherwise, skip to avoid overwriting
+        // sections that were edited in the canvas block view.
+        guard sectionsModifiedInFocusMode else {
+            print("[FOCUS-CONN-VM] saveToAtom() SKIPPED — sections not modified in focus mode uuid=\(atom.uuid)")
+            return
+        }
         let structuredData = ConnectionStructuredData(sections: state.sections)
         if let json = structuredData.toJSON() {
             var updatedAtom = atom
@@ -1191,17 +1203,20 @@ class ConnectionFocusModeViewModel: ObservableObject {
 
     func addItem(document: RichDocument, plainText: String, toSection type: ConnectionSectionType) {
         print("[FOCUS-CONN-VM] addItem() — section=\(type.rawValue) textLen=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
+        sectionsModifiedInFocusMode = true
         let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
         state.addItem(item, toSection: type)
         saveState()
     }
 
     func editItem(_ item: ConnectionItem, inSection type: ConnectionSectionType) {
+        sectionsModifiedInFocusMode = true
         state.updateItem(item, inSection: type)
         saveState()
     }
 
     func deleteItem(_ id: UUID, fromSection type: ConnectionSectionType) {
+        sectionsModifiedInFocusMode = true
         state.removeItem(id: id, fromSection: type)
         saveState()
     }

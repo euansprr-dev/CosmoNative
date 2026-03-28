@@ -263,16 +263,22 @@ class FocusFloatingBlocksManager: ObservableObject {
         }
     }
 
-    /// Persist blocks to atom metadata
+    /// Persist blocks to atom metadata using field-level update.
+    /// Uses updateFields() instead of update() to avoid overwriting other atom columns
+    /// (structured, body, title) that may have been modified by other save paths.
     private func saveBlocks() async {
         do {
-            guard var atom = try await AtomRepository.shared.fetch(uuid: ownerAtomUUID) else {
+            guard let atom = try await AtomRepository.shared.fetch(uuid: ownerAtomUUID) else {
                 return
             }
 
             let currentBlocks = blocks
-            atom = atom.withFocusFloatingBlocks(currentBlocks)
-            _ = try await AtomRepository.shared.update(atom)
+            let updated = atom.withFocusFloatingBlocks(currentBlocks)
+            guard let newMetadata = updated.metadata else { return }
+            _ = try await AtomRepository.shared.updateFields(
+                uuid: ownerAtomUUID,
+                columns: ["metadata": newMetadata]
+            )
         } catch {
             print("FocusFloatingBlocksManager: Failed to save blocks: \(error)")
         }

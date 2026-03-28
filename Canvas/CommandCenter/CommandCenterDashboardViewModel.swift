@@ -1028,6 +1028,17 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await loadHabits()
     }
 
+    var builtInHabitToggles: [(definition: HabitDefinition, isEnabled: Bool)] {
+        habitEngine.allBuiltInDefinitions.map { def in
+            (def, habitEngine.isBuiltInHabitEnabled(def.id))
+        }
+    }
+
+    func setBuiltInHabitEnabled(id: String, enabled: Bool) async {
+        await habitEngine.setBuiltInHabitEnabled(id: id, enabled: enabled)
+        await loadHabits()
+    }
+
     func applyHabit(_ habitUUID: String?, to taskUUID: String) async {
         await habitEngine.assignHabit(taskUUID: taskUUID, habitUUID: habitUUID, source: .manual)
         await refreshTasks()

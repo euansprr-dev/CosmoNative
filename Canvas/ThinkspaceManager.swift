@@ -557,7 +557,7 @@ class ThinkspaceManager: ObservableObject {
         guard let thinkspace = currentThinkspace else { return }
 
         do {
-            guard var atom = try await repository.fetch(uuid: thinkspace.id) else {
+            guard let atom = try await repository.fetch(uuid: thinkspace.id) else {
                 return
             }
 
@@ -568,14 +568,16 @@ class ThinkspaceManager: ObservableObject {
             metadata.blockIds = blockIds
             metadata.lastOpened = Date()
 
-            if let metadataJson = try? JSONEncoder().encode(metadata),
-               let metadataString = String(data: metadataJson, encoding: .utf8) {
-                atom.metadata = metadataString
-            }
+            guard let metadataJson = try? JSONEncoder().encode(metadata),
+                  let metadataString = String(data: metadataJson, encoding: .utf8) else { return }
 
-            atom.updatedAt = ISO8601DateFormatter().string(from: Date())
-
-            try await repository.update(atom)
+            // Use field-level update — only writes metadata column, avoiding
+            // full-row update that bumps version and triggers heavy sync for
+            // every viewport change.
+            try await repository.updateFields(
+                uuid: thinkspace.id,
+                columns: ["metadata": metadataString]
+            )
 
             print("💾 Saved Thinkspace state")
         } catch {

@@ -254,6 +254,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var fontSize: CGFloat = 16
     var compact: Bool = false
     var darkMode: Bool = false
+    var overrideTextColor: NSColor? = nil
     var allowSlashCommands: Bool = true
     var allowMentions: Bool = true
     var allowImages: Bool = true
@@ -277,6 +278,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onActivate: (() -> Void)?
     var onDeactivate: (() -> Void)?
     var onCommit: (() -> Void)?
+    /// Direct per-keystroke plain text callback — fires from syncBindings immediately,
+    /// bypassing the SwiftUI @Binding→onChange chain which can coalesce/skip updates.
+    var onPlainTextDidChange: ((String) -> Void)?
 
     func makeNSView(context: Context) -> CosmoScrollView {
         let scrollView = CosmoTextView.scrollableCosmoTextView()
@@ -310,7 +314,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         // Skip text storage replacement when the change originated from user typing —
         // the text view already has the correct content, avoiding scroll position resets.
-        guard !context.coordinator.isUpdatingFromTextView else {
+        // ALSO skip when the text view IS the first responder (user is actively editing).
+        // The 50ms deferred attributedText sync means `attributedText` binding can be stale.
+        // Without this guard, GRDB observation spam triggers updateNSView which overwrites
+        // the NSTextView with stale binding content, destroying text the user just typed.
+        let isFirstResponder = textView.window?.firstResponder == textView
+        guard !context.coordinator.isUpdatingFromTextView, !isFirstResponder else {
             context.coordinator.applyPolishHighlights(to: textView)
             if shouldRefocus {
                 DispatchQueue.main.async {
@@ -379,14 +388,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // destroying any rich text formatting (bold, italic, etc.).
         if isInitial {
             textView.font = resolvedBaseFont()
-            textView.textColor = darkMode ? .white : NSColor(CosmoColors.textPrimary)
+            textView.textColor = overrideTextColor ?? (darkMode ? .white : NSColor(CosmoColors.textPrimary))
             textView.alignment = textAlignment
             textView.defaultParagraphStyle = baseParagraphStyle()
             textView.typingAttributes = defaultTypingAttributes()
         }
 
         textView.backgroundColor = .clear
-        textView.insertionPointColor = darkMode ? .white : NSColor(CosmoColors.textPrimary)
+        textView.insertionPointColor = overrideTextColor ?? (darkMode ? .white : NSColor(CosmoColors.textPrimary))
         textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
         let isTitleMode = titleConfiguration != nil
@@ -438,7 +447,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     private func defaultTypingAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: resolvedBaseFont(),
-            .foregroundColor: darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary),
+            .foregroundColor: overrideTextColor ?? (darkMode ? NSColor.white : NSColor(CosmoColors.textPrimary)),
             .paragraphStyle: baseParagraphStyle()
         ]
     }
@@ -860,7 +869,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                if parent.singleLine || parent.titleConfiguration?.commitsOnReturn == true {
+                if parent.singleLine || parent.titleConfiguration?.commitsOnReturn == true || parent.onCommit != nil {
                     dismissMenus()
                     parent.onCommit?()
                     return true
@@ -1688,8 +1697,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func syncBindings(from textView: NSTextView) {
             // Lightweight per-keystroke sync: plain text + cursor position only
-            parent.plainText = textView.string
+            let currentString = textView.string
+            parent.plainText = currentString
             parent.cursorPosition = textView.selectedRange().location
+            // Fire direct callback immediately — SwiftUI's @Binding→onChange chain
+            // can coalesce/skip when mutations come from AppKit outside the update cycle.
+            parent.onPlainTextDidChange?(currentString)
 
             // Immediately resize AppKit frame so there's no visual gap
             // between text insertion and container resize (the deferred

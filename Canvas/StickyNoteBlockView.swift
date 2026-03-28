@@ -114,6 +114,7 @@ struct StickyNoteBlockView: View {
             fontSize: 14,
             compact: true,
             placeholder: "Type here...",
+            overrideTextColor: NSColor(red: 0.2, green: 0.18, blue: 0.15, alpha: 1),
             allowSlashCommands: false,
             allowMentions: isEditingBody,
             allowSelectionMenu: false,
@@ -214,9 +215,14 @@ struct StickyNoteBlockView: View {
         .onDisappear {
             print("[BLOCK-STICKY] onDisappear — uuid=\(block.entityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
-            saveClosed = true
-            saveNoteSync()
             observationCancellable?.cancel()
+            // Defer sync save by one frame so CosmoDocumentEditor's flushPendingSync()
+            // can propagate the latest text via onDocumentChange first.
+            DispatchQueue.main.async {
+                saveClosed = true
+                print("[BLOCK-STICKY] onDisappear(deferred) — saving uuid=\(block.entityUuid) bodyLen=\(noteText.count)")
+                saveNoteSync()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingBody = false
@@ -316,6 +322,10 @@ struct StickyNoteBlockView: View {
         }
         observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
             .receive(on: DispatchQueue.main)
+            .removeDuplicates(by: { prev, next in
+                guard let prev, let next else { return prev == nil && next == nil }
+                return prev.body == next.body && prev.metadata == next.metadata
+            })
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { fetchedAtom in
@@ -328,8 +338,16 @@ struct StickyNoteBlockView: View {
                     let newBody = newBodyDocument.plainText
                     let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
                     print("[BLOCK-STICKY] 🔔 GRDB observation fired — uuid=\(uuid) isEditingBody=\(isEditingBody) bodyChanged=\(bodyChanged) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbPreview=\"\(String(newBody.prefix(60)))\"")
-                    guard bodyChanged else { return }
-                    print("[BLOCK-STICKY] 🔔 observation APPLYING body — uuid=\(uuid) ⚠️ NO isEditingBody guard — overwriting local with dbLen=\(newBody.count)")
+                    // Only overwrite body from DB when NOT actively editing —
+                    // otherwise the observation echo from auto-save overwrites
+                    // text the user typed since the save was initiated.
+                    guard !isEditingBody, bodyChanged else {
+                        if isEditingBody, bodyChanged {
+                            print("[BLOCK-STICKY] 🔔 observation SKIPPED body (editing) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
+                        }
+                        return
+                    }
+                    print("[BLOCK-STICKY] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
                     isSyncingFromDB = true
                     noteBodyDocument = newBodyDocument
                     noteText = newBody
@@ -398,10 +416,14 @@ struct StickyNoteBlockView: View {
                         if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [uuid]) {
                             existingMetadata = row["metadata"]
                         }
+                        // Use current plain text for body document to avoid stale metadata
+                        let currentBodyDoc = noteBodyDocument.plainText == noteText
+                            ? noteBodyDocument
+                            : RichDocument.migrateLegacy(noteText)
                         let fields = RichDocumentPersistence.writeAtomDocuments(
                             existingMetadata: existingMetadata,
                             titleDocument: nil,
-                            bodyDocument: noteBodyDocument
+                            bodyDocument: currentBodyDoc
                         )
                         try db.execute(
                             sql: """
@@ -414,14 +436,19 @@ struct StickyNoteBlockView: View {
                             WHERE uuid = ?
                             """,
                             arguments: [
-                                fields.body ?? "",
+                                noteText,
                                 fields.metadata,
                                 ISO8601DateFormatter().string(from: Date()),
                                 uuid
                             ]
                         )
                     }
-                    print("[BLOCK-STICKY] saveNote() async DB write DONE — uuid=\(uuid) ⚠️ NOTE: ChangeTracker NOT called (missing)")
+                    print("[BLOCK-STICKY] saveNote() async DB write DONE — uuid=\(uuid)")
+                    // Sync to Supabase via ChangeTracker
+                    if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                        // skipVersionIncrement: raw SQL already did _local_version + 1
+                        await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                    }
                 } catch {
                     print("[BLOCK-STICKY] saveNote() async DB write FAILED — uuid=\(uuid) error=\(error)")
                 }
@@ -496,7 +523,7 @@ struct StickyNoteBlockView: View {
                         titleDocument: nil,
                         bodyDocument: noteBodyDocument
                     )
-                    newAtom.body = fields.body
+                    newAtom.body = noteText
                     newAtom.metadata = fields.metadata
                     let atomId = try await CosmoDatabase.shared.asyncWrite { db -> Int64 in
                         try newAtom.insert(db)

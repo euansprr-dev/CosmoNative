@@ -209,12 +209,16 @@ struct NoteFocusModeView: View {
         }
         .onDisappear {
             print("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
-            // Force an immediate save before closing — don't lose unsaved edits
             autoSaveTask?.cancel()
-            saveClosed = true  // Block any in-flight async writes from overwriting
-            saveAtomImmediately()
-            floatingBlocksManager.saveImmediately()
             observationCancellable?.cancel()
+            // Defer save by one frame so CosmoDocumentEditor's flushPendingSync()
+            // can propagate the latest text via onDocumentChange first.
+            DispatchQueue.main.async {
+                print("[FOCUS-NOTE] onDisappear(deferred) — saving uuid=\(atom.uuid) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
+                saveClosed = true
+                saveAtomImmediately()
+                floatingBlocksManager.saveImmediately()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
             autoSaveTask?.cancel()
@@ -816,7 +820,8 @@ struct NoteFocusModeView: View {
                 if let updatedAtom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).fetchOne(db)
                 }) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             }
         } catch {
@@ -874,7 +879,8 @@ struct NoteFocusModeView: View {
                             body = ?,
                             metadata = ?,
                             updated_at = ?,
-                            _local_version = _local_version + 1
+                            _local_version = _local_version + 1,
+                            _local_pending = 1
                         WHERE uuid = ?
                         """,
                         arguments: [
@@ -912,7 +918,8 @@ struct NoteFocusModeView: View {
                 if let updatedAtom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).fetchOne(db)
                 }) {
-                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
                 if let completion {
                     await MainActor.run { completion(true) }

@@ -5,6 +5,7 @@ struct DashboardHabitPanel: View {
 
     @State private var editingHabit: HabitDefinition?
     @State private var creatingHabit = false
+    @State private var showingHabitSettings = false
     @State private var animateProgress = false
     @State private var bouncingHabitId: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -65,7 +66,13 @@ struct DashboardHabitPanel: View {
                 },
                 onMoveDown: habit.isBuiltIn ? nil : {
                     Task { await viewModel.moveHabit(uuid: habit.id, direction: 1) }
-                }
+                },
+                onDisable: habit.isBuiltIn ? {
+                    Task {
+                        await viewModel.setBuiltInHabitEnabled(id: habit.id, enabled: false)
+                        editingHabit = nil
+                    }
+                } : nil
             )
         }
         .popover(isPresented: $creatingHabit, attachmentAnchor: .rect(.bounds), arrowEdge: .leading) {
@@ -97,6 +104,20 @@ struct DashboardHabitPanel: View {
             }
 
             Spacer()
+
+            Button {
+                showingHabitSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 28, height: 28)
+                    .background(DS.surface, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showingHabitSettings, arrowEdge: .leading) {
+                habitSettingsPopover
+            }
 
             Button {
                 creatingHabit = true
@@ -275,6 +296,80 @@ struct DashboardHabitPanel: View {
             Capsule()
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
+    }
+
+    private var habitSettingsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Manage Habits")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DS.text)
+
+                Text("Toggle built-in habits on or off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            VStack(spacing: 8) {
+                ForEach(viewModel.builtInHabitToggles, id: \.definition.id) { item in
+                    let accent = Color(hex: item.definition.accentColor)
+                    HStack(spacing: 10) {
+                        Image(systemName: item.definition.icon)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(
+                                accent.opacity(item.isEnabled ? 1 : 0.35),
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            )
+
+                        Text(item.definition.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(item.isEnabled ? DS.text : DS.textMuted)
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { item.isEnabled },
+                            set: { newValue in
+                                Task {
+                                    await viewModel.setBuiltInHabitEnabled(
+                                        id: item.definition.id,
+                                        enabled: newValue
+                                    )
+                                }
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .tint(accent)
+                        .labelsHidden()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+
+            Button {
+                showingHabitSettings = false
+            } label: {
+                Text("Done")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(16)
+        .frame(width: 320)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 4)
+        .shadow(color: .black.opacity(0.05), radius: 32, y: 16)
+        .environment(\.colorScheme, .light)
     }
 
     private var emptyState: some View {

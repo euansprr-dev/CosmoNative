@@ -2001,13 +2001,11 @@ struct CanvasView: View {
     // MARK: - Zoom/Pan Persistence
 
     private func debouncedSaveZoomPan() {
-        // PERF: Skip Task allocation if a save is already pending — the trailing-edge
-        // debounce will capture the latest values when it fires.
-        if let existing = zoomPanSaveTask, !existing.isCancelled {
-            return
-        }
+        // Trailing-edge debounce: cancel any pending save and restart the timer.
+        // Only saves once the user STOPS panning/zooming for 2 seconds.
+        zoomPanSaveTask?.cancel()
         zoomPanSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.0))
+            try? await Task.sleep(for: .seconds(2.0))
             guard !Task.isCancelled else { return }
             zoomPanSaveTask = nil
             let blockIds = spatialEngine.blocks.map(\.id)

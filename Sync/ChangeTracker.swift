@@ -42,16 +42,23 @@ class ChangeTracker: ObservableObject {
     }
 
     // MARK: - Track Update
+    /// Track a local update for sync.
+    /// - Parameter skipVersionIncrement: Set to `true` when the caller already incremented
+    ///   `_local_version` via raw SQL (e.g. `_local_version = _local_version + 1`).
+    ///   Prevents double-bumping the version which causes optimistic lock conflicts.
     func trackUpdate<T: Syncable>(
         table: String,
         entity: T,
-        changedFields: [String]? = nil
+        changedFields: [String]? = nil,
+        skipVersionIncrement: Bool = false
     ) async {
         guard let uuid = entity.getUUID() else { return }
-        print("[SYNC] trackUpdate — table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"])")
+        print("[SYNC] trackUpdate — table=\(table) uuid=\(uuid) changedFields=\(changedFields ?? ["all"]) skipVersionIncrement=\(skipVersionIncrement)")
 
-        // Increment local version
-        await incrementLocalVersion(table: table, uuid: uuid)
+        // Increment local version (skip if caller already did it via raw SQL)
+        if !skipVersionIncrement {
+            await incrementLocalVersion(table: table, uuid: uuid)
+        }
 
         // Mark as pending
         await markAsPending(table: table, uuid: uuid)

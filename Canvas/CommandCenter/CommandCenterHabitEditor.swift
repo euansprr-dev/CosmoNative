@@ -37,6 +37,7 @@ struct CommandCenterHabitEditor: View {
     let onArchive: (() -> Void)?
     let onMoveUp: (() -> Void)?
     let onMoveDown: (() -> Void)?
+    let onDisable: (() -> Void)?
 
     @State private var draft: CommandCenterHabitEditorDraft
     @State private var hoveredIntent: TaskIntent?
@@ -46,13 +47,15 @@ struct CommandCenterHabitEditor: View {
         onSave: @escaping (CommandCenterHabitEditorDraft) -> Void,
         onArchive: (() -> Void)? = nil,
         onMoveUp: (() -> Void)? = nil,
-        onMoveDown: (() -> Void)? = nil
+        onMoveDown: (() -> Void)? = nil,
+        onDisable: (() -> Void)? = nil
     ) {
         self.habit = habit
         self.onSave = onSave
         self.onArchive = onArchive
         self.onMoveUp = onMoveUp
         self.onMoveDown = onMoveDown
+        self.onDisable = onDisable
         _draft = State(initialValue: habit.map(CommandCenterHabitEditorDraft.init(habit:)) ?? CommandCenterHabitEditorDraft())
     }
 
@@ -230,6 +233,16 @@ struct CommandCenterHabitEditor: View {
 
                     utilityButton("Archive", icon: "archivebox", tint: DS.red) {
                         onArchive?()
+                    }
+                }
+            }
+
+            if isBuiltIn, let onDisable {
+                HStack {
+                    Spacer()
+                    utilityButton("Disable Habit", icon: "eye.slash", tint: DS.textMuted) {
+                        onDisable()
+                        dismiss()
                     }
                 }
             }

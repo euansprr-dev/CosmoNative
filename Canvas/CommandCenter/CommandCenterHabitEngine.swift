@@ -40,6 +40,10 @@ struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+struct HabitVisibilityConfig: Codable, Equatable, Sendable {
+    var disabledBuiltInHabitIDs: Set<String> = []
+}
+
 struct HabitCompletionRecord: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var habitUUID: String
@@ -94,8 +98,10 @@ final class CommandCenterHabitEngine: ObservableObject {
     static let shared = CommandCenterHabitEngine()
 
     @Published private(set) var definitions: [HabitDefinition] = []
+    @Published private(set) var visibilityConfig = HabitVisibilityConfig()
 
     private let atomRepository: AtomRepository
+    private let visibilityScope = "habit_visibility_config"
 
     init(atomRepository: AtomRepository = .shared) {
         self.atomRepository = atomRepository
@@ -103,10 +109,25 @@ final class CommandCenterHabitEngine: ObservableObject {
     }
 
     var activeDefinitions: [HabitDefinition] {
-        definitions.filter { !$0.isArchived }
+        definitions.filter { def in
+            if def.isArchived { return false }
+            if def.isBuiltIn && visibilityConfig.disabledBuiltInHabitIDs.contains(def.id) {
+                return false
+            }
+            return true
+        }
+    }
+
+    var allBuiltInDefinitions: [HabitDefinition] {
+        Self.builtInDefinitions
+    }
+
+    func isBuiltInHabitEnabled(_ id: String) -> Bool {
+        !visibilityConfig.disabledBuiltInHabitIDs.contains(id)
     }
 
     func refreshDefinitions() async {
+        await loadVisibilityConfig()
         do {
             let atoms = try await atomRepository.fetchAll(type: .routineDefinition)
             let custom = atoms.compactMap { atom -> HabitDefinition? in
@@ -616,6 +637,62 @@ final class CommandCenterHabitEngine: ObservableObject {
             parts.append("Keywords: \(keywords.joined(separator: ", "))")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    // MARK: - Visibility Config Persistence
+
+    func setBuiltInHabitEnabled(id: String, enabled: Bool) async {
+        if enabled {
+            visibilityConfig.disabledBuiltInHabitIDs.remove(id)
+        } else {
+            visibilityConfig.disabledBuiltInHabitIDs.insert(id)
+        }
+        await saveVisibilityConfig()
+    }
+
+    private func loadVisibilityConfig() async {
+        do {
+            let prefs = try await atomRepository.fetchAll(type: .userPreference)
+            let configAtom = prefs.first { atom in
+                guard let dict = atom.metadataDict else { return false }
+                return (dict["scope"] as? String) == visibilityScope
+            }
+            if let atom = configAtom,
+               let config = atom.structuredData(as: HabitVisibilityConfig.self) {
+                visibilityConfig = config
+            } else {
+                visibilityConfig = HabitVisibilityConfig()
+            }
+        } catch {
+            print("❌ HabitEngine: Failed to load visibility config: \(error)")
+            visibilityConfig = HabitVisibilityConfig()
+        }
+    }
+
+    private func saveVisibilityConfig() async {
+        do {
+            let prefs = try await atomRepository.fetchAll(type: .userPreference)
+            let existing = prefs.first { atom in
+                guard let dict = atom.metadataDict else { return false }
+                return (dict["scope"] as? String) == visibilityScope
+            }
+
+            if var atom = existing {
+                atom = atom.withStructured(visibilityConfig)
+                try await atomRepository.update(atom)
+            } else {
+                let metadataJSON = "{\"scope\":\"\(visibilityScope)\"}"
+                var newAtom = Atom.new(
+                    type: .userPreference,
+                    title: "Habit Visibility Config",
+                    metadata: metadataJSON
+                )
+                newAtom = newAtom.withStructured(visibilityConfig)
+                try await atomRepository.create(newAtom)
+            }
+        } catch {
+            print("❌ HabitEngine: Failed to save visibility config: \(error)")
+        }
     }
 
     static let builtInDefinitions: [HabitDefinition] = [

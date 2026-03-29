@@ -1739,7 +1739,7 @@ final class InstagramAutoTranscriber: Sendable {
             return updated
         }
         sanitized = correctLikelyYearOutliers(in: sanitized)
-        sanitized = deduplicateConsecutiveSlides(sanitized)
+        sanitized = deduplicateSlides(sanitized)
 
         for index in sanitized.indices {
             sanitized[index].slideNumber = index + 1
@@ -1748,17 +1748,44 @@ final class InstagramAutoTranscriber: Sendable {
         return sanitized
     }
 
-    /// Remove consecutive slides whose text is near-identical (Jaccard ≥ 0.92).
-    /// Reels can produce duplicate slides when the same overlay reappears at different timestamps.
-    private func deduplicateConsecutiveSlides(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
+    /// Remove duplicate slides by checking each slide against ALL previously accepted slides.
+    /// Catches both consecutive and non-consecutive duplicates (Jaccard ≥ 0.92), plus superset
+    /// cases where one slide's text contains another's (containment ≥ 0.90) — keeps the longer version.
+    private func deduplicateSlides(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
         guard slides.count > 1 else { return slides }
         var result: [TranscriptSlide] = [slides[0]]
+
         for i in 1..<slides.count {
-            let prevNorm = normalizedLineKey(result[result.count - 1].text)
             let currNorm = normalizedLineKey(slides[i].text)
-            let prevWords = Set(prevNorm.split(separator: " ").map(String.init))
             let currWords = Set(currNorm.split(separator: " ").map(String.init))
-            if jaccardSimilarity(prevWords, currWords) < 0.92 {
+            guard currWords.count >= 2 else {
+                result.append(slides[i])
+                continue
+            }
+
+            var isDuplicate = false
+            for j in result.indices {
+                let existNorm = normalizedLineKey(result[j].text)
+                let existWords = Set(existNorm.split(separator: " ").map(String.init))
+                guard existWords.count >= 2 else { continue }
+
+                if jaccardSimilarity(existWords, currWords) >= 0.92 {
+                    isDuplicate = true
+                    break
+                }
+
+                let intersection = existWords.intersection(currWords).count
+                let containment = Double(intersection) / Double(min(existWords.count, currWords.count))
+                if containment >= 0.90 {
+                    if currWords.count > existWords.count {
+                        result[j] = slides[i]
+                    }
+                    isDuplicate = true
+                    break
+                }
+            }
+
+            if !isDuplicate {
                 result.append(slides[i])
             }
         }

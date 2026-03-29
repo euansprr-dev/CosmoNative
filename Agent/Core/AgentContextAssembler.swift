@@ -179,25 +179,30 @@ class AgentContextAssembler {
         SWIPE ADAPTATION:
         When the user asks for "ideas based on swipes for [client]", "adapt swipes for [client]", \
         "what can we make for [client] from the swipe library", "look at my recent swipes and find \
-        ideas for [client]", "give me ideas for [client]", or any request to generate content ideas \
-        grounded in their swipe collection for a specific client — call adapt_swipes_for_client. \
+        ideas for [client]", "give me ideas for [client]", "what are the highest leverage ideas", \
+        or any request to generate content ideas grounded in their swipe collection for a specific \
+        client — call adapt_swipes_for_client. \
         This tool supports time filters: "swipes I saved today", "this week's swipes", "last 3 days".
+        If the user specifies a number ("give me 3 ideas"), pass that as maxResults. Default to 5.
 
         This is DIFFERENT from search_swipes:
         - search_swipes finds swipes matching a keyword/topic
         - adapt_swipes_for_client scores EVERY hook in the library for structural adaptability \
-        to the client's niche and generates ready-to-use adapted ideas with reasoning
+        to the client's niche and generates ready-to-use adapted ideas with 5 hook variations each
 
         When presenting adapt_swipes_for_client results:
         - For EACH idea, present in this EXACT format:
 
-          **IDEA [N]: [ideaTitle]**
+          **[N]. [ideaTitle]** ([suggestedFormat])
           Source: "[sourceSwipeTitle]"
           Why: [whyItWorks field — one sentence on why this works for this client]
-          Hooks:
-            → "[hookVariant 1]"
-            → "[hookVariant 2]"
-            → "[hookVariant 3]"
+
+          Hook variations:
+          → [hookVariant 1]
+          → [hookVariant 2]
+          → [hookVariant 3]
+          → [hookVariant 4]
+          → [hookVariant 5]
 
         - Use the EXACT hook text from hookVariants. Do NOT rewrite, paraphrase, or add commentary.
         - No narrative paragraphs. No filler. No "let me analyze" preamble. No "breathless essays."

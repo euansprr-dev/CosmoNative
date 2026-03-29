@@ -10,6 +10,7 @@ struct SwipeAdaptationCandidate {
     let swipeAtomUUID: String
     let title: String
     let hookText: String?
+    let slide1Text: String?         // actual first slide content for richer context
     let hookType: SwipeHookType?
     let frameworkType: SwipeFrameworkType?
     let dominantEmotion: SwipeEmotion?
@@ -36,6 +37,7 @@ struct AdaptedIdea: Codable {
     let ideaBody: String
     let hookType: String
     let suggestedFramework: String
+    let suggestedFormat: String?
     let adaptationReasoning: String
     let whyItWorks: String?
     let confidence: String
@@ -105,7 +107,36 @@ final class SwipeAdaptationEngine {
             .filter { $0.ideaClientUUID == clientAtom.uuid }
             .compactMap { $0.title?.lowercased() }
 
-        // 5. Extract top-performer first lines for deduplication
+        // 5a. Provenance-aware exclusion: hooks from published/in-progress content
+        let allContent = try await atomRepo.fetchAll(type: .content)
+        let clientContent = allContent.filter { atom in
+            let meta = atom.metadataDict ?? [:]
+            return meta["clientProfileUUID"] as? String == clientAtom.uuid
+        }
+        let publishedHooks: [String] = clientContent.flatMap { atom in
+            let meta = atom.metadataDict ?? [:]
+            let hooks = meta["inheritedHooks"] as? [String] ?? []
+            let title = atom.title?.lowercased() ?? ""
+            let hook = atom.hook?.lowercased() ?? ""
+            return hooks.map { $0.lowercased() } + [title, hook].filter { !$0.isEmpty }
+        }
+
+        // 5b. Swipe UUIDs already used in content for this client (skip entirely)
+        let usedSwipeUUIDs: Set<String> = Set(clientContent.flatMap { atom in
+            let meta = atom.metadataDict ?? [:]
+            return meta["inheritedSwipeUUIDs"] as? [String] ?? []
+        })
+
+        // 5c. In-production/published idea hooks (ideas already acted on)
+        let activatedIdeaHooks: [String] = allIdeas
+            .filter { $0.ideaClientUUID == clientAtom.uuid }
+            .filter { $0.ideaStatus == .inProduction || $0.ideaStatus == .published }
+            .compactMap { $0.hook?.lowercased() }
+
+        // 5d. Filter out swipes already used in content for this client
+        swipes = swipes.filter { !usedSwipeUUIDs.contains($0.uuid) }
+
+        // 5e. Extract top-performer first lines for deduplication
         let topPerformerFirstLines: [String] = {
             guard let meta = clientMeta else { return [] }
             var lines: [String] = []
@@ -124,13 +155,15 @@ final class SwipeAdaptationEngine {
             return lines
         }()
 
-        // 6. Format ALL swipes compactly for screening
+        // 6. Format ALL swipes compactly for screening (use slide 1 text, not just titles)
         let compactSwipes: [(index: Int, atom: Atom, display: String)] = swipes.enumerated().compactMap { idx, atom in
-            let title = atom.title ?? ""
-            guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let slide1 = atom.swipeAnalysis?.transcriptSlides?.first?.text
+            let hookDisplay = slide1 ?? atom.hook ?? atom.title ?? ""
+            let truncatedHook = String(hookDisplay.prefix(150))
+            guard !truncatedHook.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             let analysis = atom.swipeAnalysis
             let hookType = analysis?.hookType?.rawValue ?? "unknown"
-            return (index: idx, atom: atom, display: "#\(idx + 1). \"\(title)\" [\(hookType)]")
+            return (index: idx, atom: atom, display: "#\(idx + 1). \"\(truncatedHook)\" [\(hookType)]")
         }
 
         guard !compactSwipes.isEmpty else {
@@ -175,6 +208,7 @@ final class SwipeAdaptationEngine {
                 swipeAtomUUID: atom.uuid,
                 title: atom.title ?? "",
                 hookText: analysis?.hookText,
+                slide1Text: analysis?.transcriptSlides?.first?.text ?? atom.hook,
                 hookType: analysis?.hookType,
                 frameworkType: analysis?.frameworkType,
                 dominantEmotion: analysis?.dominantEmotion,
@@ -184,11 +218,12 @@ final class SwipeAdaptationEngine {
             )
         }
 
-        // 9. Deduplicate against existing ideas + top performers
+        // 9. Deduplicate against existing ideas + top performers + published hooks
+        let allExclusionHooks = existingIdeaTitles + topPerformerFirstLines + publishedHooks + activatedIdeaHooks
         let deduplicated = deduplicateAgainstExisting(
             candidates: selectedCandidates,
-            existingIdeaTitles: existingIdeaTitles,
-            topPerformerFirstLines: topPerformerFirstLines
+            existingIdeaTitles: allExclusionHooks,
+            topPerformerFirstLines: []
         )
 
         guard !deduplicated.isEmpty else {
@@ -209,8 +244,10 @@ final class SwipeAdaptationEngine {
             candidates: deduplicated,
             clientProfile: clientMeta,
             clientName: resolvedName,
-            existingIdeas: existingIdeaTitles,
-            topPerformerFirstLines: topPerformerFirstLines
+            existingIdeas: allExclusionHooks,
+            topPerformerFirstLines: [],
+            publishedHooks: publishedHooks,
+            maxResults: maxResults
         )
 
         // Thread Pass 2 error (takes priority over Pass 1 fallback warning)
@@ -218,11 +255,11 @@ final class SwipeAdaptationEngine {
             engineError = pass2Error
         }
 
-        // 11. Post-adaptation dedup: remove generated ideas too similar to existing content
+        // 11. Post-adaptation dedup: remove generated ideas too similar to existing/published content
         let dedupedIdeas = deduplicateAdaptedIdeas(
             adaptationResult.ideas,
-            existingIdeaTitles: existingIdeaTitles,
-            topPerformerFirstLines: topPerformerFirstLines
+            existingIdeaTitles: allExclusionHooks,
+            topPerformerFirstLines: []
         )
 
         // 12. Trim to requested maxResults
@@ -426,7 +463,9 @@ final class SwipeAdaptationEngine {
         clientProfile: ClientProfileMetadata?,
         clientName: String,
         existingIdeas: [String],
-        topPerformerFirstLines: [String] = []
+        topPerformerFirstLines: [String] = [],
+        publishedHooks: [String] = [],
+        maxResults: Int = 10
     ) async -> (ideas: [AdaptedIdea], error: String?) {
 
         let hookExpertise = buildHookExpertisePrompt()
@@ -435,7 +474,9 @@ final class SwipeAdaptationEngine {
             clientProfile: clientProfile,
             clientName: clientName,
             existingIdeas: existingIdeas,
-            topPerformerFirstLines: topPerformerFirstLines
+            topPerformerFirstLines: topPerformerFirstLines,
+            publishedHooks: publishedHooks,
+            maxResults: maxResults
         )
 
         do {
@@ -458,53 +499,168 @@ final class SwipeAdaptationEngine {
 
     // MARK: - Hook Expertise Prompt (cached across calls)
 
+    static let sharedHookExpertise: String = """
+    You are a content strategy engine inside CosmoOS. You extract proven hook STRUCTURES \
+    from a swipe file library and adapt them to a specific client's niche, voice, and audience. \
+    You deliver complete, ready-to-use hooks — not templates or placeholders.
+
+    ═══════════════════════════════════════════════
+    SECTION 1: HOOK CRAFT
+    ═══════════════════════════════════════════════
+
+    Process: Generate 5 variants per idea. Never use first instinct. Read each aloud — if it \
+    doesn't flow naturally in under 3 seconds (for short-form) or feel compelling as a thread \
+    opener (for long-form), cut and rewrite.
+
+    Tests (EVERY hook must pass ALL of these):
+
+    COVER TEST: Hide the hook and read what follows. If what follows makes sense on its own, \
+    the hook isn't creating an open loop. FAIL → the hook needs to create an information gap \
+    that the content closes.
+
+    SCROLL TEST: Would this stop someone between a cooking video and a dog video? If not, \
+    add tension, specificity, or surprise. A hook that blends in is invisible.
+
+    DINNER TABLE TEST: Read the hook aloud as if saying it to a friend at dinner. If it sounds \
+    like a caption, thesis, marketing line, or "content" — it fails. Common failures:
+    - Thesis statements: "A high income didn't mean a good life" → FAILS. \
+    Say: "Sure we made more money, but we were still working 80 hour weeks"
+    - Caption voice: "We chose freedom." → FAILS. Too polished, not speech.
+    - Corporate phrasing: "leveraged our experience" → FAILS.
+    - Triple-comma lists: stacking 3 rhetorical items = copywriting, not speech. Say ONE with feeling.
+
+    Rules:
+    - Hook = open loop. Reader must continue to close it.
+    - Specific > vague. "$47K in 11 days" beats "How I grew my business."
+    - Hook = promise. "3 mistakes" → deliver exactly 3. Bait-and-switch kills trust.
+    - Hook IS the first line. Must make you want the next line.
+    - Compare structure (not words) to client's highest-performing hooks. Match their mechanism.
+
+    ═══════════════════════════════════════════════
+    SECTION 2: HOOK TYPE REFERENCE (14 types)
+    ═══════════════════════════════════════════════
+
+    - curiosityGap: Information gap the viewer needs to close. "The one thing most [X] get wrong about [Y]"
+    - boldClaim: Provocative statement to arrest attention. "[Unexpected number] in [short time] doing [surprising method]"
+    - question: Direct question demanding an answer. "Why does every [audience] struggle with [specific thing]?"
+    - story: Personal narrative building relatability. "I was [relatable low point] until [discovery moment]"
+    - statistic: Concrete numbers or data. "[Specific number]% of [audience] don't know [valuable insight]"
+    - controversy: Inflammatory or contrarian statement. "[Common practice] is actually destroying your [outcome]"
+    - contrast: Side-by-side comparison. "[Method A] vs [Method B] — the results shocked me"
+    - howTo: Process-driven educational. "How to [desirable outcome] in [specific timeframe] (step by step)"
+    - list: Numbered items. "[N] [things] that [outcome] — #[last] changed everything"
+    - challenge: Test or experiment format. "I tried [method] for [time period] and here's what happened"
+    - hiddenGem: Underrated discovery. "The [tool/method/place] nobody talks about that [impressive result]"
+    - contrarian: "Stop doing X / Don't do Y" format. "Stop [common advice]. Do [counterintuitive thing] instead."
+    - personal: Vulnerability or honest confession. "I've never told anyone this, but [honest truth about topic]"
+    - transformation: Before/after or journey arc. "From [low point] to [high point] in [time] — here's the playbook"
+
+    ═══════════════════════════════════════════════
+    SECTION 3: ADAPTATION METHODOLOGY
+    ═══════════════════════════════════════════════
+
+    BEAT PATTERNS (choose the right one for the format):
+    Every piece follows a structural beat pattern. The hook is the first beat.
+    Beat types: HOOK → CONTEXT → TENSION → INSIGHT → PROOF → EXPANSION → TRANSITION → CTA
+    - Short reel (15-30s): HOOK → INSIGHT → CTA
+    - Long reel (30-90s): HOOK → CONTEXT → TENSION → INSIGHT → CTA
+    - Carousel (5-15 slides): HOOK → CONTEXT → TENSION → INSIGHT → PROOF → CTA
+    - Thread (4-12 tweets): HOOK → CONTEXT → TENSION → INSIGHT → PROOF → EXPANSION → CTA
+    - LinkedIn: HOOK → CONTEXT → INSIGHT → PROOF → EXPANSION → CTA
+
+    When suggesting a framework for each idea, map the swipe's beat structure to the best \
+    format for this client. The hook must fit the format's natural rhythm.
+
+    ADAPTATION RULES:
+    1. Extract the PATTERN, never copy the text. "The one foreclosure trick banks don't want \
+    you to know" → for fitness: "The one recovery technique physical therapists don't want \
+    you to know". The curiosity gap + authority challenge STRUCTURE transfers.
+    2. Every adapted hook must pass Cover + Scroll + Dinner Table tests.
+    3. Maintain the original hook's MECHANISM while transplanting to client's world.
+    4. Reference the client's specific data, methods, stories, and audience language — \
+    never generic placeholders like "[your niche]" or "[your product]".
+    5. Match voice to client's actual voice — study their best performing content for \
+    sentence length, formality, signature phrases, and absences (what they DON'T use \
+    matters as much as what they do).
+
+    FORMAT-AWARE HOOK CONSTRAINTS:
+    - Reel/Short hooks: Must be speakable in <3 seconds. Max ~15 words.
+    - Carousel hooks: Max ~80 characters. Must work as text on an image.
+    - Thread hooks: Can be longer — up to 280 characters. Must earn the click to read \
+    the full thread. Threads allow more setup and context in the hook.
+    - LinkedIn hooks: First 3 lines visible before "see more". ~200 chars to earn the click.
+    - Newsletter subject lines: Max 50 characters. Curiosity-first.
+
+    VOICE MATCHING (The Absorption Method):
+    Before adapting: Study the client's best performing content. Notice:
+    - Sentence length: 5-8 word fragments or 15-20 word flowing sentences?
+    - Formality: "I" or "we"? Contractions? Casual asides?
+    - Signature patterns: "Look..." / "Here's the thing..." / emojis / "..." between thoughts?
+    - Absences: No rhetorical questions? No exclamation marks? Absences define voice too.
+
+    Same-person test: Read the client's actual post, then your hook variant. Must sound like \
+    the same person, same day. If yours sounds smarter or more polished — it's wrong.
+
+    ═══════════════════════════════════════════════
+    SECTION 4: IDEA EVALUATION (Score each 1-10)
+    ═══════════════════════════════════════════════
+
+    Before including ANY idea, evaluate against these 6 criteria. \
+    Minimum 40/60 total. No single criterion below 3/10. If it fails, skip the candidate.
+
+    1. TAM: Does this reach a large enough audience segment for this client?
+    2. Hook-ability: Can the core insight be compressed into a compelling hook that passes all 3 tests?
+    3. Authority Match: Does the client have real credibility and experience to say this?
+    4. Emotional Charge: Does it trigger a visceral reaction? Neutral = dead.
+    5. Angle Uniqueness: Is this a fresh take this client hasn't covered?
+    6. Trend Timing: Does this tap a current cultural moment, industry shift, or seasonal relevance?
+
+    ═══════════════════════════════════════════════
+    SECTION 5: VOICE DNA (MANDATORY)
+    ═══════════════════════════════════════════════
+
+    WRITING RULES:
+    - Write like a sharp human, not a language model.
+    - Use contractions naturally (don't, can't, won't).
+    - Get to the point. No throat-clearing, no preamble.
+    - If making a claim, be specific. Use numbers, names, concrete details.
+    - Vary sentence length. Mix short punchy lines with longer ones.
+    - Use physical verbs: "sanded down" not "improved," "bolted on" not "added."
+
+    BANNED PHRASES (if even ONE appears, the output fails):
+    Dead AI: "In today's [anything]", "It's important to note", "Delve", "Dive into", \
+    "Unpack", "Harness", "Leverage", "Utilize", "Landscape", "Realm", "Robust", \
+    "Game-changer", "Cutting-edge", "Straightforward", "In order to".
+    Dead transitions: "Furthermore", "Additionally", "Moreover", "Moving forward", \
+    "At the end of the day", "To put this in perspective", "In other words".
+    Engagement bait: "Let that sink in", "Read that again", "Full stop", \
+    "This changes everything", "Are you paying attention?", "You're not ready for this".
+    AI cringe: "Supercharge", "Unlock", "Future-proof", "10x your productivity".
+    Generic insider claims: "Here's the part nobody's talking about", \
+    "What nobody tells you", anything with "nobody" or "most people don't realize".
+    FATAL: "This isn't X. This is Y." and ALL variations — delete the negation, state the positive claim.
+
+    ═══════════════════════════════════════════════
+    SECTION 6: 5-VARIANT STRATEGY
+    ═══════════════════════════════════════════════
+
+    For each idea, generate exactly 5 hook variants spanning different emotional registers:
+    - Variant 1: Most punchy, scroll-stopping version (also used as adaptedHook).
+    - Variant 2: Curiosity-driven — create the strongest possible open loop.
+    - Variant 3: Story/personal angle — lead with a relatable moment or confession.
+    - Variant 4: Data/proof-driven — lead with a specific number, stat, or result.
+    - Variant 5: Contrarian/unexpected — challenge conventional wisdom or flip expectations.
+
+    Each variant must:
+    - Use the same underlying content idea but different entry point
+    - Pass all 3 tests (Cover, Scroll, Dinner Table)
+    - Match the client's voice (sentence length, formality, signature patterns)
+    - Contain zero banned phrases
+    - Be format-appropriate (respect hook length constraints for the suggested format)
+    """
+
     private func buildHookExpertisePrompt() -> String {
-        return """
-        You are a content strategy engine specializing in hook adaptation. Your job is to take proven \
-        hook STRUCTURES from a swipe library and adapt them to a specific client's niche, voice, and audience.
-
-        HOOK TYPE REFERENCE (14 types):
-        - curiosityGap: Creates information gap the viewer needs to close. "The one thing most [X] get wrong about [Y]"
-        - boldClaim: Provocative statement to arrest attention. "[Unexpected number] in [short time] doing [surprising method]"
-        - question: Direct question demanding an answer. "Why does every [audience] struggle with [specific thing]?"
-        - story: Personal narrative building relatability. "I was [relatable low point] until [discovery moment]"
-        - statistic: Concrete numbers or data. "[Specific number]% of [audience] don't know [valuable insight]"
-        - controversy: Inflammatory or contrarian statement. "[Common practice] is actually destroying your [outcome]"
-        - contrast: Side-by-side comparison. "[Method A] vs [Method B] — the results shocked me"
-        - howTo: Process-driven educational. "How to [desirable outcome] in [specific timeframe] (step by step)"
-        - list: Numbered items. "[N] [things] that [outcome] — #[last] changed everything"
-        - challenge: Test or experiment format. "I tried [method] for [time period] and here's what happened"
-        - hiddenGem: Underrated discovery. "The [tool/method/place] nobody talks about that [impressive result]"
-        - contrarian: "Stop doing X / Don't do Y" format. "Stop [common advice]. Do [counterintuitive thing] instead."
-        - personal: Vulnerability or honest confession. "I've never told anyone this, but [honest truth about topic]"
-        - transformation: Before/after or journey arc. "From [low point] to [high point] in [time] — here's the playbook"
-
-        CRITICAL ADAPTATION RULES:
-        1. Extract the PATTERN, never copy the text. "Stop doing X, start doing Y" becomes \
-        "Stop [client-relevant mistake], start [client-relevant solution]"
-        2. Every adapted hook must pass the COVER TEST — if you hide the hook and read the next \
-        line, it should NOT make sense without the hook. The hook must create an open loop.
-        3. Every adapted hook must pass the SCROLL TEST — would someone stop scrolling between \
-        a cooking video and a dog video to read this?
-        4. Maintain the original hook's MECHANISM (curiosity gap, bold claim, contrast, etc.) \
-        while transplanting it to the client's world.
-        5. Reference the client's specific data points, methods, stories, and audience language — \
-        never generic placeholders like "[your niche]" or "[your product]".
-        6. Hook-ability: must fit in under 15 words for reels/shorts, under 80 characters for carousels.
-        7. Emotional charge: neutral = dead. Every hook must trigger curiosity, fear, desire, or awe.
-        8. Angle uniqueness: if the adaptation sounds like every other post in the niche, try harder.
-
-        EMOTIONAL SEQUENCING (for ideaBody):
-        Map a 4-beat emotional arc: Tension (cortisol) → Relatability (oxytocin) → Insight (dopamine) → CTA (serotonin)
-
-        IDEA EVALUATION (mental checklist before including):
-        - TAM: Does this reach a large enough audience segment?
-        - Hook-ability: Can it be compressed to a compelling <15 word hook?
-        - Authority Match: Does the client have credibility to say this?
-        - Emotional Charge: Does it trigger a visceral reaction?
-        - Angle Uniqueness: Is this a fresh take, not a rehash?
-        If any criterion scores below 3/10, skip the candidate.
-        """
+        return Self.sharedHookExpertise
     }
 
     // MARK: - User Prompt (Pass 2)
@@ -514,7 +670,9 @@ final class SwipeAdaptationEngine {
         clientProfile: ClientProfileMetadata?,
         clientName: String,
         existingIdeas: [String],
-        topPerformerFirstLines: [String] = []
+        topPerformerFirstLines: [String] = [],
+        publishedHooks: [String] = [],
+        maxResults: Int = 10
     ) -> String {
         var sections: [String] = []
 
@@ -541,16 +699,37 @@ final class SwipeAdaptationEngine {
                 }
             }
 
-            // Top-performing post excerpts (so Claude understands what already works)
+            // Voice fingerprint targets (from intelligence model)
+            if let voiceFingerprint = meta.intelligenceModel?.voiceFingerprint {
+                let avgLen = voiceFingerprint.avgSentenceLength
+                if avgLen > 0 {
+                    clientSection += "\nVoice Target — Sentence length: \(Int(avgLen * 0.7))-\(Int(avgLen * 1.3)) words"
+                }
+                if !voiceFingerprint.ctaPattern.isEmpty {
+                    clientSection += "\nCTA Style: \(voiceFingerprint.ctaPattern)"
+                }
+                if !voiceFingerprint.formattingQuirks.isEmpty {
+                    clientSection += "\nStyle Markers: \(voiceFingerprint.formattingQuirks.joined(separator: ", "))"
+                }
+                if !voiceFingerprint.powerWords.isEmpty {
+                    clientSection += "\nPower Words: \(voiceFingerprint.powerWords.prefix(10).joined(separator: ", "))"
+                }
+            }
+
+            if let bestFormats = meta.bestFormats, !bestFormats.isEmpty {
+                clientSection += "\nBest Formats: \(bestFormats.joined(separator: ", "))"
+            }
+
+            // Full best performing post transcripts (content IS the signal — study these)
             if let topPosts = meta.topPerformingPosts, !topPosts.isEmpty {
-                clientSection += "\n\nTOP-PERFORMING POSTS (what already works for this client):"
-                for (i, post) in topPosts.prefix(3).enumerated() {
-                    clientSection += "\n\(i + 1). \(String(post.transcript.prefix(200)))"
+                clientSection += "\n\nBEST PERFORMING CONTENT (study these — they define what works for this client):"
+                for (i, post) in topPosts.prefix(5).enumerated() {
+                    clientSection += "\n\n[\(i + 1)] \(post.transcript)"
                 }
             } else if let transcripts = meta.topPerformingTranscripts, !transcripts.isEmpty {
-                clientSection += "\n\nTOP-PERFORMING POSTS:"
-                for (i, t) in transcripts.prefix(3).enumerated() {
-                    clientSection += "\n\(i + 1). \(String(t.prefix(200)))"
+                clientSection += "\n\nBEST PERFORMING CONTENT:"
+                for (i, t) in transcripts.prefix(5).enumerated() {
+                    clientSection += "\n\n[\(i + 1)] \(t)"
                 }
             }
         } else {
@@ -571,11 +750,24 @@ final class SwipeAdaptationEngine {
             """)
         }
 
+        // Published hooks (provenance-aware dedup)
+        if !publishedHooks.isEmpty {
+            let hookList = publishedHooks.prefix(15).map { "- \"\($0)\"" }.joined(separator: "\n")
+            sections.append("""
+            HOOKS ALREADY PUBLISHED OR IN PRODUCTION (do NOT regenerate these patterns):
+            \(hookList)
+            These hooks have already been written and published. Generate FRESH structural adaptations only.
+            """)
+        }
+
         // Swipe candidates with full body excerpts
         var candidateSection = "SWIPE CANDIDATES TO ADAPT:"
         for (i, c) in candidates.enumerated() {
             candidateSection += "\n\n#\(i + 1). \"\(c.title)\""
-            if let hookText = c.hookText, hookText != c.title {
+            if let slide1 = c.slide1Text, !slide1.isEmpty, slide1 != c.title {
+                candidateSection += "\n   Slide 1: \"\(slide1)\""
+            }
+            if let hookText = c.hookText, hookText != c.title, hookText != c.slide1Text {
                 candidateSection += "\n   Hook: \"\(hookText)\""
             }
             if let hookType = c.hookType { candidateSection += "\n   Type: \(hookType.rawValue)" }
@@ -598,34 +790,40 @@ final class SwipeAdaptationEngine {
           "adaptedIdeas": [
             {
               "sourceIndex": 1,
-              "adaptedHook": "Best hook variant (the primary pick)",
-              "hookVariants": ["Hook variant 1", "Hook variant 2", "Hook variant 3"],
+              "adaptedHook": "The most scroll-stopping variant (primary pick)",
+              "hookVariants": [
+                "Variant 1: punchy/scroll-stopping",
+                "Variant 2: curiosity-driven",
+                "Variant 3: story/personal angle",
+                "Variant 4: data/proof-driven",
+                "Variant 5: contrarian/unexpected"
+              ],
               "ideaTitle": "Short title (3-8 words)",
-              "ideaBody": "2-3 sentence expansion. Map a 4-beat arc: tension → relatability → insight → CTA.",
+              "ideaBody": "2-3 sentence expansion describing the content angle and key beats.",
               "hookType": "curiosityGap",
               "suggestedFramework": "pas",
-              "adaptationReasoning": "What structural pattern was borrowed",
-              "whyItWorks": "Why this specific pattern would resonate with \(clientName)'s audience — reference their pain points, aspirations, or proven angles",
+              "suggestedFormat": "carousel",
+              "adaptationReasoning": "What structural pattern was borrowed and how it transfers",
+              "whyItWorks": "Why this resonates with \(clientName)'s audience — reference their pain points, aspirations, or voice",
               "confidence": "high"
             }
           ]
         }
 
-        Generate 2-3 distinct hook variants for each idea. Each variant should use the same underlying \
-        mechanism but different wording, angle, or emotional trigger. The first variant is the primary pick \
-        and should also be used as adaptedHook.
+        MANDATORY CHECKS:
+        - Every hook must pass Cover + Scroll + Dinner Table tests
+        - Every hook must use the client's actual voice from BEST PERFORMING CONTENT
+        - Zero banned phrases in any hook
+        - Hook length matches suggestedFormat constraints (see FORMAT-AWARE HOOK CONSTRAINTS)
+        - Each idea scores 40+ across the 6 evaluation criteria
 
-        For each idea, write a "whyItWorks" sentence explaining WHY this specific pattern would resonate \
-        with this client's audience. Reference their pain points, aspirations, or what's already working. \
-        This is NOT a structural explanation — it's a persuasion argument.
-
-        Rank ideas by LEVERAGE — highest viral potential first. The user will only see 3-5, so frontload the best.
+        Generate exactly \(maxResults) ideas, ranked by LEVERAGE (highest viral potential first). \
+        Skip candidates only if their hook mechanism genuinely cannot transfer (explain why).
 
         Valid hookTypes: curiosityGap, boldClaim, question, story, statistic, controversy, contrast, howTo, list, challenge, hiddenGem, contrarian, personal, transformation
         Valid frameworks: aida, pas, bab, escalationArc, storyLoop, listicle, tutorial, caseStudy, interview, beforeAfter, mythBusting, dayInLife
-        Confidence: "high" = hook structure maps directly, "medium" = requires creative bridging, "low" = stretch adaptation
-
-        Skip a candidate ONLY if its hook structure genuinely cannot be adapted to this client's niche (and explain why). Generate for ALL others.
+        Valid formats: carousel, reel, thread, linkedinPost, newsletter, youtubeShort
+        Confidence: "high" = hook structure maps directly, "medium" = creative bridging, "low" = stretch adaptation
         """)
 
         return sections.joined(separator: "\n\n")
@@ -715,6 +913,193 @@ final class SwipeAdaptationEngine {
         let distance = matrix[aLen][bLen]
         let maxLen = max(aLen, bLen)
         return 1.0 - (Double(distance) / Double(maxLen))
+    }
+
+    // MARK: - Single-Swipe Auto-Adaptation (per client)
+
+    /// Generate hook adaptations for a single swipe across all active client profiles.
+    /// Called automatically after swipe processing completes.
+    func generateAdaptationsForSwipe(swipeAtom: Atom) async {
+        // 1. Extract swipe hook text
+        let slide1 = swipeAtom.swipeAnalysis?.transcriptSlides?.first?.text
+        let hookText = slide1 ?? swipeAtom.hook ?? swipeAtom.title ?? ""
+        guard !hookText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("[SwipeAdaptationEngine] Skipping auto-adaptation: no hook text for \(swipeAtom.uuid)")
+            return
+        }
+
+        // 2. Load all active client profiles
+        let allAtoms = try? await atomRepo.fetchAll(type: .clientProfile)
+        let activeClients: [(atom: Atom, meta: ClientProfileMetadata)] = (allAtoms ?? []).compactMap { atom in
+            guard let meta = atom.metadataValue(as: ClientProfileMetadata.self),
+                  meta.activeStatus == true else { return nil }
+            return (atom: atom, meta: meta)
+        }
+        guard !activeClients.isEmpty else { return }
+
+        // 3. Check provenance: skip clients where this swipe already produced content
+        let allContent = try? await atomRepo.fetchAll(type: .content)
+        let clientsToSkip: Set<String> = Set((allContent ?? []).compactMap { content in
+            let meta = content.metadataDict ?? [:]
+            let swipeUUIDs = meta["inheritedSwipeUUIDs"] as? [String] ?? []
+            if swipeUUIDs.contains(swipeAtom.uuid) {
+                return meta["clientProfileUUID"] as? String
+            }
+            return nil
+        })
+        let eligibleClients = activeClients.filter { !clientsToSkip.contains($0.atom.uuid) }
+        guard !eligibleClients.isEmpty else { return }
+
+        // 4. Build prompt
+        let analysis = swipeAtom.swipeAnalysis
+        var swipeContext = "SWIPE TO ADAPT:"
+        swipeContext += "\nSlide 1: \"\(String(hookText.prefix(300)))\""
+        if let hookType = analysis?.hookType { swipeContext += "\nHook Type: \(hookType.rawValue)" }
+        if let framework = analysis?.frameworkType { swipeContext += "\nFramework: \(framework.rawValue)" }
+        if let body = swipeAtom.body, !body.isEmpty {
+            swipeContext += "\nFull transcript: \"\(String(body.prefix(500)))\""
+        }
+
+        var clientList = "CLIENTS:"
+        for (i, client) in eligibleClients.enumerated() {
+            let m = client.meta
+            clientList += "\n\n\(i + 1). \(m.clientName)"
+            if let niche = m.niche ?? m.industry { clientList += " — \(niche)" }
+            if let audience = m.targetAudience { clientList += "\n   Audience: \(audience)" }
+            if let voice = m.voiceNotes { clientList += "\n   Voice: \(String(voice.prefix(150)))" }
+            if let phrases = m.signaturePhrases, !phrases.isEmpty {
+                clientList += "\n   Signature phrases: \(phrases.joined(separator: ", "))"
+            }
+            // Best performing content (compact for single-swipe)
+            if let topPosts = m.topPerformingPosts, !topPosts.isEmpty {
+                clientList += "\n   Best performing:"
+                for (j, post) in topPosts.prefix(3).enumerated() {
+                    clientList += "\n   [\(j + 1)] \(String(post.transcript.prefix(300)))"
+                }
+            } else if let transcripts = m.topPerformingTranscripts, !transcripts.isEmpty {
+                clientList += "\n   Best performing:"
+                for (j, t) in transcripts.prefix(3).enumerated() {
+                    clientList += "\n   [\(j + 1)] \(String(t.prefix(300)))"
+                }
+            }
+        }
+
+        let userPrompt = """
+        \(swipeContext)
+
+        \(clientList)
+
+        For each client where this swipe's hook structure is adaptable (relevance >= 0.5), \
+        generate 5 hook variations following the 5-VARIANT STRATEGY. Skip clients where the \
+        hook mechanism doesn't transfer to their niche.
+
+        Return ONLY valid JSON:
+        {
+          "adaptations": [
+            {
+              "clientIndex": 1,
+              "relevanceScore": 0.85,
+              "ideaTitle": "Short title (3-8 words)",
+              "hookVariations": ["v1 punchy", "v2 curiosity", "v3 story", "v4 data", "v5 contrarian"],
+              "whyRelevant": "Why this swipe's mechanism works for this client",
+              "suggestedFramework": "pas",
+              "suggestedFormat": "carousel"
+            }
+          ]
+        }
+
+        MANDATORY: All hooks must pass Cover + Scroll + Dinner Table tests. \
+        Match each client's voice from their best performing content. Zero banned phrases.
+        """
+
+        // 5. Call LLM (Sonnet tier for single-swipe)
+        do {
+            let response = try await ResearchService.shared.generateWithCaching(
+                systemBlocks: [
+                    (content: Self.sharedHookExpertise, cacheControl: true)
+                ],
+                messages: [
+                    ["role": "user", "content": userPrompt]
+                ],
+                model: AgentModelTier.strategist.modelId,
+                maxTokens: 4096
+            )
+
+            // 6. Parse response
+            let adaptations = parseSingleSwipeResponse(response, clients: eligibleClients)
+            guard !adaptations.isEmpty else {
+                print("[SwipeAdaptationEngine] No adaptations generated for swipe \(swipeAtom.uuid)")
+                return
+            }
+
+            // 7. Store on atom
+            var updatedAtom = swipeAtom
+            var analysis = updatedAtom.swipeAnalysis ?? SwipeAnalysis()
+            analysis.clientAdaptations = adaptations
+            updatedAtom = updatedAtom.withSwipeAnalysis(analysis)
+            _ = try? await AtomRepository.shared.update(updatedAtom)
+
+            print("[SwipeAdaptationEngine] Generated \(adaptations.count) client adaptations for swipe \(swipeAtom.uuid)")
+        } catch {
+            print("⚠️ [SwipeAdaptationEngine] Auto-adaptation failed: \(error)")
+        }
+    }
+
+    private func parseSingleSwipeResponse(
+        _ response: String,
+        clients: [(atom: Atom, meta: ClientProfileMetadata)]
+    ) -> [SwipeClientAdaptation] {
+        // Try JSON extraction
+        let jsonStr: String?
+        if let data = response.data(using: .utf8),
+           let _ = try? JSONSerialization.jsonObject(with: data) {
+            jsonStr = response
+        } else if let range = response.range(of: #"\{[\s\S]*"adaptations"[\s\S]*\}"#, options: .regularExpression) {
+            jsonStr = String(response[range])
+        } else {
+            jsonStr = nil
+        }
+
+        guard let jsonStr = jsonStr,
+              let data = jsonStr.data(using: .utf8) else {
+            print("⚠️ [SwipeAdaptationEngine] Failed to parse single-swipe response")
+            return []
+        }
+
+        struct SingleSwipeResult: Codable {
+            let adaptations: [SingleAdaptation]
+        }
+        struct SingleAdaptation: Codable {
+            let clientIndex: Int
+            let relevanceScore: Double?
+            let ideaTitle: String?
+            let hookVariations: [String]?
+            let whyRelevant: String?
+            let suggestedFramework: String?
+            let suggestedFormat: String?
+        }
+
+        guard let result = try? JSONDecoder().decode(SingleSwipeResult.self, from: data) else { return [] }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        return result.adaptations.compactMap { adapt in
+            let idx = adapt.clientIndex - 1  // 1-indexed in prompt
+            guard idx >= 0, idx < clients.count else { return nil }
+            let client = clients[idx]
+            guard let hooks = adapt.hookVariations, !hooks.isEmpty else { return nil }
+
+            return SwipeClientAdaptation(
+                clientUUID: client.atom.uuid,
+                clientName: client.meta.clientName,
+                relevanceScore: adapt.relevanceScore ?? 0.5,
+                hookVariations: hooks,
+                ideaTitle: adapt.ideaTitle ?? "Untitled",
+                whyRelevant: adapt.whyRelevant ?? "",
+                suggestedFramework: adapt.suggestedFramework,
+                suggestedFormat: adapt.suggestedFormat,
+                generatedAt: now
+            )
+        }
     }
 }
 

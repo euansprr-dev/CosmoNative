@@ -75,7 +75,7 @@ final class SwipeProcessingService {
     // MARK: - Single-Post Entry Point
 
     /// Fire-and-forget background processing for a single swipe (clipboard capture path)
-    func processSwipeInBackground(uuid: String) {
+    func processSwipeInBackground(uuid: String, skipAutoAdaptation: Bool = false) {
         guard !inFlightUUIDs.contains(uuid) else {
             print("SwipeProcessingService: Already processing \(uuid), skipping")
             return
@@ -90,6 +90,13 @@ final class SwipeProcessingService {
         Task.detached { [weak self] in
             if let output = await self?.transcribe(uuid: uuid) {
                 await self?.persistAndAnalyze(output: output)
+
+                // Auto-generate hook adaptations for each client profile
+                if !skipAutoAdaptation {
+                    if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                        await SwipeAdaptationEngine.shared.generateAdaptationsForSwipe(swipeAtom: atom)
+                    }
+                }
             }
             await MainActor.run { self?.inFlightUUIDs.remove(uuid) }
         }

@@ -84,6 +84,9 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var publishedAt: Date?             // Original post publish date
     public var postShortcode: String?         // Instagram shortcode for dedup
 
+    // Per-client hook adaptations (auto-generated on swipe capture)
+    public var clientAdaptations: [SwipeClientAdaptation]?
+
     public init(
         hookText: String? = nil,
         hookType: SwipeHookType? = nil,
@@ -437,6 +440,43 @@ public enum SwipeEmotion: String, Codable, Sendable, CaseIterable {
         case .belonging:    return "person.3.fill"
         case .exclusivity:  return "lock.fill"
         }
+    }
+}
+
+// MARK: - SwipeClientAdaptation
+
+/// Per-client hook adaptation stored on each swipe atom, auto-generated on capture.
+public struct SwipeClientAdaptation: Codable, Sendable, Equatable {
+    public let clientUUID: String
+    public let clientName: String
+    public let relevanceScore: Double
+    public let hookVariations: [String]
+    public let ideaTitle: String
+    public let whyRelevant: String
+    public let suggestedFramework: String?
+    public let suggestedFormat: String?
+    public let generatedAt: String
+
+    public init(
+        clientUUID: String,
+        clientName: String,
+        relevanceScore: Double,
+        hookVariations: [String],
+        ideaTitle: String,
+        whyRelevant: String,
+        suggestedFramework: String? = nil,
+        suggestedFormat: String? = nil,
+        generatedAt: String = ISO8601DateFormatter().string(from: Date())
+    ) {
+        self.clientUUID = clientUUID
+        self.clientName = clientName
+        self.relevanceScore = relevanceScore
+        self.hookVariations = hookVariations
+        self.ideaTitle = ideaTitle
+        self.whyRelevant = whyRelevant
+        self.suggestedFramework = suggestedFramework
+        self.suggestedFormat = suggestedFormat
+        self.generatedAt = generatedAt
     }
 }
 

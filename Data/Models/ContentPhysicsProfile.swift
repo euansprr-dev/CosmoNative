@@ -24,8 +24,8 @@ struct ContentPhysicsProfile: Codable {
     // Pass 5: Physics events
     let physicsEvents: PhysicsEvents?
 
-    // Pass 6: Novel discoveries
-    let novelDiscoveries: [String]?
+    // Pass 6: Novel discoveries (may be [String] or [{pattern, evidence}])
+    let novelDiscoveries: [FlexibleJSONValue]?
 
     // Pass 7: Long-range interactions
     let longRangeInteractions: LongRangeInteractions?
@@ -190,14 +190,9 @@ struct PhaseTransition: Codable {
 
 struct EnergyResolution: Codable {
     let proportional: Bool?
-    let loopsClosed: [LoopClosure]?
-    let loopsUnclosed: [String]?
+    let loopsClosed: [FlexibleJSONValue]?  // May be [{loop, closedAtSlide}] or [String]
+    let loopsUnclosed: [FlexibleJSONValue]? // May be [String] or [{loop, reason}]
     let assessment: String?
-}
-
-struct LoopClosure: Codable {
-    let loop: String?
-    let closedAtSlide: Int?
 }
 
 struct PeakGravity: Codable {

@@ -62,7 +62,68 @@ final class SwipeAdaptationEngine {
 
     private let atomRepo = AtomRepository.shared
 
+    /// Direct Anthropic model IDs (bypasses OpenRouter)
+    private let opusModel = "claude-opus-4-6-20250929"
+    private let sonnetModel = "claude-sonnet-4-5-20250514"
+
     private init() {}
+
+    // MARK: - Direct Anthropic API
+
+    /// Call Anthropic Messages API directly (not via OpenRouter) for higher quality + prompt caching.
+    private nonisolated func callAnthropicDirect(
+        systemPrompt: String,
+        userPrompt: String,
+        model: String,
+        maxTokens: Int = 8192
+    ) async throws -> String {
+        guard let apiKey = APIKeys.agentLLM, !apiKey.isEmpty else {
+            throw SwipeAdaptationError.noAnthropicKey
+        }
+
+        let url = URL(string: "https://api.anthropic.com/v1/messages")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("prompt-caching-2024-07-31", forHTTPHeaderField: "anthropic-beta")
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "system": [
+                [
+                    "type": "text",
+                    "text": systemPrompt,
+                    "cache_control": ["type": "ephemeral"]
+                ] as [String: Any]
+            ],
+            "messages": [
+                ["role": "user", "content": userPrompt]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SwipeAdaptationError.apiError("Invalid response")
+        }
+        guard httpResponse.statusCode == 200 else {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw SwipeAdaptationError.apiError("Anthropic API \(httpResponse.statusCode): \(errorText)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let content = json["content"] as? [[String: Any]],
+              let firstBlock = content.first,
+              let text = firstBlock["text"] as? String else {
+            throw SwipeAdaptationError.apiError("Failed to parse Anthropic response")
+        }
+
+        return text
+    }
 
     // MARK: - Public API
 
@@ -155,16 +216,20 @@ final class SwipeAdaptationEngine {
             return lines
         }()
 
-        // 6. Format ALL swipes compactly for screening (use slide 1 text, not just titles)
+        // 6. STAGE 0: Mechanical pre-filter + format for screening
         let compactSwipes: [(index: Int, atom: Atom, display: String)] = swipes.enumerated().compactMap { idx, atom in
             let slide1 = atom.swipeAnalysis?.transcriptSlides?.first?.text
             let hookDisplay = slide1 ?? atom.hook ?? atom.title ?? ""
             let truncatedHook = String(hookDisplay.prefix(150))
             guard !truncatedHook.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            // Pre-filter: keep unscored swipes but filter out low scores
+            let hookScore = atom.swipeAnalysis?.hookScore ?? -1
+            if hookScore >= 0 && hookScore < 3 { return nil }
             let analysis = atom.swipeAnalysis
             let hookType = analysis?.hookType?.rawValue ?? "unknown"
             return (index: idx, atom: atom, display: "#\(idx + 1). \"\(truncatedHook)\" [\(hookType)]")
         }
+        print("[SwipeAdaptationEngine] \(swipes.count) swipes → \(compactSwipes.count) after mechanical filter")
 
         guard !compactSwipes.isEmpty else {
             return SwipeAdaptationResult(
@@ -277,7 +342,7 @@ final class SwipeAdaptationEngine {
         )
     }
 
-    // MARK: - Pass 1: Claude Screening (Haiku)
+    // MARK: - Pass 1: Sonnet Structural Mechanism Screening
 
     private func screenCandidates(
         compactSwipes: [(index: Int, atom: Atom, display: String)],
@@ -287,7 +352,7 @@ final class SwipeAdaptationEngine {
         topPerformerFirstLines: [String] = []
     ) async throws -> ScreeningResult {
 
-        let prompt = buildScreeningPrompt(
+        let userPrompt = buildScreeningUserPrompt(
             compactSwipes: compactSwipes,
             clientProfile: clientProfile,
             clientName: clientName,
@@ -295,17 +360,101 @@ final class SwipeAdaptationEngine {
             topPerformerFirstLines: topPerformerFirstLines
         )
 
-        let response = try await ResearchService.shared.analyze(
-            prompt: prompt,
-            systemPrompt: "You are a content strategist screening a swipe file library. Return ONLY valid JSON, no other text.",
-            tier: .sensor,
-            maxTokens: 2048
+        // Use Sonnet via direct Anthropic (structural reasoning requires real intelligence)
+        let response = try await callAnthropicDirect(
+            systemPrompt: Self.screeningExpertise,
+            userPrompt: userPrompt,
+            model: sonnetModel,
+            maxTokens: 4096
         )
 
         return parseScreeningResponse(response, swipeCount: compactSwipes.count)
     }
 
-    private func buildScreeningPrompt(
+    /// Deep structural mechanism analysis prompt for screening (cached via Anthropic prompt caching)
+    static let screeningExpertise: String = """
+    You are a structural hook analyst. Your job is to find hooks whose ABSTRACT MECHANISM \
+    transfers to a different niche — even when the surface words have zero topical overlap.
+
+    You do NOT look for topic similarity. You look for PSYCHOLOGICAL MACHINERY.
+
+    THE NOUN-SWAP TEST:
+    Take any hook. Replace every topic-specific word with the client's equivalent. \
+    If the hook still creates the same emotional pull, it's a structural match.
+
+    Example: "The one foreclosure trick banks don't want you to know"
+    Mechanism: [curiosity gap] + [authority gatekeeper challenge] + [insider secret]
+    Noun-swap for fitness: "The one recovery technique physical therapists don't want you to know"
+    → PASSES. Same curiosity gap, same authority challenge, completely different niche.
+
+    MECHANISM TAXONOMY — how to decode any hook:
+
+    OPEN LOOP: Creates an information gap that demands closure.
+      → "I stopped doing [common practice] and this happened..."
+
+    IDENTITY VALIDATION: Tells the audience "you're not broken, society is."
+      → "How to disappoint society as a woman in her 30s"
+      → Noun-swap: "How to ruin your 20s according to society" — same mechanism, different demo.
+
+    AUTHORITY CHALLENGE: Creates insider knowledge by naming a gatekeeper.
+      → "[Industry experts] don't want you to know..."
+
+    STATUS THREAT: Makes the audience question their current approach.
+      → "If you're still [common practice], you're leaving [result] on the table"
+
+    SPECIFICITY SURPRISE: A precise number where you'd expect vague claims.
+      → "$47K in 11 days" / "3 calls from one DM template"
+
+    TEMPORAL URGENCY: Frames knowledge as time-sensitive or age-sensitive.
+      → "What I wish I knew at 20" / "Before you turn 30, do this"
+
+    SOCIAL PROOF INVERSION: Flips what "most people" do against what winners do.
+      → "95% of people do X. The top 1% do Y instead."
+
+    VULNERABILITY CONFESSION: Earns trust through honest admission.
+      → "I've never told anyone this, but..." / "My biggest failure was..."
+
+    CONTRARIAN REFRAME: Takes a commonly accepted belief and inverts it.
+      → "Stop [widely recommended practice]" / "[Popular advice] is actually hurting you"
+
+    CROSS-NICHE TRANSFER EXAMPLES:
+
+    1. IDENTITY VALIDATION across demographics:
+      Source: "How to disappoint society as a woman in her 30s" [women's empowerment]
+      Transfer: "How to ruin your 20s according to society" [men's philosophy]
+      Why: Both audiences define identity AGAINST mainstream expectations.
+
+    2. AUTHORITY CHALLENGE across industries:
+      Source: "The one foreclosure trick banks don't want you to know" [real estate]
+      Transfer: "The one recovery technique PTs don't want you to know" [fitness]
+      Why: Both niches have trusted authorities the audience suspects of withholding.
+
+    3. VULNERABILITY CONFESSION across contexts:
+      Source: "I lost $200K in 6 months. Here's what nobody warned me about." [finance]
+      Transfer: "I wasted 3 years in the wrong relationship. Here's what nobody warned me." [dating]
+      Why: Specific loss creates empathy. "Nobody warned me" creates curiosity.
+
+    4. SPECIFICITY SURPRISE across niches:
+      Source: "How I went from $0 to $10K/month in 90 days selling digital products" [e-commerce]
+      Transfer: "How I went from 0 to 10K followers in 90 days without posting reels" [social media]
+      Why: Specific numbers + impossible-seeming timeframe. Topic doesn't matter.
+
+    5. CONTRARIAN REFRAME across fields:
+      Source: "Stop stretching before workouts. Here's what to do instead." [fitness]
+      Transfer: "Stop posting every day. Here's what to do instead." [content creation]
+      Why: "Stop doing what everyone tells you" triggers curiosity in any field.
+
+    TRANSFERABILITY: HIGH = universal emotions, mechanism is the star not the topic. \
+    MEDIUM = industry jargon swappable with creative bridging. \
+    LOW = depends on specific event/celebrity, topic IS the mechanism. Skip LOW.
+
+    PROCESS: (1) identify abstract mechanism, (2) apply noun-swap test, \
+    (3) check if psychological pull survives, (4) evaluate audience fit, (5) consider format.
+
+    Select hooks where the MECHANISM transfers, even if every surface word is different.
+    """
+
+    private func buildScreeningUserPrompt(
         compactSwipes: [(index: Int, atom: Atom, display: String)],
         clientProfile: ClientProfileMetadata?,
         clientName: String,
@@ -314,42 +463,31 @@ final class SwipeAdaptationEngine {
     ) -> String {
         var sections: [String] = []
 
-        sections.append("""
-        You are screening a swipe file library to find hooks whose STRUCTURAL PATTERN can be adapted \
-        to a specific client's niche. You are NOT looking for topic similarity — you are looking for \
-        hook MECHANISMS that work universally when you swap the domain-specific nouns.
-
-        Example: "The one foreclosure trick banks don't want you to know" → for a fitness client, \
-        the curiosity gap + authority challenge STRUCTURE adapts perfectly: "The one recovery \
-        technique physical therapists don't want you to know"
-        """)
-
-        // Client context
+        // Client context with audience model
         var clientSection = "CLIENT: \(clientName)"
         if let meta = clientProfile {
             if let niche = meta.niche ?? meta.industry { clientSection += " — \(niche)" }
-            if let brandStory = meta.brandStory, !brandStory.isEmpty { clientSection += "\nBrand Story: \(String(brandStory.prefix(200)))" }
-            if let targetAudience = meta.targetAudience, !targetAudience.isEmpty { clientSection += "\nAudience: \(targetAudience)" }
+            if let targetAudience = meta.targetAudience, !targetAudience.isEmpty {
+                clientSection += "\nAudience: \(targetAudience)"
+            }
             if let audienceModel = meta.intelligenceModel?.audienceModel {
                 if !audienceModel.topPainPoints.isEmpty {
-                    clientSection += "\nPain Points: \(audienceModel.topPainPoints.joined(separator: "; "))"
+                    clientSection += "\nAudience pain points: \(audienceModel.topPainPoints.joined(separator: "; "))"
                 }
                 if !audienceModel.aspirationalOutcomes.isEmpty {
-                    clientSection += "\nAspirations: \(audienceModel.aspirationalOutcomes.joined(separator: "; "))"
+                    clientSection += "\nAudience aspirations: \(audienceModel.aspirationalOutcomes.joined(separator: "; "))"
                 }
             }
         }
-        sections.append(clientSection)
 
-        // Top performer angle exclusion
+        // Best performing hook first-lines (few-shot for mechanism matching)
         if !topPerformerFirstLines.isEmpty {
-            let angleList = topPerformerFirstLines.prefix(10).map { "- \($0)" }.joined(separator: "\n")
-            sections.append("""
-            ANGLES ALREADY PROVEN FOR THIS CLIENT (deprioritize swipes covering the same themes):
-            \(angleList)
-            Prefer swipes that open entirely NEW structural angles for this client.
-            """)
+            clientSection += "\n\nHooks that ALREADY work for this client (find MORE with these same MECHANISMS):"
+            for h in topPerformerFirstLines.prefix(5) {
+                clientSection += "\n- \"\(h)\""
+            }
         }
+        sections.append(clientSection)
 
         // Swipe list
         let swipeList = compactSwipes.map { $0.display }.joined(separator: "\n")
@@ -357,15 +495,12 @@ final class SwipeAdaptationEngine {
 
         // Instructions
         sections.append("""
-        Select the \(maxCandidates) swipes whose hook structures are MOST adaptable to this client. \
-        Consider:
-        - Can the hook's open loop mechanism transfer? (curiosity gaps, bold claims, contrasts)
-        - Can domain-specific nouns be swapped for client-relevant equivalents?
-        - Does the emotional trigger map to this audience's pain points or aspirations?
-        - Would the adapted version pass the scroll test for this niche?
+        Select the top \(maxCandidates) hooks whose abstract MECHANISM transfers to this client's niche. \
+        Apply the noun-swap test for each. The best finds are the non-obvious ones — hooks from \
+        distant niches that share deep structural DNA with the client's audience.
 
         Return ONLY valid JSON:
-        {"selectedIndices": [3, 7, 12], "reasoning": ["brief reason for #3", "brief reason for #7", "brief reason for #12"]}
+        {"selectedIndices": [3, 7, 12], "reasoning": ["mechanism: identity validation — noun-swap works", "mechanism: authority challenge — gatekeeper parallel exists", "mechanism: contrarian reframe — conventional wisdom to challenge"]}
 
         IMPORTANT: selectedIndices must use the exact # numbers from the list above.
         """)
@@ -480,14 +615,10 @@ final class SwipeAdaptationEngine {
         )
 
         do {
-            let response = try await ResearchService.shared.generateWithCaching(
-                systemBlocks: [
-                    (content: hookExpertise, cacheControl: true)
-                ],
-                messages: [
-                    ["role": "user", "content": userPrompt]
-                ],
-                model: AgentModelTier.writer.modelId,
+            let response = try await callAnthropicDirect(
+                systemPrompt: hookExpertise,
+                userPrompt: userPrompt,
+                model: opusModel,
                 maxTokens: 8192
             )
             return (ideas: parseAdaptationResponse(response, sourceSwipes: candidates), error: nil)
@@ -1014,14 +1145,10 @@ final class SwipeAdaptationEngine {
 
         // 5. Call LLM (Sonnet tier for single-swipe)
         do {
-            let response = try await ResearchService.shared.generateWithCaching(
-                systemBlocks: [
-                    (content: Self.sharedHookExpertise, cacheControl: true)
-                ],
-                messages: [
-                    ["role": "user", "content": userPrompt]
-                ],
-                model: AgentModelTier.strategist.modelId,
+            let response = try await callAnthropicDirect(
+                systemPrompt: Self.sharedHookExpertise,
+                userPrompt: userPrompt,
+                model: opusModel,
                 maxTokens: 4096
             )
 
@@ -1114,6 +1241,8 @@ private struct AdaptationResponseWrapper: Codable {
 enum SwipeAdaptationError: LocalizedError {
     case clientNotFound(String)
     case noSwipesFound(String?)
+    case noAnthropicKey
+    case apiError(String)
 
     var errorDescription: String? {
         switch self {
@@ -1124,6 +1253,10 @@ enum SwipeAdaptationError: LocalizedError {
                 return "No swipe files found for time filter '\(filter)'"
             }
             return "No swipe files found in the library"
+        case .noAnthropicKey:
+            return "Anthropic API key not configured (set AGENT_LLM_API_KEY)"
+        case .apiError(let msg):
+            return "API error: \(msg)"
         }
     }
 }

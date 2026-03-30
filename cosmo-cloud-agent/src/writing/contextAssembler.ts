@@ -60,17 +60,24 @@ function getFormatDensityOverride(format: ContentFormat): string {
     case 'carousel':
     case 'thread':
       return `═══════════════════════════════════════════════════════════════
-FORMAT OVERRIDE: CAROUSEL/THREAD DENSITY (overrides Section 4b paragraph rules for this piece)
+FORMAT GUIDANCE: CAROUSEL/THREAD DENSITY
 ═══════════════════════════════════════════════════════════════
-This is a CAROUSEL/THREAD, NOT a reel. These formats are DENSE and INFORMATION-RICH.
-• Each slide: 3-6 sentences, 50-100 words minimum
-• Use bullet points (-- or •) for lists, steps, and key points
-• Include specific numbers, dollar amounts, percentages, and concrete details in EVERY slide
-• Each slide must TEACH something, PROVE something, or provide ACTIONABLE information
-• Study the loaded swipe examples — they show EXACTLY the right density. COUNT their words per slide and MATCH it.
+This is a CAROUSEL/THREAD. Carousel density varies dramatically by style:
+• Teaching/listicle carousels: typically 3-6 sentences, 50-100 words per slide, with bullets and specific data
+• Story/narrative carousels: typically 1-2 sentences per slide — dialogue, year markers, emotional beats
+
+YOUR DENSITY TARGET COMES FROM THE PRIMARY BLUEPRINT, NOT THESE DEFAULTS.
+Count the actual words per slide in the blueprint — that number is your target (±10%).
+The FORMATTING DNA section in your loaded swipe intelligence shows measured avgWordsPerSlide
+and avgSentencesPerSlide from all 20 swipes. Use those measured numbers as your reference.
+
+If the blueprint has 10-word slides, write 10-word slides.
+If the blueprint has 80-word slides, write 80-word slides.
+The blueprint IS the density standard. Match IT, not a generic rule.
+
+• Study the loaded swipe examples — COUNT their words per slide and MATCH the blueprint's density
 • The "1-2 sentences default" and "3 max" rules from Voice DNA do NOT apply to carousels
-• The "flag carousel slide > 20 words" self-edit rule is WRONG — ignore it for carousels
-• If your slides have fewer words than the loaded swipes, you're writing too thin. Add detail.`;
+• Use bullet points (-- or •) ONLY if the blueprint uses them — don't add formatting the blueprint doesn't have`;
 
     case 'reel':
     case 'voiceoverReel':

@@ -16,6 +16,7 @@ import {
 } from './types';
 
 const MAX_INNER_ITERATIONS = 10;
+const MAX_PHASE_ITERATIONS = 5; // Pipeline phases (plan/write/edit) need fewer iterations than open-ended conversation
 
 // ============================================================
 // Engine Cache (matches Swift: max 3 engines, 30min TTL)
@@ -345,130 +346,80 @@ export class CloudWritingEngine {
 
 You're about to write a ${this.targetFormat} for ${clientName}. Before you write a single word, you need to reverse-engineer what makes the loaded reference posts work. You're not reading for enjoyment — you're dissecting a machine to understand how each part creates the output. Then you'll build a plan so detailed that writing becomes mechanical execution.
 
-Use the think tool for each step below. Do not skip steps or combine them — each builds on the last.
+Your analysis must be comprehensive — this is where quality is determined. A thin analysis produces a thin plan which produces a thin draft. Spend the tokens. Cover every dimension below.
 
 ────────────────────────────────────────
-STEP 1: DISSECT THE ${label}
+THINK 1: DISSECT THE ${label} (all dimensions in ONE think)
 ────────────────────────────────────────
 
-Find the swipe labeled [${label}] in your loaded examples. This is the post your draft must structurally ${this.hasTruePrimaryBlueprint ? 'mirror' : 'use as its primary reference'}. Open it and work through this analysis:
+Call the think tool ONCE to analyze the ${label} across ALL of these dimensions. Find the swipe labeled [${label}] in your loaded examples — this is the post your draft must structurally ${this.hasTruePrimaryBlueprint ? 'mirror' : 'use as its primary reference'}. Work through EVERY item below in a single comprehensive analysis:
 
 1a. SLIDE COUNT
     Go through the ${label}'s body text. Each "Slide N" marker (or separator like ---) is a new slide.
     Write down the total: "The ${label} has N slides."
 
 1b. BEAT MAP
-    For each slide, identify its FUNCTION — what job does this slide do in the post?
-    Common beat functions: Hook (grabs attention), Context (sets the scene), Teach (delivers a lesson), Prove (gives evidence/numbers), Story (personal narrative), Reframe (shifts perspective), Reveal (surprise/twist), CTA (call to action).
+    For each slide, identify TWO things:
+    - Its FUNCTION — what job does this slide do? Common beat functions: Hook, Context, Teach, Prove, Story, Reframe, Reveal, CTA.
+    - Its SPECIFIC CONTENT vs its FUNCTION — note these separately. If a slide shows a luxury gift, the FUNCTION is "gratitude gesture to parent" not "gives luxury watch." When you plan your draft, you'll adapt the FUNCTION to the client's authentic story. Don't force material parallels that don't fit — adapt the emotion and beat function instead.
 
-    Write it out like this:
-      Slide 1 = [Hook] — opens with a surprising claim
-      Slide 2 = [Context] — explains how they got here
-      Slide 3 = [Teach] — first actionable point
-      ...
-
-    This beat map is the skeleton of your draft. Your draft will have the SAME number of slides with the SAME beat functions in the SAME order.
+    Write it out: Slide 1 = [Hook] — opens with a surprising claim. Slide 2 = [Context] — explains origin...
+    This beat map is the skeleton of your draft — same number of slides, same beat functions, same order.
 
 1c. DENSITY MEASUREMENT
     For slides 1, 3, the middle slide, and the last slide of the ${label}, count:
     - Words: split the text by spaces and count. Write the number.
     - Sentences: count the periods, question marks, and exclamation marks. Write the number.
     - Lines: count the line breaks within the slide. Write the number.
-
-    This gives you your density target per slide position. These aren't guidelines — they're exact targets your draft must hit (±10%).
+    These are your exact density targets per slide position (±10%). The blueprint's density IS the standard.
 
 1d. VISUAL FORMAT
-    Look at the ${label}'s slides as if they were images. For each slide, note:
-    - Does it use bullet points (-- dashes or • bullets)? How many?
-    - Are there line breaks WITHIN the slide separating ideas? How many?
-    - Are sentences short fragments (5-8 words) or longer flowing sentences (15+ words)?
-    - Is anything in ALL CAPS?
-    - Is it one dense paragraph, or does it breathe with whitespace?
-
-    Write a format tag for each slide: e.g., "Slide 3 = 4 bullet points with -- dashes, short fragments, line break between each"
+    For each slide, note: bullet points? line breaks within slide? short fragments or flowing sentences? ALL CAPS? Dense paragraph or whitespace? Write a format tag per slide.
 
 1e. HOOK ANATOMY
-    Look at the ${label}'s slide 1 (the hook) and answer EXACTLY:
-    - Case: Is it ALL CAPS, Title Case, or lowercase?
-    - Person: Is it first-person ("I did X"), third-person ("Man does X"), or second-person ("You can X")?
-    - Structure: What's the sentence skeleton? (e.g., "SUBJECT + VERB + SPECIFIC METRIC + TIMEFRAME")
-    - Word count: How many words?
-    - Does it end with a period, no punctuation, or an ellipsis?
-
-    Your hook must match ALL of these properties. Different words, same skeleton.
+    Look at slide 1 and answer EXACTLY: Case (ALL CAPS / Title Case / lowercase), Person (first/third/second), Structure (sentence skeleton), Word count, Ending punctuation. Your hook must match ALL of these.
 
 1f. TRANSITIONS
-    Read slide 2, then slide 3. What's the invisible connector? Try inserting "so...", "but...", "and that's when...", or "here's the thing..." between them. One of those should fit naturally. If none fits, the slides might use a different chaining method (numbered list, chronological, or emotional escalation).
-
-    Do this for 3-4 consecutive slide pairs. Note the pattern — this is how your draft will flow between slides.
+    For 3-4 consecutive slide pairs, identify the invisible connector ("so..." / "but..." / "and that's when..." / chronological / emotional escalation). Note the pattern.
 
 1g. COLD AUDIENCE TEST
-    Read the ${label} slide by slide as if you're a STRANGER who has NEVER heard of this person.
-    For each slide, ask: "Does this make sense if I know NOTHING except what the previous slides told me?"
+    Read slide by slide as a STRANGER. Flag any slide that references unestablished context or makes emotional jumps without bridges. Note prerequisites per slide.
 
-    Common failures to look for:
-    - Referencing a job, role, or relationship not yet established ("my head chef" when the audience doesn't know they're a chef)
-    - Emotional jumps without bridges (going from rock bottom to "I quit" without showing WHY they decided to change)
-    - Inside knowledge the audience doesn't have ("the attic" when they don't know the person lives with parents)
-
-    Note any slides that require prior knowledge. In your plan, you'll add a "Prerequisites" field per slide
-    so you never write a slide that assumes knowledge the audience doesn't have yet.
-
-1h. FORMAT CONSISTENCY
-    Look at the ${label}'s voice pattern. Does it maintain a consistent format throughout?
-    Examples: always "Mom, I..." dialogue, or always third-person narration, or always year markers.
-
-    Note the pattern. Your draft must maintain it on EVERY slide. If even one slide breaks the pattern,
-    the audience feels the shift and it breaks immersion. In your plan, write a "Voice pattern" rule:
-    e.g., "Every slide addresses Mom directly. No narration slides. No third-person."
+1h. FORMAT CONSISTENCY & TENSE PATTERN
+    What voice pattern does the ${label} maintain? (e.g., "Dad, I..." dialogue, third-person narration, year markers)
+    What TENSE PATTERN does it use? Options:
+    (a) Consistent past tense throughout
+    (b) Consistent present tense
+    (c) Chronological past → present-tense payoff/resolution at the end (note which slide the shift happens)
+    (d) Mixed with purpose (each shift marks a narrative beat — note where)
+    Your draft must follow the same tense pattern at the same structural positions. Note the pattern and WHERE any shifts occur.
 
 ────────────────────────────────────────
-STEP 2: CROSS-REFERENCE OTHER SWIPES
+THINK 2: CROSS-REFERENCE SWIPES + ABSORB CLIENT (all in ONE think)
 ────────────────────────────────────────
 
-Now scan 3-5 of the other loaded swipes. You're not studying them as deeply — you're CALIBRATING.
+Call the think tool ONCE more to cover ALL of the following:
 
-2a. DENSITY RANGE
-    Pick 3 swipes. Count words in their slide 1, middle slide, and last slide.
-    Now you have a range. The ${label}'s density is your TARGET. The range tells you what's acceptable vs what's too thin or too dense.
+SWIPE CALIBRATION (scan 3-5 of the other loaded swipes):
 
-2b. FORMAT DNA
-    Look across all swipes. What formatting patterns appear in MOST of them?
-    - Do most use line breaks within slides? → That's a format requirement.
-    - Do most use -- dashes for lists? → That's a format requirement.
-    - Do most keep sentences under 15 words? → That's a format requirement.
-    Things that only appear in 1-2 swipes are that author's style. Things that appear in 5+ swipes are the FORMAT'S DNA — your draft must have them.
+2a. DENSITY RANGE — Count words in 3 swipes' slide 1, middle, and last. The ${label}'s density is your TARGET. The range tells you what's acceptable vs too thin/dense.
 
-2c. WHAT SWIPES TEACH ABOUT THE RULES
-    The swipes are the best demonstration of how all the rules in your system context (Voice DNA, methodology, banned phrases, density guidelines) actually look in practice. When a rule says "use physical verbs" — look at the swipes to see WHICH physical verbs real authors use. When Voice DNA says "vary sentence length" — look at the swipes to see the ACTUAL range (e.g., 4-word fragments mixed with 18-word sentences). The swipes are the answer key for every abstract rule in your system prompt.
+2b. FORMAT DNA — What formatting patterns appear in MOST swipes? (line breaks, dashes, sentence length) Things in 5+ swipes = format requirement. Things in 1-2 = that author's style.
 
-────────────────────────────────────────
-STEP 3: ABSORB THE CLIENT
-────────────────────────────────────────
+2c. WHAT SWIPES TEACH — The swipes demonstrate how abstract rules look in practice. When Voice DNA says "vary sentence length" — what's the ACTUAL range in the swipes? The swipes are the answer key for every rule.
 
-Now look at the CLIENT PROFILE section in your context. This is who you're writing AS.
+2d. DEPTH RHYTHM — For 3-5 swipes, measure DEPTH per slide — not just word count, but information density. How many facts/details per slide? Some slides are one raw emotional statement with zero facts. Others pack 3 specific numbers into 2 sentences. Note which beat positions are dense with information vs sparse/emotional. Your draft must match this rhythm — don't pad emotional beats with information, and don't strip detail from teaching beats.
 
-3a. REAL DETAILS
-    Read the brand story. Pull out every specific detail you'll use in the draft:
-    - Names (people, businesses, places)
-    - Numbers (revenue, properties, years, ages, dollar amounts)
-    - Dates and timeframes
-    - Locations
-    Write them down. These are MANDATORY inclusions — a draft without the client's real details is generic and fails. Don't make up details when real ones are loaded.
+CLIENT ABSORPTION:
 
-3b. VOICE FINGERPRINT
-    Read the voice targets. The key numbers:
-    - Target sentence length: ____ words. This is your average — some shorter, some longer.
-    - Banned phrases: List them. Memorize them. If even ONE appears in your draft, rewrite.
-    - Signature phrases: These should appear 2-3 times naturally in the draft.
+3a. REAL DETAILS — Read the brand story. Pull out every specific detail you'll use: names, numbers, dates, locations. These are MANDATORY — a draft without real details is generic. Don't make up details when real ones are loaded.
 
-    Now read the client's TOP PERFORMING POSTS (also in the client profile). Read them as if you're the client. Notice how THEY talk — their rhythm, their word choices, their level of formality. Your draft must sound like the same person wrote it on the same day.
+3b. VOICE FINGERPRINT — Read voice targets: sentence length, banned phrases (memorize them), signature phrases (use 2-3 naturally). Read TOP PERFORMING POSTS — notice rhythm, word choices, formality. Your draft must sound like the same person wrote it.
 
-3c. LESSONS
-    Read the LEARNED WRITING RULES. Hard rules are non-negotiable — violating them means an automatic rewrite. Advisory rules are strong preferences. For each hard rule, think about how it applies specifically to THIS draft. A rule like "never use more than 2 rhetorical questions per post" means you need to COUNT your rhetorical questions.
+3c. LESSONS — Read LEARNED WRITING RULES. Hard rules = non-negotiable, automatic rewrite if violated. For each hard rule, note how it applies to THIS specific draft.
 
 ────────────────────────────────────────
-STEP 4: BUILD THE WRITING PLAN
+STEP 3: BUILD THE WRITING PLAN
 ────────────────────────────────────────
 
 Now you have all the data. Call create_writing_plan with a plan structured EXACTLY like this:
@@ -482,11 +433,19 @@ For EACH slide (same count as ${label}), write:
   Content: [what specific information goes here — cite real client details by name]
   Transition to next: [the connector type you identified]
 
+For slides where the blueprint's specific detail (luxury purchase, specific career move) doesn't naturally exist in the client's story, write:
+  ADAPTED: [blueprint function: e.g., gratitude gesture via luxury watch] → [client equivalent: genuine expression matching the client's actual story]
+The beat function must still land — but through the client's authentic story, not a forced parallel.
+
 If a slide has prerequisites that aren't met by earlier slides, either add a bridge slide before it or rewrite to be self-contained. A stranger who has NEVER seen this person must understand every slide.
 
 VOICE PATTERN
-  [The consistent format the draft must maintain on EVERY slide — from your Step 1h analysis]
-  Example: "Every slide addresses Mom directly with 'Mom, I...' No narration. No third-person."
+  [The consistent format the draft must maintain on EVERY slide — from your analysis]
+  Example: "Every slide addresses Dad directly with 'Dad, I...' No narration. No third-person."
+
+TENSE PATTERN
+  [The tense pattern from your analysis — where shifts occur and why]
+  Example: "Past tense throughout slides 1-20 (story narration), shifts to present tense at slide 21 (emotional resolution/payoff)"
 
 VOICE RULES
   Target sentence length: ___
@@ -497,17 +456,16 @@ VOICE RULES
 COLD AUDIENCE FLOW
   For each slide: what does the audience already know at this point?
   Flag any slide that references something not yet established.
-  Flag any emotional jump that needs a bridge slide (e.g., "I quit" needs "I realized I had to change" before it).
+  Flag any emotional jump that needs a bridge slide.
 
 HARD RULES THAT APPLY
   List every hard lesson. For each one, note how it applies to THIS draft specifically.
 
 HOOK SPECIFICATION
   Case: ___ | Person: ___ | Structure: ___ | Words: ___ | Ending: ___
-  (from your Step 1e analysis)
 
 DENSITY TARGETS
-  [List the exact word count per slide position from your Step 1c measurement]
+  [List the exact word count per slide position from your density measurement]
 
 This plan is your construction blueprint. Phase 2 will follow it slide by slide.`;
 
@@ -525,7 +483,7 @@ This plan is your construction blueprint. Phase 2 will follow it slide by slide.
     const planBlock: WritingBlock = {
       label: 'Writing Plan',
       content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}`,
-      cacheControl: false, // Covered by message-level cache breakpoint — saves a cache slot
+      cacheControl: true, // Plan is stable across Phase 2 iterations — use 4th cache breakpoint (Block1 + Block2 + plan + last user msg = 4)
     };
 
     const examplesBlock: WritingBlock = {
@@ -563,9 +521,13 @@ Work through your plan slide by slide. For each slide:
 
 3. WRITE THE SLIDE using the client's voice. Use their real details from the brand story (names, numbers, places — from your plan). Use their signature phrases where they fit naturally. Keep sentences close to the target length from the voice fingerprint.
 
-4. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
+4. TENSE PATTERN: Follow the tense pattern from your plan. If the blueprint tells a story in past tense and shifts to present for the final emotional payoff — do the same at the same structural point. Do NOT randomly switch tense mid-section. Every tense shift must be INTENTIONAL and match where the blueprint shifts.
 
-5. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
+5. For slides marked ADAPTED in your plan: match the EMOTION and BEAT FUNCTION of the blueprint slide. Don't copy its literal content. If the blueprint gives a luxury gift and the client's story doesn't have one, write what the CLIENT would actually do at this emotional moment. Authenticity > equivalence.
+
+6. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
+
+7. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
 
 ────────────────────────────────────────
 THE VISUAL SHAPE TEST
@@ -644,7 +606,7 @@ FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this
       role: 'user',
       content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed. You have the writing plan, the ${this.getBlueprintLabel()} structural summary, the quality rules, and the current draft.
 
-Use the think tool to run each of these 8 checks. For each check, write down your finding and whether it PASSES or FAILS. Then fix everything that fails and call write_draft with the corrected version. If all 8 pass, respond with a brief summary listing each check and its result.
+Call the think tool ONCE to run ALL 8 checks below in a single comprehensive analysis. For each check, write PASS or FAIL with specific evidence (quote the slide text, cite the word count). Then fix everything that fails and call write_draft with the corrected version. If all 8 pass, respond with a brief summary listing each check and its result.
 
 ────────────────────────────────────────
 CHECK 1: SLIDE COUNT
@@ -718,15 +680,16 @@ Fix: Add a bridge slide before the confusing one, or rewrite to be self-explanat
 Example fix: "My head chef threw his cigarette on the floor" → either cut it, or add "Mom, I started working in a kitchen..." before it.
 
 ────────────────────────────────────────
-CHECK 8: FORMAT CONSISTENCY
+CHECK 8: FORMAT CONSISTENCY & TENSE
 ────────────────────────────────────────
 Procedure:
 - Identify the voice pattern established in slides 1-3 (e.g., "Mom, I..." dialogue, year markers, first-person narration).
 - Read every slide. Does each one maintain that exact pattern?
 - Flag any slide that breaks it (switches to narration, drops the address, changes person/tense).
+- TENSE CHECK: Identify every point where tense changes. Is each shift at a structural beat transition (story→payoff)? Or is it random mid-section?
 
-Pass: Every slide matches the established pattern. The voice never breaks.
-Fail: Any slide breaks the pattern (e.g., switches from "Mom, I..." to third-person narration).
+Pass: Every slide matches the established pattern. The voice never breaks. Tense shifts only at narrative arc transitions (e.g., past story → present-tense resolution/payoff).
+Fail: Any slide breaks the pattern, or tense switches randomly mid-section.
 Fix: Rewrite the breaking slide to match. If the pattern is "Mom, I..." then EVERY slide must be addressed to Mom.
 
 ────────────────────────────────────────
@@ -853,13 +816,15 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
   // ============================================================
 
   private async runConversationLoop(phase: WritingPhase, block3b: WritingBlock, pipelineStep?: 'plan' | 'write' | 'edit'): Promise<string> {
+    // Pipeline phases use tighter iteration cap; open-ended conversation (revisions, brainstorm) uses full budget
+    const maxIterations = pipelineStep ? MAX_PHASE_ITERATIONS : MAX_INNER_ITERATIONS;
     let lastAssistantText = '';
     let emptyResponseCount = 0;
     let consecutiveThinks = 0;
     let truncatedResponseCount = 0;
 
-    for (let iteration = 0; iteration < MAX_INNER_ITERATIONS; iteration++) {
-      console.log(`    🔄 Iteration ${iteration + 1}/${MAX_INNER_ITERATIONS} [${pipelineStep || phase}] (${this.messages.length} messages)`);
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
+      console.log(`    🔄 Iteration ${iteration + 1}/${maxIterations} [${pipelineStep || phase}] (${this.messages.length} messages)`);
 
       // Build API messages
       const apiMessages = this.buildAPIMessages();
@@ -868,7 +833,7 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
       const tools = this.getToolDefinitions(phase, pipelineStep);
 
       // Call LLM (pass dynamic block separately — it changes each iteration)
-      const response = await this.callWritingLLM(block3b, apiMessages, tools);
+      const response = await this.callWritingLLM(block3b, apiMessages, tools, pipelineStep);
 
       // Log response shape
       const toolNames = response.toolCalls?.map(tc => tc.name).join(', ') || 'none';
@@ -980,16 +945,18 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
         });
       }
 
-      // Detect extended analysis — nudge after 4 consecutive thinks
+      // Detect extended analysis — nudge after consecutive thinks
+      // Pipeline phases (plan/write/edit) expect 2 consolidated thinks max, so nudge earlier
+      const thinkNudgeThreshold = pipelineStep ? 2 : 4;
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;
-        if (consecutiveThinks >= 4) {
-          console.log(`  ⚠️ Extended analysis (${consecutiveThinks} consecutive thinks) — directive nudge`);
+        if (consecutiveThinks >= thinkNudgeThreshold) {
+          console.log(`  ⚠️ Extended analysis (${consecutiveThinks} consecutive thinks, threshold ${thinkNudgeThreshold}) — directive nudge`);
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'user',
-            content: '[System] You have done 4 consecutive think calls without taking action. You MUST now call a tool to make progress — update_outline, add_hooks, or write_draft. Do NOT call think again.',
+            content: `[System] You have done ${consecutiveThinks} consecutive think calls without taking action. You MUST now call a tool to make progress — create_writing_plan, write_draft, update_outline, or add_hooks. Do NOT call think again.`,
             timestamp: new Date().toISOString(),
             isSystemNudge: true,
           });
@@ -1070,6 +1037,26 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
           return `Analysis received (${wordCount} words). Before writing, ensure you've analyzed your loaded swipes through EVERY lens: density patterns, punctuation usage, hook mechanics, voice characteristics, transition patterns, CTA structure. Reference the Slide Density, Dinner Table Test, Voice Matching, Hook Craft, Causal Chaining, and CTA Craft modules in your context for what to look for.`;
         }
 
+        // Quality signal check — ensure first think is genuinely comprehensive (not just long)
+        if (this.analysisDepth === 1 && wordCount >= 200) {
+          const hasDensity = /\d+\s*words/.test(thought) && /slide\s*\d/i.test(thought);
+          const hasBeatMap = /\[(Hook|Context|Teach|Prove|Story|Reframe|Reveal|CTA)\]/i.test(thought);
+          const hasHookAnalysis = /(case|person|structure).{0,40}(hook|slide.?1)/i.test(thought);
+          const hasTensePattern = /tense.{0,30}(past|present|pattern)/i.test(thought);
+          const signals = [hasDensity, hasBeatMap, hasHookAnalysis, hasTensePattern];
+          const signalCount = signals.filter(Boolean).length;
+
+          if (signalCount < 3) {
+            const missing: string[] = [];
+            if (!hasDensity) missing.push('DENSITY: Count actual words per slide in the blueprint');
+            if (!hasBeatMap) missing.push('BEAT MAP: Label each slide with function [Hook/Context/Teach/etc.]');
+            if (!hasHookAnalysis) missing.push('HOOK ANATOMY: Case, person, structure of slide 1');
+            if (!hasTensePattern) missing.push('TENSE PATTERN: Identify the tense pattern and where shifts occur');
+            console.log(`    ⚠️ Think quality check: ${signalCount}/4 signals (missing: ${missing.join(', ')})`);
+            return `Analysis received (${wordCount} words) but missing key dimensions:\n${missing.map(m => `- ${m}`).join('\n')}\n\nContinue your analysis and cover the missing dimensions. These are critical for a quality plan.`;
+          }
+        }
+
         if (this.analysisDepth >= 2) {
           const ruleReminder = this.buildCriticalRulesReminder();
           return `Analysis received (${wordCount} words). Deep analysis complete.\n\nBEFORE YOU WRITE — review these rules (violations trigger automatic rewrite):\n${ruleReminder}\n\nYou may now call write_draft.`;
@@ -1088,7 +1075,7 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
    • SLIDE ARCHITECTURE: What's the internal structure of each slide? Bullet points? Numbered steps? How many sentences per slide?
    • HOOKS: What hook mechanisms do the top-scoring swipes use? How are they structured?
    • STRUCTURE: What beat patterns do the swipes follow? How many sections?
-   • DENSITY: How many words per slide? (Carousels = 50-100, Reels = 10-25)
+   • DENSITY: How many words per slide? Match the PRIMARY BLUEPRINT's density (count its actual words per slide)
    • VOICE: What's the tone, formality, sentence length patterns?
    • TRANSITIONS: How do slides connect?
    • CTA: What CTA patterns work?
@@ -1174,7 +1161,7 @@ Only after this analysis can you call add_hooks.`;
    • SLIDE ARCHITECTURE: What's the internal structure of each slide? Count sentences per slide. Do they use bullet points (-- dashes)? Numbered steps? Headers?
    • SPECIFICITY: How many specific numbers, dollar amounts, percentages, resources, or proper nouns appear per slide? Count them. Your draft must match this density.
    • VALUE PER SLIDE: Does every slide teach something, prove something, or advance the argument? What's the ratio of teaching slides vs narrative slides?
-   • DENSITY: How many sentences per slide? How many words per slide? (FORMAT-SPECIFIC: carousels = 50-100 words, reels = 10-25 words)
+   • DENSITY: How many sentences per slide? How many words per slide? Match the PRIMARY BLUEPRINT's density (count its actual words per slide). Reels are typically 10-25 words per slide.
    • VOICE: What's the tone? Contractions? Sentence fragments vs full sentences? Formality level?
    • HOOKS: What hook mechanisms do the top-scoring swipes use? How long are hooks?
    • TRANSITIONS: How do slides connect? Implied "so/but/that's when"?
@@ -1424,9 +1411,13 @@ If ALL checks pass, present the draft.
     dynamicBlock: WritingBlock | null,
     messages: any[],
     tools: any[],
+    pipelineStep?: 'plan' | 'write' | 'edit',
   ): Promise<{ content: string | null; toolCalls: Array<{ id: string; name: string; arguments: Record<string, any> }>; finishReason: string | null; completionTokens: number }> {
     const useDirectAnthropic = !!config.anthropicApiKey;
-    const model = config.models.writer;
+    // Model routing: Sonnet for all writing engine calls (pipeline + revisions + brainstorm).
+    // To switch to hybrid (Sonnet analysis + Opus writing), change to:
+    //   pipelineStep === 'write' ? config.models.writer : config.models.strategist
+    const model = config.models.strategist;
 
     // Strip provider prefix for direct Anthropic (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
     const modelId = useDirectAnthropic ? model.replace(/^anthropic\//, '') : model;

@@ -1058,9 +1058,9 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
           } else {
             lastAssistantText = text;
           }
-          // Log full assistant response as single entry (Railway rate-limits per call)
-          const respLog = text.split('\n').map(line => `    🤖 ${line}`).join('\n');
-          console.log(`    🤖 Assistant response (${text.length} chars):\n    ────────────────────────────────────────\n${respLog}\n    ────────────────────────────────────────`);
+          // Log assistant response summary (Railway splits \n into separate entries)
+          const respPreview = text.replace(/\n/g, ' ').substring(0, 300);
+          console.log(`    🤖 Assistant response (${text.length} chars): ${respPreview}...`);
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'assistant',
@@ -1202,9 +1202,9 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
         if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
         if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
         if (/speech act|reader delta|quark|transition.*→|inevitability|state change|causality|earned/i.test(thought)) thinkTopics.push('quarks');
-        // Log think as a single log entry (Railway rate-limits per console.log call)
-        const thinkLog = thought.split('\n').map(line => `    💭 ${line}`).join('\n');
-        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]:\n    ────────────────────────────────────────\n${thinkLog}\n    ────────────────────────────────────────`);
+        // Log think summary (Railway splits \n into separate entries, so keep it compact)
+        const preview = thought.replace(/\n/g, ' ').substring(0, 200);
+        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]: ${preview}...`);
 
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
@@ -1394,9 +1394,9 @@ Only after thorough analysis can you call write_draft.`;
           const bpSlides = this.countSlidesInBody(this.blueprintAnchor.fullBody);
           console.log(`    📝 Blueprint comparison: draft=${slideCount} slides vs blueprint=${bpSlides} slides ${slideCount === bpSlides ? '✅' : '⚠️ MISMATCH'}`);
         }
-        // Log full draft as single entry (Railway rate-limits per call)
-        const draftLog = content.split('\n').map(line => `    📝 ${line}`).join('\n');
-        console.log(`    📝 ════════ FULL DRAFT ════════\n${draftLog}\n    📝 ════════ END DRAFT ════════`);
+        // Log draft summary (Railway splits \n into separate entries)
+        const draftPreview = content.replace(/\n/g, ' | ').substring(0, 400);
+        console.log(`    📝 Draft written (${wordCount} words, ${slideCount} slides): ${draftPreview}...`);
 
         let result = `Draft written (${wordCount} words, format: ${format})`;
         if (!validation.isValid) {
@@ -1504,9 +1504,9 @@ If ALL checks pass, present the draft.
         console.log(`    📋 Plan quality: ${hasSlideEntries} slide entries, ${hasWordCounts} word count targets, ${hasBeatLabels} beat labels, banned section: ${hasBannedSection ? 'yes' : 'NO'}, hook spec: ${hasHookSpec ? 'yes' : 'NO'}`);
         if (hasSlideEntries < 3) console.log(`    ⚠️ Plan has few slide entries (${hasSlideEntries}) — may not have per-slide detail`);
         if (hasWordCounts < 2) console.log(`    ⚠️ Plan has few word count targets (${hasWordCounts}) — density may be vague`);
-        // Log full plan as single entry (Railway rate-limits per call)
-        const planLog = plan.split('\n').map(line => `    📋 ${line}`).join('\n');
-        console.log(`    📋 ════════ FULL WRITING PLAN ════════\n${planLog}\n    📋 ════════ END WRITING PLAN ════════`);
+        // Log plan summary (Railway splits \n into separate entries)
+        const planPreview = plan.replace(/\n/g, ' | ').substring(0, 400);
+        console.log(`    📋 Plan created (${planWords} words): ${planPreview}...`);
 
         return `Writing plan created (${planWords} words). Structured slide contract: ${structuredPlan.slides.length} slides. The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }

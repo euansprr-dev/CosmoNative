@@ -37,6 +37,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
     title: a.title,
     hookScore: a.structured?.swipeAnalysis?.hookScore ?? 0,
     format: a.structured?.swipeAnalysis?.swipeContentFormat || a.metadata?.contentSource || 'unknown',
+    detectedFormat: classifyFormatFromBody(a.body || ''),
   }));
 
   // === TRANSITION PHYSICS ===
@@ -201,13 +202,10 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
   }
   const topNovel = [...novelCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-  // === FORMAT-SPECIFIC ===
-  const byFormat = new Map<string, typeof profiles>();
-  for (const p of profiles) {
-    const fmt = getFormatFamily(p.format);
-    if (!byFormat.has(fmt)) byFormat.set(fmt, []);
-    byFormat.get(fmt)!.push(p);
-  }
+  // === FORMAT-SPECIFIC (classified by actual content density, not metadata) ===
+  const reelProfiles = profiles.filter(p => p.detectedFormat === 'reel');
+  const carouselProfiles = profiles.filter(p => p.detectedFormat === 'carousel');
+  console.log(`  📊 Format split: ${reelProfiles.length} reels, ${carouselProfiles.length} carousels, ${profiles.length - reelProfiles.length - carouselProfiles.length} other`);
 
   // === BUILD CODEX TEXT ===
   const N = profiles.length;
@@ -301,15 +299,72 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
     lines.push('');
   }
 
-  // Format-Specific
-  if (byFormat.size > 1) {
-    lines.push(`FORMAT-SPECIFIC PHYSICS:`);
-    for (const [fmt, fmtProfiles] of byFormat) {
-      if (fmtProfiles.length < 2) continue;
-      const avgReversals = fmtProfiles.reduce((s, p) => s + p.profile.arcQuarks.winLossReversals, 0) / fmtProfiles.length;
-      const avgGravity = fmtProfiles.reduce((s, p) => s + p.profile.physicsEvents.peakGravity.activeLoops, 0) / fmtProfiles.length;
-      lines.push(`  ${fmt} (${fmtProfiles.length} posts): avg ${avgReversals.toFixed(1)} reversals, avg ${avgGravity.toFixed(1)} peak loops`);
+  // Format-Specific Sections (classified by content density: <=2 sentences/slide = reel, >=3 = carousel)
+  for (const [label, fmtProfiles] of [['REEL', reelProfiles], ['CAROUSEL', carouselProfiles]] as const) {
+    if (fmtProfiles.length < 2) continue;
+    const fN = fmtProfiles.length;
+    lines.push(`\n═══ ${label} PHYSICS (${fN} posts, classified by ≤2 or ≥3 sentences/slide) ═══`);
+
+    // Transitions for this format
+    const fmtTransitions = new Map<string, Map<string, number>>();
+    for (const { profile } of fmtProfiles) {
+      for (const t of profile.transitions) {
+        const posKey = positionBucket(t.from, profile.slideQuarks.length);
+        if (!fmtTransitions.has(posKey)) fmtTransitions.set(posKey, new Map());
+        const posMap = fmtTransitions.get(posKey)!;
+        posMap.set(t.type, (posMap.get(t.type) || 0) + 1);
+      }
     }
+    lines.push(`  Transitions:`);
+    for (const [pos, types] of fmtTransitions) {
+      const top = topN(types, 3);
+      lines.push(`    At ${pos}: ${top.map(([t, c]) => `${t} (${pct(c, fN)})`).join(', ')}`);
+    }
+
+    // Arc shape for this format
+    const fmtArcs = new Map<string, number>();
+    let fmtReversals = 0;
+    for (const { profile } of fmtProfiles) {
+      fmtArcs.set(profile.arcQuarks.shape, (fmtArcs.get(profile.arcQuarks.shape) || 0) + 1);
+      fmtReversals += profile.arcQuarks.winLossReversals;
+    }
+    lines.push(`  Arc: avg ${(fmtReversals / fN).toFixed(1)} reversals, top shapes: ${topN(fmtArcs, 2).map(([s, c]) => `"${s}" (${pct(c, fN)})`).join(', ')}`);
+
+    // Symmetry break position for this format
+    let fmtBreakPct = 0, fmtBreakCount = 0;
+    for (const { profile } of fmtProfiles) {
+      if (profile.physicsEvents.symmetryBreak.slideNumber > 0) {
+        fmtBreakPct += profile.physicsEvents.symmetryBreak.slideNumber / profile.slideQuarks.length;
+        fmtBreakCount++;
+      }
+    }
+    if (fmtBreakCount > 0) lines.push(`  Symmetry break: avg at ${(fmtBreakPct / fmtBreakCount * 100).toFixed(0)}% through`);
+
+    // Peak gravity for this format
+    const fmtGravity = fmtProfiles.reduce((s, p) => s + p.profile.physicsEvents.peakGravity.activeLoops, 0) / fN;
+    lines.push(`  Peak gravity: avg ${fmtGravity.toFixed(1)} open loops`);
+
+    // Phase transition rate
+    const fmtWithTransition = fmtProfiles.filter(p => p.profile.physicsEvents.phaseTransition.slideNumber > 0).length;
+    lines.push(`  Phase transition: ${pct(fmtWithTransition, fN)} of ${label.toLowerCase()}s have one`);
+
+    // Examples
+    const bestExample = fmtProfiles.sort((a, b) => b.hookScore - a.hookScore)[0];
+    if (bestExample) {
+      lines.push(`  Top example: "${bestExample.title.substring(0, 50)}" (${bestExample.hookScore}/10)`);
+    }
+  }
+
+  // Universal section (cross-format emergent patterns)
+  lines.push(`\n═══ UNIVERSAL PHYSICS (patterns that hold across ALL ${N} posts) ═══`);
+  lines.push(`  This section shows what's true regardless of format — the deepest laws.`);
+  // The stats computed above (transition, speech act, reader delta, etc.) ARE the universal stats
+  // They already cover all profiles. Just flag the key universals:
+  if (breakCount > 0) lines.push(`  Symmetry breaking: ${pct(breakCount, N)} of ALL posts have a clear break (avg at ${(totalBreakPosition / breakCount * 100).toFixed(0)}% through)`);
+  lines.push(`  Phase transitions: ${pct(withTransition.count, N)} of ALL posts shift the reader's frame`);
+  lines.push(`  Energy conservation: ${pct(proportionalCount, N)} resolve energy proportionally`);
+  if (loopsByScore.high4plus.count > 0 && loopsByScore.low4.count > 0) {
+    lines.push(`  Gravity law: 4+ loops at transition → avg hookScore ${(loopsByScore.high4plus.totalScore / loopsByScore.high4plus.count).toFixed(1)} vs ${(loopsByScore.low4.totalScore / loopsByScore.low4.count).toFixed(1)} for <4`);
   }
 
   const codexText = lines.join('\n');
@@ -413,10 +468,43 @@ function positionBucket(slideNum: number, totalSlides: number): string {
   return 'ending';
 }
 
-function getFormatFamily(format: string): string {
-  const f = (format || '').toLowerCase();
-  if (f.includes('reel') || f.includes('tiktok') || f.includes('short')) return 'reel';
-  if (f.includes('carousel') || f.includes('thread')) return 'carousel/thread';
+function classifyFormatFromBody(body: string): 'reel' | 'carousel' | 'other' {
+  if (!body || body.length < 20) return 'other';
+
+  // Extract slides from body (JSON slides, "Slide N" markers, or double-newline paragraphs)
+  let slideTexts: string[] = [];
+
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      slideTexts = parsed.slides.map((s: any) => s.text || s.content || '');
+    }
+  } catch {
+    // Not JSON — try markers
+    const markerSplit = body.split(/^Slide \d+[:\s—–-]*/gim).filter(s => s.trim().length > 5);
+    if (markerSplit.length >= 3) {
+      slideTexts = markerSplit;
+    } else {
+      // Fall back to double-newline paragraphs
+      slideTexts = body.split(/\n\n+/).filter(s => s.trim().length > 5);
+    }
+  }
+
+  if (slideTexts.length < 3) return 'other';
+
+  // Count sentences per slide (periods + question marks + exclamation marks)
+  let totalSentences = 0;
+  for (const slide of slideTexts) {
+    const sentences = (slide.match(/[.!?]+/g) || []).length;
+    totalSentences += Math.max(sentences, 1); // At least 1 sentence per slide
+  }
+
+  const avgSentencesPerSlide = totalSentences / slideTexts.length;
+
+  // Reel: <=2 sentences/slide (short punchy text)
+  // Carousel: >=3 sentences/slide (denser text)
+  if (avgSentencesPerSlide <= 2) return 'reel';
+  if (avgSentencesPerSlide >= 3) return 'carousel';
   return 'other';
 }
 

@@ -52,31 +52,35 @@ struct PhysicsSlideQuarksView: View {
                 selectedSlide = isSelected ? nil : quark.slideNumber
             }
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Text("\(quark.slideNumber)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isSelected ? DS.textOnAccent : DS.text)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isSelected ? .white : DS.text)
 
                 Circle()
                     .fill(deltaColor(quark))
-                    .frame(width: 8, height: 8)
+                    .frame(width: 10, height: 10)
 
                 Text(abbreviate(quark.speechAct.type ?? ""))
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(isSelected ? .white.opacity(0.8) : DS.textSecondary)
                     .lineLimit(1)
 
                 if let delta = quark.readerDeltas?.first {
                     Text(abbreviate((delta.type ?? "")))
-                        .font(.system(size: 7))
-                        .foregroundStyle(DS.textMuted)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(isSelected ? .white.opacity(0.6) : DS.textMuted)
                         .lineLimit(1)
                 }
             }
-            .frame(width: 48, height: 68)
+            .frame(width: 56, height: 80)
             .background(
-                isSelected ? DS.accent : DS.surfaceHover,
+                isSelected ? DS.entitySwipe : DS.surfaceHover,
                 in: RoundedRectangle(cornerRadius: DS.radiusSmall)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(isSelected ? DS.entitySwipe : DS.border, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

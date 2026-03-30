@@ -16,18 +16,19 @@ struct ContentPhysicsSection: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: expandedSection)
     }
 
     // MARK: - Summary Card
 
     @ViewBuilder
     private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
+        VStack(alignment: .leading, spacing: DS.space16) {
             headerRow
-            arcShapeRow
-            physicsEventBadges
-            antimatterRow
-            fabricExcerpt
+            arcShapeSection
+            physicsEventsSection
+            antimatterSection
+            fabricExcerptSection
             sectionToggles
         }
         .padding(DS.space16)
@@ -38,17 +39,19 @@ struct ContentPhysicsSection: View {
         )
     }
 
+    // MARK: - Header
+
     @ViewBuilder
     private var headerRow: some View {
         HStack(spacing: DS.space6) {
             Image(systemName: "atom")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(DS.entitySwipe)
 
             Text("CONTENT PHYSICS")
                 .font(DS.caption)
                 .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.entitySwipe)
 
             Spacer()
 
@@ -56,111 +59,185 @@ struct ContentPhysicsSection: View {
                 Text("Extracted")
                     .font(DS.caption2)
                     .foregroundStyle(DS.green)
-                    .padding(.horizontal, DS.space6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DS.space8)
+                    .padding(.vertical, 3)
                     .background(DS.greenSoft, in: Capsule())
             }
         }
     }
 
+    // MARK: - Arc Shape (readable text, not broken pills)
+
     @ViewBuilder
-    private var arcShapeRow: some View {
+    private var arcShapeSection: some View {
         if let arc = profile.arcQuarks, let shape = arc.shape, !shape.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space4) {
-                arcShapePills(shape: shape)
-                if let reversals = arc.winLossReversals, reversals > 0 {
-                    Text("\(reversals) reversals")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-            .padding(DS.space10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-        }
-    }
-
-    @ViewBuilder
-    private func arcShapePills(shape: String) -> some View {
-        let beats = shape.split(separator: "-").map(String.init)
-        FlowLayout(spacing: DS.space4) {
-            ForEach(Array(beats.enumerated()), id: \.offset) { _, beat in
-                Text(beat)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(arcBeatColor(beat))
-                    .padding(.horizontal, DS.space6)
-                    .padding(.vertical, 2)
-                    .background(arcBeatColor(beat).opacity(DS.opacitySubtle), in: Capsule())
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var physicsEventBadges: some View {
-        if let events = profile.physicsEvents {
-            let badges = buildEventBadges(events)
-            if !badges.isEmpty {
-                FlowLayout(spacing: DS.space6) {
-                    ForEach(Array(badges.enumerated()), id: \.offset) { _, badge in
-                        HStack(spacing: 3) {
-                            Text(badge.icon)
-                                .font(.system(size: 10))
-                            Text(badge.text)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(DS.text)
-                        }
+            VStack(alignment: .leading, spacing: DS.space8) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                    // Extract arc type (first word or phrase before colon/comma)
+                    let arcType = extractArcType(from: shape)
+                    Text(arcType)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(DS.entitySwipe)
                         .padding(.horizontal, DS.space8)
                         .padding(.vertical, DS.space4)
-                        .background(badge.color.opacity(DS.opacityHover), in: Capsule())
+                        .background(DS.entitySwipe.opacity(0.12), in: Capsule())
+
+                    if let reversals = arc.winLossReversals, reversals > 0 {
+                        Text("\(reversals) reversals")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
                     }
+                }
+
+                // Full arc description as readable text
+                Text(shape)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DS.space12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.entitySwipe.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.entitySwipe.opacity(0.12), lineWidth: 1)
+            )
+        }
+    }
+
+    // MARK: - Physics Events (wrapping rows, not truncating pills)
+
+    @ViewBuilder
+    private var physicsEventsSection: some View {
+        if let events = profile.physicsEvents {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                if let brk = events.symmetryBreak, let slide = brk.slideNumber, slide > 0 {
+                    physicsEventRow(
+                        icon: "⚡",
+                        label: "Symmetry Break",
+                        value: "@slide \(slide)",
+                        detail: brk.whatBreaks,
+                        color: DS.orange
+                    )
+                }
+                if let pt = events.phaseTransition, let slide = pt.slideNumber, slide > 0 {
+                    let shift = [pt.frameBefore, pt.frameAfter].compactMap { $0 }.joined(separator: " → ")
+                    physicsEventRow(
+                        icon: "🔮",
+                        label: "Phase Transition",
+                        value: "\(shift) @slide \(slide)",
+                        detail: pt.recontextualization,
+                        color: DS.info
+                    )
+                }
+                if let pg = events.peakGravity, let loops = pg.activeLoops, loops > 0 {
+                    physicsEventRow(
+                        icon: "🌀",
+                        label: "Peak Gravity",
+                        value: "\(loops) loops @slide \(pg.slideNumber ?? 0)",
+                        detail: nil,
+                        color: DS.entitySwipe
+                    )
+                }
+                if let er = events.energyResolution {
+                    physicsEventRow(
+                        icon: "⚖️",
+                        label: "Energy",
+                        value: er.proportional == true ? "Proportional" : "Disproportional",
+                        detail: nil,
+                        color: er.proportional == true ? DS.green : DS.red
+                    )
                 }
             }
         }
     }
 
     @ViewBuilder
-    private var antimatterRow: some View {
+    private func physicsEventRow(icon: String, label: String, value: String, detail: String?, color: Color) -> some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Text(icon)
+                .font(.system(size: 12))
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: DS.space6) {
+                    Text(label)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(color)
+                    Text(value)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.text)
+                }
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Antimatter
+
+    @ViewBuilder
+    private var antimatterSection: some View {
         if let antimatter = profile.antimatter, !antimatter.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space4) {
+            VStack(alignment: .leading, spacing: DS.space6) {
                 HStack(spacing: DS.space4) {
                     Text("☢️")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                     Text("ANTIMATTER")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(0.8)
                         .foregroundStyle(DS.red)
                 }
                 ForEach(antimatter.prefix(4), id: \.self) { item in
                     Text("• \(item)")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(DS.space8)
+            .padding(DS.space10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DS.red.opacity(DS.opacityFaint), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .background(DS.red.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall)
+                    .stroke(DS.red.opacity(0.12), lineWidth: 1)
+            )
         }
     }
 
+    // MARK: - Fabric Excerpt
+
     @ViewBuilder
-    private var fabricExcerpt: some View {
+    private var fabricExcerptSection: some View {
         if let fabric = profile.deepFabric, !fabric.isEmpty {
-            let excerpt = String(fabric.prefix(200)) + (fabric.count > 200 ? "..." : "")
+            let excerpt = String(fabric.prefix(250)) + (fabric.count > 250 ? "..." : "")
             Text(excerpt)
                 .font(DS.callout)
-                .italic()
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(4)
-                .padding(DS.space10)
+                .foregroundStyle(DS.text.opacity(0.85))
+                .lineSpacing(4)
+                .lineLimit(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, DS.space12)
+                .padding(.vertical, DS.space10)
+                .padding(.trailing, DS.space10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .leading) {
-                    Rectangle()
+                    RoundedRectangle(cornerRadius: 2)
                         .fill(DS.entitySwipe)
                         .frame(width: 3)
                 }
-                .background(DS.entitySwipe.opacity(DS.opacityFaint), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .background(DS.entitySwipe.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         }
     }
+
+    // MARK: - Section Toggles
 
     @ViewBuilder
     private var sectionToggles: some View {
@@ -168,22 +245,26 @@ struct ContentPhysicsSection: View {
             ForEach(PhysicsDetailSection.allCases) { section in
                 if sectionHasData(section) {
                     Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                             expandedSection = expandedSection == section ? nil : section
                         }
                     } label: {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             Image(systemName: expandedSection == section ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: 7, weight: .bold))
                             Text(section.label)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.system(size: 11, weight: .medium))
                         }
-                        .foregroundStyle(expandedSection == section ? DS.accent : DS.textMuted)
-                        .padding(.horizontal, DS.space8)
-                        .padding(.vertical, DS.space4)
+                        .foregroundStyle(expandedSection == section ? .white : DS.textSecondary)
+                        .padding(.horizontal, DS.space10)
+                        .padding(.vertical, DS.space6)
                         .background(
-                            expandedSection == section ? DS.accentSoft : DS.surfaceHover,
+                            expandedSection == section ? DS.entitySwipe : DS.surfaceHover,
                             in: Capsule()
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(expandedSection == section ? DS.entitySwipe : DS.border, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
@@ -218,39 +299,14 @@ struct ContentPhysicsSection: View {
 
     // MARK: - Helpers
 
-    private func arcBeatColor(_ beat: String) -> Color {
-        let b = beat.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if b.contains("win") || b.contains("success") || b.contains("peace") { return DS.green }
-        if b.contains("fail") || b.contains("loss") || b.contains("crisis") { return DS.red }
-        if b.contains("grind") || b.contains("struggle") { return DS.orange }
-        if b.contains("empty") || b.contains("doubt") { return DS.textMuted }
-        if b.contains("restart") || b.contains("rebuild") { return DS.info }
-        return DS.textSecondary
-    }
-
-    private struct EventBadge {
-        let icon: String
-        let text: String
-        let color: Color
-    }
-
-    private func buildEventBadges(_ events: PhysicsEvents) -> [EventBadge] {
-        var badges: [EventBadge] = []
-        if let brk = events.symmetryBreak, let slide = brk.slideNumber, slide > 0 {
-            badges.append(EventBadge(icon: "⚡", text: "Break @\(slide)", color: DS.orange))
+    private func extractArcType(from shape: String) -> String {
+        // Extract the arc type from the beginning (before first colon or comma)
+        let separators: [Character] = [":", ","]
+        if let firstSep = shape.firstIndex(where: { separators.contains($0) }) {
+            let prefix = String(shape[shape.startIndex..<firstSep]).trimmingCharacters(in: .whitespaces)
+            if prefix.count <= 40 { return prefix }
         }
-        if let pt = events.phaseTransition, let slide = pt.slideNumber, slide > 0 {
-            let shift = [pt.frameBefore, pt.frameAfter].compactMap { $0 }.joined(separator: " → ")
-            badges.append(EventBadge(icon: "🔮", text: shift.isEmpty ? "@\(slide)" : "\(shift) @\(slide)", color: DS.info))
-        }
-        if let pg = events.peakGravity, let loops = pg.activeLoops, loops > 0 {
-            badges.append(EventBadge(icon: "🌀", text: "\(loops) loops", color: DS.entitySwipe))
-        }
-        if let er = events.energyResolution {
-            let label = er.proportional == true ? "Proportional" : "Disproportional"
-            badges.append(EventBadge(icon: "⚖️", text: label, color: er.proportional == true ? DS.green : DS.red))
-        }
-        return badges
+        return String(shape.prefix(30))
     }
 
     private func sectionHasData(_ section: PhysicsDetailSection) -> Bool {
@@ -279,14 +335,13 @@ enum PhysicsDetailSection: String, CaseIterable, Identifiable {
     var label: String { rawValue }
 }
 
-// MARK: - Flow Layout (for wrapping pills)
+// MARK: - Flow Layout
 
 private struct FlowLayout: Layout {
     var spacing: CGFloat = 4
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = layout(proposal: proposal, subviews: subviews)
-        return result.size
+        layout(proposal: proposal, subviews: subviews).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -296,33 +351,20 @@ private struct FlowLayout: Layout {
         }
     }
 
-    private struct LayoutResult {
-        var size: CGSize
-        var positions: [CGPoint]
-    }
+    private struct LayoutResult { var size: CGSize; var positions: [CGPoint] }
 
     private func layout(proposal: ProposedViewSize, subviews: Subviews) -> LayoutResult {
         let maxWidth = proposal.width ?? .infinity
         var positions: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
+            if x + size.width > maxWidth && x > 0 { x = 0; y += rowHeight + spacing; rowHeight = 0 }
             positions.append(CGPoint(x: x, y: y))
             rowHeight = max(rowHeight, size.height)
             x += size.width + spacing
         }
-
-        return LayoutResult(
-            size: CGSize(width: maxWidth, height: y + rowHeight),
-            positions: positions
-        )
+        return LayoutResult(size: CGSize(width: maxWidth, height: y + rowHeight), positions: positions)
     }
 }

@@ -37,7 +37,7 @@ struct PhysicsRhythmView: View {
         VStack(alignment: .leading, spacing: DS.space4) {
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(Array(density.enumerated()), id: \.offset) { index, wordCount in
-                    let height = max(CGFloat(wordCount / maxDensity) * 40, 4)
+                    let height = max(CGFloat(wordCount / maxDensity) * 60, 4)
                     let energyLevel = index < energy.count ? Int(energy[index]) : 3
                     let silence = (r.silenceSlides ?? []).contains(index + 1)
 
@@ -55,7 +55,7 @@ struct PhysicsRhythmView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            .frame(height: 56)
+            .frame(height: 76)
 
             // Legend
             HStack(spacing: DS.space10) {

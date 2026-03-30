@@ -62,9 +62,10 @@ struct PhysicsTransitionFlowView: View {
 
             if let mechanism = t.mechanism, !mechanism.isEmpty {
                 Text(mechanism)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(2)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 48)
             }
         }

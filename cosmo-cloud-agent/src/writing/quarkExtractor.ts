@@ -171,7 +171,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
     model,
     system: [{ type: 'text', text: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' }],
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 16384,
+    max_tokens: 32768,
     temperature: 0.2,
   } : {
     model,
@@ -179,7 +179,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       { role: 'system', content: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' },
       { role: 'user', content: prompt },
     ],
-    max_tokens: 16384,
+    max_tokens: 32768,
     temperature: 0.2,
   };
 
@@ -242,7 +242,41 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
         jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
       }
 
-      const profile: QuarkProfile = JSON.parse(jsonText);
+      // Attempt JSON parse with repair for common LLM output issues
+      let profile: QuarkProfile;
+      try {
+        profile = JSON.parse(jsonText);
+      } catch (parseErr: any) {
+        console.log(`  ⚠️ JSON parse failed at position ${parseErr.message.match(/position (\d+)/)?.[1] || '?'}, attempting repair...`);
+        // Try to salvage: truncate at the last valid closing brace
+        const lastBrace = jsonText.lastIndexOf('}');
+        if (lastBrace > 0) {
+          // Count open vs close braces to find a balanced cut point
+          let depth = 0;
+          let cutPoint = -1;
+          for (let i = 0; i < jsonText.length; i++) {
+            if (jsonText[i] === '{') depth++;
+            if (jsonText[i] === '}') { depth--; if (depth === 0) { cutPoint = i; } }
+          }
+          if (cutPoint > 0) {
+            const repaired = jsonText.substring(0, cutPoint + 1);
+            try {
+              profile = JSON.parse(repaired);
+              console.log(`  ✅ JSON repaired by truncating at balanced brace (${repaired.length} chars of ${jsonText.length})`);
+            } catch {
+              console.log(`  ❌ JSON repair failed. Raw length: ${jsonText.length}, last 100 chars: ${jsonText.slice(-100)}`);
+              return null;
+            }
+          } else {
+            console.log(`  ❌ No balanced brace found. Raw length: ${jsonText.length}`);
+            return null;
+          }
+        } else {
+          console.log(`  ❌ No closing brace in response. Raw length: ${jsonText.length}`);
+          return null;
+        }
+      }
+
       profile.extractedAt = new Date().toISOString();
       profile.extractedBy = 'claude-opus-4-6';
       profile.version = 1;

@@ -120,6 +120,102 @@ export interface CompressedSwipe {
   hookMechanism: string;      // WHY the hook works (psychological mechanism)
   structuralRecipe: string;   // Step-by-step writing recipe
   voiceMarkers: string[];     // Voice traits (e.g., ["conversational", "data-driven"])
+  quarkSummary?: QuarkSummary; // Pre-extracted Content Physics summary (from Opus extraction)
+}
+
+// ============================================================
+// Content Physics: Quark Summary (compact, for Block 3A per-swipe display)
+// ============================================================
+
+export interface QuarkSummary {
+  dominantSpeechActs: string[];   // top 3 speech acts (e.g., ["confession", "update", "reveal"])
+  arcShape: string;               // e.g., "fail-win-loss-win-emptiness-restart-peace"
+  symmetryBreakSlide: number;     // which slide breaks the established pattern
+  phaseTransition?: string;       // e.g., "success → meaning" or undefined if none
+  peakGravityLoops: number;       // open loops at peak gravity point
+  novelDiscoveries: string[];     // top 2 unique patterns found
+}
+
+// ============================================================
+// Content Physics: Full Quark Profile (stored per-swipe in atom.structured.contentPhysics)
+// ============================================================
+
+export interface QuarkProfile {
+  version: number;
+  extractedAt: string;
+  extractedBy: string;            // model ID used for extraction
+
+  slideQuarks: Array<{
+    slideNumber: number;
+    text: string;                 // first 100 chars of slide text for reference
+    speechAct: { type: string; mechanism: string };
+    readerDeltas: Array<{ type: string; mechanism: string }>;
+    proofType?: { type: string; mechanism: string };
+    motivation?: { type: string; mechanism: string };
+    compression?: { type: string; size: string; mechanism: string };
+  }>;
+
+  transitions: Array<{
+    from: number;
+    to: number;
+    type: string;                 // e.g., "doubt→reaffirmation", "deflation", "escalation"
+    mechanism: string;
+    swapTestPasses: boolean;      // false = strong transition (can't swap)
+    doubleHelix: boolean;         // both narrative + psychological causality present
+    doubleHelixDetail?: string;
+  }>;
+
+  arcQuarks: {
+    shape: string;
+    winLossReversals: number;
+    tensionPeaks: number[];
+    sparseDensePattern: string;
+    internalExternalTension?: {
+      present: boolean;
+      peakSlide: number;
+      description: string;
+    };
+  };
+
+  rsv: {
+    trajectoryPoints: Array<{
+      afterSlide: number;
+      openLoops: { count: number; loops: string[] };
+      trust: string;
+      tension: { level: string; type: string };
+      patternExpectation: string;
+      frame: string;
+      energyBalance: string;
+    }>;
+  };
+
+  physicsEvents: {
+    symmetryBreak: {
+      slideNumber: number;
+      patternEstablished: string;
+      whatBreaks: string;
+      whyDevastating: string;
+    };
+    phaseTransition: {
+      slideNumber: number;
+      frameBefore: string;
+      frameAfter: string;
+      recontextualization: string;
+    };
+    energyResolution: {
+      proportional: boolean;
+      loopsClosed: Array<{ loop: string; closedAtSlide: number }>;
+      loopsUnclosed: string[];
+      assessment: string;
+    };
+    peakGravity: {
+      slideNumber: number;
+      activeLoops: number;
+      coincidesWithTransition: boolean;
+    };
+  };
+
+  novelDiscoveries: string[];
 }
 
 /**
@@ -175,6 +271,14 @@ export function formatCompressedSwipe(swipe: CompressedSwipe): string {
   if (swipe.isPrimary && swipe.structuralBreakdown) {
     lines.push(`--- STRUCTURAL BLUEPRINT ---`);
     lines.push(swipe.structuralBreakdown);
+  }
+
+  if (swipe.quarkSummary) {
+    const q = swipe.quarkSummary;
+    lines.push(`Physics: Arc=${q.arcShape}, Break@slide${q.symmetryBreakSlide}${q.phaseTransition ? `, Transition=${q.phaseTransition}` : ''}, Gravity=${q.peakGravityLoops} loops`);
+    if (q.novelDiscoveries.length > 0) {
+      lines.push(`Novel: ${q.novelDiscoveries.join('; ')}`);
+    }
   }
 
   return lines.join('\n');

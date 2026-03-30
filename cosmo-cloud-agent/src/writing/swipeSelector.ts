@@ -277,6 +277,34 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
     hookMechanism: (analysis.hookMechanism as string) || '',
     structuralRecipe: (analysis.structuralRecipe as string) || '',
     voiceMarkers: (analysis.voiceMarkers as string[]) || [],
+    quarkSummary: buildQuarkSummaryFromAtom(atom),
+  };
+}
+
+function buildQuarkSummaryFromAtom(atom: Atom): CompressedSwipe['quarkSummary'] {
+  const physics = atom.structured?.contentPhysics;
+  if (!physics?.version) return undefined;
+
+  // Import would create circular dep — inline the summary extraction
+  const actCounts: Record<string, number> = {};
+  for (const sq of (physics.slideQuarks || [])) {
+    const act = sq.speechAct?.type;
+    if (act) actCounts[act] = (actCounts[act] || 0) + 1;
+  }
+  const dominantSpeechActs = Object.entries(actCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([act]) => act);
+
+  return {
+    dominantSpeechActs,
+    arcShape: physics.arcQuarks?.shape || '',
+    symmetryBreakSlide: physics.physicsEvents?.symmetryBreak?.slideNumber || 0,
+    phaseTransition: physics.physicsEvents?.phaseTransition?.frameBefore && physics.physicsEvents?.phaseTransition?.frameAfter
+      ? `${physics.physicsEvents.phaseTransition.frameBefore} → ${physics.physicsEvents.phaseTransition.frameAfter}`
+      : undefined,
+    peakGravityLoops: physics.physicsEvents?.peakGravity?.activeLoops || 0,
+    novelDiscoveries: (physics.novelDiscoveries || []).slice(0, 2),
   };
 }
 

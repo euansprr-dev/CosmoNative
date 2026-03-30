@@ -246,7 +246,7 @@ export class CloudWritingEngine {
     // Build blocks
     const block1 = await assembleBlock1(this.targetFormat);
     const block2 = await assembleBlock2(this.clientAtom, lessons);
-    const block3a = assembleBlock3Stable(
+    const block3a = await assembleBlock3Stable(
       this.selectedSwipes,
       this.clientAtom?.metadata?.niche as string | null || null,
       experiences,
@@ -471,6 +471,8 @@ Call the think tool ONCE to analyze the ${label} across ALL of these dimensions.
     - ENERGY RESOLUTION: Where does accumulated tension convert to catharsis/meaning/action? Is the resolution proportional to the buildup?
     - PEAK GRAVITY: At which slide boundary are the most open loops active? Does this coincide with the phase transition?
 
+    Compare your findings to the CONTENT PHYSICS CODEX in your context (if present). Does the blueprint follow the statistical patterns (e.g., symmetry break position, open loops at transition)? Where does it deviate? Deviations may be innovations worth preserving OR weaknesses to address.
+
 ────────────────────────────────────────
 THINK 2: CROSS-REFERENCE SWIPES + ABSORB CLIENT (all in ONE think)
 ────────────────────────────────────────
@@ -487,11 +489,12 @@ SWIPE CALIBRATION (scan 3-5 of the other loaded swipes):
 
 2d. DEPTH RHYTHM — For 3-5 swipes, measure DEPTH per slide — not just word count, but information density. How many facts/details per slide? Some slides are one raw emotional statement with zero facts. Others pack 3 specific numbers into 2 sentences. Note which beat positions are dense with information vs sparse/emotional. Your draft must match this rhythm — don't pad emotional beats with information, and don't strip detail from teaching beats.
 
-2e. QUARK PATTERNS (light comparison — not full extraction):
-    - What transition types repeat across 3+ swipes at similar positions? (These are format requirements)
+2e. QUARK PATTERNS — Cross-reference the quark summaries in your loaded swipes AND the Content Physics Codex (if present in your context). The codex shows statistical laws from all analyzed viral posts in the library.
+    - What transition types repeat across 3+ swipes at similar positions? Do they match the codex's statistics?
     - What reader deltas are most common at hook, middle, and ending positions?
     - What arc shapes appear in the best-performing swipes? (Oscillating win/loss? Linear rise? Rise-crash-rise?)
     - What makes the best swipes' decisions feel motivated vs the weaker ones' decisions feel random?
+    - Where does the blueprint align with the codex's proven patterns? Where does it deviate?
 
 CLIENT ABSORPTION:
 

@@ -9,6 +9,7 @@
 
 import { Atom, fetchAtom, fetchAllByType, loadPromptTemplate } from '../db/queries';
 import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem } from './types';
+import { getCodexText } from './codex';
 import { computeSwipeIntelligenceBrief } from './swipeSelector';
 
 export interface WritingBlock {
@@ -403,11 +404,11 @@ export function getSwipeApplicationRules(swipeCount: number, primarySwipe?: Comp
 // Block 3A: Stable Session Context (Swipes + Rules)
 // ============================================================
 
-export function assembleBlock3Stable(
+export async function assembleBlock3Stable(
   swipes: CompressedSwipe[],
   clientNiche: string | null,
   experiences?: Array<{ generated: string; edited: string; summary: string; format?: string }>,
-): WritingBlock {
+): Promise<WritingBlock> {
   const sections: string[] = [];
 
   sections.push('=== STABLE SESSION CONTEXT ===');
@@ -421,6 +422,16 @@ export function assembleBlock3Stable(
   if (brief) {
     sections.push('');
     sections.push(brief);
+  }
+
+  // Content Physics Codex (statistical laws from all extracted swipe profiles)
+  const codexText = await getCodexText();
+  if (codexText) {
+    sections.push('');
+    sections.push('=== CONTENT PHYSICS CODEX ===');
+    sections.push('(Statistical laws derived from analyzed viral posts — these are proven patterns, not guidelines)');
+    sections.push('');
+    sections.push(codexText);
   }
 
   // Swipe examples

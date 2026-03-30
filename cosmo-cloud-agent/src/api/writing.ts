@@ -13,6 +13,8 @@
 
 import { Request, Response, Router } from 'express';
 import { generateOutline, generateDraft, reviseDraft, readDraft } from '../tools/writing';
+import { batchExtractAll } from '../writing/quarkExtractor';
+import { computeCodex, saveCodexAtom, invalidateCodexCache } from '../writing/codex';
 import { config } from '../config';
 
 export const writingRouter = Router();
@@ -165,6 +167,47 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
     res.json(parsed);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ============================================================
+// Content Physics Codex
+// ============================================================
+
+writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
+  if (!authenticate(req, res)) return;
+  const { reExtractAll } = req.body || {};
+
+  try {
+    // Step 1: Extract quarks for all unextracted swipes (or re-extract all)
+    console.log(`\n  🔬 Codex generation requested (reExtractAll: ${!!reExtractAll})`);
+    const extractionResult = await batchExtractAll({ reExtractAll: !!reExtractAll });
+
+    // Step 2: Compute aggregate codex from all profiles
+    const { codexText, stats } = await computeCodex();
+
+    // Step 3: Save codex as a dedicated atom (human-viewable + model-readable)
+    const codexUUID = await saveCodexAtom(codexText);
+    invalidateCodexCache();
+
+    res.json({
+      success: true,
+      extraction: {
+        total: extractionResult.total,
+        extracted: extractionResult.extracted,
+        skipped: extractionResult.skipped,
+        failed: extractionResult.failed.length,
+      },
+      codex: {
+        uuid: codexUUID,
+        profileCount: stats.totalProfiles,
+        preview: codexText.substring(0, 500) + '...',
+      },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`  ❌ Codex generation failed: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

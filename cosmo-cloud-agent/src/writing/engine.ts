@@ -645,9 +645,9 @@ Work through your plan slide by slide. For each slide:
 
 8. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
 
-8. The PRIMARY BLUEPRINT controls WHAT each slide does. The supporting swipes only teach HOW to say that kind of slide naturally. Do NOT import extra beats, extra setup, or random detail slides from supporting examples.
+9. The PRIMARY BLUEPRINT controls WHAT each slide does. The supporting swipes only teach HOW to say that kind of slide naturally. Do NOT import extra beats, extra setup, or random detail slides from supporting examples.
 
-9. Sparse emotional slides stay sparse. Do NOT cram every available detail into them just because you know the story.
+10. Sparse emotional slides stay sparse. Do NOT cram every available detail into them just because you know the story.
 
 ────────────────────────────────────────
 THE VISUAL SHAPE TEST

@@ -33,20 +33,21 @@ final class CodexViewModel {
         }
     }
 
+    private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
+
     func generateCodex(reExtractAll: Bool = false) async {
         isGenerating = true
         progress = reExtractAll ? "Re-extracting all swipes with Opus 4.6..." : "Extracting unanalyzed swipes with Opus 4.6..."
         error = nil
 
         do {
-            guard let baseURL = UserDefaults.standard.string(forKey: "cloudAgentURL"),
-                  let apiKey = UserDefaults.standard.string(forKey: "cloudAgentAPIKey") else {
-                error = "Cloud agent URL or API key not configured in Cloud Sync settings"
+            guard let apiKey = APIKeys.supabaseServiceRoleKey else {
+                error = "Supabase service role key not configured"
                 isGenerating = false
                 return
             }
 
-            let url = URL(string: "\(baseURL)/api/writing/codex/generate")!
+            let url = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

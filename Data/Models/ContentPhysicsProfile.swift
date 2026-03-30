@@ -82,9 +82,54 @@ struct QuarkTransition: Codable, Identifiable {
 struct ArcQuarks: Codable {
     let shape: String?
     let winLossReversals: Int?
-    let tensionPeaks: [Int]?
     let sparseDensePattern: String?
     let internalExternalTension: InternalExternalTension?
+
+    // tensionPeaks: Opus may output [Int], [{"slide":N}], or other shapes — decode flexibly
+    let tensionPeaks: [FlexibleJSONValue]?
+
+    var tensionPeakSlides: [Int] {
+        guard let peaks = tensionPeaks else { return [] }
+        return peaks.compactMap { peak in
+            if let intVal = peak.intValue { return intVal }
+            if let dict = peak.dictValue, let slide = dict["slide"] as? Int { return slide }
+            if let dict = peak.dictValue, let slide = dict["slideNumber"] as? Int { return slide }
+            return nil
+        }
+    }
+}
+
+/// Flexible JSON value wrapper — handles LLM output type mismatches
+struct FlexibleJSONValue: Codable {
+    let value: Any
+
+    var intValue: Int? { value as? Int ?? (value as? Double).map(Int.init) }
+    var stringValue: String? { value as? String }
+    var dictValue: [String: Any]? { value as? [String: Any] }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let int = try? container.decode(Int.self) { value = int }
+        else if let double = try? container.decode(Double.self) { value = double }
+        else if let string = try? container.decode(String.self) { value = string }
+        else if let bool = try? container.decode(Bool.self) { value = bool }
+        else if let dict = try? container.decode([String: FlexibleJSONValue].self) {
+            value = dict.mapValues { $0.value }
+        }
+        else if let array = try? container.decode([FlexibleJSONValue].self) {
+            value = array.map { $0.value }
+        }
+        else { value = "null" }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let int = value as? Int { try container.encode(int) }
+        else if let double = value as? Double { try container.encode(double) }
+        else if let string = value as? String { try container.encode(string) }
+        else if let bool = value as? Bool { try container.encode(bool) }
+        else { try container.encode("unknown") }
+    }
 }
 
 struct InternalExternalTension: Codable {

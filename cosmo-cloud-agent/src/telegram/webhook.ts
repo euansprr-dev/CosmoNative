@@ -207,8 +207,9 @@ async function handleCommand(compositeId: string, text: string, chatId: string, 
       const { loadConversation, saveConversation } = await import('../db/queries');
       const existing = await loadConversation(compositeId);
 
-      // Summarize before clearing (preserve context)
-      let summary = existing?.summary || '';
+      // Summarize ONLY high-level context (no drafts, no revision feedback, no creative decisions)
+      // REPLACES old summary entirely — no accumulation
+      let summary = '';
       if (existing?.messages && existing.messages.length > 0) {
         try {
           const msgText = existing.messages
@@ -222,22 +223,20 @@ async function handleCommand(compositeId: string, text: string, chatId: string, 
             body: JSON.stringify({
               model: config.models.sensor,
               messages: [
-                { role: 'system', content: 'Summarize in 2 sentences. Preserve: client names, content created, key decisions.' },
+                { role: 'system', content: 'Summarize in 1-2 sentences. ONLY preserve: which clients were discussed and what type of content was worked on. Do NOT include any draft text, slide content, revision feedback, creative decisions, or specific writing changes. Keep it purely factual: "Worked on a carousel for [client]" level only.' },
                 { role: 'user', content: msgText },
               ],
-              max_tokens: 128,
+              max_tokens: 80,
             }),
           });
           const data = await response.json() as any;
-          const newSummary = data.choices?.[0]?.message?.content || '';
-          if (newSummary) {
-            summary = summary ? `${summary} | ${newSummary}` : newSummary;
-          }
+          summary = data.choices?.[0]?.message?.content || '';
         } catch {}
       }
 
+      // Full reset — replace summary (don't accumulate), clear messages
       await saveConversation(compositeId, [], { summary: summary || undefined });
-      await sendMessage(chatId, 'Context cleared ✓\nStarting fresh — previous context summarized for continuity.', threadId);
+      await sendMessage(chatId, 'Context cleared ✓\nStarting fresh — no draft or revision context carried over.', threadId);
       break;
     }
     default:

@@ -38,12 +38,13 @@ export async function assembleSystemPrompt(
   chatId: string,
   conversationSummary?: string,
   activeItemsContext?: string,
+  activeClientUUID?: string | null,
 ): Promise<SystemPrompt> {
   // Layer 1: Cached (identity + methodology + tool guidelines)
   const cached = await buildCachedPrompt(intent);
 
   // Layer 2: Dynamic (GRDB context, preferences, lessons, conversation)
-  const dynamic = await buildDynamicPrompt(intent, chatId, conversationSummary, activeItemsContext);
+  const dynamic = await buildDynamicPrompt(intent, chatId, conversationSummary, activeItemsContext, activeClientUUID);
 
   return { cached, dynamic };
 }
@@ -85,6 +86,7 @@ async function buildDynamicPrompt(
   chatId: string,
   conversationSummary?: string,
   activeItemsContext?: string,
+  activeClientUUID?: string | null,
 ): Promise<string> {
   // Check per-chatId cache
   const now = Date.now();
@@ -119,7 +121,7 @@ async function buildDynamicPrompt(
 
   // Learned skills/lessons (skip for lightweight intents)
   if (!['capture', 'correct', 'plan'].includes(intent)) {
-    const skills = await buildSkills(intent);
+    const skills = await buildSkills(intent, activeClientUUID || undefined);
     if (skills) sections.push(skills);
   }
 
@@ -333,7 +335,7 @@ async function buildPreferences(): Promise<string | null> {
   return lines.join('\n');
 }
 
-async function buildSkills(intent: AgentIntent): Promise<string | null> {
+async function buildSkills(intent: AgentIntent, activeClientUUID?: string): Promise<string | null> {
   const all = await fetchAllByType('agent_learning');
   let lessons = all.filter(a => a.metadata?.subtype === 'lesson');
 
@@ -345,6 +347,15 @@ async function buildSkills(intent: AgentIntent): Promise<string | null> {
       return lessonIntent === intent;
     });
   }
+
+  // Filter by client scope — only show lessons for the active client or universal lessons
+  // Prevents draft-specific feedback for one client from leaking into another client's session
+  lessons = lessons.filter(a => {
+    const lessonClientUUID = a.metadata?.clientUUID as string | undefined;
+    if (!lessonClientUUID) return true; // Universal (no client) — always included
+    if (!activeClientUUID) return true; // No active client context — include all
+    return lessonClientUUID === activeClientUUID; // Only include if matches active client
+  });
 
   if (lessons.length === 0) return null;
 

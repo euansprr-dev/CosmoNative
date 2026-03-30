@@ -206,18 +206,19 @@ export async function processMessage(
   if (fastCaptureResult) return fastCaptureResult;
 
   // 2. Session rotation — summarize older messages if conversation is long
+  // REPLACE summary (don't accumulate) — prevents old draft/feedback leaking across sessions
   let conversationSummary = existingConv?.summary || '';
   if (messages.length > 15) {
     const { summary, recentMessages } = await summarizeOlderMessages(messages, chatId);
     if (summary) {
-      conversationSummary = conversationSummary ? `${conversationSummary} | ${summary}` : summary;
+      conversationSummary = summary; // Replace, not accumulate
       messages.length = 0;
       messages.push(...recentMessages);
     }
   }
 
   // 3. Assemble system prompt (with conversation summary + active items context)
-  const systemPrompt = await assembleSystemPrompt(intent, chatId, conversationSummary);
+  const systemPrompt = await assembleSystemPrompt(intent, chatId, conversationSummary, undefined, activeClientUUID);
 
   // Append active items context if available for this chat
   const activeItems = activeItemsContext.get(chatId) || '';

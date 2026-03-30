@@ -41,11 +41,14 @@ final class CodexViewModel {
         error = nil
 
         do {
+            print("🔬 Codex: Starting generation (reExtractAll: \(reExtractAll))")
             guard let apiKey = APIKeys.supabaseServiceRoleKey else {
+                print("🔬 Codex: ERROR — no Supabase service role key")
                 error = "Supabase service role key not configured"
                 isGenerating = false
                 return
             }
+            print("🔬 Codex: API key found, calling \(Self.cloudBaseURL)/api/writing/codex/generate")
 
             let url = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!
             var request = URLRequest(url: url)
@@ -57,10 +60,12 @@ final class CodexViewModel {
 
             let (data, response) = try await URLSession.shared.data(for: request)
 
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let body = String(data: data, encoding: .utf8) ?? ""
-                error = "Server error (\(statusCode)): \(body.prefix(200))"
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let responseBody = String(data: data, encoding: .utf8) ?? ""
+            print("🔬 Codex: Response status \(statusCode), body: \(responseBody.prefix(300))")
+
+            guard statusCode == 200 else {
+                error = "Server error (\(statusCode)): \(responseBody.prefix(200))"
                 isGenerating = false
                 return
             }
@@ -190,6 +195,14 @@ struct CodexSettingsTab: View {
                 .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
+
+            if let error = viewModel.error {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.red)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
+            }
 
             generateButton
         }

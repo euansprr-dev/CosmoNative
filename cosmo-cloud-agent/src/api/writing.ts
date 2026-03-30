@@ -31,9 +31,13 @@ function authenticate(req: Request, res: Response): boolean {
     return false;
   }
 
-  const token = authHeader.slice(7);
+  let token = authHeader.slice(7);
+  // Handle Swift Optional(...) string wrapping quirk — Swift String? interpolation
+  // produces "Optional("eyJ...")" instead of the raw value
+  if (token.startsWith('Optional("') && token.endsWith('")')) {
+    token = token.slice(10, -2);
+  }
   // Accept either the Supabase service role key or a simple shared secret
-  // For now, check against the configured API key
   if (token !== config.writingApiKey && token !== process.env.SUPABASE_SERVICE_ROLE_KEY) {
     res.status(403).json({ error: 'Invalid API key' });
     return false;

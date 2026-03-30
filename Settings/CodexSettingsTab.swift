@@ -42,7 +42,7 @@ final class CodexViewModel {
 
         do {
             print("🔬 Codex: Starting generation (reExtractAll: \(reExtractAll))")
-            let apiKey = APIKeys.supabaseServiceRoleKey
+            let apiKey: String = APIKeys.supabaseServiceRoleKey ?? ""
             print("🔬 Codex: API key found, calling \(Self.cloudBaseURL)/api/writing/codex/generate")
 
             let url = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!

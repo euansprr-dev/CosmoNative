@@ -18,6 +18,41 @@ import {
 const MAX_INNER_ITERATIONS = 10;
 const MAX_PHASE_ITERATIONS = 5; // Pipeline phases (plan/write/edit) need fewer iterations than open-ended conversation
 
+type SlideDepthType = 'sparse_emotional' | 'bridge' | 'proof' | 'detail_dense' | 'payoff' | 'unknown';
+
+interface StructuredSlideContract {
+  slideNumber: number;
+  beatFunction: string;
+  prerequisites: string;
+  targetWords: number | null;
+  targetWordBand: [number, number] | null;
+  targetSentences: number | null;
+  targetSentenceBand: [number, number] | null;
+  format: string;
+  content: string;
+  transitionExpectation: string;
+  depthType: SlideDepthType;
+  allowedAdaptation?: string;
+  requiredAddressPrefix?: string | null;
+  requiresYearMarker?: boolean;
+}
+
+interface StructuredSlidePlan {
+  blueprintSlideCount: number;
+  voicePattern: string;
+  tensePattern: string;
+  directAddressPrefix: string | null;
+  endingZoneStartsAt: number;
+  slides: StructuredSlideContract[];
+}
+
+interface NarrativeValidationViolation {
+  kind: 'blueprint_fidelity' | 'conversationality';
+  slideNumbers: number[];
+  message: string;
+  evidence?: string;
+}
+
 // ============================================================
 // Engine Cache (matches Swift: max 3 engines, 30min TTL)
 // ============================================================
@@ -112,6 +147,7 @@ export class CloudWritingEngine {
 
   // 3-phase pipeline: writing plan created in Phase 1, used in Phases 2-3
   private writingPlan: string | null = null;
+  private structuredSlidePlan: StructuredSlidePlan | null = null;
 
   // Blueprint anchor — resolved in initialize() (true primary or highest-scoring fallback)
   private blueprintAnchor: CompressedSwipe | null = null;
@@ -167,6 +203,7 @@ export class CloudWritingEngine {
       this.writingContext = structured.writingContext as import('./contextAssembler').WritingContext;
       this.analysisDepth = this.writingContext.analysisDepth || 0;
       this.writingPlan = this.writingContext.writingPlan || null;
+      this.structuredSlidePlan = (this.writingContext as any).structuredSlidePlan || null;
       // analysisDepth persists across phases — no boolean flags needed
       // If LLM did deep analysis in outline phase, gates stay open for draft phase
     }
@@ -432,6 +469,9 @@ For EACH slide (same count as ${label}), write:
   Format: [from your visual format analysis — bullets? breaks? fragments?]
   Content: [what specific information goes here — cite real client details by name]
   Transition to next: [the connector type you identified]
+  Depth Type: [sparse_emotional | bridge | proof | detail_dense | payoff]
+  Voice Requirement: [how this slide must sound to preserve the blueprint's POV/direct-address pattern]
+  Allowed Adaptation: [what may change creatively without changing the slide's job]
 
 For slides where the blueprint's specific detail (luxury purchase, specific career move) doesn't naturally exist in the client's story, write:
   ADAPTED: [blueprint function: e.g., gratitude gesture via luxury watch] → [client equivalent: genuine expression matching the client's actual story]
@@ -482,7 +522,7 @@ This plan is your construction blueprint. Phase 2 will follow it slide by slide.
 
     const planBlock: WritingBlock = {
       label: 'Writing Plan',
-      content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}`,
+      content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}${this.buildStructuredPlanSummary()}`,
       cacheControl: true, // Plan is stable across Phase 2 iterations — use 4th cache breakpoint (Block1 + Block2 + plan + last user msg = 4)
     };
 
@@ -528,6 +568,10 @@ Work through your plan slide by slide. For each slide:
 6. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
 
 7. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
+
+8. The PRIMARY BLUEPRINT controls WHAT each slide does. The supporting swipes only teach HOW to say that kind of slide naturally. Do NOT import extra beats, extra setup, or random detail slides from supporting examples.
+
+9. Sparse emotional slides stay sparse. Do NOT cram every available detail into them just because you know the story.
 
 ────────────────────────────────────────
 THE VISUAL SHAPE TEST
@@ -607,6 +651,10 @@ FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this
       content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed. You have the writing plan, the ${this.getBlueprintLabel()} structural summary, the quality rules, and the current draft.
 
 Call the think tool ONCE to run ALL 8 checks below in a single comprehensive analysis. For each check, write PASS or FAIL with specific evidence (quote the slide text, cite the word count). Then fix everything that fails and call write_draft with the corrected version. If all 8 pass, respond with a brief summary listing each check and its result.
+
+The two hard gates are:
+- CONVERSATIONALITY: slides must sound like speech, not narration or caption copy
+- BLUEPRINT FIDELITY: each slide must still be doing the same job as the blueprint slide in that position
 
 ────────────────────────────────────────
 CHECK 1: SLIDE COUNT
@@ -698,7 +746,20 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
     });
 
     const block3b = this.buildDynamicBlock();
-    const result = await this.runConversationLoop('draft', block3b, 'edit');
+    let result = await this.runConversationLoop('draft', block3b, 'edit');
+
+    const finalDraft = this.contentAtom?.body || '';
+    const blockingViolations = this.getBlockingNarrativeViolations(finalDraft);
+    if (blockingViolations.length > 0) {
+      console.log(`  ⚠️ Self-edit did not clear blocking narrative violations (${blockingViolations.length}) — forcing repair pass`);
+      this.messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: `Binding repair pass. The draft still fails the hard gates below. Fix ONLY these exact slide issues and call write_draft with the corrected full draft.\n\n${formatNarrativeViolations(blockingViolations)}`,
+        timestamp: new Date().toISOString(),
+      });
+      result = await this.runConversationLoop('draft', this.buildDynamicBlock(), 'edit');
+    }
 
     this.blocks = originalBlocks;
     return result;
@@ -706,6 +767,41 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
 
   private getBlueprintLabel(): string {
     return this.hasTruePrimaryBlueprint ? 'PRIMARY BLUEPRINT' : 'STRUCTURAL ANCHOR';
+  }
+
+  private buildStructuredPlanSummary(): string {
+    if (!this.structuredSlidePlan || this.structuredSlidePlan.slides.length === 0) return '';
+
+    const lines: string[] = [];
+    lines.push('\n\n═══ STRUCTURED SLIDE CONTRACT ═══');
+    lines.push(`Voice Pattern: ${this.structuredSlidePlan.voicePattern || 'unspecified'}`);
+    lines.push(`Tense Pattern: ${this.structuredSlidePlan.tensePattern || 'unspecified'}`);
+    if (this.structuredSlidePlan.directAddressPrefix) {
+      lines.push(`Direct Address Prefix: ${this.structuredSlidePlan.directAddressPrefix}`);
+    }
+    lines.push(`Blueprint Slide Count: ${this.structuredSlidePlan.blueprintSlideCount}`);
+    for (const slide of this.structuredSlidePlan.slides) {
+      const words = slide.targetWordBand ? `${slide.targetWordBand[0]}-${slide.targetWordBand[1]} words` : 'flex words';
+      lines.push(`Slide ${slide.slideNumber}: [${slide.beatFunction}] ${slide.depthType}, ${words}, transition=${slide.transitionExpectation || 'none'}`);
+    }
+    return lines.join('\n');
+  }
+
+  private getBlockingNarrativeViolations(draft: string): NarrativeValidationViolation[] {
+    if (!draft || !this.blueprintAnchor || !this.structuredSlidePlan) return [];
+
+    const draftSlides = extractContentSlides(draft);
+    const blueprintSlides = extractContentSlides(this.blueprintAnchor.fullBody || '');
+    const blueprintViolations = validateBlueprintFidelity(
+      draftSlides,
+      blueprintSlides,
+      this.structuredSlidePlan,
+    );
+    const conversationalViolations = validateConversationality(
+      draftSlides,
+      this.structuredSlidePlan,
+    );
+    return [...blueprintViolations, ...conversationalViolations];
   }
 
   private getBlueprintStructuralSummary(): string {
@@ -793,6 +889,7 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
     // Supporting examples
     sections.push('═══ SUPPORTING EXAMPLES — STYLE REFERENCE ═══');
     sections.push('Study these for copy quality, transitions, and formatting patterns.');
+    sections.push('These do NOT get to change the blueprint story structure. They only help you say each slide more naturally.');
     sections.push('NOTICE: line breaks within slides, -- bullet lists, short sentences.\n');
 
     for (const swipe of this.selectedSwipes) {
@@ -1227,6 +1324,16 @@ Only after thorough analysis can you call write_draft.`;
           console.log(`    ✅ Voice compliance passed`);
         }
 
+        // Slide-level narrative quality checks
+        const narrativeViolations = this.getBlockingNarrativeViolations(content);
+        if (narrativeViolations.length > 0) {
+          console.log(`    ⚠️ Narrative quality violations (${narrativeViolations.length}): ${narrativeViolations.map(v => `[${v.kind}] ${v.message.substring(0, 80)}`).join('; ')}`);
+          result += `\n\n⚠️ HARD NARRATIVE QUALITY FAILURES:`;
+          result += `\n${formatNarrativeViolations(narrativeViolations)}`;
+        } else {
+          console.log('    ✅ Blueprint fidelity + conversational slide checks passed');
+        }
+
         // Self-evaluation
         const selfEval = args.selfEvaluation;
         if (selfEval) {
@@ -1237,7 +1344,7 @@ Only after thorough analysis can you call write_draft.`;
         }
 
         // Auto-refine prompt if violations found
-        if (deterministicViolations.length > 0 || voiceViolations.length > 0) {
+        if (deterministicViolations.length > 0 || voiceViolations.length > 0 || narrativeViolations.length > 0) {
           this.refinementCount = (this.refinementCount || 0) + 1;
           if (this.refinementCount <= 2) {
             result += `\n\nAUTO-REFINEMENT PASS ${this.refinementCount}/2: Fix the violations above, then call write_draft again with the corrected content.`;
@@ -1245,7 +1352,7 @@ Only after thorough analysis can you call write_draft.`;
         }
 
         // Self-review injection — fires once per draft, after all deterministic validation
-        if (!this.hasCompletedSelfReview && deterministicViolations.length === 0 && voiceViolations.length === 0) {
+        if (!this.hasCompletedSelfReview && deterministicViolations.length === 0 && voiceViolations.length === 0 && narrativeViolations.length === 0) {
           this.hasCompletedSelfReview = true;
 
           result += `\n\n═══ SELF-REVIEW REQUIRED ═══
@@ -1262,6 +1369,8 @@ Then compare your draft against:
 • ALL skill modules (Dinner Table Test, Slide Density, Causal Chaining, Hook Craft, Voice Matching, CTA Craft) — does your draft pass every test described in these modules?
 • ALL learned rules and failure fingerprint in your client intelligence — are any rules violated?
 • Your own pre-write analysis — did you follow the patterns you identified?
+• The structured slide contract — is each slide still doing the blueprint slide's job?
+• Conversationality — does each sparse slide sound like speech instead of narration?
 
 Call think with your self-review findings. If ANY check fails, call write_draft with corrections.
 If ALL checks pass, present the draft.
@@ -1280,6 +1389,9 @@ If ALL checks pass, present the draft.
         }
         this.writingPlan = plan;
         this.writingContext.writingPlan = plan;
+        const structuredPlan = buildStructuredSlidePlan(plan, this.blueprintAnchor?.fullBody || '', args.structuredPlan);
+        this.structuredSlidePlan = structuredPlan;
+        (this.writingContext as any).structuredSlidePlan = structuredPlan;
 
         // Log plan quality signals
         const hasSlideEntries = (plan.match(/Slide \d+/gi) || []).length;
@@ -1298,7 +1410,7 @@ If ALL checks pass, present the draft.
         }
         console.log(`    📋 ════════ END WRITING PLAN ════════`);
 
-        return `Writing plan created (${planWords} words). The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
+        return `Writing plan created (${planWords} words). Structured slide contract: ${structuredPlan.slides.length} slides. The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }
 
       case 'read_draft': {
@@ -1899,7 +2011,7 @@ If ALL checks pass, present the draft.
     if (pipelineStep === 'plan') {
       return [
         { name: 'think', description: 'Internal reasoning — use before complex decisions', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
-        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan. Must cover: content analysis, voice & style, slide-by-slide blueprint, rules checklist, quality targets. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' } }, required: ['plan'] } },
+        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan. Must cover: content analysis, voice & style, slide-by-slide blueprint, rules checklist, quality targets. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' }, structuredPlan: { type: 'object', description: 'Structured slide contract for deterministic validation', properties: { voicePattern: { type: 'string' }, tensePattern: { type: 'string' }, directAddressPrefix: { type: 'string' }, slides: { type: 'array', items: { type: 'object', properties: { slideNumber: { type: 'number' }, beatFunction: { type: 'string' }, prerequisites: { type: 'string' }, targetWords: { type: 'number' }, targetSentences: { type: 'number' }, format: { type: 'string' }, content: { type: 'string' }, transitionExpectation: { type: 'string' }, depthType: { type: 'string', enum: ['sparse_emotional', 'bridge', 'proof', 'detail_dense', 'payoff', 'unknown'] }, allowedAdaptation: { type: 'string' } }, required: ['slideNumber', 'beatFunction'] } } } } }, required: ['plan'] } },
         { name: 'search_swipes', description: 'Search loaded swipe library', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
         { name: 'read_swipe_body', description: 'Load full swipe text', parameters: { type: 'object', properties: { swipe_id: { type: 'string' } }, required: ['swipe_id'] } },
         { name: 'analyze_swipe_patterns', description: 'Analyze patterns across swipe library', parameters: { type: 'object', properties: { focus: { type: 'string', enum: ['hooks', 'persuasion', 'emotional_arc', 'engagement', 'all'] } } } },
@@ -2033,15 +2145,18 @@ If ALL checks pass, present the draft.
 
     // Format-specific content guidance
     if (this.targetFormat === 'carousel' || this.targetFormat === 'thread') {
-      rules.push('• [FORMAT] CAROUSEL: 3-6 sentences/slide, 50-100 words, bullet points (--), specific numbers in EVERY slide');
-      rules.push('• [FORMAT] Each slide must TEACH or PROVE something — no empty narrative slides');
-      rules.push('• [FORMAT] Count specifics (numbers, $, %, names) in your loaded swipes and MATCH that density');
+      rules.push('• [FORMAT] Match the PRIMARY BLUEPRINT slide density, not a generic carousel average');
+      rules.push('• [FORMAT] Sparse emotional slides stay sparse. Proof slides carry the heavy specifics.');
+      rules.push('• [FORMAT] Support swipes teach natural phrasing and depth rhythm, not story structure');
     } else {
-      rules.push('• [FORMAT] REEL: 1-2 sentences/slide, 10-25 words, punchy conversational tone');
+      rules.push('• [FORMAT] Match the PRIMARY BLUEPRINT slide density and pacing');
+      rules.push('• [FORMAT] Keep slides conversational, one thought per slide, no narration drift');
     }
 
     // Write directive
     rules.push('• WRITE the draft using loaded context. Do NOT ask for more information.');
+    rules.push('• BLUEPRINT slides decide what happens. Supporting swipes only help you say it naturally.');
+    rules.push('• If a slide is meant to be emotional and sparse, do not overload it with facts.');
 
     return rules.join('\n');
   }
@@ -2396,4 +2511,466 @@ function checkVoiceCompliance(draft: string, clientAtom: Atom | null): string[] 
   }
 
   return violations;
+}
+
+interface SlideSnapshot {
+  slideNumber: number;
+  text: string;
+  lowerText: string;
+  words: number;
+  sentences: number;
+  specificityCount: number;
+  addressPrefix: string | null;
+  startsWithYear: boolean;
+  hasListSyntax: boolean;
+  hasFirstPerson: boolean;
+  commaCount: number;
+  clauseJoinerCount: number;
+}
+
+function formatNarrativeViolations(violations: NarrativeValidationViolation[]): string {
+  return violations.map(v => {
+    const slides = v.slideNumbers.length > 0 ? `Slide${v.slideNumbers.length > 1 ? 's' : ''} ${v.slideNumbers.join(', ')}` : 'Draft';
+    const evidence = v.evidence ? `\n    Evidence: ${v.evidence}` : '';
+    return `  - [${v.kind}] ${slides}: ${v.message}${evidence}`;
+  }).join('\n');
+}
+
+function buildStructuredSlidePlan(
+  planText: string,
+  blueprintBody: string,
+  structuredPlanArg?: any,
+): StructuredSlidePlan {
+  const blueprintSlides = extractContentSlides(blueprintBody);
+  const blueprintSlideCount = blueprintSlides.length || Math.max((planText.match(/^Slide \d+:/gim) || []).length, 0);
+
+  const voicePattern = extractSection(planText, 'VOICE PATTERN', 'TENSE PATTERN');
+  const tensePattern = extractSection(planText, 'TENSE PATTERN', 'VOICE RULES');
+  const fallbackDirectAddress = inferRepeatedDirectAddressPrefix(blueprintSlides);
+
+  let slides: StructuredSlideContract[] = [];
+  if (structuredPlanArg?.slides && Array.isArray(structuredPlanArg.slides)) {
+    slides = structuredPlanArg.slides
+      .map((slide: any) => normalizeSlideContract(slide))
+      .filter((slide: StructuredSlideContract | null): slide is StructuredSlideContract => !!slide);
+  }
+
+  if (slides.length === 0) {
+    const blocks = planText.split(/(?=^Slide \d+:)/gm).filter(block => /^Slide \d+:/m.test(block));
+    slides = blocks.map(block => {
+      const header = block.match(/^Slide (\d+):\s*\[(.*?)\]/m);
+      const targetWords = parsePositiveInt(captureLabeledValue(block, 'Words'));
+      const targetSentences = parsePositiveInt(captureLabeledValue(block, 'Sentences'));
+      const format = captureLabeledValue(block, 'Format');
+      const content = captureLabeledValue(block, 'Content');
+      const transitionExpectation = captureLabeledValue(block, 'Transition to next');
+      const depthTypeRaw = captureLabeledValue(block, 'Depth Type');
+      const prerequisites = captureLabeledValue(block, 'Prerequisites') || 'none';
+      const allowedAdaptation = captureLabeledValue(block, 'Allowed Adaptation');
+      return normalizeSlideContract({
+        slideNumber: parsePositiveInt(header?.[1]) || 0,
+        beatFunction: header?.[2] || 'Unknown',
+        prerequisites,
+        targetWords,
+        targetSentences,
+        format,
+        content,
+        transitionExpectation,
+        depthType: depthTypeRaw || inferDepthType(`${header?.[2] || ''} ${content} ${transitionExpectation}`),
+        allowedAdaptation,
+      })!;
+    }).filter(Boolean);
+  }
+
+  const directAddressPrefix = sanitizeAddressPrefix(
+    structuredPlanArg?.directAddressPrefix
+      || extractDirectAddressPrefixFromVoicePattern(voicePattern)
+      || fallbackDirectAddress,
+  );
+
+  slides = slides.map((slide, index) => {
+    const blueprintSlide = blueprintSlides[index];
+    return {
+      ...slide,
+      requiredAddressPrefix: blueprintSlide?.addressPrefix || null,
+      requiresYearMarker: blueprintSlide?.startsWithYear || false,
+    };
+  });
+
+  const payoffIndex = slides.findIndex(slide => slide.depthType === 'payoff');
+  return {
+    blueprintSlideCount: blueprintSlideCount || slides.length,
+    voicePattern,
+    tensePattern,
+    directAddressPrefix,
+    endingZoneStartsAt: payoffIndex >= 0 ? payoffIndex + 1 : Math.max((blueprintSlideCount || slides.length) - 3, 1),
+    slides,
+  };
+}
+
+function normalizeSlideContract(raw: any): StructuredSlideContract | null {
+  const slideNumber = parsePositiveInt(raw?.slideNumber);
+  const beatFunction = String(raw?.beatFunction || raw?.beat || '').trim();
+  if (!slideNumber || !beatFunction) return null;
+
+  const targetWords = parsePositiveInt(raw?.targetWords);
+  const targetSentences = parsePositiveInt(raw?.targetSentences);
+  const depthType = normalizeDepthType(raw?.depthType || inferDepthType(`${beatFunction} ${raw?.content || ''}`));
+
+  return {
+    slideNumber,
+    beatFunction,
+    prerequisites: String(raw?.prerequisites || 'none').trim(),
+    targetWords: targetWords || null,
+    targetWordBand: buildToleranceBand(targetWords || null),
+    targetSentences: targetSentences || null,
+    targetSentenceBand: buildToleranceBand(targetSentences || null, 0),
+    format: String(raw?.format || '').trim(),
+    content: String(raw?.content || '').trim(),
+    transitionExpectation: String(raw?.transitionExpectation || '').trim(),
+    depthType,
+    allowedAdaptation: raw?.allowedAdaptation ? String(raw.allowedAdaptation).trim() : undefined,
+  };
+}
+
+function validateBlueprintFidelity(
+  draftSlides: SlideSnapshot[],
+  blueprintSlides: SlideSnapshot[],
+  structuredPlan: StructuredSlidePlan,
+): NarrativeValidationViolation[] {
+  const violations: NarrativeValidationViolation[] = [];
+  if (draftSlides.length !== structuredPlan.blueprintSlideCount) {
+    violations.push({
+      kind: 'blueprint_fidelity',
+      slideNumbers: [],
+      message: `Slide count ${draftSlides.length} does not match blueprint ${structuredPlan.blueprintSlideCount}`,
+    });
+  }
+
+  const priorText: string[] = [];
+  const maxSlides = Math.min(draftSlides.length, structuredPlan.slides.length);
+  for (let i = 0; i < maxSlides; i++) {
+    const draft = draftSlides[i];
+    const contract = structuredPlan.slides[i];
+    const blueprint = blueprintSlides[i];
+
+    if (contract.requiredAddressPrefix && draft.addressPrefix !== contract.requiredAddressPrefix) {
+      violations.push({
+        kind: 'blueprint_fidelity',
+        slideNumbers: [draft.slideNumber],
+        message: `Breaks the blueprint's direct-address pattern. Expected "${contract.requiredAddressPrefix}" opening.`,
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    if (contract.requiresYearMarker && !draft.startsWithYear) {
+      violations.push({
+        kind: 'blueprint_fidelity',
+        slideNumbers: [draft.slideNumber],
+        message: 'Missing the blueprint year-marker opening for this slide position.',
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    if (i < 3 && isSparseLike(contract.depthType)) {
+      const openingMax = contract.targetWordBand?.[1] || Math.max((blueprint?.words || 14) + 4, 16);
+      if (draft.words > Math.max(22, Math.round(openingMax * 1.35)) || draft.specificityCount > 2) {
+        violations.push({
+          kind: 'blueprint_fidelity',
+          slideNumbers: [draft.slideNumber],
+          message: 'Opening slide is overfilled versus the blueprint. It feels like setup/explanation instead of the intended sparse beat.',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+    }
+
+    if ((contract.depthType === 'proof' || contract.depthType === 'detail_dense') && draft.specificityCount === 0 && draft.words < 10) {
+      violations.push({
+        kind: 'blueprint_fidelity',
+        slideNumbers: [draft.slideNumber],
+        message: `This slide is supposed to carry proof/detail, but it is too vague to do the blueprint slide's job.`,
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    if (introducesOrphanRole(draft.text, priorText.join(' ')) && !looksLikeBridge(contract)) {
+      violations.push({
+        kind: 'blueprint_fidelity',
+        slideNumbers: [draft.slideNumber],
+        message: 'Introduces a new role/event without enough setup. This reads like a random inserted slide, not a clean blueprint progression.',
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    if (draft.slideNumber >= structuredPlan.endingZoneStartsAt && containsEndingConflict(draft.lowerText)) {
+      violations.push({
+        kind: 'blueprint_fidelity',
+        slideNumbers: [draft.slideNumber],
+        message: 'The ending zone reintroduces conflict instead of paying off cleanly like the blueprint.',
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    priorText.push(draft.text);
+  }
+
+  return dedupeNarrativeViolations(violations);
+}
+
+function validateConversationality(
+  draftSlides: SlideSnapshot[],
+  structuredPlan: StructuredSlidePlan,
+): NarrativeValidationViolation[] {
+  const violations: NarrativeValidationViolation[] = [];
+  const maxSlides = Math.min(draftSlides.length, structuredPlan.slides.length);
+
+  for (let i = 0; i < maxSlides; i++) {
+    const draft = draftSlides[i];
+    const contract = structuredPlan.slides[i];
+    const isSparse = isSparseLike(contract.depthType);
+
+    if (structuredPlan.directAddressPrefix && (contract.requiredAddressPrefix || isSparse) && draft.addressPrefix !== (contract.requiredAddressPrefix || structuredPlan.directAddressPrefix)) {
+      violations.push({
+        kind: 'conversationality',
+        slideNumbers: [draft.slideNumber],
+        message: 'Slides drifted out of the conversational direct-address voice and into narration.',
+        evidence: trimEvidence(draft.text),
+      });
+    }
+
+    if (isSparse) {
+      const maxWords = contract.targetWordBand?.[1] || 18;
+      if (draft.words > Math.max(24, Math.round(maxWords * 1.35))) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [draft.slideNumber],
+          message: 'Sparse slide is too long. It is explaining instead of speaking naturally in one thought.',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+
+      if (draft.sentences > 2 || draft.clauseJoinerCount >= 3 || draft.commaCount >= 3) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [draft.slideNumber],
+          message: 'Slide carries too many thoughts to feel conversational.',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+
+      if (draft.specificityCount > 2) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [draft.slideNumber],
+          message: 'Sparse emotional slide is jammed with too many facts/details.',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+
+      if (draft.hasListSyntax) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [draft.slideNumber],
+          message: 'Slide formatting reads like copy or notes, not like someone actually talking.',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+    }
+
+    if ((contract.requiredAddressPrefix || structuredPlan.directAddressPrefix) && !draft.hasFirstPerson && draft.addressPrefix == null) {
+      violations.push({
+        kind: 'conversationality',
+        slideNumbers: [draft.slideNumber],
+        message: 'This slide loses the first-person spoken voice and reads like detached narration.',
+        evidence: trimEvidence(draft.text),
+      });
+    }
+  }
+
+  return dedupeNarrativeViolations(violations);
+}
+
+function extractContentSlides(content: string): SlideSnapshot[] {
+  if (!content) return [];
+
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      return parsed.slides
+        .map((slide: any, index: number) => createSlideSnapshot(index + 1, String(typeof slide === 'string' ? slide : slide.text || '')))
+        .filter(Boolean);
+    }
+    if (parsed.tweets && Array.isArray(parsed.tweets)) {
+      return parsed.tweets
+        .map((tweet: any, index: number) => createSlideSnapshot(index + 1, String(typeof tweet === 'string' ? tweet : tweet.text || tweet.content || '')))
+        .filter(Boolean);
+    }
+  } catch {
+    // Not JSON
+  }
+
+  const separatorParts = content
+    .split(/^\s*[-=]{3,}\s*$/gm)
+    .map(part => part.trim())
+    .filter(part => part.length > 0);
+  if (separatorParts.length > 1) {
+    return separatorParts.map((part, index) => createSlideSnapshot(index + 1, part)).filter(Boolean);
+  }
+
+  if (/^Slide \d+/im.test(content)) {
+    const matches = [...content.matchAll(/^Slide \d+[^\n]*\n([\s\S]*?)(?=^Slide \d+[^\n]*\n|$)/gim)];
+    if (matches.length > 0) {
+      return matches.map((match, index) => createSlideSnapshot(index + 1, match[1] || '')).filter(Boolean);
+    }
+  }
+
+  const paragraphs = content
+    .split(/\n{2,}/)
+    .map(part => part.trim())
+    .filter(part => part.length > 0 && !/^[-=]{3,}$/.test(part));
+  return paragraphs.map((part, index) => createSlideSnapshot(index + 1, part)).filter(Boolean);
+}
+
+function createSlideSnapshot(slideNumber: number, rawText: string): SlideSnapshot {
+  const text = stripNonContentLines(rawText);
+  const lowerText = text.toLowerCase();
+  return {
+    slideNumber,
+    text,
+    lowerText,
+    words: countWords(text),
+    sentences: countSentences(text),
+    specificityCount: (text.match(/\$?\d[\d,]*(?:\.\d+)?%?/g) || []).length,
+    addressPrefix: extractAddressPrefix(text),
+    startsWithYear: /^\s*(19|20)\d{2}:\s*/.test(text),
+    hasListSyntax: /(^|\n)\s*(?:[-*•]|\d+\.)\s+/m.test(text) || /[:;]/.test(text),
+    hasFirstPerson: /\b(I|I'm|I’d|I'd|I've|I’ll|I'll|my|me|we|we're|we'd|we've|our|us)\b/i.test(text),
+    commaCount: (text.match(/,/g) || []).length,
+    clauseJoinerCount: (text.match(/\b(and|but|so|then|because)\b/gi) || []).length,
+  };
+}
+
+function stripNonContentLines(text: string): string {
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !/^\[VISUAL:.*\]$/i.test(line))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function countSentences(text: string): number {
+  const matches = text.match(/[^.!?]+[.!?]+/g) || [];
+  return Math.max(matches.length, text.trim().length > 0 ? 1 : 0);
+}
+
+function parsePositiveInt(value: any): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.round(value);
+  if (typeof value !== 'string') return null;
+  const match = value.match(/\d+/);
+  return match ? parseInt(match[0], 10) : null;
+}
+
+function captureLabeledValue(block: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = block.match(new RegExp(`${escaped}:\\s*(.+)$`, 'im'));
+  return match?.[1]?.trim() || '';
+}
+
+function extractSection(planText: string, startLabel: string, endLabel: string): string {
+  const escapedStart = startLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedEnd = endLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = planText.match(new RegExp(`${escapedStart}\\s*\\n([\\s\\S]*?)\\n\\s*${escapedEnd}`, 'i'));
+  return match?.[1]?.trim() || '';
+}
+
+function buildToleranceBand(target: number | null, floor = 1): [number, number] | null {
+  if (!target || target <= 0) return null;
+  const delta = Math.max(1, Math.round(target * 0.1));
+  return [Math.max(floor, target - delta), Math.max(floor, target + delta)];
+}
+
+function inferDepthType(text: string): SlideDepthType {
+  const lower = text.toLowerCase();
+  if (/(cta|thank|gratitude|retire|grandfather|daughter|wife|married|happy again|thank you|visit|gift|payoff)/i.test(lower)) return 'payoff';
+  if (/(bridge|transition|that's when|then|after that|so i|so we|context|moved|started over)/i.test(lower)) return 'bridge';
+  if (/(proof|prove|numbers|deal|revenue|month|sales|students|get their first deal|score|percent|losses|details)/i.test(lower)) return 'proof';
+  if (/(teach|framework|steps|how to|why this worked|lesson|explain)/i.test(lower)) return 'detail_dense';
+  if (/(hook|story|reveal|emotion|lost|sorry|feel|what's all of this for|couldn't go back)/i.test(lower)) return 'sparse_emotional';
+  return 'unknown';
+}
+
+function normalizeDepthType(value: any): SlideDepthType {
+  const lower = String(value || '').trim().toLowerCase();
+  if (lower === 'sparse_emotional' || lower === 'bridge' || lower === 'proof' || lower === 'detail_dense' || lower === 'payoff') {
+    return lower;
+  }
+  return inferDepthType(lower);
+}
+
+function inferRepeatedDirectAddressPrefix(slides: SlideSnapshot[]): string | null {
+  const counts = new Map<string, number>();
+  for (const slide of slides) {
+    if (!slide.addressPrefix) continue;
+    counts.set(slide.addressPrefix, (counts.get(slide.addressPrefix) || 0) + 1);
+  }
+  const winner = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return winner && winner[1] >= 3 ? winner[0] : null;
+}
+
+function extractDirectAddressPrefixFromVoicePattern(voicePattern: string): string | null {
+  const quoted = voicePattern.match(/['"]([A-Z][^'"]{0,20},)['"]/);
+  if (quoted?.[1]) return sanitizeAddressPrefix(quoted[1]);
+  const plain = voicePattern.match(/\b(Mom|Dad|Coach|Ben|Mama|Papa),\s*I\b/i);
+  if (plain?.[0]) return sanitizeAddressPrefix(plain[1] + ',');
+  return null;
+}
+
+function sanitizeAddressPrefix(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.endsWith(',') ? trimmed : `${trimmed},`;
+}
+
+function extractAddressPrefix(text: string): string | null {
+  const match = text.match(/^\s*([A-Z][a-z]+,)/);
+  return match?.[1] || null;
+}
+
+function isSparseLike(depthType: SlideDepthType): boolean {
+  return depthType === 'sparse_emotional' || depthType === 'bridge' || depthType === 'payoff' || depthType === 'unknown';
+}
+
+function looksLikeBridge(contract: StructuredSlideContract): boolean {
+  const combined = `${contract.beatFunction} ${contract.transitionExpectation} ${contract.prerequisites}`.toLowerCase();
+  return contract.depthType === 'bridge' || /(bridge|context|setup|transition|chronological|that's when|then|after)/.test(combined);
+}
+
+function introducesOrphanRole(text: string, priorText: string): boolean {
+  const roleMatch = text.match(/\b(?:the|my|our)\s+(business partner|partner|mentor|wife|husband|girlfriend|boyfriend|coach|investor|boss|chef|team|client|friend)\b/i);
+  if (!roleMatch) return false;
+  return !new RegExp(`\\b${roleMatch[1]}\\b`, 'i').test(priorText);
+}
+
+function containsEndingConflict(lowerText: string): boolean {
+  return /\b(almost|loss|losses|debt|owe|problem|broke|failure|failed|close the doors|shut down|quit|sorry|couldn't)\b/i.test(lowerText);
+}
+
+function trimEvidence(text: string): string {
+  return text.length > 120 ? `${text.substring(0, 117)}...` : text;
+}
+
+function dedupeNarrativeViolations(violations: NarrativeValidationViolation[]): NarrativeValidationViolation[] {
+  const seen = new Set<string>();
+  return violations.filter(v => {
+    const key = `${v.kind}:${v.slideNumbers.join(',')}:${v.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

@@ -402,7 +402,7 @@ Use the exact # numbers from the list above as index values.`;
       SCREENING_EXPERTISE,
       screeningUserPrompt,
       4096,
-      'claude-sonnet-4-5-20250514',
+      'claude-sonnet-4-6',
     );
     selectedCandidates = parseScreeningResponse(screeningResponse, compactSwipes);
     console.log(`  📊 Screening: ${compactSwipes.length} → ${selectedCandidates.length} candidates (Sonnet structural analysis)`);
@@ -912,7 +912,7 @@ async function callAnthropicDirectForAdaptation(
   systemPrompt: string,
   userPrompt: string,
   maxTokens: number = 8192,
-  model: string = 'claude-opus-4-6-20250929',
+  model: string = 'claude-opus-4-6',
 ): Promise<string> {
   const apiKey = config.anthropicApiKey || config.agentLLMApiKey;
   if (!apiKey) {

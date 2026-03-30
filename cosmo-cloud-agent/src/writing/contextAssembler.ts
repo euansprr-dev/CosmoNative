@@ -69,15 +69,17 @@ This is a CAROUSEL/THREAD. Carousel density varies dramatically by style:
 YOUR DENSITY TARGET COMES FROM THE PRIMARY BLUEPRINT, NOT THESE DEFAULTS.
 Count the actual words per slide in the blueprint — that number is your target (±10%).
 The FORMATTING DNA section in your loaded swipe intelligence shows measured avgWordsPerSlide
-and avgSentencesPerSlide from all 20 swipes. Use those measured numbers as your reference.
+and avgSentencesPerSlide from all 20 swipes. Use those measured numbers to learn how sparse or dense each slide type should feel, not to override the blueprint.
 
 If the blueprint has 10-word slides, write 10-word slides.
 If the blueprint has 80-word slides, write 80-word slides.
 The blueprint IS the density standard. Match IT, not a generic rule.
 
-• Study the loaded swipe examples — COUNT their words per slide and MATCH the blueprint's density
+• Study the loaded swipe examples to learn how they phrase sparse slides vs proof-heavy slides
+• Supporting swipes teach natural phrasing and depth rhythm. They do NOT change what each blueprint slide is doing
 • The "1-2 sentences default" and "3 max" rules from Voice DNA do NOT apply to carousels
-• Use bullet points (-- or •) ONLY if the blueprint uses them — don't add formatting the blueprint doesn't have`;
+• Use bullet points (-- or •) ONLY if the blueprint uses them — don't add formatting the blueprint doesn't have
+• Sparse emotional slides stay sparse — do not cram every detail into them`;
 
     case 'reel':
     case 'voiceoverReel':
@@ -477,6 +479,7 @@ export interface WritingContext {
   swipePatternAnalysis?: string;    // Keyword-matched subset (swipe/pattern/density/etc.)
   structuralPlan?: string;          // Keyword-matched subset (plan/approach/strategy/etc.)
   writingPlan?: string;             // Comprehensive writing plan from Phase 1 of draft pipeline
+  structuredSlidePlan?: any;
   keyDecisions?: string[];
   selfReviewFindings?: string;
   analysisDepth?: number;
@@ -562,6 +565,14 @@ export function assembleBlock3Dynamic(
   if (writingContext?.structuralPlan) {
     sections.push('\n--- YOUR WRITING PLAN ---');
     sections.push(writingContext.structuralPlan);
+  }
+  if (writingContext?.structuredSlidePlan?.slides?.length) {
+    sections.push('\n--- STRUCTURED SLIDE CONTRACT ---');
+    sections.push(`Voice Pattern: ${writingContext.structuredSlidePlan.voicePattern || 'unspecified'}`);
+    sections.push(`Tense Pattern: ${writingContext.structuredSlidePlan.tensePattern || 'unspecified'}`);
+    for (const slide of writingContext.structuredSlidePlan.slides.slice(0, 12)) {
+      sections.push(`  Slide ${slide.slideNumber}: [${slide.beatFunction}] ${slide.depthType}`);
+    }
   }
   if (writingContext?.selfReviewFindings) {
     sections.push('\n--- SELF-REVIEW FINDINGS (from previous draft) ---');
@@ -736,7 +747,7 @@ Construction rules:
 Run all 6 steps after every draft, before presenting. Not optional.
 
 1. Read-aloud: Every slide at speaking pace. Flag stumbles, rhythm breaks, "content voice," or lost thread.
-2. Density: Match your loaded swipe examples' density EXACTLY. Reels: 10-25 words/slide. Carousels: 50-100 words/slide with bullet points. Count words in your swipes and match.
+2. Density: Match the PRIMARY BLUEPRINT's density and the support swipes' depth rhythm. Sparse slides should stay sparse. Proof slides should carry the heavier details.
 3. Chain: Insert "so/but/that's when" between every slide pair. Bad fit = broken transition.
 4. Perspective: Who speaks to whom on slide 1? Must stay consistent.
 5. Scroll test: Read slides 3-5 as the SPECIFIC target audience. Would they feel seen?

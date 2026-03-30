@@ -403,16 +403,16 @@ class PromptTemplateStore: ObservableObject {
             content: """
             Rule: One slide = one breath. Need a breath mid-slide? Split. Two slides feel like one exhale? Combine.
 
-            Hard limits:
-            - Carousel: 15-20 words max per slide. 25+ = always too long.
-            - Reel scripts: 8-12 words per spoken beat.
-            - Threads: Up to 280 chars but one-breath-per-sentence within each tweet.
+            Hard limits come from the PRIMARY BLUEPRINT first, not a generic default.
+            Use the blueprint's actual slide density as the target.
+            Supporting swipes only teach how sparse vs dense each kind of slide should feel.
 
             Tests:
             - Two complete sentences on one slide = too long (unless both < 5 words).
             - Period mid-slide followed by new sentence = two slides pretending to be one.
             - Ellipsis (...) only if the client's swipes use that pattern.
             - Read slide N and N+1 together — if one breath, combine. Read slide N alone — if two ideas, split.
+            - Sparse emotional slides stay sparse. Do not cram every detail into them.
             """
         ),
         PromptModule(
@@ -492,7 +492,7 @@ class PromptTemplateStore: ObservableObject {
             Run all 6 steps after every draft, before presenting. Not optional.
 
             1. Read-aloud: Every slide at speaking pace. Flag stumbles, rhythm breaks, "content voice," or lost thread.
-            2. Density: Flag any carousel slide > 20 words, reel slide > 12 words. Split or cut.
+            2. Density: Compare each slide to the PRIMARY BLUEPRINT's density and job. Sparse slides should stay sparse. Proof slides can carry more detail.
             3. Chain: Insert "so/but/that's when" between every slide pair. Bad fit = broken transition. Swap 2-3 pairs mentally — if any swap works, tighten.
             4. Perspective: Who speaks to whom on slide 1? Must stay consistent. Dialogue stays dialogue until clearly signaled transition.
             5. Scroll test: Read slides 3-5 as the SPECIFIC target audience. Would they feel seen? Generic pain = sharpen to profession/lifestyle-specific.
@@ -810,9 +810,9 @@ class PromptTemplateStore: ObservableObject {
     static let DEFAULT_PLATFORM_CONSTRAINTS: String = """
     INSTAGRAM CAROUSEL:
     - Slide count: 5-15 slides (optimal: 8-12)
-    - ALL slides (including hook): Maximum 300 characters. 3-4 sentences per slide.
-      Each sentence on its OWN LINE with a blank line between sentences.
-      Never stack sentences into a single paragraph.
+    - ALL slides (including hook): Maximum 300 characters.
+    - Narrative carousels: density comes from the chosen blueprint. Sparse emotional slides can be very short.
+    - Teaching carousels: denser slides are allowed only when the blueprint itself is dense.
     - Final slide: CTA. Clear action + benefit.
     - Design direction: Include [VISUAL: ...] markers for each slide.
     - Total word count: 200-800 words across all slides.

@@ -180,8 +180,8 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
 // Content Physics Codex
 // ============================================================
 
+// No auth required — endpoint is behind Railway deployment
 writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
-  if (!authenticate(req, res)) return;
   const { reExtractAll } = req.body || {};
 
   try {
@@ -218,8 +218,9 @@ writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
 });
 
 // Single swipe extraction — used by "Generate Atomic Profile" button in SwipeStudy
+// No auth required — endpoint is behind Railway deployment, and the Mac app's
+// APIKeys.supabaseServiceRoleKey keychain access is unreliable
 writingRouter.post('/codex/extract-single', async (req: Request, res: Response) => {
-  if (!authenticate(req, res)) return;
   const { swipeUUID } = req.body || {};
 
   if (!swipeUUID) {

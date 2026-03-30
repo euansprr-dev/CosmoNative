@@ -2850,12 +2850,8 @@ struct SwipeStudyFocusModeView: View {
         profileGenerationError = nil
 
         do {
-            guard let apiKey = APIKeys.supabaseServiceRoleKey else {
-                profileGenerationError = "No API key configured"
-                isGeneratingProfile = false
-                return
-            }
-
+            // Use same auth pattern as CloudWritingClient
+            let apiKey = APIKeys.supabaseServiceRoleKey ?? APIKeys.supabaseAuthToken ?? ""
             let baseURL = "https://cosmonative-production.up.railway.app"
             let url = URL(string: "\(baseURL)/api/writing/codex/extract-single")!
             var request = URLRequest(url: url)

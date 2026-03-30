@@ -42,12 +42,7 @@ final class CodexViewModel {
 
         do {
             print("🔬 Codex: Starting generation (reExtractAll: \(reExtractAll))")
-            guard let apiKey = APIKeys.supabaseServiceRoleKey else {
-                print("🔬 Codex: ERROR — no Supabase service role key")
-                error = "Supabase service role key not configured"
-                isGenerating = false
-                return
-            }
+            let apiKey = APIKeys.supabaseServiceRoleKey ?? APIKeys.supabaseAuthToken ?? ""
             print("🔬 Codex: API key found, calling \(Self.cloudBaseURL)/api/writing/codex/generate")
 
             let url = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!

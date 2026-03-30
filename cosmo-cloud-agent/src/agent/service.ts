@@ -218,7 +218,9 @@ export async function processMessage(
   }
 
   // 3. Assemble system prompt (with conversation summary + active items context)
-  const systemPrompt = await assembleSystemPrompt(intent, chatId, conversationSummary, undefined, activeClientUUID);
+  // activeClientUUID is resolved later in the tool loop — pass null for initial prompt assembly
+  // Client-scoped lesson filtering will apply on subsequent calls within the same session
+  const systemPrompt = await assembleSystemPrompt(intent, chatId, conversationSummary, undefined, null);
 
   // Append active items context if available for this chat
   const activeItems = activeItemsContext.get(chatId) || '';

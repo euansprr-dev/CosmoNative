@@ -277,7 +277,7 @@ export async function batchExtractAll(options: { reExtractAll?: boolean } = {}):
   failed: string[];
   cost: { inputTokens: number; outputTokens: number };
 }> {
-  const allAtoms = await fetchAllByType('research', 500);
+  const allAtoms = await fetchAllByType('research', { limit: 500 });
   const swipes = allAtoms.filter(a =>
     a.metadata?.isSwipeFile &&
     a.body &&

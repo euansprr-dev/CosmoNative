@@ -17,7 +17,7 @@ const CODEX_ATOM_TYPE = 'research'; // Reuse research type with a codex flag in 
 
 export async function computeCodex(): Promise<{ codexText: string; stats: CodexStats }> {
   // Fetch all swipes with extracted quark profiles
-  const allAtoms = await fetchAllByType('research', 500);
+  const allAtoms = await fetchAllByType('research', { limit: 500 });
   const profiledSwipes = allAtoms.filter(a =>
     a.metadata?.isSwipeFile &&
     a.structured?.contentPhysics?.version
@@ -33,7 +33,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
   }
 
   const profiles = profiledSwipes.map(a => ({
-    profile: a.structured.contentPhysics as QuarkProfile,
+    profile: a.structured!.contentPhysics as QuarkProfile,
     title: a.title,
     hookScore: a.structured?.swipeAnalysis?.hookScore ?? 0,
     format: a.structured?.swipeAnalysis?.swipeContentFormat || a.metadata?.contentSource || 'unknown',
@@ -155,7 +155,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
       if (hookScore >= 8) { breakHighScore.count++; breakHighScore.total += hookScore; }
       else if (hookScore <= 6) { breakLowScore.count++; breakLowScore.total += hookScore; }
 
-      breakExamples.push({ title, slide: brk.slideNumber, pattern: brk.patternEstablished, whatBreaks: brk.whatBreaks });
+      breakExamples.push({ title: title || '', slide: brk.slideNumber, pattern: brk.patternEstablished || '', whatBreaks: brk.whatBreaks || '' });
     }
   }
 
@@ -176,7 +176,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
       frameShifts.set(shiftKey, (frameShifts.get(shiftKey) || 0) + 1);
       totalTransitionPosition += pt.slideNumber / profile.slideQuarks.length;
       transitionCount++;
-      transitionExamples.push({ title, slide: pt.slideNumber, from: pt.frameBefore, to: pt.frameAfter, recontext: pt.recontextualization });
+      transitionExamples.push({ title: title || '', slide: pt.slideNumber, from: pt.frameBefore || '', to: pt.frameAfter || '', recontext: pt.recontextualization || '' });
     } else {
       withoutTransition.count++;
       withoutTransition.totalScore += hookScore;
@@ -351,7 +351,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
     // Examples
     const bestExample = fmtProfiles.sort((a, b) => b.hookScore - a.hookScore)[0];
     if (bestExample) {
-      lines.push(`  Top example: "${bestExample.title.substring(0, 50)}" (${bestExample.hookScore}/10)`);
+      lines.push(`  Top example: "${(bestExample.title || '').substring(0, 50)}" (${bestExample.hookScore}/10)`);
     }
   }
 
@@ -386,7 +386,7 @@ export async function computeCodex(): Promise<{ codexText: string; stats: CodexS
 
 export async function saveCodexAtom(codexText: string): Promise<string> {
   // Look for existing codex atom
-  const allAtoms = await fetchAllByType('research', 500);
+  const allAtoms = await fetchAllByType('research', { limit: 500 });
   const existing = allAtoms.find(a => a.metadata?.isCodex);
 
   if (existing) {
@@ -431,7 +431,7 @@ export async function getCodexText(): Promise<string | null> {
   }
 
   // Try to load from atom
-  const allAtoms = await fetchAllByType('research', 500);
+  const allAtoms = await fetchAllByType('research', { limit: 500 });
   const codexAtom = allAtoms.find(a => a.metadata?.isCodex);
 
   if (codexAtom?.body) {

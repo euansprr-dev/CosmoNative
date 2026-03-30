@@ -2927,8 +2927,8 @@ struct SwipeStudyFocusModeView: View {
             if let quarks = profile.slideQuarks, !quarks.isEmpty {
                 text += "\nSlide Quarks:\n"
                 for q in quarks {
-                    text += "  \(q.slideNumber): \(q.speechAct.type)"
-                    if let deltas = q.readerDeltas { text += " | \(deltas.map(\.type).joined(separator: ", "))" }
+                    text += "  \(q.slideNumber): \(q.speechAct.type ?? "")"
+                    if let deltas = q.readerDeltas { text += " | \(deltas.compactMap(\.type).joined(separator: ", "))" }
                     text += "\n"
                 }
             }

@@ -32,13 +32,13 @@ struct PhysicsRhythmView: View {
     private func densityBars(_ r: RhythmData) -> some View {
         let density = r.densityWaveform ?? []
         let energy = r.energyCurve ?? []
-        let maxDensity = max(Double(density.max() ?? 1), 1)
+        let maxDensity = max(density.max() ?? 1.0, 1.0)
 
         VStack(alignment: .leading, spacing: DS.space4) {
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(Array(density.enumerated()), id: \.offset) { index, wordCount in
-                    let height = max(CGFloat(Double(wordCount) / maxDensity) * 40, 4)
-                    let energyLevel = index < energy.count ? energy[index] : 3
+                    let height = max(CGFloat(wordCount / maxDensity) * 40, 4)
+                    let energyLevel = index < energy.count ? Int(energy[index]) : 3
                     let silence = (r.silenceSlides ?? []).contains(index + 1)
 
                     VStack(spacing: 1) {

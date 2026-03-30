@@ -54,7 +54,7 @@ struct SlideQuark: Codable, Identifiable {
 }
 
 struct QuarkMechanism: Codable {
-    let type: String
+    let type: String?
     let mechanism: String?
 }
 
@@ -216,9 +216,9 @@ struct CallbackAppearance: Codable {
 // MARK: - Rhythm (Pass 8)
 
 struct RhythmData: Codable {
-    let densityWaveform: [Int]?
-    let energyCurve: [Int]?
-    let informationRate: [Int]?
+    let densityWaveform: [Double]?  // Model may output floats
+    let energyCurve: [Double]?
+    let informationRate: [Double]?
     let silenceSlides: [Int]?
     let momentumMechanism: String?
     let pacingPattern: String?
@@ -249,6 +249,15 @@ extension Atom {
         }
 
         let decoder = JSONDecoder()
-        return try? decoder.decode(ContentPhysicsProfile.self, from: physicsData)
+        do {
+            return try decoder.decode(ContentPhysicsProfile.self, from: physicsData)
+        } catch {
+            print("⚠️ ContentPhysicsProfile decode failed: \(error)")
+            // Try to at least confirm the data exists even if decode fails
+            if let dict = try? JSONSerialization.jsonObject(with: physicsData) as? [String: Any] {
+                print("⚠️ contentPhysics keys present: \(dict.keys.sorted().joined(separator: ", "))")
+            }
+            return nil
+        }
     }
 }

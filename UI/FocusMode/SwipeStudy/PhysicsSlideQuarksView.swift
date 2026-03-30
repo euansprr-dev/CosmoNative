@@ -61,13 +61,13 @@ struct PhysicsSlideQuarksView: View {
                     .fill(deltaColor(quark))
                     .frame(width: 8, height: 8)
 
-                Text(abbreviate(quark.speechAct.type))
+                Text(abbreviate(quark.speechAct.type ?? ""))
                     .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
 
                 if let delta = quark.readerDeltas?.first {
-                    Text(abbreviate(delta.type))
+                    Text(abbreviate((delta.type ?? "")))
                         .font(.system(size: 7))
                         .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
@@ -93,18 +93,18 @@ struct PhysicsSlideQuarksView: View {
                         .lineLimit(2)
                 }
 
-                quarkRow(label: "Speech Act", type: quark.speechAct.type, mechanism: quark.speechAct.mechanism, color: DS.entitySwipe)
+                quarkRow(label: "Speech Act", type: quark.speechAct.type ?? "", mechanism: quark.speechAct.mechanism, color: DS.entitySwipe)
 
                 if let deltas = quark.readerDeltas {
                     ForEach(Array(deltas.enumerated()), id: \.offset) { _, delta in
-                        quarkRow(label: "Reader", type: delta.type, mechanism: delta.mechanism, color: DS.info)
+                        quarkRow(label: "Reader", type: (delta.type ?? ""), mechanism: delta.mechanism, color: DS.info)
                     }
                 }
                 if let proof = quark.proofType {
-                    quarkRow(label: "Proof", type: proof.type, mechanism: proof.mechanism, color: DS.green)
+                    quarkRow(label: "Proof", type: proof.type ?? "", mechanism: proof.mechanism, color: DS.green)
                 }
                 if let motivation = quark.motivation {
-                    quarkRow(label: "Motivation", type: motivation.type, mechanism: motivation.mechanism, color: DS.orange)
+                    quarkRow(label: "Motivation", type: motivation.type ?? "", mechanism: motivation.mechanism, color: DS.orange)
                 }
                 if let compression = quark.compression {
                     quarkRow(label: "Compression", type: "\(compression.type)\(compression.size.map { " (\($0))" } ?? "")", mechanism: compression.mechanism, color: DS.textMuted)
@@ -140,7 +140,7 @@ struct PhysicsSlideQuarksView: View {
     }
 
     private func deltaColor(_ quark: SlideQuark) -> Color {
-        guard let delta = quark.readerDeltas?.first?.type.lowercased() else { return DS.textMuted }
+        guard let delta = quark.readerDeltas?.first?.type?.lowercased() else { return DS.textMuted }
         if delta.contains("tension+") || delta.contains("empathy") { return DS.red }
         if delta.contains("trust") || delta.contains("hope") || delta.contains("curiosity+") { return DS.green }
         if delta.contains("surprise") { return DS.orange }

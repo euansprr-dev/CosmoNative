@@ -94,7 +94,7 @@ struct PhysicsSlideQuarksView: View {
                     Text("Slide \(slideNum): \"\(text)\"")
                         .font(DS.callout)
                         .foregroundStyle(DS.text)
-                        .lineLimit(2)
+    
                 }
 
                 quarkRow(label: "Speech Act", type: quark.speechAct.type ?? "", mechanism: quark.speechAct.mechanism, color: DS.entitySwipe)
@@ -162,7 +162,7 @@ struct PhysicsSlideQuarksView: View {
                 Text(mechanism)
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
-                    .lineLimit(3)
+
             }
         }
     }

@@ -175,7 +175,7 @@ struct PhysicsReaderJourneyView: View {
                     Text(frame)
                         .font(.system(size: 9))
                         .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
+
                 }
             }
         }

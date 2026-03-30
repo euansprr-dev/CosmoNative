@@ -64,7 +64,7 @@ struct PhysicsTransitionFlowView: View {
                 Text(mechanism)
                     .font(DS.callout)
                     .foregroundStyle(DS.textSecondary)
-                    .lineLimit(3)
+
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 48)
             }

@@ -173,7 +173,7 @@ struct ContentPhysicsSection: View {
                     Text(detail)
                         .font(DS.caption2)
                         .foregroundStyle(DS.textSecondary)
-                        .lineLimit(2)
+
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -198,7 +198,7 @@ struct ContentPhysicsSection: View {
                     Text("• \(item)")
                         .font(DS.caption2)
                         .foregroundStyle(DS.text)
-                        .lineLimit(2)
+
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -222,7 +222,7 @@ struct ContentPhysicsSection: View {
                 .font(DS.callout)
                 .foregroundStyle(DS.text.opacity(0.85))
                 .lineSpacing(4)
-                .lineLimit(5)
+
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, DS.space12)
                 .padding(.vertical, DS.space10)

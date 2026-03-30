@@ -78,7 +78,7 @@ struct PhysicsBondsView: View {
                     Text(planted)
                         .font(DS.caption2)
                         .foregroundStyle(DS.textSecondary)
-                        .lineLimit(1)
+
                 }
             }
             if let harvested = bond.harvested {
@@ -89,7 +89,7 @@ struct PhysicsBondsView: View {
                     Text(harvested)
                         .font(DS.caption2)
                         .foregroundStyle(DS.textSecondary)
-                        .lineLimit(1)
+
                 }
             }
         }
@@ -122,13 +122,13 @@ struct PhysicsBondsView: View {
                             Text("If \(pair.slideA) removed: \(ifA)")
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.red.opacity(0.8))
-                                .lineLimit(2)
+
                         }
                         if let ifB = pair.ifBRemoved {
                             Text("If \(pair.slideB) removed: \(ifB)")
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.red.opacity(0.8))
-                                .lineLimit(2)
+
                         }
                     }
                 }
@@ -160,7 +160,7 @@ struct PhysicsBondsView: View {
                             Text(transformation)
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.textSecondary)
-                                .lineLimit(2)
+
                         }
                     }
                 }
@@ -197,7 +197,7 @@ struct PhysicsBondsView: View {
                             Text("→ \(effect)")
                                 .font(DS.caption2)
                                 .foregroundStyle(DS.textSecondary)
-                                .lineLimit(2)
+
                         }
                     }
                 }
@@ -226,7 +226,7 @@ struct PhysicsBondsView: View {
                                 Text(effect)
                                     .font(DS.caption2)
                                     .foregroundStyle(DS.textMuted)
-                                    .lineLimit(2)
+    
                             }
                         }
                     }

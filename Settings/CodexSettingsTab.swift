@@ -23,11 +23,10 @@ final class CodexViewModel {
     func loadExistingCodex() async {
         // Look for existing codex atom in GRDB
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .research, limit: 500)
-            if let codexAtom = atoms.first(where: { ($0.metadata?["isCodex"] as? Bool) == true }) {
+            let atoms = try await AtomRepository.shared.fetchAll(type: .research)
+            if let codexAtom = atoms.first(where: { $0.metadataDict?["isCodex"] as? Bool == true }) {
                 codexText = codexAtom.body ?? ""
-                lastGenerated = codexAtom.metadata?["updatedAt"] as? String
-                    ?? codexAtom.updatedAt
+                lastGenerated = codexAtom.metadataDict?["updatedAt"] as? String ?? codexAtom.updatedAt
             }
         } catch {
             print("Failed to load codex: \(error)")
@@ -147,7 +146,7 @@ struct CodexSettingsTab: View {
                 .foregroundStyle(DS.textMuted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(DS.surfaceSecondary, in: RoundedRectangle(cornerRadius: 6))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 6))
         }
     }
 
@@ -214,7 +213,7 @@ struct CodexSettingsTab: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(DS.surfaceSecondary, in: RoundedRectangle(cornerRadius: 8))
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8))
                 .confirmationDialog("Re-extract all swipes?", isPresented: $showReExtractConfirmation) {
                     Button("Re-extract All (~$3-5)", role: .destructive) {
                         Task { await viewModel.generateCodex(reExtractAll: true) }
@@ -250,7 +249,7 @@ struct CodexSettingsTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
         }
-        .background(DS.surfacePrimary, in: RoundedRectangle(cornerRadius: 8))
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DS.borderSubtle, lineWidth: 1)

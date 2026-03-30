@@ -182,6 +182,7 @@
 		61AE6E10E6AE89382CE3E381 /* GhostCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7C6320201B991A481A70EC /* GhostCardView.swift */; };
 		61B7BB90A561E73AAC518E31 /* ObsidianPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A9E3C6F7D5DAA5B4402C06C /* ObsidianPalette.swift */; };
 		624520441708046250237305 /* SanctuarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508034948877066137948206 /* SanctuarySettingsView.swift */; };
+		C0D3X5E771B8A93F01234567 /* CodexSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */; };
 		62D9902811E41698A9B1566F /* IdeaEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2EECB1864218BE781E7FFE8 /* IdeaEditorView.swift */; };
 		64599EA49CF44F6A8592CF92 /* AutomationRuleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */; };
 		647E8F4DE9EC3734513F156E /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8CD10D86DD112EEAD95F75 /* HotkeyManager.swift */; };
@@ -748,6 +749,7 @@
 		4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCluster.swift; sourceTree = "<group>"; };
 		4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteDrawingAction.swift; sourceTree = "<group>"; };
 		508034948877066137948206 /* SanctuarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SanctuarySettingsView.swift; sourceTree = "<group>"; };
+		C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSettingsTab.swift; sourceTree = "<group>"; };
 		50DDC3ED65C2C443AB74FAD5 /* CommandCenterZone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterZone.swift; sourceTree = "<group>"; };
 		510127420EC790D32FECDB2F /* VisualEffectBlur.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectBlur.swift; sourceTree = "<group>"; };
 		511232F099CC20A77E8086FE /* NordicFrostPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NordicFrostPalette.swift; sourceTree = "<group>"; };
@@ -1763,6 +1765,7 @@
 				C3D9E7F1A2B40568394E6B01 /* SkillsAndPromptsSettingsTab.swift */,
 				EE540F151E53E884BD71664F /* SettingsMenuButton.swift */,
 				508034948877066137948206 /* SanctuarySettingsView.swift */,
+				C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */,
 				A5AF87E1664C61B99F4ABCB1 /* CloudSyncSettingsTab.swift */,
 				B7C4E9F2A31D685049FE3A12 /* ShortcutsSettingsTab.swift */,
 				7F2E9B4A3C8D51062E7A9F13 /* ProfileManagementTab.swift */,
@@ -2951,6 +2954,7 @@
 				092E3BDCDD907CC7EB1BE9D7 /* XPCalculationEngine.swift in Sources */,
 				2CA61A66B8D98F5F6A1709EB /* DimensionXPRouter.swift in Sources */,
 				624520441708046250237305 /* SanctuarySettingsView.swift in Sources */,
+				C0D3X5E771B8A93F01234567 /* CodexSettingsTab.swift in Sources */,
 				3A9C5D71E4B28F063C1E7D42 /* ProfileManagementTab.swift in Sources */,
 				A16E02E4BEDA8394E97492B9 /* XPSummaryOverlay.swift in Sources */,
 				9EC140895077EF97380C37FF /* YouTubeProcessor.swift in Sources */,

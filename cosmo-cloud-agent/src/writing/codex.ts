@@ -413,8 +413,9 @@ export async function saveCodexAtom(codexText: string): Promise<string> {
     structured: {},
   });
 
-  console.log(`  📊 Created new codex atom: ${uuid}`);
-  return uuid;
+  const codexUUID = typeof uuid === 'string' ? uuid : (uuid as any)?.uuid || 'unknown';
+  console.log(`  📊 Created new codex atom: ${codexUUID}`);
+  return codexUUID;
 }
 
 // ============================================================

@@ -152,9 +152,9 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
 // ============================================================
 
 export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | null> {
-  // Use direct Anthropic if available, otherwise fall back to OpenRouter
-  const useDirectAnthropic = !!config.anthropicApiKey;
-  const apiKey = config.anthropicApiKey || config.openRouterApiKey;
+  // Always use OpenRouter for extraction — direct Anthropic fetch fails on Railway
+  const useDirectAnthropic = false;
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
   if (!apiKey) {
     console.log(`  ❌ Quark extraction: no API key configured (neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY)`);
     return null;

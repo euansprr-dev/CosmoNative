@@ -36,6 +36,7 @@ enum SettingsTab: String, CaseIterable {
     case voice = "Voice"
     case apiKeys = "API Keys"
     case cosmoAI = "Cosmo AI"
+    case codex = "Codex"
     case shortcuts = "Shortcuts"
     case about = "About"
 
@@ -48,6 +49,7 @@ enum SettingsTab: String, CaseIterable {
         case .voice: return "waveform"
         case .apiKeys: return "key.fill"
         case .cosmoAI: return "sparkles.rectangle.stack"
+        case .codex: return "atom"
         case .shortcuts: return "keyboard"
         case .about: return "info.circle"
         }
@@ -198,6 +200,8 @@ struct SanctuarySettingsView: View {
                     apiKeysTab
                 case .cosmoAI:
                     CosmoAISettingsTab()
+                case .codex:
+                    CodexSettingsTab()
                 case .shortcuts:
                     ShortcutsSettingsTab()
                 case .about:

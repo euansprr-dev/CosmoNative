@@ -254,6 +254,14 @@
 		8765C49BB9A6DCDFECC0FBCB /* FunctionGemmaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E650D41B7677E26ECB6AC7 /* FunctionGemmaEngine.swift */; };
 		878EB062F56B8C7549A9B93C /* CanvasBlockFrameTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E335A930FACCBF88CE7922C /* CanvasBlockFrameTracker.swift */; };
 		8822374716D4A1BECF43006B /* PersuasionStackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */; };
+		CP01A1B2C3D4E5F601234567 /* ContentPhysicsProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */; };
+		CP02A1B2C3D4E5F601234567 /* ContentPhysicsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */; };
+		CP03A1B2C3D4E5F601234567 /* PhysicsSlideQuarksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */; };
+		CP04A1B2C3D4E5F601234567 /* PhysicsTransitionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */; };
+		CP05A1B2C3D4E5F601234567 /* PhysicsReaderJourneyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */; };
+		CP06A1B2C3D4E5F601234567 /* PhysicsRhythmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */; };
+		CP07A1B2C3D4E5F601234567 /* PhysicsBondsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */; };
+		CP08A1B2C3D4E5F601234567 /* PhysicsFabricView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */; };
 		885D7EC748F4E86F9FCE55CC /* IntelligenceModelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122BC26D8F6FD1CE7BBBC48F /* IntelligenceModelView.swift */; };
 		890920DAF1A4698B5A9C1ACA /* CrystallizationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521A8F94BE805C03298AE029 /* CrystallizationEngine.swift */; };
 		898197C3EBBD7D00277B9FAC /* ReadwiseBookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44B5D2F2B24BEC3ECB6FB427 /* ReadwiseBookStore.swift */; };
@@ -1079,6 +1087,14 @@
 		DC015AD19E281A8886EA2EF9 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
 		DD8B4C2A5F0E3B9C6A2D7F1E /* ContentContextPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentContextPanel.swift; path = UI/FocusMode/Content/ContentContextPanel.swift; sourceTree = SOURCE_ROOT; };
 		DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PersuasionStackView.swift; path = UI/FocusMode/SwipeStudy/PersuasionStackView.swift; sourceTree = SOURCE_ROOT; };
+		CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsProfile.swift; path = Data/Models/ContentPhysicsProfile.swift; sourceTree = SOURCE_ROOT; };
+		CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsSection.swift; path = UI/FocusMode/SwipeStudy/ContentPhysicsSection.swift; sourceTree = SOURCE_ROOT; };
+		CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsSlideQuarksView.swift; path = UI/FocusMode/SwipeStudy/PhysicsSlideQuarksView.swift; sourceTree = SOURCE_ROOT; };
+		CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsTransitionFlowView.swift; path = UI/FocusMode/SwipeStudy/PhysicsTransitionFlowView.swift; sourceTree = SOURCE_ROOT; };
+		CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsReaderJourneyView.swift; path = UI/FocusMode/SwipeStudy/PhysicsReaderJourneyView.swift; sourceTree = SOURCE_ROOT; };
+		CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsRhythmView.swift; path = UI/FocusMode/SwipeStudy/PhysicsRhythmView.swift; sourceTree = SOURCE_ROOT; };
+		CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsBondsView.swift; path = UI/FocusMode/SwipeStudy/PhysicsBondsView.swift; sourceTree = SOURCE_ROOT; };
+		CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsFabricView.swift; path = UI/FocusMode/SwipeStudy/PhysicsFabricView.swift; sourceTree = SOURCE_ROOT; };
 		DF42D197C4D4141B80DB7E24 /* ConnectionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSidebarView.swift; sourceTree = "<group>"; };
 		DF5FEDB8FB985F915B6C235E /* IdeaBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaBlockView.swift; sourceTree = "<group>"; };
 		DF860CF734F5A6FCD81379FE /* InfiniteCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfiniteCanvasView.swift; sourceTree = "<group>"; };
@@ -2411,6 +2427,14 @@
 				9CFFE01D66AF6E99CBBB3BCE /* EmotionalArcView.swift */,
 				BC43CE2888FE8DF17B870B58 /* StructureMapView.swift */,
 				DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */,
+				CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */,
+				CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */,
+				CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */,
+				CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */,
+				CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */,
+				CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */,
+				CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */,
+				CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */,
 				AF9571AABE8CFFEE0F5D67BE /* SimilarSwipesSection.swift */,
 				CDD5EC6633BA8802F3965EC8 /* InstagramTranscriptView.swift */,
 				9F60797E73A20FDE2D2D93C6 /* CreatorListView.swift */,
@@ -3012,6 +3036,14 @@
 				BCB47D1F7F7B7CE166A406E5 /* EmotionalArcView.swift in Sources */,
 				81BD93637C0AF0DC73F0A206 /* StructureMapView.swift in Sources */,
 				8822374716D4A1BECF43006B /* PersuasionStackView.swift in Sources */,
+				CP01A1B2C3D4E5F601234567 /* ContentPhysicsProfile.swift in Sources */,
+				CP02A1B2C3D4E5F601234567 /* ContentPhysicsSection.swift in Sources */,
+				CP03A1B2C3D4E5F601234567 /* PhysicsSlideQuarksView.swift in Sources */,
+				CP04A1B2C3D4E5F601234567 /* PhysicsTransitionFlowView.swift in Sources */,
+				CP05A1B2C3D4E5F601234567 /* PhysicsReaderJourneyView.swift in Sources */,
+				CP06A1B2C3D4E5F601234567 /* PhysicsRhythmView.swift in Sources */,
+				CP07A1B2C3D4E5F601234567 /* PhysicsBondsView.swift in Sources */,
+				CP08A1B2C3D4E5F601234567 /* PhysicsFabricView.swift in Sources */,
 				AD07DD6D3AD57286B8C8D76B /* SimilarSwipesSection.swift in Sources */,
 				97D07991CA257A633F0CB6B6 /* SwipeClassificationEngine.swift in Sources */,
 				C04145186996D302AEDBCFD5 /* SwipeDraftEngine.swift in Sources */,

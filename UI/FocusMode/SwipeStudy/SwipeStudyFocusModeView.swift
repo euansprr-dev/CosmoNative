@@ -2735,6 +2735,11 @@ struct SwipeStudyFocusModeView: View {
                         )
                     }
 
+                    // Content Physics Profile
+                    if let physicsProfile = currentAtom?.contentPhysicsProfile {
+                        ContentPhysicsSection(profile: physicsProfile)
+                    }
+
                     // Taxonomy Classification
                     TaxonomySection(
                         analysis: Binding(

@@ -31,6 +31,8 @@ struct SwipeStudyFocusModeView: View {
     @State private var analysis: SwipeAnalysis?
     @State private var isAnalyzing = false
     @State private var isDeepAnalyzing = false
+    @State private var isGeneratingProfile = false
+    @State private var profileGenerationError: String?
     @State private var hasAppeared = false
 
     // YouTube player state
@@ -361,6 +363,19 @@ struct SwipeStudyFocusModeView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // Copy swipe + profile
+            Button {
+                copySwipeWithProfile()
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textMuted)
+                    .padding(8)
+                    .background(DS.border, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Copy swipe + physics profile")
 
             // Delete button
             Button {
@@ -2701,43 +2716,11 @@ struct SwipeStudyFocusModeView: View {
                         )
                     }
 
-                    // Emotional Arc — always visible, placeholder when empty
-                    if let arc = analysis.emotionalArc, !arc.isEmpty {
-                        EmotionalArcView(
-                            dataPoints: arc,
-                            dominantEmotion: analysis.dominantEmotion,
-                            onSeek: { position in
-                                // Convert normalized position (0-1) to timestamp using video duration
-                                let timestamp = position * videoDuration
-                                currentTimestamp = timestamp
-                                if !isPlayerActive {
-                                    isPlayerActive = true
-                                }
-                            },
-                            transcriptText: transcriptText
-                        )
-                    } else {
-                        emptyAnalysisCard(
-                            title: "EMOTIONAL ARC",
-                            icon: "waveform.path.ecg",
-                            message: "Transcript required for emotional progression"
-                        )
-                    }
-
-                    // Persuasion Stack — always visible, placeholder when empty
-                    if let techniques = analysis.persuasionTechniques, !techniques.isEmpty {
-                        PersuasionStackView(techniques: techniques)
-                    } else {
-                        emptyAnalysisCard(
-                            title: "PERSUASION STACK",
-                            icon: "chart.bar.fill",
-                            message: "Transcript required for persuasion analysis"
-                        )
-                    }
-
-                    // Content Physics Profile
+                    // Content Physics Profile (replaces legacy Emotional Arc + Persuasion Stack)
                     if let physicsProfile = currentAtom?.contentPhysicsProfile {
                         ContentPhysicsSection(profile: physicsProfile)
+                    } else {
+                        generateAtomicProfileCard
                     }
 
                     // Taxonomy Classification
@@ -2791,6 +2774,175 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Styled placeholder for analysis cards that need more data
+    // MARK: - Generate Atomic Profile
+
+    @ViewBuilder
+    private var generateAtomicProfileCard: some View {
+        VStack(spacing: DS.space12) {
+            HStack {
+                Text("CONTENT PHYSICS")
+                    .font(DS.caption)
+                    .tracking(1.2)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+            }
+
+            if isGeneratingProfile {
+                VStack(spacing: DS.space10) {
+                    ProgressView()
+                        .scaleEffect(1.1)
+                    Text("Extracting atomic profile with Opus 4.6...")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textMuted)
+                    Text("10 passes: quarks, transitions, rhythm, reader simulation, fabric synthesis")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical, DS.space20)
+            } else {
+                VStack(spacing: DS.space10) {
+                    Image(systemName: "atom")
+                        .font(.system(size: 28))
+                        .foregroundStyle(DS.entitySwipe)
+
+                    Text("No physics profile yet")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+
+                    Text("Generate the complete Content Physics profile — every quark, transition, bond, rhythm pattern, and reader state mapped by Opus 4.6 (~$0.05)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+
+                    if let error = profileGenerationError {
+                        Text(error)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.red)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    Button {
+                        Task { await generateAtomicProfile() }
+                    } label: {
+                        Label("Generate Atomic Profile", systemImage: "atom")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, DS.space16)
+                            .padding(.vertical, DS.space8)
+                            .background(DS.entitySwipe, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, DS.space16)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DS.space16)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+    }
+
+    private func generateAtomicProfile() async {
+        guard let atom = currentAtom else { return }
+        isGeneratingProfile = true
+        profileGenerationError = nil
+
+        do {
+            guard let apiKey = APIKeys.supabaseServiceRoleKey else {
+                profileGenerationError = "No API key configured"
+                isGeneratingProfile = false
+                return
+            }
+
+            let baseURL = "https://cosmonative-production.up.railway.app"
+            let url = URL(string: "\(baseURL)/api/writing/codex/extract-single")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["swipeUUID": atom.uuid])
+            request.timeoutInterval = 600 // 10 min for Opus deep analysis
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            if statusCode == 200 {
+                // Refresh the atom from GRDB to pick up the new contentPhysics
+                try await Task.sleep(for: .seconds(2)) // Wait for sync
+                if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
+                    currentAtom = refreshed
+                }
+            } else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                profileGenerationError = "Error (\(statusCode)): \(String(body.prefix(150)))"
+            }
+        } catch {
+            profileGenerationError = error.localizedDescription
+        }
+
+        isGeneratingProfile = false
+    }
+
+    // MARK: - Copy Swipe + Profile
+
+    private func copySwipeWithProfile() {
+        guard let atom = currentAtom else { return }
+        var text = "=== SWIPE: \(atom.title ?? "Untitled") ===\n\n"
+
+        // Body
+        if let body = atom.body, !body.isEmpty {
+            text += "--- BODY ---\n\(body)\n\n"
+        }
+
+        // Existing analysis
+        if let structured = atom.structured,
+           let data = structured.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let swipeAnalysis = json["swipeAnalysis"] as? [String: Any] {
+            if let hookText = swipeAnalysis["hookText"] as? String { text += "Hook: \(hookText)\n" }
+            if let hookType = swipeAnalysis["hookType"] as? String { text += "Hook Type: \(hookType)\n" }
+            if let hookScore = swipeAnalysis["hookScore"] as? Double { text += "Hook Score: \(hookScore)/10\n" }
+            if let beatFP = swipeAnalysis["beatFingerprint"] as? String { text += "Beats: \(beatFP)\n" }
+            text += "\n"
+        }
+
+        // Content Physics profile
+        if let profile = atom.contentPhysicsProfile {
+            text += "--- CONTENT PHYSICS ---\n"
+            if let arc = profile.arcQuarks?.shape { text += "Arc: \(arc)\n" }
+            if let brk = profile.physicsEvents?.symmetryBreak?.slideNumber { text += "Symmetry Break: @slide \(brk)\n" }
+            if let pt = profile.physicsEvents?.phaseTransition {
+                text += "Phase Transition: \(pt.frameBefore ?? "") → \(pt.frameAfter ?? "") @slide \(pt.slideNumber ?? 0)\n"
+            }
+            if let gravity = profile.physicsEvents?.peakGravity { text += "Peak Gravity: \(gravity.activeLoops ?? 0) loops @slide \(gravity.slideNumber ?? 0)\n" }
+
+            if let quarks = profile.slideQuarks, !quarks.isEmpty {
+                text += "\nSlide Quarks:\n"
+                for q in quarks {
+                    text += "  \(q.slideNumber): \(q.speechAct.type)"
+                    if let deltas = q.readerDeltas { text += " | \(deltas.map(\.type).joined(separator: ", "))" }
+                    text += "\n"
+                }
+            }
+
+            if let transitions = profile.transitions, !transitions.isEmpty {
+                text += "\nTransitions:\n"
+                for t in transitions {
+                    text += "  \(t.from)→\(t.to): \(t.type)\(t.doubleHelix == true ? " 🧬" : "")\n"
+                }
+            }
+
+            if let fabric = profile.deepFabric, !fabric.isEmpty {
+                text += "\nThe Fabric:\n\(fabric)\n"
+            }
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
     private func emptyAnalysisCard(title: String, icon: String, message: String) -> some View {
         VStack(spacing: 12) {
             HStack {

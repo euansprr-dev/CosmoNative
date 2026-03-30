@@ -13,8 +13,9 @@
 
 import { Request, Response, Router } from 'express';
 import { generateOutline, generateDraft, reviseDraft, readDraft } from '../tools/writing';
-import { batchExtractAll } from '../writing/quarkExtractor';
+import { batchExtractAll, extractQuarkProfile, buildQuarkSummary } from '../writing/quarkExtractor';
 import { computeCodex, saveCodexAtom, invalidateCodexCache } from '../writing/codex';
+import { fetchAtom, updateAtom } from '../db/queries';
 import { config } from '../config';
 
 export const writingRouter = Router();
@@ -208,6 +209,54 @@ writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.log(`  ❌ Codex generation failed: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Single swipe extraction — used by "Generate Atomic Profile" button in SwipeStudy
+writingRouter.post('/codex/extract-single', async (req: Request, res: Response) => {
+  if (!authenticate(req, res)) return;
+  const { swipeUUID } = req.body || {};
+
+  if (!swipeUUID) {
+    res.status(400).json({ error: 'swipeUUID is required' });
+    return;
+  }
+
+  try {
+    console.log(`\n  🔬 Single extraction requested: ${swipeUUID}`);
+    const atom = await fetchAtom(swipeUUID);
+    if (!atom) {
+      res.status(404).json({ error: 'Swipe not found' });
+      return;
+    }
+
+    const profile = await extractQuarkProfile(atom);
+    if (!profile) {
+      res.status(500).json({ error: 'Extraction failed — check server logs' });
+      return;
+    }
+
+    // Save profile to atom
+    const existing = atom.structured || {};
+    await updateAtom(swipeUUID, {
+      structured: { ...existing, contentPhysics: profile },
+    });
+
+    console.log(`  ✅ Single extraction complete: ${profile.slideQuarks?.length || 0} slides, ${profile.transitions?.length || 0} transitions`);
+
+    res.json({
+      success: true,
+      slides: profile.slideQuarks?.length || 0,
+      transitions: profile.transitions?.length || 0,
+      hasFabric: !!profile.deepFabric,
+      hasRhythm: !!profile.rhythm,
+      hasBonds: !!profile.longRangeInteractions,
+      hasSimulation: (profile.readerSimulation || []).length > 0,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`  ❌ Single extraction failed: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

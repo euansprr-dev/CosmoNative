@@ -152,34 +152,53 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
 // ============================================================
 
 export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | null> {
-  const apiKey = config.anthropicApiKey;
+  // Use direct Anthropic if available, otherwise fall back to OpenRouter
+  const useDirectAnthropic = !!config.anthropicApiKey;
+  const apiKey = config.anthropicApiKey || config.openRouterApiKey;
   if (!apiKey) {
-    console.log(`  ❌ Quark extraction: no Anthropic API key configured`);
+    console.log(`  ❌ Quark extraction: no API key configured (neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY)`);
     return null;
   }
 
   const prompt = buildExtractionPrompt(atom);
-  console.log(`  🔬 Extracting quarks for "${atom.title?.substring(0, 60)}" (${(atom.body || '').length} chars body)...`);
+  console.log(`  🔬 Extracting quarks for "${atom.title?.substring(0, 60)}" (${(atom.body || '').length} chars body) [${useDirectAnthropic ? 'direct Anthropic' : 'OpenRouter'}]...`);
 
-  const body = {
-    model: 'claude-opus-4-6',
+  const model = useDirectAnthropic ? 'claude-opus-4-6' : 'anthropic/claude-opus-4-6';
+  const apiUrl = useDirectAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://openrouter.ai/api/v1/chat/completions';
+
+  // Build request based on provider
+  const requestBody = useDirectAnthropic ? {
+    model,
     system: [{ type: 'text', text: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' }],
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 16384,
     temperature: 0.2,
+  } : {
+    model,
+    messages: [
+      { role: 'system', content: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' },
+      { role: 'user', content: prompt },
+    ],
+    max_tokens: 16384,
+    temperature: 0.2,
+  };
+
+  const headers: Record<string, string> = useDirectAnthropic ? {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+  } : {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
   };
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
+        headers,
+        body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(600_000), // 10 min timeout (Opus can be slow)
       });
 
@@ -193,7 +212,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
 
       if (!response.ok) {
         const errText = await response.text();
-        console.log(`  ❌ Anthropic error ${response.status}: ${errText.substring(0, 200)}`);
+        console.log(`  ❌ API error ${response.status}: ${errText.substring(0, 200)}`);
         if (attempt < MAX_RETRIES - 1) {
           await new Promise(r => setTimeout(r, (attempt + 1) * 5000));
           continue;
@@ -202,14 +221,23 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       }
 
       const data = await response.json() as any;
-      const textBlock = data.content?.find((c: any) => c.type === 'text');
-      if (!textBlock?.text) {
+
+      // Extract text from response (Anthropic vs OpenRouter format)
+      let rawText: string | undefined;
+      if (useDirectAnthropic) {
+        const textBlock = data.content?.find((c: any) => c.type === 'text');
+        rawText = textBlock?.text;
+      } else {
+        rawText = data.choices?.[0]?.message?.content;
+      }
+
+      if (!rawText) {
         console.log(`  ❌ No text in response`);
         return null;
       }
 
       // Parse JSON from response (strip any markdown fences if model wraps them)
-      let jsonText = textBlock.text.trim();
+      let jsonText = rawText.trim();
       if (jsonText.startsWith('```')) {
         jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
       }
@@ -219,9 +247,11 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       profile.extractedBy = 'claude-opus-4-6';
       profile.version = 1;
 
-      const usage = data.usage;
+      const usage = data.usage || data.choices?.[0]?.usage;
       if (usage) {
-        console.log(`  🔬 Extraction complete: ${usage.input_tokens} input, ${usage.output_tokens} output tokens`);
+        const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
+        const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
+        console.log(`  🔬 Extraction complete: ${inputTokens} input, ${outputTokens} output tokens [${useDirectAnthropic ? 'Anthropic' : 'OpenRouter'}]`);
       }
 
       return profile;

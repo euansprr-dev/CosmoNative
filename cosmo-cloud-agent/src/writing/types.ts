@@ -216,6 +216,38 @@ export interface QuarkProfile {
   };
 
   novelDiscoveries: string[];
+
+  // Long-range interactions (Pass 7)
+  longRangeInteractions?: {
+    setupPayoffBonds: Array<{ setupSlide: number; payoffSlide: number; distance: number; planted: string; harvested: string }>;
+    echoPatterns: Array<{ quarkType: string; positions: number[]; transformation: string }>;
+    interferences: Array<{ slides: number[]; forces: string[]; emergentEffect: string }>;
+    deliberateAbsences: Array<{ what: string; slides: number[]; effect: string }>;
+    callbackChains: Array<{ element: string; appearances: Array<{ slide: number; meaning: string }>; transformationArc: string }>;
+  };
+
+  // Rhythm and pacing (Pass 8)
+  rhythm?: {
+    densityWaveform: number[];
+    energyCurve: number[];
+    informationRate: number[];
+    silenceSlides: number[];
+    momentumMechanism: string;
+    pacingPattern: string;
+  };
+
+  // Complete reader simulation (Pass 9)
+  readerSimulation?: Array<{
+    afterSlide: number;
+    activeQuestions: string[];
+    builtAssumptions: string[];
+    prediction: string;
+    dominantEmotion: string;
+    investmentLevel: string;
+  }>;
+
+  // Deep fabric synthesis (Pass 10)
+  deepFabric?: string;
 }
 
 /**

@@ -90,6 +90,34 @@ What makes this post UNIQUELY effective beyond standard physics? Look for:
 - Meta-narrative techniques
 - Cultural resonance mechanisms (hitting unspoken societal frequencies)
 
+PASS 7 — LONG-RANGE QUARK INTERACTIONS:
+Zoom out from individual slides and adjacent pairs. Look at how quarks ACROSS THE ENTIRE POST interact:
+1. SETUP-PAYOFF BONDS: Map EVERY long-range bond — a detail planted on slide X that pays off on slide Y. An open loop from slide 1 that closes on slide 22. A character trait from slide 4 that makes slide 20's decision inevitable. [slide X → slide Y: planted what, harvested what, how many slides apart]
+2. ECHO PATTERNS: Which quarks repeat at different positions with different emotional weight? Map every echo and how MEANING transforms with repetition.
+3. INTERFERENCE EFFECTS: Where do multiple quark forces COMBINE to create something none creates alone? Find every point where compound forces produce emergent effects that no single quark explains.
+4. ABSENCE AS FORCE: What is deliberately MISSING? Which omissions create curiosity (productive) vs confusion (destructive)? Map every deliberate omission and its effect.
+5. CALLBACK CHAINS: Trace elements appearing 3+ times. How does each transform with each appearance?
+
+PASS 8 — RHYTHM AND PACING:
+Analyze the post as a WAVEFORM:
+1. DENSITY WAVEFORM: Map word count per slide as a number sequence. Where does it accelerate vs decelerate? What rhythm?
+2. ENERGY DYNAMICS: Rate energy 1-5 per slide. Map the curve. How does it interact with the tension curve?
+3. INFORMATION RATE: New facts/details per slide. Where does the post starve the reader vs flood them?
+4. SILENCE AND SPACE: Which slides are intentionally sparse? What function — decompression or held breath?
+5. MOMENTUM MECHANICS: How does forward momentum work? Escalation, alternation, acceleration, mystery?
+
+PASS 9 — COMPLETE READER SIMULATION:
+For EVERY slide boundary (one entry per slide, not just 5), trace:
+1. ACTIVE QUESTIONS: Every unresolved question in the reader's mind at this exact point.
+2. BUILT ASSUMPTIONS: What the reader has assumed/inferred that was never stated.
+3. PREDICTION: What the reader expects the next slide to be.
+4. EMOTIONAL CHARGE: Dominant emotion right now. What caused any shift.
+5. INVESTMENT LEVEL: How much the reader cares (low/medium/high/locked-in) and what built it.
+
+PASS 10 — THE FABRIC:
+You now have the complete physics from Passes 1-9. Synthesize EVERYTHING. Find what no single pass could reveal — emergent patterns visible only when you see ALL the physics together. How quarks interact across passes, how rhythm reinforces or fights quark physics, how long-range bonds create conditions for physics events, how the reader simulation reveals compound effects.
+Write 500-1000 words of free-form synthesis. Cite specific slides, quarks, reader states from your findings. Every claim grounded in your data — but what you FIND is entirely up to you. Discover.
+
 Output ONLY valid JSON matching this exact schema (no markdown, no explanation outside JSON):
 {
   "version": 1,
@@ -98,7 +126,24 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
   "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}},
   "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging"}]},
   "physicsEvents": {"symmetryBreak": {"slideNumber": 0, "patternEstablished": "...", "whatBreaks": "...", "whyDevastating": "..."}, "phaseTransition": {"slideNumber": 0, "frameBefore": "...", "frameAfter": "...", "recontextualization": "..."}, "energyResolution": {"proportional": true, "loopsClosed": [{"loop": "...", "closedAtSlide": 0}], "loopsUnclosed": [], "assessment": "..."}, "peakGravity": {"slideNumber": 0, "activeLoops": 0, "coincidesWithTransition": true}},
-  "novelDiscoveries": ["..."]
+  "novelDiscoveries": ["..."],
+  "longRangeInteractions": {
+    "setupPayoffBonds": [{"setupSlide": 1, "payoffSlide": 22, "distance": 21, "planted": "...", "harvested": "..."}],
+    "echoPatterns": [{"quarkType": "...", "positions": [1, 12, 24], "transformation": "..."}],
+    "interferences": [{"slides": [3, 7, 11], "forces": ["trust+", "identification+", "tension+"], "emergentEffect": "..."}],
+    "deliberateAbsences": [{"what": "...", "slides": [1, 2], "effect": "..."}],
+    "callbackChains": [{"element": "...", "appearances": [{"slide": 1, "meaning": "..."}, {"slide": 24, "meaning": "..."}], "transformationArc": "..."}]
+  },
+  "rhythm": {
+    "densityWaveform": [8, 12, 10, 6, 9],
+    "energyCurve": [3, 2, 4, 5, 3],
+    "informationRate": [1, 2, 1, 0, 3],
+    "silenceSlides": [5, 16],
+    "momentumMechanism": "...",
+    "pacingPattern": "..."
+  },
+  "readerSimulation": [{"afterSlide": 1, "activeQuestions": ["..."], "builtAssumptions": ["..."], "prediction": "...", "dominantEmotion": "...", "investmentLevel": "low"}],
+  "deepFabric": "500-1000 words of emergent synthesis citing specific slides, quarks, and reader states from all passes..."
 }`;
 }
 

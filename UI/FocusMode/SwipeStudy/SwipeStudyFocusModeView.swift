@@ -2897,50 +2897,189 @@ struct SwipeStudyFocusModeView: View {
         guard let atom = currentAtom else { return }
         var text = "=== SWIPE: \(atom.title ?? "Untitled") ===\n\n"
 
-        // Body
+        // Full body
         if let body = atom.body, !body.isEmpty {
             text += "--- BODY ---\n\(body)\n\n"
         }
 
-        // Existing analysis
+        // Existing analysis (hook, beats, score, framework, voice)
         if let structured = atom.structured,
            let data = structured.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let swipeAnalysis = json["swipeAnalysis"] as? [String: Any] {
-            if let hookText = swipeAnalysis["hookText"] as? String { text += "Hook: \(hookText)\n" }
-            if let hookType = swipeAnalysis["hookType"] as? String { text += "Hook Type: \(hookType)\n" }
-            if let hookScore = swipeAnalysis["hookScore"] as? Double { text += "Hook Score: \(hookScore)/10\n" }
-            if let beatFP = swipeAnalysis["beatFingerprint"] as? String { text += "Beats: \(beatFP)\n" }
+           let sa = json["swipeAnalysis"] as? [String: Any] {
+            if let hookText = sa["hookText"] as? String { text += "Hook: \(hookText)\n" }
+            if let hookType = sa["hookType"] as? String { text += "Hook Type: \(hookType)\n" }
+            if let hookScore = sa["hookScore"] as? Double { text += "Hook Score: \(hookScore)/10\n" }
+            if let hookMechanism = sa["hookMechanism"] as? String { text += "Hook Mechanism: \(hookMechanism)\n" }
+            if let hookReason = sa["hookScoreReason"] as? String { text += "Hook Score Reason: \(hookReason)\n" }
+            if let beatFP = sa["beatFingerprint"] as? String { text += "Beats: \(beatFP)\n" }
+            if let framework = sa["frameworkType"] as? String { text += "Framework: \(framework)\n" }
+            if let recipe = sa["structuralRecipe"] as? String { text += "Structural Recipe: \(recipe)\n" }
+            if let voice = sa["voiceMarkers"] as? [String] { text += "Voice: \(voice.joined(separator: ", "))\n" }
+            if let emotion = sa["dominantEmotion"] as? String { text += "Dominant Emotion: \(emotion)\n" }
             text += "\n"
         }
 
-        // Content Physics profile
-        if let profile = atom.contentPhysicsProfile {
+        // Content Physics — EVERYTHING
+        if let p = atom.contentPhysicsProfile {
             text += "--- CONTENT PHYSICS ---\n"
-            if let arc = profile.arcQuarks?.shape { text += "Arc: \(arc)\n" }
-            if let brk = profile.physicsEvents?.symmetryBreak?.slideNumber { text += "Symmetry Break: @slide \(brk)\n" }
-            if let pt = profile.physicsEvents?.phaseTransition {
-                text += "Phase Transition: \(pt.frameBefore ?? "") → \(pt.frameAfter ?? "") @slide \(pt.slideNumber ?? 0)\n"
-            }
-            if let gravity = profile.physicsEvents?.peakGravity { text += "Peak Gravity: \(gravity.activeLoops ?? 0) loops @slide \(gravity.slideNumber ?? 0)\n" }
 
-            if let quarks = profile.slideQuarks, !quarks.isEmpty {
+            // Arc
+            if let arc = p.arcQuarks {
+                text += "Arc: \(arc.shape ?? "")\n"
+                if let reversals = arc.winLossReversals { text += "Win/Loss Reversals: \(reversals)\n" }
+                if let sparse = arc.sparseDensePattern { text += "Sparse/Dense: \(sparse)\n" }
+                if let iet = arc.internalExternalTension, iet.present == true {
+                    text += "Internal/External Tension: \(iet.description ?? "") (peak @slide \(iet.peakSlide ?? 0))\n"
+                }
+            }
+
+            // Physics Events
+            if let brk = p.physicsEvents?.symmetryBreak {
+                text += "Symmetry Break: @slide \(brk.slideNumber ?? 0)\n"
+                if let pattern = brk.patternEstablished { text += "  Pattern: \(pattern)\n" }
+                if let what = brk.whatBreaks { text += "  Breaks: \(what)\n" }
+                if let why = brk.whyDevastating { text += "  Why: \(why)\n" }
+            }
+            if let pt = p.physicsEvents?.phaseTransition {
+                text += "Phase Transition: \(pt.frameBefore ?? "") → \(pt.frameAfter ?? "") @slide \(pt.slideNumber ?? 0)\n"
+                if let recontext = pt.recontextualization { text += "  Recontextualization: \(recontext)\n" }
+            }
+            if let pg = p.physicsEvents?.peakGravity {
+                text += "Peak Gravity: \(pg.activeLoops ?? 0) loops @slide \(pg.slideNumber ?? 0)\n"
+            }
+            if let er = p.physicsEvents?.energyResolution {
+                text += "Energy: \(er.proportional == true ? "Proportional" : "Disproportional")\n"
+                if let assessment = er.assessment { text += "  Assessment: \(assessment)\n" }
+            }
+
+            // Slide Quarks (full detail)
+            if let quarks = p.slideQuarks, !quarks.isEmpty {
                 text += "\nSlide Quarks:\n"
                 for q in quarks {
                     text += "  \(q.slideNumber): \(q.speechAct.type ?? "")"
-                    if let deltas = q.readerDeltas { text += " | \(deltas.compactMap(\.type).joined(separator: ", "))" }
+                    if let mechanism = q.speechAct.mechanism { text += " — \(mechanism)" }
                     text += "\n"
+                    if let deltas = q.readerDeltas {
+                        for d in deltas {
+                            text += "    Reader: \(d.type ?? "")"
+                            if let m = d.mechanism { text += " — \(m)" }
+                            text += "\n"
+                        }
+                    }
+                    if let proof = q.proofType {
+                        text += "    Proof: \(proof.type ?? "")\(proof.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
+                    if let motivation = q.motivation {
+                        text += "    Motivation: \(motivation.type ?? "")\(motivation.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
+                    if let compression = q.compression {
+                        text += "    Compression: \(compression.type)\(compression.size.map { " (\($0))" } ?? "")\(compression.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
                 }
             }
 
-            if let transitions = profile.transitions, !transitions.isEmpty {
+            // Transitions (full detail)
+            if let transitions = p.transitions, !transitions.isEmpty {
                 text += "\nTransitions:\n"
                 for t in transitions {
                     text += "  \(t.from)→\(t.to): \(t.type)\(t.doubleHelix == true ? " 🧬" : "")\n"
+                    if let mechanism = t.mechanism { text += "    \(mechanism)\n" }
+                    if let dh = t.doubleHelixDetail { text += "    Double helix: \(dh)\n" }
                 }
             }
 
-            if let fabric = profile.deepFabric, !fabric.isEmpty {
+            // Reader Journey
+            if let sim = p.readerSimulation, !sim.isEmpty {
+                text += "\nReader Journey:\n"
+                for s in sim {
+                    text += "  After slide \(s.afterSlide):"
+                    if let emotion = s.dominantEmotion { text += " [\(emotion)]" }
+                    if let investment = s.investmentLevel { text += " invest=\(investment)" }
+                    text += "\n"
+                    if let questions = s.activeQuestions, !questions.isEmpty {
+                        text += "    Questions: \(questions.joined(separator: "; "))\n"
+                    }
+                    if let assumptions = s.builtAssumptions, !assumptions.isEmpty {
+                        text += "    Assumptions: \(assumptions.joined(separator: "; "))\n"
+                    }
+                    if let prediction = s.prediction { text += "    Predicts: \(prediction)\n" }
+                }
+            } else if let rsv = p.rsv?.trajectoryPoints, !rsv.isEmpty {
+                text += "\nRSV Trajectory:\n"
+                for pt in rsv {
+                    text += "  @slide \(pt.afterSlide): \(pt.openLoops?.count ?? 0) loops, trust=\(pt.trust ?? "?"), tension=\(pt.tension?.level ?? "?")/\(pt.tension?.type ?? "?"), frame=\"\(pt.frame ?? "?")\", energy=\(pt.energyBalance ?? "?")\n"
+                    if let loops = pt.openLoops?.loops, !loops.isEmpty {
+                        text += "    Loops: \(loops.joined(separator: "; "))\n"
+                    }
+                }
+            }
+
+            // Rhythm
+            if let r = p.rhythm {
+                text += "\nRhythm & Pacing:\n"
+                if let density = r.densityWaveform { text += "  Density waveform: \(density.map { String(Int($0)) }.joined(separator: ", "))\n" }
+                if let energy = r.energyCurve { text += "  Energy curve: \(energy.map { String(Int($0)) }.joined(separator: ", "))\n" }
+                if let info = r.informationRate { text += "  Information rate: \(info.map { String(Int($0)) }.joined(separator: ", "))\n" }
+                if let silence = r.silenceSlides { text += "  Silence slides: \(silence.map(String.init).joined(separator: ", "))\n" }
+                if let momentum = r.momentumMechanism { text += "  Momentum: \(momentum)\n" }
+                if let pattern = r.pacingPattern { text += "  Pattern: \(pattern)\n" }
+            }
+
+            // Long-Range Bonds
+            if let inter = p.longRangeInteractions {
+                if let bonds = inter.setupPayoffBonds, !bonds.isEmpty {
+                    text += "\nLong-Range Bonds:\n"
+                    for b in bonds {
+                        text += "  Slide \(b.setupSlide) → Slide \(b.payoffSlide) (\(b.distance ?? 0) apart)\n"
+                        if let planted = b.planted { text += "    Planted: \(planted)\n" }
+                        if let harvested = b.harvested { text += "    Harvested: \(harvested)\n" }
+                    }
+                }
+                if let echoes = inter.echoPatterns, !echoes.isEmpty {
+                    text += "\nEcho Patterns:\n"
+                    for e in echoes {
+                        text += "  \"\(e.quarkType)\" @ slides \(e.positions?.map(String.init).joined(separator: ", ") ?? "")\n"
+                        if let transform = e.transformation { text += "    Transformation: \(transform)\n" }
+                    }
+                }
+                if let interferences = inter.interferences, !interferences.isEmpty {
+                    text += "\nInterference Effects:\n"
+                    for i in interferences {
+                        text += "  @slides \(i.slides?.map(String.init).joined(separator: ",") ?? ""): \(i.forces.joined(separator: " + "))\n"
+                        if let effect = i.emergentEffect { text += "    → \(effect)\n" }
+                    }
+                }
+                if let absences = inter.deliberateAbsences, !absences.isEmpty {
+                    text += "\nDeliberate Absences:\n"
+                    for a in absences {
+                        text += "  ⊘ \(a.what)\n"
+                        if let effect = a.effect { text += "    Effect: \(effect)\n" }
+                    }
+                }
+                if let chains = inter.callbackChains, !chains.isEmpty {
+                    text += "\nCallback Chains:\n"
+                    for c in chains {
+                        text += "  \"\(c.element)\" — \(c.transformationArc ?? "")\n"
+                        if let appearances = c.appearances {
+                            for app in appearances {
+                                text += "    @slide \(app.slide): \(app.meaning ?? "")\n"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Novel Discoveries
+            if let novels = p.novelDiscoveries, !novels.isEmpty {
+                text += "\nNovel Discoveries:\n"
+                for n in novels {
+                    text += "  • \(n.stringValue ?? n.dictValue.map { "\($0)" } ?? "?")\n"
+                }
+            }
+
+            // The Fabric (full)
+            if let fabric = p.deepFabric, !fabric.isEmpty {
                 text += "\nThe Fabric:\n\(fabric)\n"
             }
         }

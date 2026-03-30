@@ -53,6 +53,7 @@ PASS 1 — MICRO QUARKS (per slide):
 For EVERY slide, extract:
 1. SPEECH ACT — Name it AND describe the specific writing technique. How many words? What's included vs omitted? Why does THIS technique work for THIS act?
 2. READER DELTA — Name 1-2 deltas AND identify the SPECIFIC TEXT MECHANISM that creates each (curiosity+: what question/what's withheld? tension+: what's at risk? trust+: what vulnerability/proof? identification+: what specific-yet-universal experience? surprise: what expectation broken? empathy+: what sensory detail simulated?)
+   For slides with identification+: also identify the RESONANCE FREQUENCY — the specific detail that hits a mass unspoken experience. Specific enough to be vivid, universal enough that millions recognize it, unspoken enough that seeing it named feels like being seen. Name the frequency and estimate audience reach.
 3. PROOF TYPE — If present: what type, WHY does that type fit here?
 4. MOTIVATION — If decision/action: what PRESSURE makes it inevitable, not random?
 5. COMPRESSION — If time skip: how large, what earns it, intrigue or confusion?
@@ -73,6 +74,7 @@ PASS 3 — MACRO QUARKS:
 PASS 4 — RSV TRAJECTORY:
 Trace the Reader State Vector at 5 boundaries (after slide 1, after ~slide 5, midpoint, most powerful moment, final slide):
 For each: open loops (count + list), trust level, tension (level + type), pattern expectation, frame, energy balance.
+Also for each boundary: SUPERPOSITION COUNT — how many simultaneous interpretations is the reader holding? (e.g., "success story AND cautionary tale AND love letter" = 3). The longer the superposition holds before collapsing at the phase transition, the more powerful the collapse. Note where the superposition collapses to a single interpretation.
 
 PASS 5 — PHYSICS EVENTS:
 1. SYMMETRY BREAK — What pattern do slides 1-5 establish? Which slide breaks it? What breaks? Why devastating?
@@ -90,6 +92,8 @@ What makes this post UNIQUELY effective beyond standard physics? Look for:
 - Meta-narrative techniques
 - Cultural resonance mechanisms (hitting unspoken societal frequencies)
 
+ANTIMATTER: For every element that CREATES engagement, identify the anti-element that would DESTROY it with equal force. What specific phrase, structure, or move would annihilate the accumulated physics? A single "let that sink in" can destroy 10 slides of earned trust. An unearned flex cancels 15 slides of vulnerability. List the specific antimatter for THIS post — what must NEVER appear in a draft adapting this blueprint?
+
 PASS 7 — LONG-RANGE QUARK INTERACTIONS:
 Zoom out from individual slides and adjacent pairs. Look at how quarks ACROSS THE ENTIRE POST interact:
 1. SETUP-PAYOFF BONDS: Map EVERY long-range bond — a detail planted on slide X that pays off on slide Y. An open loop from slide 1 that closes on slide 22. A character trait from slide 4 that makes slide 20's decision inevitable. [slide X → slide Y: planted what, harvested what, how many slides apart]
@@ -97,6 +101,7 @@ Zoom out from individual slides and adjacent pairs. Look at how quarks ACROSS TH
 3. INTERFERENCE EFFECTS: Where do multiple quark forces COMBINE to create something none creates alone? Find every point where compound forces produce emergent effects that no single quark explains.
 4. ABSENCE AS FORCE: What is deliberately MISSING? Which omissions create curiosity (productive) vs confusion (destructive)? Map every deliberate omission and its effect.
 5. CALLBACK CHAINS: Trace elements appearing 3+ times. How does each transform with each appearance?
+6. ENTANGLEMENT PAIRS: For each long-range bond, test: if you REMOVED slide X, would slide Y collapse into meaninglessness? Truly entangled slides have NO independent meaning — they're a single quantum system separated by distance. List each entangled pair and what happens to each side if the other is removed.
 
 PASS 8 — RHYTHM AND PACING:
 Analyze the post as a WAVEFORM:
@@ -121,10 +126,10 @@ Write 500-1000 words of free-form synthesis. Cite specific slides, quarks, reade
 Output ONLY valid JSON matching this exact schema (no markdown, no explanation outside JSON):
 {
   "version": 1,
-  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}}],
+  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}}],
   "transitions": [{"from": 1, "to": 2, "type": "...", "mechanism": "...", "swapTestPasses": false, "doubleHelix": true, "doubleHelixDetail": "..."}],
   "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}},
-  "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging"}]},
+  "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging", "superpositionCount": 2, "superpositions": ["success story", "love letter"]}]},
   "physicsEvents": {"symmetryBreak": {"slideNumber": 0, "patternEstablished": "...", "whatBreaks": "...", "whyDevastating": "..."}, "phaseTransition": {"slideNumber": 0, "frameBefore": "...", "frameAfter": "...", "recontextualization": "..."}, "energyResolution": {"proportional": true, "loopsClosed": [{"loop": "...", "closedAtSlide": 0}], "loopsUnclosed": [], "assessment": "..."}, "peakGravity": {"slideNumber": 0, "activeLoops": 0, "coincidesWithTransition": true}},
   "novelDiscoveries": ["..."],
   "longRangeInteractions": {
@@ -132,7 +137,8 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
     "echoPatterns": [{"quarkType": "...", "positions": [1, 12, 24], "transformation": "..."}],
     "interferences": [{"slides": [3, 7, 11], "forces": ["trust+", "identification+", "tension+"], "emergentEffect": "..."}],
     "deliberateAbsences": [{"what": "...", "slides": [1, 2], "effect": "..."}],
-    "callbackChains": [{"element": "...", "appearances": [{"slide": 1, "meaning": "..."}, {"slide": 24, "meaning": "..."}], "transformationArc": "..."}]
+    "callbackChains": [{"element": "...", "appearances": [{"slide": 1, "meaning": "..."}, {"slide": 24, "meaning": "..."}], "transformationArc": "..."}],
+    "entanglementPairs": [{"slideA": 1, "slideB": 22, "ifARemoved": "...", "ifBRemoved": "..."}]
   },
   "rhythm": {
     "densityWaveform": [8, 12, 10, 6, 9],
@@ -143,6 +149,7 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
     "pacingPattern": "..."
   },
   "readerSimulation": [{"afterSlide": 1, "activeQuestions": ["..."], "builtAssumptions": ["..."], "prediction": "...", "dominantEmotion": "...", "investmentLevel": "low"}],
+  "antimatter": ["specific phrase/structure/move that would destroy this post's physics..."],
   "deepFabric": "500-1000 words of emergent synthesis citing specific slides, quarks, and reader states from all passes..."
 }`;
 }

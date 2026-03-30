@@ -153,6 +153,7 @@ export interface QuarkProfile {
     proofType?: { type: string; mechanism: string };
     motivation?: { type: string; mechanism: string };
     compression?: { type: string; size: string; mechanism: string };
+    resonanceFrequency?: { detail: string; unspokenExperience: string; estimatedReach: string };
   }>;
 
   transitions: Array<{
@@ -186,6 +187,8 @@ export interface QuarkProfile {
       patternExpectation: string;
       frame: string;
       energyBalance: string;
+      superpositionCount?: number;
+      superpositions?: string[];
     }>;
   };
 
@@ -224,7 +227,11 @@ export interface QuarkProfile {
     interferences: Array<{ slides: number[]; forces: string[]; emergentEffect: string }>;
     deliberateAbsences: Array<{ what: string; slides: number[]; effect: string }>;
     callbackChains: Array<{ element: string; appearances: Array<{ slide: number; meaning: string }>; transformationArc: string }>;
+    entanglementPairs?: Array<{ slideA: number; slideB: number; ifARemoved: string; ifBRemoved: string }>;
   };
+
+  // Antimatter — phrases/structures/moves that would destroy this post's physics
+  antimatter?: string[];
 
   // Rhythm and pacing (Pass 8)
   rhythm?: {

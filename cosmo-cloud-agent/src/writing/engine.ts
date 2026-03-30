@@ -516,14 +516,18 @@ For EACH slide (same count as ${label}), write:
   Quarks: [speech act — technique that makes it this act] | Reader: [delta — what in the text creates it] | Proof: [type, if present]
   Transition to N+1: [type — what pressure in THIS slide forces the reader to the next? Be specific about the mechanism.]
   Motivation: [if decision/action — what pressure visible in the text?] | Compression: [if time skip — earned/intriguing/confusing? what signal?]
+  Entangled with: [slide numbers whose meaning DEPENDS on this slide — if this slide were removed, which others collapse?]
   Prerequisites: [what the audience must already know from previous slides]
   Words: [target from your density measurement] | Sentences: [target] | Lines: [target]
   Format: [from your visual format analysis — bullets? breaks? fragments?]
   Content: [what specific information goes here — cite real client details by name]
+  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION — translate the blueprint's mechanism into a specific writing direction for the client's version. Include: target word count, sentence structure, what to include vs omit, how it should feel when read aloud, and WHY this technique creates the planned reader delta. Reference the blueprint's actual slide as the model to match. Different blueprints → different WRITE instructions.]
 
-The quark annotations should be SPECIFIC to the blueprint's mechanisms, not generic labels.
-Good: "confession — 10 words, direct to Dad, names the failure, no excuse. Reader: curiosity+ (no explanation = open loop), empathy+ (vulnerability of admitting to parent)."
-Bad: "confession | empathy+, curiosity+" (just labels — model won't know how to reproduce the mechanism)
+The quark annotations AND WRITE instructions should be SPECIFIC to the blueprint's mechanisms, not generic labels.
+Good quarks: "confession — 10 words, direct address, names the failure, no excuse. Reader: curiosity+ (no explanation = open loop), empathy+ (vulnerability of admitting)."
+Bad quarks: "confession | empathy+, curiosity+" (just labels — model won't know how to reproduce the mechanism)
+Good WRITE: "10 words max. Direct address + year marker. Name the specific failure. End with apology, no excuse. Ellipsis. Should feel like a child confessing to a parent. Model: blueprint's slide 1."
+Bad WRITE: "Write a confession slide." (too vague — no craft direction)
 
 For slides where the blueprint's specific detail (luxury purchase, specific career move) doesn't naturally exist in the client's story, write:
   ADAPTED: [blueprint function: e.g., gratitude gesture via luxury watch] → [client equivalent: genuine expression matching the client's actual story]
@@ -579,6 +583,9 @@ RSV PHYSICS
   Peak gravity at slide ___: [how many active loops, list them]
   Energy resolution: [is the total payoff proportional to the total buildup? which loops close where?]
 
+ANTIMATTER (phrases, structures, or moves that would DESTROY this post's physics — never use in a draft):
+  [List the specific antimatter derived from the blueprint's analysis. What would collapse the earned trust, break the voice, or annihilate the accumulated physics?]
+
 This plan is your construction blueprint. Phase 2 will follow it slide by slide.`;
 
     this.messages.push({ id: crypto.randomUUID(), role: 'user', content: planInstruction, timestamp: new Date().toISOString() });
@@ -623,7 +630,7 @@ HOW TO WRITE EACH SLIDE
 
 Work through your plan slide by slide. For each slide:
 
-1. READ YOUR PLAN ENTRY for this slide. It tells you: the beat function, the target word count, the target sentence count, the visual format, and the specific content.
+1. READ YOUR PLAN'S WRITE INSTRUCTION for this slide. It tells you the exact craft direction: word count target, sentence structure, what to include vs omit, how it should feel when read aloud. Follow the WRITE instruction as your primary guide. Then cross-reference the quark annotation — does your slide hit the planned speech act, reader delta, and transition? The WRITE instruction is the HOW. The quarks are the WHAT. Both must be present.
 
 2. LOOK AT THE CORRESPONDING SLIDE in the ${this.getBlueprintLabel()}. Your slide must MATCH ITS SHAPE:
    - If the ${this.getBlueprintLabel()}'s slide 3 has 4 short lines separated by line breaks → yours has 4 short lines separated by line breaks
@@ -846,7 +853,29 @@ RSV PHYSICS: Check the four physics events against your plan:
 - PHASE TRANSITION: Identify where the reader's frame shifts from story type A to type B. If you can describe the post as ONLY one story type start to finish, the phase transition is missing. The strongest posts are TWO stories — the frame shifts mid-post.
 - CUMULATIVE GRAVITY: At the phase transition point, are there 3+ active open loops? If fewer, the reader might scroll away before the transition hits. Open more loops in the first half.
 
-Pass: Every slide has a delta, every transition is causal, every major moment is earned, the arc oscillates, energy is conserved, the pattern breaks, the frame shifts, gravity peaks at the transition.
+QUARK AUDIT (slide-by-slide precision check):
+
+STEP 1 — EXTRACT YOUR DRAFT'S ACTUAL QUARKS: Before comparing, identify what you ACTUALLY wrote. For each slide, extract:
+- What speech act IS this slide performing? (Name it based on what you wrote, not what you planned)
+- What reader delta does it ACTUALLY create? (Read it fresh — what genuinely changes?)
+- What is the actual transition mechanism to the next slide?
+Write compact: "Slide 1: [actual act] | [actual delta] | → [actual transition to 2]"
+
+STEP 2 — COMPARE TO PLAN: Put your draft's quarks next to the plan's quarks, slide by slide:
+- SPEECH ACT: Does the actual act match the planned act? "confession" vs "report" = MISS.
+  Check if the MECHANISM from the WRITE instruction is present (word count, structure, what's included/omitted).
+- READER DELTA: Does the actual delta match? "tension+" vs "identification+" = different physics.
+  Test: can the reader skip this slide without noticing? If yes, delta is zero.
+- TRANSITION: Does the actual bridge match? Can you swap this slide and the next? If yes, broken.
+- WRITE INSTRUCTION: Does the specific craft technique from the WRITE field appear in your text?
+
+STEP 3 — ENTANGLEMENT CHECK: For each entangled pair in the plan — if you removed your slide X, would your slide Y still make sense? If the bond is broken, fix BOTH sides.
+
+STEP 4 — DETECTABILITY: Read the full draft as a SKEPTIC. Flag any slide where the engineering is visible: generic motivation language, manufactured emotional beats, mechanical transitions, CTA that breaks voice. Invisible physics = powerful. Visible physics = collapsed.
+
+For each MISS: rewrite using the WRITE instruction from your plan.
+
+Pass: Every slide has a delta, every transition is causal, every major moment is earned, the arc oscillates, energy is conserved, the pattern breaks, the frame shifts, gravity peaks at the transition, AND every slide's actual quarks match the planned quarks.
 Fail: Fix flagged slides and call write_draft.
 
 ────────────────────────────────────────

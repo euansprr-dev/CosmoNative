@@ -2865,10 +2865,20 @@ struct SwipeStudyFocusModeView: View {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
             if statusCode == 200 {
-                // Refresh the atom from GRDB to pick up the new contentPhysics
-                try await Task.sleep(for: .seconds(2)) // Wait for sync
-                if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
-                    currentAtom = refreshed
+                // Poll for the synced data — Supabase Realtime needs time to push to GRDB
+                for attempt in 1...10 {
+                    try await Task.sleep(for: .seconds(3))
+                    if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid),
+                       refreshed.contentPhysicsProfile != nil {
+                        currentAtom = refreshed
+                        print("🔬 Physics profile loaded after \(attempt * 3)s")
+                        break
+                    }
+                    print("🔬 Waiting for sync... attempt \(attempt)/10")
+                }
+                // If still not synced after 30s, show message
+                if currentAtom?.contentPhysicsProfile == nil {
+                    profileGenerationError = "Extraction completed but data hasn't synced yet. Close and reopen this swipe to see the profile."
                 }
             } else {
                 let body = String(data: data, encoding: .utf8) ?? ""

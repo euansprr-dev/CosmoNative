@@ -1058,9 +1058,8 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
           } else {
             lastAssistantText = text;
           }
-          // Log assistant response summary (Railway splits \n into separate entries)
-          const respPreview = text.replace(/\n/g, ' ').substring(0, 300);
-          console.log(`    🤖 Assistant response (${text.length} chars): ${respPreview}...`);
+          // Structured JSON log — Railway renders as ONE expandable entry
+          console.log(JSON.stringify({ type: '🤖 RESPONSE', chars: text.length, content: text }));
           this.messages.push({
             id: crypto.randomUUID(),
             role: 'assistant',
@@ -1202,9 +1201,8 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
         if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
         if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
         if (/speech act|reader delta|quark|transition.*→|inevitability|state change|causality|earned/i.test(thought)) thinkTopics.push('quarks');
-        // Log think summary (Railway splits \n into separate entries, so keep it compact)
-        const preview = thought.replace(/\n/g, ' ').substring(0, 200);
-        console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]: ${preview}...`);
+        // Structured JSON log — Railway renders as ONE expandable entry
+        console.log(JSON.stringify({ type: '💭 THINK', words: wordCount, topics: thinkTopics, content: thought }));
 
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
@@ -1394,9 +1392,8 @@ Only after thorough analysis can you call write_draft.`;
           const bpSlides = this.countSlidesInBody(this.blueprintAnchor.fullBody);
           console.log(`    📝 Blueprint comparison: draft=${slideCount} slides vs blueprint=${bpSlides} slides ${slideCount === bpSlides ? '✅' : '⚠️ MISMATCH'}`);
         }
-        // Log draft summary (Railway splits \n into separate entries)
-        const draftPreview = content.replace(/\n/g, ' | ').substring(0, 400);
-        console.log(`    📝 Draft written (${wordCount} words, ${slideCount} slides): ${draftPreview}...`);
+        // Structured JSON log — Railway renders as ONE expandable entry
+        console.log(JSON.stringify({ type: '📝 DRAFT', words: wordCount, slides: slideCount, format, content }));
 
         let result = `Draft written (${wordCount} words, format: ${format})`;
         if (!validation.isValid) {
@@ -1504,9 +1501,8 @@ If ALL checks pass, present the draft.
         console.log(`    📋 Plan quality: ${hasSlideEntries} slide entries, ${hasWordCounts} word count targets, ${hasBeatLabels} beat labels, banned section: ${hasBannedSection ? 'yes' : 'NO'}, hook spec: ${hasHookSpec ? 'yes' : 'NO'}`);
         if (hasSlideEntries < 3) console.log(`    ⚠️ Plan has few slide entries (${hasSlideEntries}) — may not have per-slide detail`);
         if (hasWordCounts < 2) console.log(`    ⚠️ Plan has few word count targets (${hasWordCounts}) — density may be vague`);
-        // Log plan summary (Railway splits \n into separate entries)
-        const planPreview = plan.replace(/\n/g, ' | ').substring(0, 400);
-        console.log(`    📋 Plan created (${planWords} words): ${planPreview}...`);
+        // Structured JSON log — Railway renders as ONE expandable entry
+        console.log(JSON.stringify({ type: '📋 PLAN', words: planWords, slideEntries: hasSlideEntries, wordCountTargets: hasWordCounts, beatLabels: hasBeatLabels, content: plan }));
 
         return `Writing plan created (${planWords} words). Structured slide contract: ${structuredPlan.slides.length} slides. The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }

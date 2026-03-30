@@ -109,6 +109,30 @@ struct PhysicsSlideQuarksView: View {
                 if let compression = quark.compression {
                     quarkRow(label: "Compression", type: "\(compression.type)\(compression.size.map { " (\($0))" } ?? "")", mechanism: compression.mechanism, color: DS.textMuted)
                 }
+                if let resonance = quark.resonanceFrequency, let detail = resonance.detail {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: DS.space4) {
+                            Text("📡")
+                                .font(.system(size: 10))
+                            Text("RESONANCE")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.entitySwipe)
+                        }
+                        Text(detail)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.entitySwipe)
+                        if let experience = resonance.unspokenExperience {
+                            Text(experience)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.textMuted)
+                        }
+                        if let reach = resonance.estimatedReach {
+                            Text("Reach: \(reach)")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.textMuted)
+                        }
+                    }
+                }
             }
             .padding(DS.space12)
             .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))

@@ -3078,6 +3078,54 @@ struct SwipeStudyFocusModeView: View {
                 }
             }
 
+            // Entanglement Pairs
+            if let pairs = p.longRangeInteractions?.entanglementPairs, !pairs.isEmpty {
+                text += "\nEntanglement Pairs:\n"
+                for pair in pairs {
+                    text += "  Slide \(pair.slideA) ⟷ Slide \(pair.slideB) (entangled)\n"
+                    if let ifA = pair.ifARemoved { text += "    If \(pair.slideA) removed: \(ifA)\n" }
+                    if let ifB = pair.ifBRemoved { text += "    If \(pair.slideB) removed: \(ifB)\n" }
+                }
+            }
+
+            // Superposition
+            if let rsvPoints = p.rsv?.trajectoryPoints {
+                let superPoints = rsvPoints.filter { ($0.superpositionCount ?? 0) > 0 }
+                if !superPoints.isEmpty {
+                    text += "\nSuperposition:\n"
+                    for pt in superPoints {
+                        text += "  @slide \(pt.afterSlide): \(pt.superpositionCount ?? 0) interpretations"
+                        if let sups = pt.superpositions, !sups.isEmpty { text += " (\(sups.joined(separator: ", ")))" }
+                        text += "\n"
+                    }
+                    if let collapse = superPoints.last(where: { ($0.superpositionCount ?? 0) <= 1 }),
+                       let peak = superPoints.max(by: { ($0.superpositionCount ?? 0) < ($1.superpositionCount ?? 0) }) {
+                        text += "  Collapse: from \(peak.superpositionCount ?? 0) interpretations → 1 at slide \(collapse.afterSlide)\n"
+                    }
+                }
+            }
+
+            // Resonance Frequencies
+            if let quarks = p.slideQuarks {
+                let resonant = quarks.filter { $0.resonanceFrequency != nil }
+                if !resonant.isEmpty {
+                    text += "\nResonance Frequencies:\n"
+                    for q in resonant {
+                        if let r = q.resonanceFrequency {
+                            text += "  📡 Slide \(q.slideNumber): \(r.detail ?? "") — \(r.unspokenExperience ?? "") (reach: \(r.estimatedReach ?? "?"))\n"
+                        }
+                    }
+                }
+            }
+
+            // Antimatter
+            if let antimatter = p.antimatter, !antimatter.isEmpty {
+                text += "\nAntimatter:\n"
+                for a in antimatter {
+                    text += "  ☢️ \(a)\n"
+                }
+            }
+
             // The Fabric (full)
             if let fabric = p.deepFabric, !fabric.isEmpty {
                 text += "\nThe Fabric:\n\(fabric)\n"

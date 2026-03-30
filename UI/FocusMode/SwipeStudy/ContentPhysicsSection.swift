@@ -26,6 +26,7 @@ struct ContentPhysicsSection: View {
             headerRow
             arcShapeRow
             physicsEventBadges
+            antimatterRow
             fabricExcerpt
             sectionToggles
         }
@@ -114,6 +115,30 @@ struct ContentPhysicsSection: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var antimatterRow: some View {
+        if let antimatter = profile.antimatter, !antimatter.isEmpty {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                HStack(spacing: DS.space4) {
+                    Text("☢️")
+                        .font(.system(size: 10))
+                    Text("ANTIMATTER")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.red)
+                }
+                ForEach(antimatter.prefix(4), id: \.self) { item in
+                    Text("• \(item)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .lineLimit(1)
+                }
+            }
+            .padding(DS.space8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.red.opacity(DS.opacityFaint), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
         }
     }
 

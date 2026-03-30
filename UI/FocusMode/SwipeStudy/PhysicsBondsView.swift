@@ -23,6 +23,7 @@ struct PhysicsBondsView: View {
 
             if let inter = interactions {
                 bondsList(inter)
+                entanglementList(inter)
                 echoList(inter)
                 interferenceList(inter)
                 absenceList(inter)
@@ -93,6 +94,46 @@ struct PhysicsBondsView: View {
             }
         }
         .padding(.vertical, DS.space4)
+    }
+
+    @ViewBuilder
+    private func entanglementList(_ inter: LongRangeInteractions) -> some View {
+        if let pairs = inter.entanglementPairs, !pairs.isEmpty {
+            VStack(alignment: .leading, spacing: DS.space6) {
+                Text("ENTANGLED PAIRS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+
+                ForEach(pairs) { pair in
+                    VStack(alignment: .leading, spacing: DS.space4) {
+                        HStack(spacing: DS.space6) {
+                            Text("Slide \(pair.slideA)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            Text("⟷")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(DS.red)
+                            Text("Slide \(pair.slideB)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            Text("(entangled)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(DS.red)
+                        }
+                        if let ifA = pair.ifARemoved {
+                            Text("If \(pair.slideA) removed: \(ifA)")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.red.opacity(0.8))
+                                .lineLimit(2)
+                        }
+                        if let ifB = pair.ifBRemoved {
+                            Text("If \(pair.slideB) removed: \(ifB)")
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.red.opacity(0.8))
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder

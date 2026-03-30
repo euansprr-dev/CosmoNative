@@ -30,6 +30,9 @@ struct ContentPhysicsProfile: Codable {
     // Pass 7: Long-range interactions
     let longRangeInteractions: LongRangeInteractions?
 
+    // Antimatter — phrases/structures/moves that would destroy this post's physics
+    let antimatter: [String]?
+
     // Pass 8: Rhythm and pacing
     let rhythm: RhythmData?
 
@@ -51,6 +54,13 @@ struct SlideQuark: Codable, Identifiable {
     let proofType: QuarkMechanism?
     let motivation: QuarkMechanism?
     let compression: CompressionQuark?
+    let resonanceFrequency: ResonanceFrequency?
+}
+
+struct ResonanceFrequency: Codable {
+    let detail: String?
+    let unspokenExperience: String?
+    let estimatedReach: String?
 }
 
 struct QuarkMechanism: Codable {
@@ -153,6 +163,8 @@ struct RSVPoint: Codable, Identifiable {
     let patternExpectation: String?
     let frame: String?
     let energyBalance: String?
+    let superpositionCount: Int?
+    let superpositions: [String]?
 }
 
 struct OpenLoops: Codable {
@@ -209,6 +221,15 @@ struct LongRangeInteractions: Codable {
     let interferences: [Interference]?
     let deliberateAbsences: [DeliberateAbsence]?
     let callbackChains: [CallbackChain]?
+    let entanglementPairs: [EntanglementPair]?
+}
+
+struct EntanglementPair: Codable, Identifiable {
+    var id: String { "\(slideA)-\(slideB)" }
+    let slideA: Int
+    let slideB: Int
+    let ifARemoved: String?
+    let ifBRemoved: String?
 }
 
 struct SetupPayoffBond: Codable, Identifiable {

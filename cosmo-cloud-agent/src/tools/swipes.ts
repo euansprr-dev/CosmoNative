@@ -837,9 +837,9 @@ function buildAdaptationUserPrompt(
 
   // Candidates
   let candidateSection = `SELECTED SWIPE CANDIDATES (${candidates.length} pre-screened):`;
-  for (const c of candidates) {
+  for (const [candidatePosition, c] of candidates.entries()) {
     const analysis = getSwipeAnalysisHelper(c.atom);
-    candidateSection += `\n\n#${c.index + 1}. "${c.atom.title || 'Untitled'}"`;
+    candidateSection += `\n\n#${candidatePosition + 1}. "${c.atom.title || 'Untitled'}"`;
     const slides = analysis?.transcriptSlides as any[] | undefined;
     const slide1 = slides?.[0]?.text;
     if (slide1 && slide1 !== c.atom.title) {
@@ -892,6 +892,9 @@ MANDATORY CHECKS:
 - Zero banned phrases in any hook
 - Hook length matches suggestedFormat constraints (see FORMAT-AWARE HOOK CONSTRAINTS)
 - Each idea scores 40+ across the 6 evaluation criteria
+
+IMPORTANT: sourceIndex must be the candidate number from the SELECTED SWIPE CANDIDATES list above \
+(1-${candidates.length}), not the original swipe library index.
 
 Generate exactly ${maxResults} ideas, ranked by LEVERAGE (highest viral potential first). \
 Skip candidates only if their hook mechanism genuinely cannot transfer (explain why).
@@ -1092,11 +1095,25 @@ function parseAdaptationResponse(
 
   if (!json?.adaptedIdeas) return [];
 
-  return (json.adaptedIdeas as any[]).map((idea: any) => {
-    const sourceIdx = (idea.sourceIndex || 1) - 1; // 1-indexed in response
-    const source = candidates[sourceIdx] || candidates[0];
+  return (json.adaptedIdeas as any[]).map((idea: any, ideaPosition: number) => {
+    const rawSourceIndex = typeof idea.sourceIndex === 'number'
+      ? idea.sourceIndex
+      : parseInt(String(idea.sourceIndex || ''), 10);
+
+    // Preferred mapping: the prompt numbers candidates 1..N.
+    const sourceByPromptPosition = Number.isFinite(rawSourceIndex) && rawSourceIndex >= 1 && rawSourceIndex <= candidates.length
+      ? candidates[rawSourceIndex - 1]
+      : undefined;
+
+    // Backward-compatible fallback for responses generated against the earlier prompt,
+    // which exposed the original swipe-library numbering instead of dense candidate numbers.
+    const sourceByOriginalIndex = Number.isFinite(rawSourceIndex)
+      ? candidates.find(candidate => candidate.index + 1 === rawSourceIndex)
+      : undefined;
+
+    const source = sourceByPromptPosition || sourceByOriginalIndex || candidates[ideaPosition] || candidates[0];
     return {
-      sourceIndex: idea.sourceIndex || 1,
+      sourceIndex: Number.isFinite(rawSourceIndex) ? rawSourceIndex : (ideaPosition + 1),
       sourceTitle: source?.atom?.title || 'Unknown',
       sourceUUID: source?.atom?.uuid || '',
       adaptedHook: idea.adaptedHook || idea.hookVariants?.[0] || '',

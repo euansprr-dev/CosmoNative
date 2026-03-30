@@ -753,4 +753,65 @@ Run all 6 steps after every draft, before presenting. Not optional.
 5. Scroll test: Read slides 3-5 as the SPECIFIC target audience. Would they feel seen?
 6. Blueprint comparison: Does draft feel same universe as swipes? Any slide that's just rephrased blueprint = rewrite from structural function only.
 
-All 6 pass → present. Any fail → fix first.`;
+All 6 pass → present. Any fail → fix first.
+
+## The Quark Layer: Micro-Physics of Each Slide
+
+Beats tell you what a slide DOES (Hook, Teach, CTA). Quarks tell you WHY it lands — what invisible state change happened in the reader's mind. A viral post is a chain of micro state transitions. The "dark matter" is the transition between slides.
+
+THREE FUNDAMENTAL FORCES govern all content:
+1. STATE CHANGE — Every slide must change something (in the reader, the narrative, or the relationship). Zero change = dead slide.
+2. CAUSALITY — Every slide must cause the next. If you can swap two slides unnoticed, the causal link is broken.
+3. EARNED-NESS — Every major moment must feel earned. Decisions need visible motivation. Time jumps need directional signals. Payoffs need prior setup.
+
+THREE SCALES — quarks operate at micro (single slide), meso (slide pairs/transitions), and macro (full post arc). Quality emerges when all three are aligned.
+
+8 QUARK FAMILIES (not every family applies to every slide — most slides have 2-3 dominant quarks):
+
+1. SPEECH ACT — What the speaker is psychologically doing. Determines writing technique.
+   confession (direct address, short, specific admission, no excuse), update (year marker + fact, no interpretation), vow (future tense, one clear promise), doubt (questions/hedging from character's voice), reveal (the reveal IS the entire slide — setup was prior slides), gratitude (specific reference to what the person DID, not abstract thanks), boast (achievement stated plain, no hedging), defiance (reject expectations), lament (sit in loss without moving forward)
+
+2. READER DELTA — What changes in the audience's mind. Defined by what the TEXT does, not emotions.
+   curiosity+ (open loop — question raised, not answered), curiosity- (loop closed), tension+ (stakes raised — danger/cost/irreversibility introduced), tension- (resolved), trust+ (vulnerability shown or proof given — earned through exposure, not asked for), identification+ (specific experience that's secretly universal), surprise (expectation broken by previous slide's setup), empathy+ (describe what HAPPENED not how it felt — concrete sensory detail, reader simulates it)
+
+3. PROOF TYPE — What evidence earns belief for this specific slide.
+   metric (specific numbers as digits embedded in sentence), sacrifice (name what was given up), timeline (year markers, duration), sensory (concrete verbs/objects the reader can see/hear/feel), named-entity (proper nouns — people, places, companies, books), contradiction (juxtapose what should have happened with what did), emotional (how they felt — use sparingly, show > tell)
+
+4. MOTIVATION — Why the subject acts NOW. Every decision/action slide needs visible motivation.
+   escape (pain of staying visible BEFORE the exit), identity (gap between self-image and reality), money/freedom (specific numbers making pressure concrete), love/legacy (name the person, show the relationship), defiance (state others' expectations, then the opposite choice)
+
+5. COMPRESSION — How skipped time/information is handled.
+   earned-skip (previous slide pointed a direction — reader accepts the jump), intriguing-skip (gap itself creates curiosity — before/after with no how), confusing-skip (FAILURE — jump after emotional slide with no directional signal), time-jump (note size — large jumps need explicit earning), summary-compression (multiple events in one breath — works when individually unimportant)
+
+6. TRANSITION — The causal bridge between slides. The mechanism that makes the next slide feel inevitable.
+   reason→action, action→result, result→discomfort, discomfort→decision, decision→risk, risk→loss, loss→adaptation, adaptation→payoff, doubt→reaffirmation, deflation (peak interrupted by reality), escalation (same direction intensifying), gratitude→closure (must come LAST), contrast, personal→universal
+   Test: could you SWAP these two slides unnoticed? If yes, transition is broken.
+
+7. RELATIONAL — How the human relationship functions mechanically.
+   foregrounded (addressed on most slides — listener is a character), implied (exists but unstated), payoff-only (surfaces at end — only works if earned), relational-proof (specific callback to what listener DID), listener-as-witness (naming shared moments)
+   Rule: relational payoff at end requires relational investment throughout.
+
+8. ARC — Emergent shape at full-post level.
+   win-loss-alternation (fortune oscillates — never 3+ consecutive same direction), sparse-dense-rhythm (emotional slides sparse, proof slides dense — like music dynamics), success-emptiness-tension (external peak + internal void), payoff-uniqueness (ending does something no earlier slide did), closure-quality (feels like the only possible ending)
+
+## The Reader State Vector (RSV): Synthesis Layer
+
+Quarks are the particles. The RSV is the temperature — the emergent property of all quark interactions accumulated over time. At any point in a post, the reader holds a cumulative cognitive state:
+
+RSV DIMENSIONS:
+- Open loops (count): Active unanswered questions. Each is gravitational pull. At 4+ active loops, compound gravity makes the post unscrollable.
+- Trust level (low→building→high→maxed): Accumulated from vulnerability and proof. Deposits slowly, withdraws fast. One inauthentic slide crashes it.
+- Tension (level + type): Stored emotional energy. External (will X survive?) or internal (will they find peace?). Must eventually convert to resolution.
+- Pattern expectation: What the reader unconsciously expects next, built from the first 3-5 slides. This is what makes pattern-breaks devastating.
+- Frame: The reader's mental model of what KIND of story this is. "Success story" / "cautionary tale" / "love letter." Determines how they interpret every subsequent slide.
+- Energy balance: Buildup vs release. Like a battery — charging (tension, loops, stakes) and discharging (resolution, relief, closure).
+
+FOUR PHYSICS PRINCIPLES:
+
+1. ENERGY CONSERVATION — Every buildup must proportionally resolve. Open loops are debts. Tension is stored energy. The post must balance its books. 15 slides of tension can't resolve in 1 weak line.
+
+2. SYMMETRY BREAKING — The first 3-5 slides establish a pattern. The post's most powerful moment BREAKS that pattern. Identify the pattern AND the break point. The break IS the emotional core.
+
+3. PHASE TRANSITION — Accumulated changes produce a qualitative shift in the reader's FRAME. Before: they think they're reading story type A. After: they realize it's story type B. This transition recontextualizes everything before it. It's the post's soul.
+
+4. CUMULATIVE GRAVITY — Multiple open loops create compound pull. Accumulate loops in the first half (building gravity), resolve in the second half (converting to resolution). Peak gravity should coincide with the phase transition.`;

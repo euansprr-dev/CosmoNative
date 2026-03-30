@@ -431,6 +431,46 @@ Call the think tool ONCE to analyze the ${label} across ALL of these dimensions.
     (d) Mixed with purpose (each shift marks a narrative beat — note where)
     Your draft must follow the same tense pattern at the same structural positions. Note the pattern and WHERE any shifts occur.
 
+1i. QUARK ANALYSIS (three passes — reference the Quark Layer section in your methodology)
+
+    PASS 1 — MICRO (per slide): For each slide, identify its quark chord AND the mechanism:
+    - Speech act: What is the speaker doing? Name it AND note the writing technique that makes it that speech act.
+      (e.g., "confession — 6 words, direct address, names the failure, no excuse given")
+    - Reader delta: What 1-2 things change in the reader? Name the delta AND what in the TEXT creates it.
+      (e.g., "empathy+ — 'scraping popcorn ceilings' is sensory, reader simulates the experience")
+    - Proof type (if evidence present): What type and WHY that type fits this slide's function?
+    - Motivation (if decision/action): What PRESSURE in the text makes this action feel forced, not random?
+    - Compression (if time skip): Is it earned? What directional signal makes the reader accept the jump?
+    Format per slide: "Slide 4: confession — 6 words, direct, names failure, no excuse. Reader: empathy+ (sensory detail), identification+ (universal gap between expectation and reality). Proof: sensory + contradiction."
+
+    PASS 2 — MESO (per slide pair): For each consecutive pair:
+    - Name the transition type AND the mechanism: what in slide N creates a pressure or question that ONLY slide N+1 resolves?
+    - The inevitability test: could you swap these two slides without the reader noticing? If yes, the transition is broken.
+    Format: "Slide 5→6: doubt→reaffirmation — 'Maybe I should quit' creates reader need to know outcome. '$1M' directly resolves that doubt. Swap: impossible."
+
+    PASS 3 — MACRO (full post): Describe the arc:
+    - Win/loss alternation: does fortune oscillate or plateau? Where are the reversals?
+    - Tension curve: where are the peaks? Where does it breathe?
+    - Internal/external tension: does external success coexist with internal struggle? Where?
+    - Payoff uniqueness: does the ending do something no earlier slide did?
+
+    PASS 4 — RSV TRAJECTORY (the reader's cumulative mind through the whole post):
+    Trace the Reader State Vector at 5 key boundaries — after slide 1, after ~slide 5, at the midpoint, at the phase transition, and at the final slide:
+
+    For each boundary, note:
+    - Open loops: How many active? List them. (Compound gravitational pull — at 4+ the reader can't stop.)
+    - Trust: Low / building / high / maxed? What accumulated it?
+    - Tension: Level and type — external (survival/outcome) or internal (identity/meaning)?
+    - Pattern expectation: What does the reader now expect the next slide to be?
+    - Frame: What kind of story does the reader think this is RIGHT NOW?
+    - Energy balance: How much has been charged (buildup) vs discharged (release)?
+
+    Then identify the four physics events:
+    - SYMMETRY BREAK: Which slide breaks the pattern established by slides 1-5? What pattern? This is the post's emotional fulcrum.
+    - PHASE TRANSITION: Which slide shifts the reader's FRAME from story type A to story type B? What are A and B?
+    - ENERGY RESOLUTION: Where does accumulated tension convert to catharsis/meaning/action? Is the resolution proportional to the buildup?
+    - PEAK GRAVITY: At which slide boundary are the most open loops active? Does this coincide with the phase transition?
+
 ────────────────────────────────────────
 THINK 2: CROSS-REFERENCE SWIPES + ABSORB CLIENT (all in ONE think)
 ────────────────────────────────────────
@@ -446,6 +486,12 @@ SWIPE CALIBRATION (scan 3-5 of the other loaded swipes):
 2c. WHAT SWIPES TEACH — The swipes demonstrate how abstract rules look in practice. When Voice DNA says "vary sentence length" — what's the ACTUAL range in the swipes? The swipes are the answer key for every rule.
 
 2d. DEPTH RHYTHM — For 3-5 swipes, measure DEPTH per slide — not just word count, but information density. How many facts/details per slide? Some slides are one raw emotional statement with zero facts. Others pack 3 specific numbers into 2 sentences. Note which beat positions are dense with information vs sparse/emotional. Your draft must match this rhythm — don't pad emotional beats with information, and don't strip detail from teaching beats.
+
+2e. QUARK PATTERNS (light comparison — not full extraction):
+    - What transition types repeat across 3+ swipes at similar positions? (These are format requirements)
+    - What reader deltas are most common at hook, middle, and ending positions?
+    - What arc shapes appear in the best-performing swipes? (Oscillating win/loss? Linear rise? Rise-crash-rise?)
+    - What makes the best swipes' decisions feel motivated vs the weaker ones' decisions feel random?
 
 CLIENT ABSORPTION:
 
@@ -464,14 +510,17 @@ Now you have all the data. Call create_writing_plan with a plan structured EXACT
 STRUCTURAL TEMPLATE
 For EACH slide (same count as ${label}), write:
   Slide N: [beat function from your beat map]
-  Prerequisites: [what the audience must already know from previous slides for this to make sense — if none, write "none"]
+  Quarks: [speech act — technique that makes it this act] | Reader: [delta — what in the text creates it] | Proof: [type, if present]
+  Transition to N+1: [type — what pressure in THIS slide forces the reader to the next? Be specific about the mechanism.]
+  Motivation: [if decision/action — what pressure visible in the text?] | Compression: [if time skip — earned/intriguing/confusing? what signal?]
+  Prerequisites: [what the audience must already know from previous slides]
   Words: [target from your density measurement] | Sentences: [target] | Lines: [target]
   Format: [from your visual format analysis — bullets? breaks? fragments?]
   Content: [what specific information goes here — cite real client details by name]
-  Transition to next: [the connector type you identified]
-  Depth Type: [sparse_emotional | bridge | proof | detail_dense | payoff]
-  Voice Requirement: [how this slide must sound to preserve the blueprint's POV/direct-address pattern]
-  Allowed Adaptation: [what may change creatively without changing the slide's job]
+
+The quark annotations should be SPECIFIC to the blueprint's mechanisms, not generic labels.
+Good: "confession — 10 words, direct to Dad, names the failure, no excuse. Reader: curiosity+ (no explanation = open loop), empathy+ (vulnerability of admitting to parent)."
+Bad: "confession | empathy+, curiosity+" (just labels — model won't know how to reproduce the mechanism)
 
 For slides where the blueprint's specific detail (luxury purchase, specific career move) doesn't naturally exist in the client's story, write:
   ADAPTED: [blueprint function: e.g., gratitude gesture via luxury watch] → [client equivalent: genuine expression matching the client's actual story]
@@ -506,6 +555,26 @@ HOOK SPECIFICATION
 
 DENSITY TARGETS
   [List the exact word count per slide position from your density measurement]
+
+ARC QUARKS
+  Win/loss pattern: [describe the oscillation — e.g., "fail-struggle-smallwin-bigwin-loss-grind-hugewin-emptiness-restart-peace"]
+  Tension peaks at slides: [list slide numbers where stakes are highest]
+  Internal/external tension: [where does external success meet internal struggle?]
+  Payoff uniqueness: [what does the ending do that no earlier slide did?]
+
+RSV TRAJECTORY (reader's cumulative state at key boundaries)
+  After slide 1: [open loops, trust, tension, pattern, frame, energy]
+  After slide ~5: [...]
+  At midpoint: [...]
+  At phase transition (slide ___): [...]
+  At final slide: [...]
+
+RSV PHYSICS
+  Pattern established by slides 1-___: [describe the pattern the reader learns to expect]
+  Symmetry break at slide ___: [what breaks and why it's devastating]
+  Phase transition at slide ___: [frame A → frame B — what shifts and what it recontextualizes]
+  Peak gravity at slide ___: [how many active loops, list them]
+  Energy resolution: [is the total payoff proportional to the total buildup? which loops close where?]
 
 This plan is your construction blueprint. Phase 2 will follow it slide by slide.`;
 
@@ -565,9 +634,16 @@ Work through your plan slide by slide. For each slide:
 
 5. For slides marked ADAPTED in your plan: match the EMOTION and BEAT FUNCTION of the blueprint slide. Don't copy its literal content. If the blueprint gives a luxury gift and the client's story doesn't have one, write what the CLIENT would actually do at this emotional moment. Authenticity > equivalence.
 
-6. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
+6. QUARK CHECK — before moving to the next slide:
+   - STATE CHANGE: Does this slide change at least ONE thing in the reader's mind? If nothing changes, the slide is dead weight — rewrite to create a delta.
+   - CAUSALITY: Is the transition to the next slide causal? The reader should feel pulled forward. If "and then..." is the only connector, the transition is broken — add the pressure or question that makes the next slide inevitable.
+   - EARNED-NESS: If this is a decision/action, is the motivation VISIBLE in the text? If there's a time jump, is the skip earned? If there's a payoff, was it set up? The reader should never ask "but why?" or "wait, what happened?"
+   - SPEECH ACT: Does it match your plan? A planned confession should FEEL like a confession (short, direct, specific, no excuse) — not read like a report or narration.
+   - RSV TRAJECTORY: Check your plan's RSV targets. At this slide, does the reader's cumulative state match? Are the right loops open? Is trust/tension where it should be? At the symmetry break slide: does your text actually BREAK the pattern? At the phase transition slide: does the reader's frame actually SHIFT?
 
-7. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
+7. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
+
+8. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
 
 8. The PRIMARY BLUEPRINT controls WHAT each slide does. The supporting swipes only teach HOW to say that kind of slide naturally. Do NOT import extra beats, extra setup, or random detail slides from supporting examples.
 
@@ -741,7 +817,37 @@ Fail: Any slide breaks the pattern, or tense switches randomly mid-section.
 Fix: Rewrite the breaking slide to match. If the pattern is "Mom, I..." then EVERY slide must be addressed to Mom.
 
 ────────────────────────────────────────
-After all 8 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
+CHECK 9: QUARK INTEGRITY (the three forces)
+────────────────────────────────────────
+Procedure:
+Read your draft against the quark annotations in your plan. Check the three fundamental forces:
+
+STATE CHANGE: For each slide, does it change at least ONE reader state?
+- A zero-delta slide (nothing changes) is dead weight — the reader's mind processes it without transitioning.
+- If you find a dead slide: cut it, merge it with an adjacent slide, or rewrite to create a delta.
+- Consecutive slides that change the SAME thing in the SAME direction are redundant — combine or differentiate.
+
+CAUSALITY: For each slide pair, is the transition causal?
+- Insert "so...", "but...", or "that's when..." between them. If none fits AND you can swap them unnoticed, the transition is broken.
+- Decision/action slides without visible motivation = broken causality. The reader asks "but why?" Fix: add the motivation (even one clause: "I couldn't do this forever, so I quit").
+- The arc should show win/loss oscillation. If 3+ consecutive slides are all wins or all losses, the rhythm is broken.
+
+EARNED-NESS: For major moments (decisions, losses, payoffs, relational callbacks):
+- Was this moment set up by earlier slides? A relational payoff ("Dad, thank you") requires prior relational investment.
+- Is any compression earned? A time jump after an emotional slide with no directional signal = confusing, not intriguing.
+- Is the ending payoff UNIQUE? If it repeats an earlier slide's beat, the post deflates instead of resolving.
+
+RSV PHYSICS: Check the four physics events against your plan:
+- ENERGY CONSERVATION: Count open loops at the post's peak. Count resolutions by the end. If major loops are unresolved or the biggest tension resolves in 1 weak line after 10+ slides of buildup, the energy balance is broken. Fix: add resolution or strengthen the payoff.
+- SYMMETRY BREAKING: Read slides 1-5, note what pattern they establish. Find the slide that BREAKS it. If no pattern breaks — the post has no emotional core. If the break is too early (before tension peaks) or too late (no time to resolve), adjust.
+- PHASE TRANSITION: Identify where the reader's frame shifts from story type A to type B. If you can describe the post as ONLY one story type start to finish, the phase transition is missing. The strongest posts are TWO stories — the frame shifts mid-post.
+- CUMULATIVE GRAVITY: At the phase transition point, are there 3+ active open loops? If fewer, the reader might scroll away before the transition hits. Open more loops in the first half.
+
+Pass: Every slide has a delta, every transition is causal, every major moment is earned, the arc oscillates, energy is conserved, the pattern breaks, the frame shifts, gravity peaks at the transition.
+Fail: Fix flagged slides and call write_draft.
+
+────────────────────────────────────────
+After all 9 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -1096,6 +1202,7 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
         if (/rule|lesson|ban/i.test(thought)) thinkTopics.push('rules');
         if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
         if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
+        if (/speech act|reader delta|quark|transition.*→|inevitability|state change|causality|earned/i.test(thought)) thinkTopics.push('quarks');
         console.log(`    💭 Think (${wordCount} words) [${thinkTopics.join(', ') || 'general'}]:`);
         console.log(`    ────────────────────────────────────────`);
         // Log full thought with indentation for readability
@@ -1140,15 +1247,17 @@ After all 8 checks: fix failures and call write_draft, or respond with a summary
           const hasBeatMap = /\[(Hook|Context|Teach|Prove|Story|Reframe|Reveal|CTA)\]/i.test(thought);
           const hasHookAnalysis = /(case|person|structure).{0,40}(hook|slide.?1)/i.test(thought);
           const hasTensePattern = /tense.{0,30}(past|present|pattern)/i.test(thought);
-          const signals = [hasDensity, hasBeatMap, hasHookAnalysis, hasTensePattern];
+          const hasQuarks = /(speech act|reader delta|quark|transition.*→|inevitability|state change|causality)/i.test(thought);
+          const signals = [hasDensity, hasBeatMap, hasHookAnalysis, hasTensePattern, hasQuarks];
           const signalCount = signals.filter(Boolean).length;
 
-          if (signalCount < 3) {
+          if (signalCount < 4) {
             const missing: string[] = [];
             if (!hasDensity) missing.push('DENSITY: Count actual words per slide in the blueprint');
             if (!hasBeatMap) missing.push('BEAT MAP: Label each slide with function [Hook/Context/Teach/etc.]');
             if (!hasHookAnalysis) missing.push('HOOK ANATOMY: Case, person, structure of slide 1');
             if (!hasTensePattern) missing.push('TENSE PATTERN: Identify the tense pattern and where shifts occur');
+            if (!hasQuarks) missing.push('QUARKS: Run the three-pass quark analysis (micro/meso/macro) on the blueprint');
             console.log(`    ⚠️ Think quality check: ${signalCount}/4 signals (missing: ${missing.join(', ')})`);
             return `Analysis received (${wordCount} words) but missing key dimensions:\n${missing.map(m => `- ${m}`).join('\n')}\n\nContinue your analysis and cover the missing dimensions. These are critical for a quality plan.`;
           }

@@ -170,7 +170,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
   const prompt = buildExtractionPrompt(atom);
   console.log(`  🔬 Extracting quarks for "${atom.title?.substring(0, 60)}" (${(atom.body || '').length} chars body) [${useDirectAnthropic ? 'direct Anthropic' : 'OpenRouter'}]...`);
 
-  const model = useDirectAnthropic ? 'claude-opus-4-6' : 'anthropic/claude-opus-4-6';
+  const model = useDirectAnthropic ? 'claude-sonnet-4-6' : 'anthropic/claude-sonnet-4-6';
   const apiUrl = useDirectAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://openrouter.ai/api/v1/chat/completions';
 
   // Build request based on provider

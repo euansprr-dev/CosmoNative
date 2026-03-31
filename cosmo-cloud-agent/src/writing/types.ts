@@ -154,6 +154,7 @@ export interface QuarkProfile {
     motivation?: { type: string; mechanism: string };
     compression?: { type: string; size: string; mechanism: string };
     resonanceFrequency?: { detail: string; unspokenExperience: string; estimatedReach: string };
+    frame?: { type: string; mechanism: string };
   }>;
 
   transitions: Array<{

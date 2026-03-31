@@ -57,6 +57,7 @@ For EVERY slide, extract:
 3. PROOF TYPE — If present: what type, WHY does that type fit here?
 4. MOTIVATION — If decision/action: what PRESSURE makes it inevitable, not random?
 5. COMPRESSION — If time skip: how large, what earns it, intrigue or confusion?
+6. FRAME — How does this slide POSITION itself? Is it a loss, decision, consequence, success, observation, setup, absurd, compression-punch, or transformation? The frame determines how the reader CATEGORIZES this information. A "museum of failures" post frames nearly every slide as a loss. A tutorial frames as steps. Name the frame AND explain why.
 
 PASS 2 — MESO QUARKS (per slide pair):
 For EVERY consecutive pair:
@@ -126,7 +127,7 @@ Write 500-1000 words of free-form synthesis. Cite specific slides, quarks, reade
 Output ONLY valid JSON matching this exact schema (no markdown, no explanation outside JSON):
 {
   "version": 1,
-  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}}],
+  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}, "frame": {"type": "loss", "mechanism": "..."}}],
   "transitions": [{"from": 1, "to": 2, "type": "...", "mechanism": "...", "swapTestPasses": false, "doubleHelix": true, "doubleHelixDetail": "..."}],
   "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}},
   "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging", "superpositionCount": 2, "superpositions": ["success story", "love letter"]}]},

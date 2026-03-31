@@ -1,22 +1,25 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/PhysicsSlideQuarksView.swift
-// Horizontal scrolling strip of slide quark chords — tap to expand mechanisms
+// Horizontal scroll of per-slide quark cards with tap-to-expand detail
 
 import SwiftUI
 
 struct PhysicsSlideQuarksView: View {
     let quarks: [SlideQuark]
-    @State private var selectedSlide: Int?
+    @Binding var selectedSlide: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             sectionHeader
-            slideStrip
-            expandedDetail
+            slideCardStrip
+            selectedSlideDetail
         }
         .padding(DS.space16)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+        .dsRestingShadow()
     }
+
+    // MARK: - Header
 
     @ViewBuilder
     private var sectionHeader: some View {
@@ -24,7 +27,7 @@ struct PhysicsSlideQuarksView: View {
             Text("SLIDE QUARKS")
                 .font(DS.caption)
                 .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.entitySwipe)
             Spacer()
             Text("\(quarks.count) slides")
                 .font(DS.caption2)
@@ -32,12 +35,14 @@ struct PhysicsSlideQuarksView: View {
         }
     }
 
+    // MARK: - Slide Card Strip
+
     @ViewBuilder
-    private var slideStrip: some View {
+    private var slideCardStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DS.space4) {
+            HStack(spacing: DS.space8) {
                 ForEach(quarks) { quark in
-                    slideNode(quark)
+                    slideCard(quark)
                 }
             }
             .padding(.vertical, DS.space4)
@@ -45,155 +50,191 @@ struct PhysicsSlideQuarksView: View {
     }
 
     @ViewBuilder
-    private func slideNode(_ quark: SlideQuark) -> some View {
+    private func slideCard(_ quark: SlideQuark) -> some View {
         let isSelected = selectedSlide == quark.slideNumber
+
         Button {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            withAnimation(ProMotionSprings.snappy) {
                 selectedSlide = isSelected ? nil : quark.slideNumber
             }
         } label: {
-            VStack(spacing: 3) {
-                Text("\(quark.slideNumber)")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isSelected ? .white : DS.text)
-
-                Circle()
-                    .fill(deltaColor(quark))
-                    .frame(width: 10, height: 10)
-
-                Text(abbreviate(quark.speechAct.type ?? ""))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(isSelected ? .white.opacity(0.8) : DS.textSecondary)
-                    .lineLimit(1)
-
-                if let delta = quark.readerDeltas?.first {
-                    Text(abbreviate((delta.type ?? "")))
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(isSelected ? .white.opacity(0.6) : DS.textMuted)
-                        .lineLimit(1)
-                }
+            VStack(alignment: .leading, spacing: DS.space6) {
+                slideCardHeader(quark)
+                propertyPill("Speech", quark.speechAct.type, DS.entitySwipe)
+                deltasPills(quark)
+                propertyPill("Proof", quark.proofType?.type, DS.green)
+                propertyPill("Motive", quark.motivation?.type, DS.orange)
             }
-            .frame(width: 56, height: 80)
-            .background(
-                isSelected ? DS.entitySwipe : DS.surfaceHover,
-                in: RoundedRectangle(cornerRadius: DS.radiusSmall)
-            )
+            .padding(DS.space10)
+            .frame(width: 150, alignment: .leading)
+            .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
             .overlay(
                 RoundedRectangle(cornerRadius: DS.radiusSmall)
-                    .stroke(isSelected ? DS.entitySwipe : DS.border, lineWidth: 1)
+                    .stroke(isSelected ? DS.entitySwipe : DS.border, lineWidth: isSelected ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Slide \(quark.slideNumber) quarks")
     }
 
     @ViewBuilder
-    private var expandedDetail: some View {
-        if let slideNum = selectedSlide, let quark = quarks.first(where: { $0.slideNumber == slideNum }) {
-            VStack(alignment: .leading, spacing: DS.space8) {
-                if let text = quark.text, !text.isEmpty {
-                    Text("Slide \(slideNum): \"\(text)\"")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-    
-                }
+    private func slideCardHeader(_ quark: SlideQuark) -> some View {
+        Text("Slide \(quark.slideNumber)")
+            .font(DS.caption)
+            .monospacedDigit()
+            .foregroundStyle(DS.text)
+    }
 
-                quarkRow(label: "Speech Act", type: quark.speechAct.type ?? "", mechanism: quark.speechAct.mechanism, color: DS.entitySwipe)
-
-                if let deltas = quark.readerDeltas {
-                    ForEach(Array(deltas.enumerated()), id: \.offset) { _, delta in
-                        quarkRow(label: "Reader", type: (delta.type ?? ""), mechanism: delta.mechanism, color: DS.info)
-                    }
-                }
-                if let proof = quark.proofType {
-                    quarkRow(label: "Proof", type: proof.type ?? "", mechanism: proof.mechanism, color: DS.green)
-                }
-                if let motivation = quark.motivation {
-                    quarkRow(label: "Motivation", type: motivation.type ?? "", mechanism: motivation.mechanism, color: DS.orange)
-                }
-                if let compression = quark.compression {
-                    quarkRow(label: "Compression", type: "\(compression.type)\(compression.size.map { " (\($0))" } ?? "")", mechanism: compression.mechanism, color: DS.textMuted)
-                }
-                if let resonance = quark.resonanceFrequency, let detail = resonance.detail {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: DS.space4) {
-                            Text("📡")
-                                .font(.system(size: 10))
-                            Text("RESONANCE")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DS.entitySwipe)
-                        }
-                        Text(detail)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DS.entitySwipe)
-                        if let experience = resonance.unspokenExperience {
-                            Text(experience)
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                        if let reach = resonance.estimatedReach {
-                            Text("Reach: \(reach)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                    }
-                }
+    @ViewBuilder
+    private func deltasPills(_ quark: SlideQuark) -> some View {
+        if let deltas = quark.readerDeltas {
+            ForEach(Array(deltas.prefix(2).enumerated()), id: \.offset) { _, delta in
+                propertyPill("Delta", delta.type, deltaColor(for: delta.type ?? ""))
             }
-            .padding(DS.space12)
-            .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
     }
 
     @ViewBuilder
-    private func quarkRow(label: String, type: String, mechanism: String?, color: Color) -> some View {
+    private func propertyPill(_ label: String, _ value: String?, _ color: Color) -> some View {
+        if let value, !value.isEmpty {
+            HStack(spacing: DS.space4) {
+                Text(label)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 40, alignment: .leading)
+                Text(cleanTypeName(value))
+                    .font(DS.caption2)
+                    .foregroundStyle(color)
+                    .padding(.horizontal, DS.space4)
+                    .padding(.vertical, 1)
+                    .background(color.opacity(DS.opacitySubtle), in: Capsule())
+            }
+        }
+    }
+
+    // MARK: - Selected Slide Detail
+
+    @ViewBuilder
+    private var selectedSlideDetail: some View {
+        if let slideNum = selectedSlide, let quark = quarks.first(where: { $0.slideNumber == slideNum }) {
+            expandedPanel(quark)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        }
+    }
+
+    @ViewBuilder
+    private func expandedPanel(_ quark: SlideQuark) -> some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            slideTextQuote(quark)
+            quarkRow(label: "Speech Act", type: quark.speechAct.type, mechanism: quark.speechAct.mechanism, color: DS.entitySwipe)
+            readerDeltasSection(quark)
+            optionalRow(label: "Proof", qm: quark.proofType, color: DS.green)
+            optionalRow(label: "Motivation", qm: quark.motivation, color: DS.orange)
+            compressionRow(quark)
+            optionalRow(label: "Frame", qm: quark.frame, color: DS.orange)
+            resonanceCard(quark)
+        }
+        .padding(DS.space12)
+        .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    @ViewBuilder
+    private func slideTextQuote(_ quark: SlideQuark) -> some View {
+        if let text = quark.text, !text.isEmpty {
+            Text("Slide \(quark.slideNumber): \"\(text)\"")
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func readerDeltasSection(_ quark: SlideQuark) -> some View {
+        if let deltas = quark.readerDeltas {
+            ForEach(Array(deltas.enumerated()), id: \.offset) { _, delta in
+                quarkRow(label: "Reader Delta", type: delta.type, mechanism: delta.mechanism, color: deltaColor(for: delta.type ?? ""))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func optionalRow(label: String, qm: QuarkMechanism?, color: Color) -> some View {
+        if let qm { quarkRow(label: label, type: qm.type, mechanism: qm.mechanism, color: color) }
+    }
+
+    @ViewBuilder
+    private func compressionRow(_ quark: SlideQuark) -> some View {
+        if let c = quark.compression {
+            quarkRow(label: "Compression", type: "\(c.type)\(c.size.map { " (\($0))" } ?? "")", mechanism: c.mechanism, color: DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func resonanceCard(_ quark: SlideQuark) -> some View {
+        if let resonance = quark.resonanceFrequency, let detail = resonance.detail {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("RESONANCE")
+                    .font(DS.caption)
+                    .tracking(1.0)
+                    .foregroundStyle(DS.entitySwipe)
+                Text(detail)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.entitySwipe)
+                if let exp = resonance.unspokenExperience {
+                    Text(exp).font(DS.caption2).foregroundStyle(DS.textMuted)
+                }
+                if let reach = resonance.estimatedReach {
+                    Text("Reach: \(reach)").font(DS.caption2).foregroundStyle(DS.textMuted)
+                }
+            }
+            .padding(DS.space8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) {
+                DS.entitySwipe.frame(width: 3).clipShape(.rect(cornerRadius: 2))
+            }
+            .background(DS.entitySwipe.opacity(DS.opacitySubtle), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        }
+    }
+
+    // MARK: - Quark Row
+
+    @ViewBuilder
+    private func quarkRow(label: String, type: String?, mechanism: String?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: DS.space6) {
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
-                Text(type)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(color)
-                    .padding(.horizontal, DS.space6)
-                    .padding(.vertical, 1)
-                    .background(color.opacity(DS.opacitySubtle), in: Capsule())
+                if let type, !type.isEmpty {
+                    Text(cleanTypeName(type))
+                        .font(DS.caption2)
+                        .foregroundStyle(color)
+                        .padding(.horizontal, DS.space4)
+                        .padding(.vertical, 1)
+                        .background(color.opacity(DS.opacitySubtle), in: Capsule())
+                }
             }
             if let mechanism, !mechanism.isEmpty {
                 Text(mechanism)
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
-
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private func deltaColor(_ quark: SlideQuark) -> Color {
-        guard let delta = quark.readerDeltas?.first?.type?.lowercased() else { return DS.textMuted }
-        if delta.contains("tension+") || delta.contains("empathy") { return DS.red }
-        if delta.contains("trust") || delta.contains("hope") || delta.contains("curiosity+") { return DS.green }
-        if delta.contains("surprise") { return DS.orange }
-        if delta.contains("identification") { return DS.info }
-        return DS.textMuted
+    // MARK: - Helpers
+
+    private func cleanTypeName(_ name: String) -> String {
+        name.replacingOccurrences(of: "_", with: " ")
     }
 
-    private func abbreviate(_ type: String) -> String {
+    private func deltaColor(for type: String) -> Color {
         let t = type.lowercased()
-        if t.starts(with: "conf") { return "conf" }
-        if t.starts(with: "upd") { return "updt" }
-        if t.starts(with: "vow") { return "vow" }
-        if t.starts(with: "doubt") { return "dbt" }
-        if t.starts(with: "rev") { return "rvl" }
-        if t.starts(with: "grat") { return "grat" }
-        if t.starts(with: "boast") { return "bst" }
-        if t.starts(with: "defi") { return "def" }
-        if t.starts(with: "lam") { return "lmt" }
-        if t.contains("curiosity") { return "cur+" }
-        if t.contains("tension") { return "ten+" }
-        if t.contains("trust") { return "trs+" }
-        if t.contains("identification") { return "idn+" }
-        if t.contains("empathy") { return "emp+" }
-        if t.contains("surprise") { return "sur" }
-        if t.contains("hope") { return "hop+" }
-        return String(t.prefix(4))
+        if t.contains("tension") || t.contains("empathy") { return DS.red }
+        if t.contains("trust") || t.contains("hope") || t.contains("curiosity") { return DS.green }
+        if t.contains("surprise") { return DS.orange }
+        if t.contains("identification") { return DS.info }
+        return DS.textMuted
     }
 }

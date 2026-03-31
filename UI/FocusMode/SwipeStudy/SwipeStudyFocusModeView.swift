@@ -2984,6 +2984,9 @@ struct SwipeStudyFocusModeView: View {
                     if let compression = q.compression {
                         text += "    Compression: \(compression.type)\(compression.size.map { " (\($0))" } ?? "")\(compression.mechanism.map { " — \($0)" } ?? "")\n"
                     }
+                    if let frame = q.frame {
+                        text += "    Frame: \(frame.type ?? "")\(frame.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
                 }
             }
 

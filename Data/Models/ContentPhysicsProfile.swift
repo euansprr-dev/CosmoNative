@@ -55,6 +55,7 @@ struct SlideQuark: Codable, Identifiable {
     let motivation: QuarkMechanism?
     let compression: CompressionQuark?
     let resonanceFrequency: ResonanceFrequency?
+    let frame: QuarkMechanism?
 }
 
 struct ResonanceFrequency: Codable {

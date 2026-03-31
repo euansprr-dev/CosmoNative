@@ -805,6 +805,18 @@ THREE SCALES — quarks operate at micro (single slide), meso (slide pairs/trans
 8. ARC — Emergent shape at full-post level.
    win-loss-alternation (fortune oscillates — never 3+ consecutive same direction), sparse-dense-rhythm (emotional slides sparse, proof slides dense — like music dynamics), success-emptiness-tension (external peak + internal void), payoff-uniqueness (ending does something no earlier slide did), closure-quality (feels like the only possible ending)
 
+9. FRAME — How the slide POSITIONS its content. Not what it says or what it does to the reader, but how it presents the information.
+   loss (the slide IS the failure — "Got kicked out", "Slept in my car", "Car accident")
+   decision (the slide is a choice made — "I quit", "I packed bags", "I signed")
+   consequence (what happened BECAUSE of something — "Had to sell my car", "Now i gotta pay both halfs")
+   success (an achievement — "We just hit $1M!", "Top salesman in the region")
+   observation (a realization — "Watched the 30 year olds", "I feel nothing")
+   setup (creates expectation for what comes next — "Pov: you and bro get an apartment")
+   absurd (comedic/absurd moment — "A bird jus flew by and shi in my hair bro")
+   compression-punch (max compression, max impact, no context — "Car accident", "Three lawsuits at once")
+   transformation (signals change/forward momentum — "Got DESTROYED... Day 0 im 6'3, 133 pounds")
+   The frame quark tells you HOW content is positioned, not WHAT it contains. In a "museum of failures" post, Frame should be loss/consequence/absurd on nearly every slide. In a "tutorial" post, Frame should be step/proof/result. The blueprint's dominant frame IS the frame the draft must replicate.
+
 ## The Reader State Vector (RSV): Synthesis Layer
 
 Quarks are the particles. The RSV is the temperature — the emergent property of all quark interactions accumulated over time. At any point in a post, the reader holds a cumulative cognitive state:

@@ -1530,7 +1530,8 @@ final class InstagramAutoTranscriber: Sendable {
         }
 
         if let refined = await cleanupWithClaude(slides: postProcessed, isCarousel: isCarousel) {
-            return renumberedSlides(refined)
+            let finalSlides = isCarousel ? trimSlideLines(refined) : refined
+            return renumberedSlides(finalSlides)
         }
 
         return renumberedSlides(postProcessed)
@@ -1603,10 +1604,30 @@ final class InstagramAutoTranscriber: Sendable {
             whether text is background/watermark vs. core content, KEEP IT. Only remove text you are \
             highly confident is a watermark, account handle overlay, or UI element.
             8. PRESERVE all numbers, numbered lists, statistics, currency amounts, and dates exactly as they appear.
-            9. FORMAT for readability: If a slide has a heading or title line (e.g. "#1- Topic", "Step 3:", \
-            a short bold statement), add a blank line after it before the body text. If arrow-separated lists \
-            appear (→ item → item → item), reformat them with each item on its own line starting with →. \
-            Keep bullet points (•, -, *) and numbered items each on their own line.
+            9. FORMAT for readability:
+            - If a slide has a heading or title line (e.g. "#1- Topic", "Step 3:", a short bold statement), \
+            put the body text on the next line after it.
+            - LISTS: Any time multiple items are separated by delimiters (→, --, •, -, *, ▸), \
+            put EACH item on its own line with its delimiter. This includes double-dash (--) lists. \
+            Example input: "Criteria: -- Price: $300K -- 3+ bedrooms -- Large rooms" \
+            Example output:
+            Criteria:
+            -- Price: $300K
+            -- 3+ bedrooms
+            -- Large rooms
+            - ARROW BULLETS: The → character ALWAYS signals a new list item. Put a line break BEFORE each →. \
+            Example input: "Benefits: → Lower costs → Better quality → More time" \
+            Example output:
+            Benefits:
+            → Lower costs
+            → Better quality
+            → More time
+            - NUMBERED RANKINGS/DATA: When you see numbered entries like "1 Hawaii $38,107 $544,386 2 Nebraska $33,885", \
+            put EACH numbered entry on its own line:
+            1 Hawaii $38,107 $544,386
+            2 Nebraska $33,885 $484,071
+            - Keep numbered items (1., 2., etc.) each on their own line.
+            - Do NOT add leading spaces before lines. Each line should start at the left margin.
             """
         } else {
             lineBreakRule = """
@@ -1721,6 +1742,20 @@ final class InstagramAutoTranscriber: Sendable {
         return nil
     }
 
+    /// Trim leading whitespace from each line in carousel slide text.
+    /// Claude sometimes returns lines with leading spaces; this normalizes them.
+    private func trimSlideLines(_ slides: [TranscriptSlide]) -> [TranscriptSlide] {
+        slides.map { slide in
+            var updated = slide
+            updated.text = slide.text
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            return updated
+        }
+    }
+
     // MARK: - Text Helpers
 
     func postProcessSlides(
@@ -1823,10 +1858,20 @@ final class InstagramAutoTranscriber: Sendable {
 
         // For carousels: split joined text at sentence boundaries for readability.
         // After OCR lines are merged, sentences run together — split them apart so
-        // each sentence gets its own line.
+        // each sentence gets its own line. BUT protect list items from splitting.
         if isCarousel {
             mergedLines = mergedLines.flatMap { line -> [String] in
-                splitAtSentenceBoundaries(line)
+                // Don't split lines that are list items (numbered, bulleted, arrow-delimited, step markers)
+                let listPattern = #"^(\d+[\.\)]\s|[→▸►•·\-\*]\s|--\s|#\d|Step\s)"#
+                if line.range(of: listPattern, options: .regularExpression) != nil {
+                    return [line]  // Preserve list items as-is
+                }
+                // Also force line breaks before → characters mid-line
+                let arrowSplit = line.replacingOccurrences(of: " → ", with: "\n→ ")
+                if arrowSplit.contains("\n") {
+                    return arrowSplit.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                }
+                return splitAtSentenceBoundaries(line)
             }
         }
 

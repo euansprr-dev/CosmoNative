@@ -2188,6 +2188,10 @@ struct SwipeStudyFocusModeView: View {
 
         // Persist slides + comments into swipeAnalysis so they survive analysis rewrites
         var sa = current.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+        // Sync hookText with the canonical hook from slides
+        if let hook = canonicalHookFromSlides() {
+            sa.hookText = String(hook.prefix(500))
+        }
         sa.transcriptSlides = transcriptSlides
         sa.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
         sa.transcriptSpeechSegments = transcriptSpeechSegments
@@ -2347,6 +2351,10 @@ struct SwipeStudyFocusModeView: View {
 
         // Persist slides + comments into swipeAnalysis so they survive analysis rewrites
         var sa = current.swipeAnalysis ?? SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
+        // Sync hookText with the canonical hook from slides
+        if let hook = canonicalHookFromSlides() {
+            sa.hookText = String(hook.prefix(500))
+        }
         sa.transcriptSlides = transcriptSlides
         sa.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
         sa.transcriptSpeechSegments = transcriptSpeechSegments

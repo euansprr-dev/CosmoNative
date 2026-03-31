@@ -152,11 +152,11 @@ final class SwipeProcessingService {
             return nil
         }
 
-        // Step 2: Skip if already transcribed
+        // Step 2: Skip if already transcribed (need BOTH transcript status + actual slides, not just body text)
         let hasTranscript = atom.richContent?.transcriptStatus == "available"
-        let hasBody = !(atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if hasTranscript && hasBody {
-            print("SwipeProcessingService: Atom \(uuid) already has transcript, skipping")
+        let hasSlides = (atom.swipeAnalysis?.transcriptSlides?.count ?? 0) > 0
+        if hasTranscript && hasSlides {
+            print("SwipeProcessingService: Atom \(uuid) already has transcript + \(atom.swipeAnalysis?.transcriptSlides?.count ?? 0) slides, skipping")
             return nil
         }
 

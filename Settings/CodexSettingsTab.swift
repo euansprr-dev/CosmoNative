@@ -41,47 +41,55 @@ final class CodexViewModel {
         error = nil
 
         do {
-            print("🔬 Codex: Starting generation (reExtractAll: \(reExtractAll))")
-            let apiKey: String = APIKeys.supabaseServiceRoleKey ?? ""
-            print("🔬 Codex: API key found, calling \(Self.cloudBaseURL)/api/writing/codex/generate")
+            // Step 1: Start the background pipeline
+            let startURL = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!
+            var startRequest = URLRequest(url: startURL)
+            startRequest.httpMethod = "POST"
+            startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll])
+            startRequest.timeoutInterval = 30
 
-            let url = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/generate")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll])
-            request.timeoutInterval = 1800 // 30 min timeout for batch extraction
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let responseBody = String(data: data, encoding: .utf8) ?? ""
-            print("🔬 Codex: Response status \(statusCode), body: \(responseBody.prefix(300))")
-
-            guard statusCode == 200 else {
-                error = "Server error (\(statusCode)): \(responseBody.prefix(200))"
+            let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
+            guard (startResponse as? HTTPURLResponse)?.statusCode == 200 else {
+                error = "Failed to start pipeline"
                 isGenerating = false
                 return
             }
 
-            let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            if let extraction = result?["extraction"] as? [String: Any] {
-                extractionStats = ExtractionStats(
-                    total: extraction["total"] as? Int ?? 0,
-                    extracted: extraction["extracted"] as? Int ?? 0,
-                    skipped: extraction["skipped"] as? Int ?? 0,
-                    failed: extraction["failed"] as? Int ?? 0
-                )
+            // Step 2: Poll progress every 5 seconds
+            let progressURL = URL(string: "\(Self.cloudBaseURL)/api/writing/codex/progress")!
+            while true {
+                try await Task.sleep(for: .seconds(5))
+
+                var progressRequest = URLRequest(url: progressURL)
+                progressRequest.httpMethod = "GET"
+                progressRequest.timeoutInterval = 10
+
+                let (data, _) = try await URLSession.shared.data(for: progressRequest)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let status = json["status"] as? String ?? "unknown"
+                    let phase = json["phase"] as? String ?? ""
+                    let current = json["current"] as? Int ?? 0
+                    let total = json["total"] as? Int ?? 0
+                    let extracted = json["extracted"] as? Int ?? 0
+                    let skipped = json["skipped"] as? Int ?? 0
+                    let failed = json["failed"] as? Int ?? 0
+
+                    progress = phase
+                    extractionStats = ExtractionStats(total: total, extracted: extracted, skipped: skipped, failed: failed)
+
+                    if status == "complete" {
+                        progress = "Codex complete! Loading..."
+                        try? await Task.sleep(for: .seconds(3))
+                        await loadExistingCodex()
+                        lastGenerated = Date().formatted(date: .abbreviated, time: .shortened)
+                        break
+                    } else if status == "failed" {
+                        self.error = json["error"] as? String ?? "Pipeline failed"
+                        break
+                    }
+                }
             }
-
-            progress = "Codex generated. Refreshing..."
-
-            // Reload the codex from the database (it was saved as an atom by the cloud)
-            try? await Task.sleep(for: .seconds(2))
-            await loadExistingCodex()
-            lastGenerated = Date().formatted(date: .abbreviated, time: .shortened)
-
         } catch {
             self.error = error.localizedDescription
         }

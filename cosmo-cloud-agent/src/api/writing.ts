@@ -15,6 +15,7 @@ import { Request, Response, Router } from 'express';
 import { generateOutline, generateDraft, reviseDraft, readDraft } from '../tools/writing';
 import { batchExtractAll, extractQuarkProfile, buildQuarkSummary } from '../writing/quarkExtractor';
 import { computeCodex, saveCodexAtom, invalidateCodexCache } from '../writing/codex';
+import { startCodexPipeline, getCodexProgress } from '../writing/codexPipeline';
 import { fetchAtom, updateAtom } from '../db/queries';
 import { config } from '../config';
 
@@ -181,40 +182,28 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
 // ============================================================
 
 // No auth required — endpoint is behind Railway deployment
+
+// Start codex pipeline (background — returns immediately)
 writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
   const { reExtractAll } = req.body || {};
 
-  try {
-    // Step 1: Extract quarks for all unextracted swipes (or re-extract all)
-    console.log(`\n  🔬 Codex generation requested (reExtractAll: ${!!reExtractAll})`);
-    const extractionResult = await batchExtractAll({ reExtractAll: !!reExtractAll });
-
-    // Step 2: Compute aggregate codex from all profiles
-    const { codexText, stats } = await computeCodex();
-
-    // Step 3: Save codex as a dedicated atom (human-viewable + model-readable)
-    const codexUUID = await saveCodexAtom(codexText);
-    invalidateCodexCache();
-
-    res.json({
-      success: true,
-      extraction: {
-        total: extractionResult.total,
-        extracted: extractionResult.extracted,
-        skipped: extractionResult.skipped,
-        failed: extractionResult.failed.length,
-      },
-      codex: {
-        uuid: codexUUID,
-        profileCount: stats.totalProfiles,
-        preview: codexText.substring(0, 500) + '...',
-      },
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.log(`  ❌ Codex generation failed: ${msg}`);
-    res.status(500).json({ error: msg });
+  const progress = getCodexProgress();
+  if (progress.status === 'extracting' || progress.status === 'computing_stats' || progress.status === 'synthesizing' || progress.status === 'saving') {
+    res.json({ success: false, error: 'Pipeline already running', progress });
+    return;
   }
+
+  // Start in background — don't await
+  startCodexPipeline({ reExtractAll: !!reExtractAll }).catch(err => {
+    console.log(`  ❌ Background pipeline error: ${err.message}`);
+  });
+
+  res.json({ success: true, message: 'Pipeline started. Poll /codex/progress for updates.' });
+});
+
+// Poll progress
+writingRouter.get('/codex/progress', async (req: Request, res: Response) => {
+  res.json(getCodexProgress());
 });
 
 // Single swipe extraction — used by "Generate Atomic Profile" button in SwipeStudy

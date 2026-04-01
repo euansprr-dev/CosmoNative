@@ -405,7 +405,7 @@ USER FEEDBACK:
 
     console.log(`\n  ⚛️ ─── Phase 2: WRITE (direct from plan + think + profile) ───`);
     console.log(`  ⚛️ Sources: plan + full Phase 1 analysis + ${this.hasBlueprintProfile ? 'atomic profile' : 'inline analysis'} + swipe bodies`);
-    console.log(`  ⚛️ Mode: Compose inside think → write_draft (1 think, 1 write)`);
+    console.log(`  ⚛️ Mode: Direct write_draft (0 thinks, 1 write)`);
     console.log(`  ⚛️ Blocks: STABLE (full cache hit expected)`);
     await this.runWritePhase();
 
@@ -716,21 +716,11 @@ ${blueprintBody}
 in your system context. Reference them while writing — but the voice rules, banned patterns,
 and blueprint body above are your highest-priority writing guardrails.)
 
-═══ COMPOSE THE DRAFT ═══
+═══ WRITE THE DRAFT ═══
 
-You are a ghostwriter for ${clientName}. Call think ONCE. Inside this single think, COMPOSE the entire draft zone by zone:
+You are a ghostwriter for ${clientName}. Write the draft NOW. Call write_draft with the complete carousel.
 
-For each slide in your plan:
-1. QUOTE the corresponding slide from the PRIMARY BLUEPRINT BODY above
-   (copy the actual slide text — this forces you to see the real density, style, and structure)
-2. Note: how many words? How many lines? What formatting? What voice?
-3. WRITE your version: same structure and density, same physics, but using ${clientName}'s content,
-   voice, and real details. The blueprint is the skeleton. ${clientName}'s voice is the flesh.
-4. Check: same density (±10%)? Right distance? Right techniques? Passes Dinner Table Test?
-   Would ${clientName} say this at dinner? If it sounds like a news report — rewrite.
-5. Move to the next slide.
-
-After composing every zone inside your think, call write_draft with the complete draft.
+Your plan has per-slide WRITE instructions. The blueprint body above shows the density and format per slide. The client's voice and real details are in your context. Follow the plan, match the blueprint's structure, use the client's voice. Call write_draft.
 
 ────────────────────────────────────────
 WHILE COMPOSING EACH SLIDE

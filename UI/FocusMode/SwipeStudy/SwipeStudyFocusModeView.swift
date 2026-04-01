@@ -2785,6 +2785,7 @@ struct SwipeStudyFocusModeView: View {
                     // Content Physics Profile (replaces legacy Emotional Arc + Persuasion Stack)
                     if let physicsProfile = currentAtom?.contentPhysicsProfile {
                         ContentPhysicsSection(profile: physicsProfile)
+                        reExtractProfileButton
                     } else {
                         generateAtomicProfileCard
                     }
@@ -2840,6 +2841,28 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Styled placeholder for analysis cards that need more data
+    // MARK: - Re-Extract Profile Button
+
+    @ViewBuilder
+    private var reExtractProfileButton: some View {
+        HStack {
+            Spacer()
+            Button {
+                Task { await generateAtomicProfile() }
+            } label: {
+                Label(
+                    isGeneratingProfile ? "Re-extracting..." : "Re-extract Profile",
+                    systemImage: "arrow.clockwise"
+                )
+                .font(DS.caption2)
+                .foregroundStyle(DS.entitySwipe)
+            }
+            .buttonStyle(.plain)
+            .disabled(isGeneratingProfile)
+        }
+        .padding(.top, DS.space4)
+    }
+
     // MARK: - Generate Atomic Profile
 
     @ViewBuilder

@@ -392,6 +392,29 @@ USER FEEDBACK:
 
     console.log(`  ⚛️ Phase 1 complete: plan=${this.writingPlan.split(/\s+/).length} words, outline=${this.outline.length} slides, hooks=${this.hooks.length}`);
     console.log(`  ⚛️ Waiting for user confirmation before Phase 2+3`);
+
+    // Phase 1 recap — copyable JSON with think + plan + hooks
+    const phase1Recap: any = {
+      type: '📋 PHASE_1_RECAP',
+      client: this.clientAtom?.title || 'unknown',
+      blueprint: this.blueprintAnchor?.title?.substring(0, 80) || 'none',
+      thinks: [] as any[],
+      plan: this.writingPlan,
+      planWords: this.writingPlan.split(/\s+/).length,
+      hooks: this.hooks,
+      outline: this.outline.map((o: any) => `${o.sortOrder + 1}. ${o.title}`),
+    };
+    for (const msg of this.messages) {
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          if (tc.name === 'think') {
+            phase1Recap.thinks.push({ words: ((tc.arguments as any)?.thought || '').split(/\s+/).length, content: (tc.arguments as any)?.thought || '' });
+          }
+        }
+      }
+    }
+    console.log(JSON.stringify(phase1Recap));
+
     await this.persistConversation();
     return result;
   }
@@ -432,6 +455,46 @@ USER FEEDBACK:
     console.log(`  📋 Final: ${finalWords} words, ~${finalSlides} slides`);
     console.log(`  📋 API calls: ${totalCalls} total (${totalThinks} thinks, ${totalWrites} writes, ${totalCalls - totalThinks - totalWrites} other)`);
     console.log(`  📋 Messages: ${this.messages.length}`);
+
+    // Full pipeline recap — one copyable JSON log with everything
+    const recap: any = {
+      type: '📋 FULL_PIPELINE_RECAP',
+      client: this.clientAtom?.title || 'unknown',
+      blueprint: this.blueprintAnchor?.title?.substring(0, 80) || 'none',
+      hasProfile: this.hasBlueprintProfile,
+      swipeCount: this.selectedSwipes.length,
+      apiCalls: totalCalls,
+      thinks: [] as any[],
+      plans: [] as any[],
+      drafts: [] as any[],
+      validations: [] as any[],
+      responses: [] as any[],
+      finalDraft: finalBody,
+    };
+
+    for (const msg of this.messages) {
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          if (tc.name === 'think') {
+            recap.thinks.push({ words: ((tc.arguments as any)?.thought || '').split(/\s+/).length, content: (tc.arguments as any)?.thought || '' });
+          } else if (tc.name === 'create_writing_plan') {
+            recap.plans.push({ words: ((tc.arguments as any)?.plan || '').split(/\s+/).length, content: (tc.arguments as any)?.plan || '', hooks: (tc.arguments as any)?.hookVariants || [] });
+          } else if (tc.name === 'write_draft') {
+            recap.drafts.push({ words: ((tc.arguments as any)?.content || '').split(/\s+/).length, format: (tc.arguments as any)?.format || 'unknown', content: (tc.arguments as any)?.content || '' });
+          }
+        }
+      }
+      // Capture tool results that contain validation info
+      if (msg.role === 'tool' && msg.content && (msg.content.includes('violation') || msg.content.includes('REJECTED'))) {
+        recap.validations.push(msg.content.substring(0, 2000));
+      }
+      // Capture assistant text responses (summaries, explanations)
+      if (msg.role === 'assistant' && msg.content && !msg.toolCalls?.length) {
+        recap.responses.push(msg.content.substring(0, 1000));
+      }
+    }
+
+    console.log(JSON.stringify(recap));
 
     await this.persistConversation();
     return result;

@@ -2210,25 +2210,11 @@ If ALL checks pass, present the draft.
       }
     }
 
-    // Add cache_control to the last user message — caches the ENTIRE conversation prefix
-    // (system blocks + all messages up to this point). Only new messages after this are uncached.
-    // Anthropic allows up to 4 cache breakpoints. We use: Block1 + Block2 (system) + this message = 3.
-    for (let i = result.length - 1; i >= 0; i--) {
-      if (result[i].role === 'user') {
-        const content = result[i].content;
-        if (typeof content === 'string') {
-          result[i].content = [{
-            type: 'text',
-            text: content,
-            cache_control: { type: 'ephemeral' },
-          }];
-        } else if (Array.isArray(content) && content.length > 0) {
-          // Add cache_control to the last content block (tool_result or text)
-          content[content.length - 1].cache_control = { type: 'ephemeral' };
-        }
-        break; // Only mark the LAST user message
-      }
-    }
+    // Message-level cache breakpoint REMOVED — it was writing 87K tokens at $3.75/M every call
+    // but never reading them back (the breakpoint position changes every call, so the prefix
+    // never matches). Without it, messages are regular uncached input at $3/M instead of
+    // cache write at $3.75/M. Saves ~25% on message tokens per call.
+    // System blocks (Block 1+2+3A) still have their 3 cache breakpoints and work correctly.
 
     return result;
   }

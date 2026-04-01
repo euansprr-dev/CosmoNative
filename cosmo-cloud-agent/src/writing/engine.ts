@@ -550,7 +550,7 @@ Then MAP the macro physics to the client's story:
 
 Also verify from the profile + blueprint body:
 1b. BEAT MAP — confirm slide count and beat functions (the profile's slideQuarks give you the function per slide)
-1c. DENSITY — VERIFY before trusting. The profile contains a densityWaveform, but it may have miscounted slide boundaries. Open the blueprint's FULL BODY in your loaded swipe examples. Count the actual words per slide for slides 1, 3, and the middle slide. Compare to the waveform. If they match (±20%): use the waveform. If they DIVERGE: the body is TRUTH — use the body's actual word counts. Carousel slides must fit on one card — if the waveform says "150 words" but the actual slide has 50, the waveform is wrong.
+1c. DENSITY — Count the actual words per slide in the blueprint's FULL BODY (in your loaded swipe examples). These are your density targets (±10%). If the blueprint body only shows partial text, use the client's top performing posts in the SAME FORMAT (carousel for carousel, reel for reel) as your density reference. Every slide must still pass the one-breath test from the Slide Density skill module.
 1d. VISUAL FORMAT — read techniques per slide for formatting cues (line breaks, ALL CAPS, bullets, fragments)
 1e. HOOK ANATOMY — read slide 1's techniques, experiential distance, and the blueprint's actual hook text. Match: Case, Person, Structure, Word count, Ending punctuation.
 1f. TRANSITIONS — read the transitions array (pre-analyzed with mechanisms and swap tests)
@@ -780,14 +780,15 @@ ${hardRules ? `HARD RULES (non-negotiable — automatic rewrite if violated):\n$
 - NO "in today's [anything]," "furthermore," "additionally," "moreover"
 
 CRAFT RULES (apply to every slide):
+- DINNER TABLE TEST IS #1: If a slide sounds like a news report, caption, thesis, or marketing copy — rewrite as speech. This overrides density, structure, everything.
 - Write like a sharp human, not a language model. Contractions always.
 - Get to the point. No throat-clearing, no preamble, no padding.
 - Specific > vague. Use numbers, names, concrete details from the brand story.
 - Vary sentence length. Mix short punchy lines with longer ones.
-- Use physical verbs: "sanded down" not "improved," "stripped back" not "simplified."
-- Follow the blueprint's STRUCTURE closely (slide count, density, arc). Use the client's WORDS and VOICE.
+- One slide = one breath. If you need a breath mid-slide, split it.
+- Follow the blueprint's structure (slide count, arc). Derive density from the blueprint BODY, not from numbers.
 - If any slide's phrasing is >80% similar to the blueprint's text, rewrite from structural function only.
-- Priority when rules conflict: Platform constraints > Client failure rules > Blueprint structure > Voice > Lessons.
+- ALL skill modules apply: density checks, voice matching, causal chaining, self-edit. None are overridden.
 
 PRIMARY BLUEPRINT BODY (this is your density and style reference — QUOTE it before writing each zone):
 ${blueprintBody}

@@ -119,7 +119,8 @@ export function formatQuarkProfileForPrompt(profile: QuarkProfile): string {
   if (profile.rhythm) {
     const r = profile.rhythm;
     lines.push('RHYTHM:');
-    if (r.densityWaveform?.length) lines.push(`  Density waveform (APPROXIMATE — always verify against the actual blueprint body in your context): [${r.densityWaveform.join(', ')}]`);
+    // Density waveform intentionally NOT rendered — model should derive density from the actual
+    // blueprint body text and client's top performing posts, not from potentially wrong numbers
     if (r.energyCurve?.length) lines.push(`  Energy curve: [${r.energyCurve.join(', ')}]`);
     if (r.informationRate?.length) lines.push(`  Info rate: [${r.informationRate.join(', ')}]`);
     if (r.silenceSlides?.length) lines.push(`  Silence slides: ${r.silenceSlides.join(', ')}`);
@@ -220,24 +221,15 @@ function getFormatDensityOverride(format: ContentFormat): string {
       return `═══════════════════════════════════════════════════════════════
 FORMAT GUIDANCE: CAROUSEL/THREAD DENSITY
 ═══════════════════════════════════════════════════════════════
-This is a CAROUSEL/THREAD. Carousel density varies dramatically by style:
-• Teaching/listicle carousels: typically 3-6 sentences, 50-100 words per slide, with bullets and specific data
-• Story/narrative carousels: typically 1-2 sentences per slide — dialogue, year markers, emotional beats
+This is a CAROUSEL/THREAD. To determine slide density:
 
-YOUR DENSITY TARGET COMES FROM THE PRIMARY BLUEPRINT, NOT THESE DEFAULTS.
-Count the actual words per slide in the blueprint — that number is your target (±10%).
-The FORMATTING DNA section in your loaded swipe intelligence shows measured avgWordsPerSlide
-and avgSentencesPerSlide from all 20 swipes. Use those measured numbers to learn how sparse or dense each slide type should feel, not to override the blueprint.
-
-If the blueprint has 10-word slides, write 10-word slides.
-If the blueprint has 80-word slides, write 80-word slides.
-The blueprint IS the density standard. Match IT, not a generic rule.
-
-• Study the loaded swipe examples to learn how they phrase sparse slides vs proof-heavy slides
-• Supporting swipes teach natural phrasing and depth rhythm. They do NOT change what each blueprint slide is doing
-• The "1-2 sentences default" and "3 max" rules from Voice DNA do NOT apply to carousels
-• Use bullet points (-- or •) ONLY if the blueprint uses them — don't add formatting the blueprint doesn't have
-• Sparse emotional slides stay sparse — do not cram every detail into them`;
+1. READ the PRIMARY BLUEPRINT's actual body text. Count words per slide. Match that density (±10%).
+2. If the blueprint body is incomplete, READ the client's top performing CAROUSEL/THREAD posts in Block 2.
+   Match THEIR typical slide density — not reels, not long-form, the same format you're writing.
+3. Study the loaded swipe examples for how they phrase sparse slides vs proof-heavy slides.
+4. ALL skill module rules still apply to carousels: the Dinner Table Test, the one-breath rule,
+   the density checks. These are NOT overridden.
+5. Sparse emotional slides stay sparse — do not cram every detail into them.`;
 
     case 'reel':
     case 'voiceoverReel':
@@ -445,8 +437,8 @@ export async function assembleBlock2(
       }
     }
 
-    // Top performing content (reels + threads with real transcripts and engagement metrics)
-    const topContent = documents.filter((d: any) => ['reel', 'thread'].includes(d.category));
+    // Top performing content (all formats with real transcripts and engagement metrics)
+    const topContent = documents.filter((d: any) => ['reel', 'thread', 'carousel', 'post', 'topPerforming'].includes(d.category));
     if (topContent.length > 0) {
       sections.push('\n--- TOP PERFORMING CONTENT (real transcripts with engagement data) ---');
       for (const doc of topContent.slice(0, 5)) {
@@ -795,16 +787,18 @@ ANTI-HALLUCINATION:
 
 You operate in phases:
 • PHASE 1 (STUDY & PLAN): Dissect reference posts using Content Physics (quarks, transitions, arc, RSV). Study client profile. Build a writing plan with per-slide physics targets AND craft instructions.
-• PHASE 2 (WRITE): Compose the draft inside a think call. Use the plan's physics targets + the blueprint body for density + the client's voice. Quote the blueprint before writing each zone.
+• PHASE 2 (WRITE): Write the draft directly via write_draft. Follow the plan's per-slide instructions. Match the blueprint body's density. Use the client's voice. Every slide must pass the Dinner Table Test.
 • PHASE 3 (SELF-EDIT): Extract your draft's actual physics. Compare to blueprint body and profile. Fix mismatches. Run universal quality checks.
 
 CONTEXT HIERARCHY (apply in this order when constraints conflict):
-1. PLATFORM CONSTRAINTS: Non-negotiable hard limits (char counts, slide counts, format rules).
-2. CLIENT FAILURE RULES: Patterns that caused underperformance. Treat as blockers.
-3. BLUEPRINT PHYSICS: The primary swipe's emotional arc, density, and physics events. Your anchor.
-4. VOICE FINGERPRINT: Sentence length, signature phrases, tone, banned words from client profile.
-5. LEARNED RULES: Hard rules (MUST apply), then advisory (PREFER when possible).
-6. CONTENT PHYSICS: Quarks, RSV, transitions, experiential distance — the WHY behind the blueprint.
+1. DINNER TABLE TEST: Every slide must sound like the client talking at dinner. If it sounds like a news report, caption, thesis, or marketing copy — rewrite. This overrides everything.
+2. PLATFORM CONSTRAINTS: Non-negotiable hard limits (char counts, slide counts, format rules).
+3. SKILL MODULES: Density checks, voice matching, causal chaining, self-edit pass. Always apply.
+4. CLIENT FAILURE RULES: Patterns that caused underperformance. Treat as blockers.
+5. BLUEPRINT STRUCTURE: The primary swipe's slide count, arc shape, and physics events. Follow closely.
+6. VOICE FINGERPRINT: Sentence length, signature phrases, tone, banned words from client profile.
+7. LEARNED RULES: Hard rules (MUST apply), then advisory (PREFER when possible).
+8. CONTENT PHYSICS: Quarks, RSV, transitions, experiential distance — the WHY behind the blueprint.
 
 WHAT IS CONTENT PHYSICS:
 Content Physics is the framework for understanding WHY viral content works — not what it says (the words) or what it does (the beats), but the invisible forces, state changes, and causal mechanisms that make readers unable to stop scrolling. Each slide creates specific reader state changes (quarks). The transitions between slides create causal pressure. The arc shape creates the emotional journey. The blueprint's atomic profile maps all of these per-slide. Your job is to replicate these forces using the client's content and voice.

@@ -470,7 +470,7 @@ Then MAP the macro physics to the client's story:
 
 Also verify from the profile + blueprint body:
 1b. BEAT MAP — confirm slide count and beat functions (the profile's slideQuarks give you the function per slide)
-1c. DENSITY — read the rhythm.densityWaveform from the profile (these ARE your word-count targets per slide, ±10%)
+1c. DENSITY — VERIFY before trusting. The profile contains a densityWaveform, but it may have miscounted slide boundaries. Open the blueprint's FULL BODY in your loaded swipe examples. Count the actual words per slide for slides 1, 3, and the middle slide. Compare to the waveform. If they match (±20%): use the waveform. If they DIVERGE: the body is TRUTH — use the body's actual word counts. Carousel slides must fit on one card — if the waveform says "150 words" but the actual slide has 50, the waveform is wrong.
 1d. VISUAL FORMAT — read techniques per slide for formatting cues (line breaks, ALL CAPS, bullets, fragments)
 1e. HOOK ANATOMY — read slide 1's techniques, experiential distance, and the blueprint's actual hook text. Match: Case, Person, Structure, Word count, Ending punctuation.
 1f. TRANSITIONS — read the transitions array (pre-analyzed with mechanisms and swap tests)
@@ -544,33 +544,41 @@ STEP 2: BUILD THE WRITING PLAN
 
 IMMEDIATELY after your think, call create_writing_plan with a plan structured EXACTLY like this:
 
-STRUCTURAL TEMPLATE
-For EACH slide (same count as ${label}), write:
-  Slide N: [beat function from your beat map]
-  Quarks: [speech act — technique that makes it this act] | Reader: [delta — what in the text creates it] | Proof: [type, if present]
-  Transition to N+1: [type — what pressure in THIS slide forces the reader to the next? Be specific about the mechanism.]
-  Motivation: [if decision/action — what pressure visible in the text?] | Compression: [if time skip — earned/intriguing/confusing? what signal?]
-  Distance: [zero/near/far — ${hasProfile ? 'from blueprint profile' : 'from your analysis'}. zero = inside the moment, no explanation. near = vivid storytelling. far = reporting (almost always wrong). MUST match blueprint.]
-  Techniques: [${hasProfile ? 'from blueprint profile — ' : ''}list every craft move: subject-drop, ALL CAPS, ellipsis, maximum-compression, casual spelling, POV framing, direct address, number formatting, parenthetical aside, repetition, contrast structure, etc.]
-  Dominant Frame: [${hasProfile ? 'from arcQuarks.dominantFrame — ' : ''}every slide must conform to this post's dominant identity: museum_of_failures / chronological_journey / dialogue / tutorial / letter_to_someone / testimony / listicle]
-  Entangled with: [slide numbers whose meaning DEPENDS on this slide — if this slide were removed, which others collapse?]
-  Prerequisites: [what the audience must already know from previous slides]
-  Words: [target ${hasProfile ? 'from rhythm.densityWaveform' : 'from your density measurement'}] | Sentences: [target] | Lines: [target]
-  Format: [from ${hasProfile ? 'techniques per slide' : 'your visual format analysis'} — bullets? breaks? fragments?]
-  Content: [what specific information goes here — cite real client details by name]
-  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION — translate the blueprint's mechanism into a specific writing direction for the client's version. Include: target word count, target experiential distance, specific techniques to use, sentence structure, what to include vs omit, how it should feel when read aloud, and WHY this technique creates the planned reader delta. Reference the blueprint's actual slide as the model to match. Different blueprints → different WRITE instructions.]
+PHYSICS MAP
+Divide the blueprint's emotional arc into ZONES. A zone is a stretch of content that does one physics job. The blueprint might achieve a zone in 1 slide; you might need 2. Or vice versa. What matters is the zone's physics land — not the slide count.
 
-The quark annotations AND WRITE instructions should be SPECIFIC to the blueprint's mechanisms, not generic labels.
-Good quarks: "confession — 10 words, direct address, names the failure, no excuse. Reader: curiosity+ (no explanation = open loop), empathy+ (vulnerability of admitting)."
-Bad quarks: "confession | empathy+, curiosity+" (just labels — model won't know how to reproduce the mechanism)
-Good WRITE: "10 words max. Direct address + year marker. Name the specific failure. End with apology, no excuse. Ellipsis. Should feel like a child confessing to a parent. Model: blueprint's slide 1."
-Bad WRITE: "Write a confession slide." (too vague — no craft direction)
+For each zone, describe:
+  ZONE N: [emotional job — what the reader should FEEL entering and exiting this zone]
+  Physics: [speech acts, reader deltas, experiential distance — describe WHY they work, not just labels.
+    Example of WHY: "Second-person 'Your' collapses distance between abstract data and daily life.
+    The reader isn't reading about inflation — they're feeling their wallet shrink. That's why distance is zero."]
+  Techniques the blueprint uses: [from profile — these are INSPIRATION, not prescription.
+    You don't have to use the exact same techniques. If the blueprint uses bullet points but short
+    declarative sentences serve the same physics better for your content, use those.]
+  Transition pressure to next zone: [what unresolved tension pushes the reader forward?]
+  Client content: [real details from brand story and research briefing that serve this emotional job]
+  Density feel: sparse / moderate / dense (reference the ACTUAL blueprint body, not waveform numbers)
+  Structure guidance: [approximate slide count (e.g., "2-3 slides"), density per slide
+    (e.g., "each slide 40-60 words"). Get these by READING the blueprint body's corresponding
+    section. This is structural GUIDANCE, not a template to copy.]
+  Antimatter for this zone: [what would kill the physics HERE specifically]
 
-For slides where the blueprint's specific detail (luxury purchase, specific career move) doesn't naturally exist in the client's story, write:
-  ADAPTED: [blueprint function: e.g., gratitude gesture via luxury watch] → [client equivalent: genuine expression matching the client's actual story]
-The beat function must still land — but through the client's authentic story, not a forced parallel.
+Where the client's story doesn't have a direct parallel to the blueprint, note:
+  ADAPTED: [blueprint function] → [client equivalent that preserves the physics]
 
-If a slide has prerequisites that aren't met by earlier slides, either add a bridge slide before it or rewrite to be self-contained. A stranger who has NEVER seen this person must understand every slide.
+STRUCTURAL GUIDANCE (not structural copying):
+- Total slide count should be SIMILAR to the blueprint (±2-3 slides), not exact.
+- Each slide must fit on a single carousel card. Look at the blueprint body's actual slide lengths.
+- Sparse zones feel sparse (1-2 short sentences per slide). Dense zones feel substantive.
+  Match the FEEL of the blueprint body, not waveform numbers.
+- Your formatting may differ from the blueprint. Same physics, your structure.
+- What should NOT differ: the emotional arc, the tension peaks, the physics events, the payoff.
+
+Each zone must introduce UNIQUE content. If two zones reference the same statistics,
+consolidate — the data lives in whichever zone it serves best.
+
+A stranger who has NEVER seen this person must understand every slide. Flag any zone that
+references something not yet established.
 
 VOICE PATTERN
   [The consistent format the draft must maintain on EVERY slide — from your analysis]
@@ -598,7 +606,7 @@ HOOK SPECIFICATION
   Case: ___ | Person: ___ | Structure: ___ | Words: ___ | Ending: ___
 
 DENSITY TARGETS
-  [List the exact word count per slide position from your density measurement]
+  [For each zone: sparse / moderate / dense. Reference the actual blueprint body for calibration — read how long each slide actually is. The body is truth, not the waveform.]
 
 ARC QUARKS
   Win/loss pattern: [describe the oscillation — e.g., "fail-struggle-smallwin-bigwin-loss-grind-hugewin-emptiness-restart-peace"]
@@ -669,89 +677,76 @@ This plan is your construction blueprint. The user will review the outline and h
 ═══ YOUR WRITING PLAN ═══
 ${this.writingPlan}${this.buildStructuredPlanSummary()}
 
-═══ WRITE THE DRAFT ═══
+═══ COMPOSE THE DRAFT ═══
 
-You are a ghostwriter. Write the draft NOW using ALL of the following:
-- The WRITING PLAN above — per-slide WRITE instructions with exact craft directions
-- Your FULL Phase 1 analysis (in dynamic context) — your mapping of blueprint physics to client content
-- The blueprint's COMPLETE atomic profile (in system context under "BLUEPRINT PHYSICS SPECIFICATION") — per-slide quarks, transitions, rhythm waveform, physics events, antimatter
-- All swipe full bodies (in system context) — reference these for voice, density, formatting
-- The client's voice fingerprint, brand story, and lessons (in system context)
+You are a ghostwriter. You have everything you need:
+- Your WRITING PLAN with physics zones and emotional architecture
+- The blueprint's FULL BODY in your loaded swipe examples (this is your density and style reference — the source of truth)
+- The blueprint's ATOMIC PROFILE with per-slide quarks, transitions, and physics events
+- Your Phase 1 analysis mapping the blueprint's physics to the client's content
+- 19 other swipe examples for voice and formatting inspiration
+- The client's voice fingerprint, brand story, real details, and lessons
+- The research briefing with factual data (if provided)
 
-DO NOT call think — the plan + your analysis + the profile + the swipes ARE your thinking. For each slide: follow the WRITE instruction from your plan, match the blueprint's experiential distance and techniques, reference the corresponding swipe slide for visual shape, and use the client's real details and voice.
+Call think ONCE. Inside this single think, COMPOSE the entire draft zone by zone:
 
-────────────────────────────────────────
-HOW TO WRITE EACH SLIDE
-────────────────────────────────────────
+For each zone in your plan:
+1. Re-read the zone's physics target. What should the reader FEEL?
+2. Look at how the BLUEPRINT BODY achieves similar physics. Note the density
+   (how many words per slide?), the formatting, the voice. The body is your
+   density reference — not the plan's numbers, not the profile's waveform.
+3. WRITE the zone using the client's content, voice, and real details.
+   The STRUCTURE is YOURS to decide. Don't copy the blueprint's layout.
+   If the blueprint uses 4 bullet points, you might use 3 short sentences.
+   Same physics, your structure.
+4. Check: Does this zone produce the planned reader delta? Is the experiential
+   distance right? Would the client say this at dinner?
+5. Move to the next zone.
 
-Work through your plan slide by slide. For each slide:
-
-1. READ YOUR PLAN'S PHYSICS SPEC for this slide:
-   - Target speech act + mechanism (HOW to write it, not just what it is)
-   - Target experiential distance (zero = BE inside the moment. No explaining, no "I decided to." Near = telling a friend. Far = reporting — almost always wrong.)
-   - Target techniques (subject-drop = don't start with "I". ALL CAPS = capitalize the key word. Maximum-compression = cut every word that isn't load-bearing. These are the TOOLS that produce the physics.)
-   - Target reader delta + the text mechanism that creates it
-   - Target frame (in a museum_of_failures, this slide IS a failure — not a step toward one)
-   - WRITE instruction: the specific craft direction. Follow it as your primary guide.
-
-2. LOOK AT THE CORRESPONDING SLIDE in the ${this.getBlueprintLabel()}. Your slide must MATCH ITS SHAPE:
-   - If the ${this.getBlueprintLabel()}'s slide 3 has 4 short lines separated by line breaks → yours has 4 short lines separated by line breaks
-   - If the ${this.getBlueprintLabel()}'s slide 5 is a dense paragraph with 3 sentences → yours is a dense paragraph with 3 sentences
-   - If the ${this.getBlueprintLabel()} uses -- dashes for a list → you use -- dashes for a list
-   The shape is the blueprint. You're filling it with different words.
-
-3. WRITE THE SLIDE using the client's voice. Use their real details from the brand story (names, numbers, places — from your plan). Use their signature phrases where they fit naturally. Keep sentences close to the target length from the voice fingerprint.
-
-4. TENSE PATTERN: Follow the tense pattern from your plan. If the blueprint tells a story in past tense and shifts to present for the final emotional payoff — do the same at the same structural point. Do NOT randomly switch tense mid-section. Every tense shift must be INTENTIONAL and match where the blueprint shifts.
-
-5. For slides marked ADAPTED in your plan: match the EMOTION and BEAT FUNCTION of the blueprint slide. Don't copy its literal content. If the blueprint gives a luxury gift and the client's story doesn't have one, write what the CLIENT would actually do at this emotional moment. Authenticity > equivalence.
-
-6. PHYSICS CHECK — before moving to the next slide:
-   - EXPERIENTIAL DISTANCE: Read your slide. Is it at the target distance? Zero = "Slept in my car" (you ARE there). If yours reads like "I ended up sleeping in my car because I had nowhere else to go" — that's NEAR, not zero. Cut the explanation. Distance is the #1 quality signal.
-   - TECHNIQUES: Does your slide use the planned techniques? If plan says "subject-drop" and your slide starts with "I" — fix it. If plan says "ALL CAPS" on the key word — add it. If plan says "maximum-compression" and you wrote 15 words — cut to 4.
-   - DOMINANT FRAME: Does this slide conform to the post's dominant frame? In a museum_of_failures, even positive events must be FRAMED as losses/traps. "Got promoted" → "Got promoted. Hated it."
-   - STATE CHANGE: Does this slide change at least ONE thing in the reader's mind? If nothing changes, the slide is dead weight — rewrite to create a delta.
-   - CAUSALITY: Is the transition to the next slide causal? The reader should feel pulled forward. If "and then..." is the only connector, the transition is broken — add the pressure or question that makes the next slide inevitable.
-   - EARNED-NESS: If this is a decision/action, is the motivation VISIBLE in the text? If there's a time jump, is the skip earned? If there's a payoff, was it set up?
-   - SPEECH ACT: Does it match your plan? A planned confession should FEEL like a confession (short, direct, specific, no excuse) — not read like a report or narration.
-   - RSV TRAJECTORY: Check your plan's RSV targets. At this slide, does the reader's cumulative state match? Are the right loops open? Is trust/tension where it should be? At the symmetry break slide: does your text actually BREAK the pattern? At the phase transition slide: does the reader's frame actually SHIFT?
-
-7. CHECK THE WORD COUNT. Your plan says "Slide 3: 47 words." Count the words you wrote. If you wrote 62 words, cut 15. If you wrote 31 words, add detail. The tolerance is ±10% — for a 47-word target, that's 42-52 words.
-
-8. READ IT AS THE CLIENT. Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, or marketing copy — it fails the Dinner Table Test. Rewrite it as speech.
-
-9. The PRIMARY BLUEPRINT controls WHAT each slide does. The supporting swipes only teach HOW to say that kind of slide naturally. Do NOT import extra beats, extra setup, or random detail slides from supporting examples.
-
-10. Sparse emotional slides stay sparse. Do NOT cram every available detail into them just because you know the story.
+After composing every zone inside your think, call write_draft with the complete draft.
 
 ────────────────────────────────────────
-THE VISUAL SHAPE TEST
+WHILE COMPOSING EACH ZONE
 ────────────────────────────────────────
 
-Your draft must produce the same PHYSICS as the ${this.getBlueprintLabel()}. ${this.hasBlueprintProfile ? 'The rhythm.densityWaveform in the profile gives you exact word counts per slide. The techniques per slide give you the visual format. The experiential distance per slide gives you the psychological depth.' : 'The density targets in your plan give you exact word counts. The format tags give you the visual shape.'}
+PHYSICS FIRST: The plan tells you what the reader should FEEL. That's your target. Not word count. Not formatting. The emotional effect.
 
-If you squint at both drafts side by side, they should LOOK the same (density, whitespace, formatting).
-If you READ both drafts, they should FEEL the same (distance, techniques, deltas).
+BLUEPRINT AS INSPIRATION: The blueprint body shows you ONE way to achieve the physics. Study it for density (how sparse or dense are its slides?), for voice (how does it phrase things?), for rhythm (short slides vs long slides). Then write YOUR version that creates the same feeling through the client's authentic content.
 
-The words are different. The physics are identical.
+DENSITY FROM THE BODY: Look at the actual blueprint slides in your context. If the blueprint's slides in this zone are ~50 words each, yours should feel similarly concise. If they're ~80 words, yours can be similarly dense. Don't follow numbers from the plan or the waveform — READ the blueprint body.
+
+VOICE: Would ${this.clientAtom?.title || 'the client'} say this at dinner? Not at a podium. Not in a caption. At dinner, to a friend. The Dinner Table Test is non-negotiable.
+
+ORIGINAL STRUCTURE: Your post should NOT be recognizable as the blueprint with different words. Same physics, different structure. If someone saw both posts, they should think "these create the same feeling" not "this is copied."
+
+TENSE: Follow the tense pattern from your plan. Shifts only at structural beat transitions.
+
+EACH ZONE EARNS ITS PLACE: If a zone doesn't change something in the reader's mind, cut it. If two zones say the same thing, merge. Every zone must introduce something new.
+
+────────────────────────────────────────
+THE PHYSICS SHAPE TEST
+────────────────────────────────────────
+
+Read your draft, then read the blueprint. Ask:
+- Does the reader go on the SAME emotional journey? (Same arc, same peaks, same release)
+- Does the opening create the SAME alarm/hook? (Same physics, possibly different format)
+- Does the middle build the SAME pressure? (Same tension accumulation, possibly different structure)
+- Does the ending provide the SAME payoff? (Same resolution, same CTA physics)
+If yes: the physics match. The structure can be different and that's CORRECT.
+If no: something is wrong with the physics, not the formatting.
 
 ────────────────────────────────────────
 WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
 ────────────────────────────────────────
 
-- PARAGRAPH SLIDES: Your slide is a paragraph but the ${this.getBlueprintLabel()}'s equivalent slide uses line breaks and bullet points. Fix: break it up to match the visual format.
-- GENERIC CLAIMS: You wrote "this changed everything" or "the results were incredible." The swipes use SPECIFIC numbers: "$47K in 11 days", "17 properties", "quit at 28." Fix: replace every generic claim with a specific detail from the client's brand story.
-- WRONG SLIDE COUNT: You wrote 8 slides but the ${this.getBlueprintLabel()} has 12. Your plan specified 12. Fix: add the missing slides.
-- HOOK FORMAT MISMATCH: Your hook doesn't match the ${this.getBlueprintLabel()}'s format (case, person, structure, word count). Fix: rewrite matching the hook specification from your plan.
+- DENSITY MISMATCH: A zone that should feel sparse is crammed with detail, or a zone that should feel dense is too thin. Fix: read the blueprint body for that zone and match its weight.
+- GENERIC CLAIMS: You wrote "this changed everything" or "the results were incredible." Fix: replace with specific details from the client's brand story or research briefing.
+- HOOK PHYSICS MISMATCH: Your hook doesn't produce the same reader deltas as the blueprint's hook. Fix: rewrite to create the same tension/curiosity/identification.
 - BANNED PHRASES: If any phrase from the BANNED list appears ANYWHERE, replace it immediately. Common traps: "in today's", "leverage", "game-changer", "let that sink in", "this isn't X, this is Y."
-- AI VOICE DRIFT: Sentences getting longer and more sophisticated. Vocabulary feels elevated. Hedging with "perhaps" and "it might be." Fix: rewrite as shorter, more direct, more like the client's real posts.
-- DISTANCE VIOLATION: Your slide reads like a report but the blueprint's slide is zero-distance lived experience. Fix: cut all explanation, put the reader INSIDE the moment. "I decided to leave" → "Left."
-- TECHNIQUE MISMATCH: Blueprint uses subject-drop + maximum-compression, your slide is a full grammatical sentence with "I" subject. Fix: rewrite using the planned techniques.
-- FRAME VIOLATION: Blueprint is museum_of_failures but your slide reads like a success or neutral event. Fix: reframe the same content as a loss, consequence, or absurd moment.
-
-Call write_draft with the complete content.
-
-FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this.getBlueprintLabel()}? Count words in slide 1. Does it match your plan target (±10%)? If not, fix it now.`,
+- AI VOICE DRIFT: Sentences getting longer and more sophisticated. Vocabulary elevated. Hedging. Fix: rewrite as shorter, more direct, more like the client's real posts.
+- DISTANCE VIOLATION: Your slide reads like a report but the physics call for zero distance. Fix: cut all explanation, put the reader INSIDE the moment. "I decided to leave" → "Left."
+- FRAME VIOLATION: The dominant frame is broken (e.g., a "success" slide in a loss-accumulation zone). Fix: reframe the same content to serve the zone's physics.
+- MISSING ZONE: A physics zone from the plan is absent from the draft. Fix: add it.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -796,9 +791,9 @@ For each slide you wrote, identify what you ACTUALLY produced (not what you plan
 Write compact per slide: "Slide 1: confession | empathy+,curiosity+ | dist=zero | tech=[subject-drop,compression] | frame=loss"
 
 ────────────────────────────────────────
-STEP 2 — COMPARE PHYSICS TO ${this.hasBlueprintProfile ? 'BLUEPRINT PROFILE' : 'PLAN'}
+STEP 2 — COMPARE PHYSICS TO BLUEPRINT
 ────────────────────────────────────────
-Put your draft's physics next to the ${this.hasBlueprintProfile ? 'blueprint\'s atomic profile' : 'plan\'s quarks'}, slide by slide. Flag every mismatch in priority order:
+Read your draft alongside the BLUEPRINT BODY in your loaded examples. For each zone: does the reader FEEL the same things in the same order? Is the density similar (read both aloud — similar breath count)? Then cross-reference the ${this.hasBlueprintProfile ? 'blueprint\'s atomic profile' : 'plan\'s quarks'} for missed physics. Flag every mismatch in priority order:
 
 1. EXPERIENTIAL DISTANCE (priority #1): actual vs target. This determines whether the reader FEELS or just PROCESSES.
    If target is "zero" and your slide reads like "near" or "far" — REWRITE. Zero distance = no explanation, sensory detail, reader simulates directly. "Slept in my car" not "I ended up sleeping in my car because I had nowhere else to go."
@@ -822,11 +817,11 @@ STEP 3 — UNIVERSAL CHECKS
 ────────────────────────────────────────
 Run each of these. For each: PASS or FAIL with specific evidence.
 
-SLIDE COUNT: Look at the ${this.getBlueprintLabel()} STRUCTURAL SUMMARY. Count your slides (look for "Slide N" markers or --- separators). Same number? If different → add missing or merge extras.
+ZONE COMPLETENESS: Does your draft cover every physics zone from the plan? A missing zone = a missing piece of the emotional journey. The total slide count should be similar to the blueprint (±2-3), not exact. What matters is that every emotional beat is present.
 
-DENSITY PER SLIDE: Open your writing plan — it has word count targets per slide position. For your draft's slide 1, split text by spaces and count words. Compare to plan target. Repeat for slides 3, the middle slide, and the last slide (minimum 4 spot checks). Pass: each within ±10% of target (e.g., 47-word target → 42-52 is pass). Fail: cut words from too-dense slides or add specific details to too-thin.
+DENSITY BY ZONE: Read each zone aloud. Then read the blueprint body's corresponding section aloud. Do they take roughly the same breath count? A zone that takes 3 breaths in the blueprint should take 2-4 in yours, not 8. The BLUEPRINT BODY is your density reference — not plan numbers, not the waveform.
 
-VISUAL FORMAT: Pick slide 3 from your draft and slide 3 from the ${this.getBlueprintLabel()} in your loaded examples. Compare: same number of lines? Same formatting (bullets, line breaks, fragments vs paragraphs)? Repeat for slide 1 and one other. Pass: slides look like they came from the same template.
+FORMATTING COHERENCE: Is your formatting internally consistent? Sparse zones look sparse. Dense zones look substantive. Your formatting choices don't need to mirror the blueprint's exact bullet/line-break style — but they should be consistent within your draft.
 
 VOICE MATCH: Read your slide 5 as if reading aloud at dinner. Compare to the client's TOP PERFORMING POSTS from the client profile. Do they sound like the same person? What voice drift looks like: sentences getting longer/more complex, sophisticated vocabulary, hedging ("perhaps", "it might be"), sounds "written" instead of "spoken." Pass: same person, same day. Fail: rewrite with shorter sentences, client's vocabulary, their signature phrases.
 
@@ -961,6 +956,9 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
     if (slideMatches) return slideMatches.length;
     const separators = body.split(/^[-=]{3,}$/m).filter(s => s.trim().length > 0);
     if (separators.length > 1) return separators.length;
+    // Paragraph fallback — matches extractContentSlides behavior
+    const paragraphs = body.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+    if (paragraphs.length > 1) return paragraphs.length;
     return 0;
   }
 
@@ -2797,11 +2795,12 @@ function validateBlueprintFidelity(
   structuredPlan: StructuredSlidePlan,
 ): NarrativeValidationViolation[] {
   const violations: NarrativeValidationViolation[] = [];
-  if (draftSlides.length !== structuredPlan.blueprintSlideCount) {
+  // Advisory only — physics zones may produce different slide counts (±2-3 is normal)
+  if (structuredPlan.blueprintSlideCount > 0 && Math.abs(draftSlides.length - structuredPlan.blueprintSlideCount) > 3) {
     violations.push({
       kind: 'blueprint_fidelity',
       slideNumbers: [],
-      message: `Slide count ${draftSlides.length} does not match blueprint ${structuredPlan.blueprintSlideCount}`,
+      message: `Slide count ${draftSlides.length} differs significantly from blueprint ${structuredPlan.blueprintSlideCount} (>3 difference)`,
     });
   }
 

@@ -119,7 +119,7 @@ export function formatQuarkProfileForPrompt(profile: QuarkProfile): string {
   if (profile.rhythm) {
     const r = profile.rhythm;
     lines.push('RHYTHM:');
-    if (r.densityWaveform?.length) lines.push(`  Density waveform: [${r.densityWaveform.join(', ')}]`);
+    if (r.densityWaveform?.length) lines.push(`  Density waveform (APPROXIMATE — always verify against the actual blueprint body in your context): [${r.densityWaveform.join(', ')}]`);
     if (r.energyCurve?.length) lines.push(`  Energy curve: [${r.energyCurve.join(', ')}]`);
     if (r.informationRate?.length) lines.push(`  Info rate: [${r.informationRate.join(', ')}]`);
     if (r.silenceSlides?.length) lines.push(`  Silence slides: ${r.silenceSlides.join(', ')}`);
@@ -743,8 +743,15 @@ export function assembleBlock3Dynamic(
 
   // Prior analysis context (persisted across phases)
   if (writingContext?.latestAnalysis) {
-    sections.push('\n--- YOUR LATEST ANALYSIS (persisted across phases) ---');
-    sections.push(writingContext.latestAnalysis);
+    // During pipeline runs (plan exists), the full analysis is in recent message history — avoid duplication
+    // For revision/cross-session contexts, include the full text since messages may have been compressed
+    const isInPipeline = !!writingContext?.writingPlan;
+    if (isInPipeline) {
+      sections.push('\n--- NOTE: Your full Phase 1 analysis is in your message history above. Reference it as needed. ---');
+    } else {
+      sections.push('\n--- YOUR LATEST ANALYSIS ---');
+      sections.push(writingContext.latestAnalysis);
+    }
   }
   if (writingContext?.swipePatternAnalysis && writingContext.swipePatternAnalysis !== writingContext.latestAnalysis) {
     sections.push('\n--- SWIPE PATTERN ANALYSIS ---');

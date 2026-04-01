@@ -675,6 +675,17 @@ This plan is your construction blueprint. The user will review the outline and h
     // The plan and swipe data are either in conversation history or Block 3A already.
     console.log(`  ✍️ Write phase: keeping stable blocks for cache (${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')})`);
 
+    // Extract critical context for recency (end-of-context = maximum attention)
+    const bp = this.blueprintAnchor;
+    const clientName = this.clientAtom?.title || 'the client';
+    const voiceContext = this.buildCriticalVoiceContext();
+    const blueprintBody = bp?.fullBody || '[Blueprint body not available]';
+    const hardRules = this.lessons
+      .filter((l: any) => l.enforcement === 'hard')
+      .map((l: any) => `• ${(l.rule || '').split('\n')[0].replace(/^RULE:\s*/i, '')}`)
+      .slice(0, 10)
+      .join('\n');
+
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
@@ -683,30 +694,37 @@ This plan is your construction blueprint. The user will review the outline and h
 ═══ YOUR WRITING PLAN ═══
 ${this.writingPlan}${this.buildStructuredPlanSummary()}
 
+═══ CRITICAL WRITING CONTEXT (highest priority — read before composing) ═══
+
+CLIENT VOICE (${clientName}):
+${voiceContext}
+
+${hardRules ? `HARD RULES (non-negotiable — automatic rewrite if violated):\n${hardRules}\n` : ''}BANNED PATTERNS (check EVERY sentence):
+- NO em-dashes — use commas, periods, or ellipsis
+- NO "This isn't X. This is Y." or ANY variation (Not X. Y. / Forget X. / Less X, more Y.)
+- NO triple-beat patterns (X. Y. Z.) — three consecutive short sentences
+- NO "leverage," "game-changer," "let that sink in," "unprecedented," "robust," "utilize"
+- NO hedging ("perhaps," "it might be," "could potentially")
+- NO "in today's [anything]," "furthermore," "additionally," "moreover"
+
+PRIMARY BLUEPRINT BODY (this is your density and style reference — READ before writing each zone):
+${blueprintBody}
+
+(The full brand story, all client details, top performing posts, and all swipe examples are
+in your system context. Reference them while writing — but the voice rules, banned patterns,
+and blueprint body above are your highest-priority writing guardrails.)
+
 ═══ COMPOSE THE DRAFT ═══
 
-You are a ghostwriter. You have everything you need:
-- Your WRITING PLAN with physics zones and emotional architecture
-- The blueprint's FULL BODY in your loaded swipe examples (this is your density and style reference — the source of truth)
-- The blueprint's ATOMIC PROFILE with per-slide quarks, transitions, and physics events
-- Your Phase 1 analysis mapping the blueprint's physics to the client's content
-- 19 other swipe examples for voice and formatting inspiration
-- The client's voice fingerprint, brand story, real details, and lessons
-- The research briefing with factual data (if provided)
-
-Call think ONCE. Inside this single think, COMPOSE the entire draft zone by zone:
+You are a ghostwriter for ${clientName}. Call think ONCE. Inside this single think, COMPOSE the entire draft zone by zone:
 
 For each zone in your plan:
-1. Re-read the zone's physics target. What should the reader FEEL?
-2. Look at how the BLUEPRINT BODY achieves similar physics. Note the density
-   (how many words per slide?), the formatting, the voice. The body is your
-   density reference — not the plan's numbers, not the profile's waveform.
-3. WRITE the zone using the client's content, voice, and real details.
-   The STRUCTURE is YOURS to decide. Don't copy the blueprint's layout.
-   If the blueprint uses 4 bullet points, you might use 3 short sentences.
-   Same physics, your structure.
-4. Check: Does this zone produce the planned reader delta? Is the experiential
-   distance right? Would the client say this at dinner?
+1. QUOTE the corresponding section from the PRIMARY BLUEPRINT BODY above
+   (copy the actual slide text — this forces you to see the real density and style)
+2. Note: how many words per slide? What formatting? How does ${clientName} talk?
+3. WRITE your version that produces the same physics through ${clientName}'s content and voice
+4. Check: right distance? Right techniques? Passes Dinner Table Test?
+   Would ${clientName} say this at dinner? If it sounds like a news report — rewrite.
 5. Move to the next zone.
 
 After composing every zone inside your think, call write_draft with the complete draft.
@@ -899,6 +917,33 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
 
   private getBlueprintLabel(): string {
     return this.hasTruePrimaryBlueprint ? 'PRIMARY BLUEPRINT' : 'STRUCTURAL ANCHOR';
+  }
+
+  // Extract critical voice data from client profile for recency positioning
+  // (Block 2 has the full data but it's in the middle of 250KB — this puts the essentials at the end)
+  private buildCriticalVoiceContext(): string {
+    const client = this.clientAtom;
+    if (!client) return 'No client profile loaded.';
+
+    const intel = (client.structured as any)?.intelligenceModel;
+    const voice = intel?.voiceFingerprint;
+    const lines: string[] = [];
+
+    if (voice?.avgSentenceLength) lines.push(`Sentence length: ${voice.avgSentenceLength} words`);
+    if (voice?.signaturePhrases?.length) lines.push(`Signature phrases: ${(voice.signaturePhrases as string[]).join(', ')}`);
+    if (voice?.blacklistedPhrases?.length) lines.push(`CLIENT-SPECIFIC BANNED: ${(voice.blacklistedPhrases as string[]).join(', ')}`);
+    if (voice?.emotionalTone?.length) {
+      const tones = (voice.emotionalTone as any[]).slice(0, 3).map((t: any) => typeof t === 'string' ? t : t.name || String(t)).join(', ');
+      lines.push(`Tone: ${tones}`);
+    }
+    if (voice?.formattingQuirks?.length) lines.push(`Formatting: ${(voice.formattingQuirks as string[]).join(', ')}`);
+
+    const positioning = intel?.nicheAndPositioning;
+    if (positioning?.specificNiche) lines.push(`Niche: ${positioning.specificNiche}`);
+    if (positioning?.uniqueMechanism) lines.push(`Mechanism: ${positioning.uniqueMechanism}`);
+    if (positioning?.uniqueAngle) lines.push(`Angle: ${positioning.uniqueAngle}`);
+
+    return lines.join('\n') || 'Voice data not available — match the blueprint and swipe examples.';
   }
 
   private buildStructuredPlanSummary(): string {

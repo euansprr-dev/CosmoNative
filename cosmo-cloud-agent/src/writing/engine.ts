@@ -376,6 +376,23 @@ USER FEEDBACK:
     this.logPipelineHeader();
     console.log(`  📋 Strategy: Phase 1 only → plan + outline + hooks → user confirmation`);
 
+    // Dump full system prompt for debugging — one copyable JSON entry showing everything the model sees
+    const debugBlock3b = this.buildDynamicBlock();
+    console.log(JSON.stringify({
+      type: '📋 FULL_SYSTEM_PROMPT_DUMP',
+      blocks: this.blocks.map(b => ({
+        label: b.label,
+        chars: b.content.length,
+        cached: b.cacheControl,
+        content: b.content,
+      })),
+      dynamicBlock: {
+        label: 'Block 3B: Dynamic',
+        chars: debugBlock3b.content.length,
+        content: debugBlock3b.content,
+      },
+    }));
+
     console.log(`\n  ⚛️ ─── Phase 1: ${this.hasBlueprintProfile ? 'MAP PHYSICS + PLAN + HOOKS' : 'ANALYZE + PLAN + HOOKS'} ───`);
     console.log(`  ⚛️ Mode: ${this.hasBlueprintProfile ? 'READ atomic profile → MAP to client → create plan with hooks (1 think)' : 'Inline analysis → create plan with hooks (1 think)'}`);
     console.log(`  ⚛️ Tools: think, create_writing_plan, search_swipes, read_swipe_body`);

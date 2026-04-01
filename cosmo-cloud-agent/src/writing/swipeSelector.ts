@@ -239,8 +239,18 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
     return firstSentence ? firstSentence.substring(0, 100) : '';
   }).filter(Boolean).slice(0, 5);
 
-  // CTA: last paragraph
-  const body = atom.body || '';
+  // Build full body: prefer atom.body, but if it's just the hook (< 500 chars),
+  // rebuild from transcriptSlides which has the complete per-slide transcript
+  let body = atom.body || '';
+  const transcriptSlides = analysis.transcriptSlides as Array<{ text: string; slideNumber: number }> | undefined;
+  if (transcriptSlides && transcriptSlides.length > 1 && body.length < 500) {
+    // atom.body is likely just the hook — rebuild from the full transcript slides
+    body = transcriptSlides
+      .sort((a, b) => (a.slideNumber || 0) - (b.slideNumber || 0))
+      .map(s => `Slide ${s.slideNumber}\n${s.text}`)
+      .join('\n\n');
+    console.log(`    ✍️ Rebuilt body from ${transcriptSlides.length} transcriptSlides for "${(atom.title || '').substring(0, 40)}" (atom.body was ${(atom.body || '').length} chars, now ${body.length} chars)`);
+  }
   const paragraphs = body.split('\n\n').filter(Boolean);
   const ctaText = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1].substring(0, 150) : '';
 

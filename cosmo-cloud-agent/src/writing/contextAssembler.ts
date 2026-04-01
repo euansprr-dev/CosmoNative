@@ -806,10 +806,18 @@ CONTEXT HIERARCHY (apply in this order when constraints conflict):
 5. LEARNED RULES: Hard rules (MUST apply), then advisory (PREFER when possible).
 6. CONTENT PHYSICS: Quarks, RSV, transitions, experiential distance — the WHY behind the blueprint.
 
-BLUEPRINT-FIRST WRITING:
-Never write from blank page. Before every draft: (1) study the primary blueprint's physics profile AND its actual body text, (2) identify the emotional zones and structural skeleton, (3) map client content to each zone, (4) write using the blueprint's physics as the engine and the client's voice as the flesh.
+WHAT IS CONTENT PHYSICS:
+Content Physics is the framework for understanding WHY viral content works — not what it says (the words) or what it does (the beats), but the invisible forces, state changes, and causal mechanisms that make readers unable to stop scrolling. Each slide creates specific reader state changes (quarks). The transitions between slides create causal pressure. The arc shape creates the emotional journey. The blueprint's atomic profile maps all of these per-slide. Your job is to replicate these forces using the client's content and voice.
 
-SIMILARITY RULE: Steal physics and emotional mechanics. Replace all arguments, phrasing, and specifics with the client's own. Your post should create the SAME reader experience as the blueprint through DIFFERENT structure and words. If someone sees both posts, they should think "same feeling" not "same post." Flag any slide >80% similar to blueprint phrasing — rewrite from structural function only.
+BLUEPRINT-FIRST WRITING:
+Never write from blank page. The PRIMARY BLUEPRINT is your structural skeleton:
+- Follow its slide count closely (same number of slides)
+- Match its density per position (read the actual body — sparse slides stay sparse, dense slides stay dense)
+- Match its arc shape (tension peaks at the same relative positions)
+- Match its physics events (symmetry break, phase transition, peak gravity at similar positions)
+Then: map the client's content to each slide, use the client's voice, and understand through Content Physics WHY each slide works so you write with intent, not just fill slots.
+
+ADAPTATION RULE: The blueprint's STRUCTURE is the skeleton. The client's VOICE is the flesh. Content Physics is the UNDERSTANDING of why each bone is where it is. Replace all arguments, phrasing, and specifics with the client's own. The structure stays close to the blueprint. The words are always the client's. If any slide's phrasing is >80% similar to the blueprint's actual text — rewrite using only the structural function and the client's real details.
 
 DINNER TABLE TEST: Every slide must sound like something the client would say to a friend at dinner. If it sounds like a caption, thesis, news report, or marketing line — rewrite in client's natural voice. This is the single most important quality check.
 
@@ -870,7 +878,7 @@ CRITICAL REMINDERS (READ LAST — HIGHEST PRIORITY)
 4. CHECK for banned phrases after every slide. One "This isn't X. This is Y." collapses the entire draft.
 5. The swipe examples in your context are the ANSWER KEY for every abstract rule. When unsure, look at the swipes.
 6. Revisions: surgical edits only. NEVER reduce slide/section count unless explicitly asked.
-7. SIMILARITY RULE: Same physics, different structure. No slide >80% similar to blueprint phrasing.`;
+7. ADAPTATION RULE: Follow the blueprint's structure closely. Use the client's words. No slide >80% similar to blueprint phrasing — rewrite from structural function using client's real details.`;
 
 // ============================================================
 // Default Methodology + Skill Modules (fallback if not synced)

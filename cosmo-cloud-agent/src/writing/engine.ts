@@ -544,47 +544,35 @@ STEP 2: BUILD THE WRITING PLAN
 
 IMMEDIATELY after your think, call create_writing_plan with a plan structured EXACTLY like this:
 
-PHYSICS MAP + SLIDE-BY-SLIDE CRAFT PLAN
-First, divide the blueprint's emotional arc into ZONES. Then, for each zone, write per-slide WRITE instructions. You need BOTH the physics understanding AND the concrete craft direction.
+SLIDE-BY-SLIDE PLAN (structure from blueprint + physics understanding + client content)
 
-For each zone:
-  ZONE N: [emotional job — what the reader should FEEL entering and exiting]
-  Physics: [WHY the blueprint's approach works — not just quark labels, but the mechanism.
+The blueprint IS your structural skeleton. Match its slide count, density per position, and arc shape closely. Content Physics tells you WHY each slide works — use that understanding to write each slide with intent, not just fill a template.
+
+For EACH SLIDE (same count as the blueprint), write:
+  Slide N: [beat function — what this slide DOES in the arc]
+  Blueprint reference: [what the blueprint's actual slide says — READ it from the body, note word count and format]
+  Physics (WHY it works): [speech act + mechanism, reader delta + what creates it, experiential distance.
+    Describe the mechanism, not just label it.
     Example: "Second-person 'Your' collapses distance between abstract data and daily life.
     The reader isn't reading about inflation — they're feeling their wallet shrink."]
-  Transition pressure to next zone: [what pulls the reader forward?]
+  Transition to next: [what pressure in THIS slide forces the reader to the next?]
+  Client content: [what specific client details fill this slot — names, numbers, dates from brand story and research briefing]
+  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION for this slide.
+    - Target density: match the blueprint slide's actual word count (READ the body — ±10%)
+    - Sentence structure and formatting: guided by the blueprint's formatting for this position
+    - What to include vs omit
+    - How it should feel when read aloud — must pass the Dinner Table Test
+    - WHY this technique creates the planned reader delta
+    - What the client's version sounds like vs the blueprint's version]
 
-Then, for EACH SLIDE within the zone:
-  Slide N: [beat function]
-  Quarks: [speech act — technique that makes it this act] | Reader: [delta — what creates it]
-  Distance: [zero/near/far. zero = inside the moment. near = telling a friend. far = reporting (almost always wrong)]
-  Techniques: [craft moves to use — subject-drop, ALL CAPS, bullets, compression, etc. INSPIRED by the blueprint but not necessarily identical]
-  Content: [what specific client details go here — names, numbers, dates from brand story and research briefing]
-  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION. How to write this specific slide. Target density
-    (reference the ACTUAL blueprint body's slide length — READ it, don't use waveform numbers).
-    Sentence structure. What to include vs omit. How it should feel when read aloud.
-    WHY this technique creates the planned reader delta. Must pass the Dinner Table Test —
-    would the client say this at dinner?]
-  Dominant Frame: [how this slide positions its content within the post's overall identity]
+Good WRITE: "~40 words, matching blueprint slide 1. 3 dash bullets with 'Your' + specific %. Contrast line breaks the bullet pattern. Agenda line with colon. Should feel like being accused by statistics — the reader can't escape because gas, groceries, and the dollar are things they buy every day."
+Bad WRITE: "Write an alarm slide." (too vague — no craft direction, no density, no mechanism)
 
-Good WRITE: "40 words max. 3 dash bullets with 'Your' + specific %. Contrast line breaks the bullet pattern. Agenda line with colon. Should feel like being accused by statistics. Model: blueprint's slide 1 density."
-Bad WRITE: "Write an alarm slide." (too vague — no craft direction)
+Where the client's story doesn't have a direct parallel to the blueprint slide:
+  ADAPTED: [blueprint's function for this slide] → [client equivalent that preserves the emotional job and physics. The beat function must still land — through the client's authentic story, not a forced parallel.]
 
-Where the client's story doesn't have a direct parallel:
-  ADAPTED: [blueprint function] → [client equivalent that preserves the physics]
-
-STRUCTURAL GUIDANCE:
-- Total slide count should be SIMILAR to the blueprint (±2-3 slides), not exact.
-- Each slide must fit on a single carousel card. READ the blueprint body's actual slide lengths.
-- Sparse zones feel sparse (1-2 short sentences per slide). Dense zones feel substantive.
-- Your formatting may differ from the blueprint. Same physics, your structure.
-- What should NOT differ: the emotional arc, the tension peaks, the physics events, the payoff.
-
-Each zone must introduce UNIQUE content. If two zones reference the same statistics,
-consolidate — the data lives in whichever zone it serves best.
-
-A stranger who has NEVER seen this person must understand every slide. Flag any zone that
-references something not yet established.
+Each slide must introduce UNIQUE content. If two slides reference the same statistics, consolidate.
+A stranger who has NEVER seen this person must understand every slide. Flag prerequisites.
 
 VOICE PATTERN
   [The consistent format the draft must maintain on EVERY slide — from your analysis]
@@ -713,9 +701,9 @@ CRAFT RULES (apply to every slide):
 - Specific > vague. Use numbers, names, concrete details from the brand story.
 - Vary sentence length. Mix short punchy lines with longer ones.
 - Use physical verbs: "sanded down" not "improved," "stripped back" not "simplified."
-- Steal PHYSICS from the blueprint, not structure. Same reader experience, different layout.
-- If any slide is >80% similar to blueprint phrasing, rewrite from structural function only.
-- Priority when rules conflict: Platform constraints > Client failure rules > Blueprint physics > Voice > Lessons.
+- Follow the blueprint's STRUCTURE closely (slide count, density, arc). Use the client's WORDS and VOICE.
+- If any slide's phrasing is >80% similar to the blueprint's text, rewrite from structural function only.
+- Priority when rules conflict: Platform constraints > Client failure rules > Blueprint structure > Voice > Lessons.
 
 PRIMARY BLUEPRINT BODY (this is your density and style reference — QUOTE it before writing each zone):
 ${blueprintBody}
@@ -728,14 +716,15 @@ and blueprint body above are your highest-priority writing guardrails.)
 
 You are a ghostwriter for ${clientName}. Call think ONCE. Inside this single think, COMPOSE the entire draft zone by zone:
 
-For each zone in your plan:
-1. QUOTE the corresponding section from the PRIMARY BLUEPRINT BODY above
-   (copy the actual slide text — this forces you to see the real density and style)
-2. Note: how many words per slide? What formatting? How does ${clientName} talk?
-3. WRITE your version that produces the same physics through ${clientName}'s content and voice
-4. Check: right distance? Right techniques? Passes Dinner Table Test?
+For each slide in your plan:
+1. QUOTE the corresponding slide from the PRIMARY BLUEPRINT BODY above
+   (copy the actual slide text — this forces you to see the real density, style, and structure)
+2. Note: how many words? How many lines? What formatting? What voice?
+3. WRITE your version: same structure and density, same physics, but using ${clientName}'s content,
+   voice, and real details. The blueprint is the skeleton. ${clientName}'s voice is the flesh.
+4. Check: same density (±10%)? Right distance? Right techniques? Passes Dinner Table Test?
    Would ${clientName} say this at dinner? If it sounds like a news report — rewrite.
-5. Move to the next zone.
+5. Move to the next slide.
 
 After composing every zone inside your think, call write_draft with the complete draft.
 
@@ -761,21 +750,21 @@ FOR EACH SLIDE, follow the WRITE instruction from your plan. The WRITE instructi
 
 8. TENSE: Follow the tense pattern from your plan. Shifts only at structural beat transitions. No random tense switching mid-section.
 
-BLUEPRINT AS INSPIRATION, NOT TEMPLATE: Your post should NOT be recognizable as the blueprint with different words. Same physics, different structure. If someone saw both posts, they should think "these create the same feeling" not "this is copied."
+BLUEPRINT AS SKELETON: Follow the blueprint's structure closely — same slide count, same density per position, same arc shape. But ALL words, phrasing, and arguments must be the client's own. If any slide's text is >80% similar to the blueprint's actual text, rewrite using only the structural function and the client's real details.
 
-EACH ZONE EARNS ITS PLACE: If a zone doesn't change something in the reader's mind, cut it. If two zones say the same thing, merge.
+EVERY SLIDE EARNS ITS PLACE: If a slide doesn't change something in the reader's mind, it's dead weight. If two slides say the same thing, consolidate.
 
 ────────────────────────────────────────
-THE PHYSICS SHAPE TEST
+THE QUALITY TEST
 ────────────────────────────────────────
 
-Read your draft, then read the blueprint. Ask:
-- Does the reader go on the SAME emotional journey? (Same arc, same peaks, same release)
-- Does the opening create the SAME alarm/hook? (Same physics, possibly different format)
-- Does the middle build the SAME pressure? (Same tension accumulation, possibly different structure)
-- Does the ending provide the SAME payoff? (Same resolution, same CTA physics)
-If yes: the physics match. The structure can be different and that's CORRECT.
-If no: something is wrong with the physics, not the formatting.
+Read your draft, then read the blueprint. Check:
+- STRUCTURE: Same slide count? Same density per position (±10%)? Same arc shape?
+- PHYSICS: Same emotional journey? Same tension peaks? Same symmetry break and phase transition?
+- VOICE: Does every slide sound like ${clientName} talking at dinner? Not a news report, not a caption?
+- DENSITY: Count words on your slide 1, 3, middle, last. Compare to the blueprint. Match ±10%.
+- BANNED: Any banned phrase anywhere? Fix immediately.
+If all pass: draft is ready. If any fail: fix before submitting.
 
 ────────────────────────────────────────
 WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
@@ -859,11 +848,11 @@ STEP 3 — UNIVERSAL CHECKS
 ────────────────────────────────────────
 Run each of these. For each: PASS or FAIL with specific evidence.
 
-ZONE COMPLETENESS: Does your draft cover every physics zone from the plan? A missing zone = a missing piece of the emotional journey. The total slide count should be similar to the blueprint (±2-3), not exact. What matters is that every emotional beat is present.
+SLIDE COUNT: Does your draft have the same number of slides as the blueprint? Count them. If different, add or merge to match.
 
-DENSITY BY ZONE: Read each zone aloud. Then read the blueprint body's corresponding section aloud. Do they take roughly the same breath count? A zone that takes 3 breaths in the blueprint should take 2-4 in yours, not 8. The BLUEPRINT BODY is your density reference — not plan numbers, not the waveform.
+DENSITY PER SLIDE: Open the BLUEPRINT BODY in your loaded examples. For the blueprint's slide 1, count actual words. For your slide 1, count actual words. Compare — must be within ±10%. Repeat for slides 3, the middle slide, and the last slide (minimum 4 spot checks). The BLUEPRINT BODY is your density reference.
 
-FORMATTING COHERENCE: Is your formatting internally consistent? Sparse zones look sparse. Dense zones look substantive. Your formatting choices don't need to mirror the blueprint's exact bullet/line-break style — but they should be consistent within your draft.
+FORMATTING: Pick slide 3 from your draft and slide 3 from the blueprint. Compare: similar density? Similar formatting style (bullets, line breaks, fragments vs paragraphs)? Repeat for slide 1 and one other. Your slides should feel like they came from the same structural family as the blueprint.
 
 VOICE MATCH: Read your slide 5 as if reading aloud at dinner. Compare to the client's TOP PERFORMING POSTS from the client profile. Do they sound like the same person? What voice drift looks like: sentences getting longer/more complex, sophisticated vocabulary, hedging ("perhaps", "it might be"), sounds "written" instead of "spoken." Pass: same person, same day. Fail: rewrite with shorter sentences, client's vocabulary, their signature phrases.
 
@@ -2865,12 +2854,12 @@ function validateBlueprintFidelity(
   structuredPlan: StructuredSlidePlan,
 ): NarrativeValidationViolation[] {
   const violations: NarrativeValidationViolation[] = [];
-  // Advisory only — physics zones may produce different slide counts (±2-3 is normal)
-  if (structuredPlan.blueprintSlideCount > 0 && Math.abs(draftSlides.length - structuredPlan.blueprintSlideCount) > 3) {
+  // Slide count should match the blueprint closely
+  if (structuredPlan.blueprintSlideCount > 0 && draftSlides.length !== structuredPlan.blueprintSlideCount) {
     violations.push({
       kind: 'blueprint_fidelity',
       slideNumbers: [],
-      message: `Slide count ${draftSlides.length} differs significantly from blueprint ${structuredPlan.blueprintSlideCount} (>3 difference)`,
+      message: `Slide count ${draftSlides.length} does not match blueprint ${structuredPlan.blueprintSlideCount}`,
     });
   }
 

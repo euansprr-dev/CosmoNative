@@ -707,7 +707,17 @@ ${hardRules ? `HARD RULES (non-negotiable — automatic rewrite if violated):\n$
 - NO hedging ("perhaps," "it might be," "could potentially")
 - NO "in today's [anything]," "furthermore," "additionally," "moreover"
 
-PRIMARY BLUEPRINT BODY (this is your density and style reference — READ before writing each zone):
+CRAFT RULES (apply to every slide):
+- Write like a sharp human, not a language model. Contractions always.
+- Get to the point. No throat-clearing, no preamble, no padding.
+- Specific > vague. Use numbers, names, concrete details from the brand story.
+- Vary sentence length. Mix short punchy lines with longer ones.
+- Use physical verbs: "sanded down" not "improved," "stripped back" not "simplified."
+- Steal PHYSICS from the blueprint, not structure. Same reader experience, different layout.
+- If any slide is >80% similar to blueprint phrasing, rewrite from structural function only.
+- Priority when rules conflict: Platform constraints > Client failure rules > Blueprint physics > Voice > Lessons.
+
+PRIMARY BLUEPRINT BODY (this is your density and style reference — QUOTE it before writing each zone):
 ${blueprintBody}
 
 (The full brand story, all client details, top performing posts, and all swipe examples are

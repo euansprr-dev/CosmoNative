@@ -1908,26 +1908,7 @@ struct SwipeStudyFocusModeView: View {
             }
         }
 
-        // Phase 3: Add blank lines between logical sections
-        // (transition from non-list → list, list → non-list, sentence → sentence)
-        func isList(_ line: String) -> Bool {
-            line.range(of: bulletPattern, options: .regularExpression) != nil ||
-            line.range(of: numberedPattern, options: .regularExpression) != nil
-        }
-        var spaced: [String] = []
-        for (idx, line) in merged.enumerated() {
-            if idx > 0 {
-                let prev = merged[idx - 1]
-                let prevIsList = isList(prev)
-                let currIsList = isList(line)
-                // Add blank line at list boundary transitions
-                if prevIsList != currIsList {
-                    spaced.append("")
-                }
-            }
-            spaced.append(line)
-        }
-        return spaced.joined(separator: "\n")
+        return merged.joined(separator: "\n")
     }
 
     /// Apply line break cleanup to all transcript slides
@@ -4736,12 +4717,24 @@ private struct SlideTextEditor: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.allowsUndo = true
         textView.textContainerInset = NSSize(width: 4, height: 4)
+
+        // Add visual spacing between paragraphs (lines separated by \n)
+        // This is display-only — doesn't modify stored text
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = 6
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes = [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor(DS.text),
+            .paragraphStyle: paragraphStyle,
+        ]
         textView.delegate = context.coordinator
 
         scrollView.hasVerticalScroller = false
         scrollView.drawsBackground = false
 
-        textView.string = text
+        // Set initial text with paragraph spacing
+        textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: textView.typingAttributes))
 
         context.coordinator.textView = textView
         context.coordinator.lastSyncedText = text
@@ -4754,7 +4747,15 @@ private struct SlideTextEditor: NSViewRepresentable {
         if textView.string != text {
             let selectedRange = textView.selectedRange()
             let isFirstResponder = textView.window?.firstResponder === textView
-            textView.string = text
+            // Apply paragraph spacing via attributed string so it persists through updates
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.paragraphSpacing = 6
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor(DS.text),
+                .paragraphStyle: paragraphStyle,
+            ]
+            textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attrs))
             context.coordinator.lastSyncedText = text
             if isFirstResponder {
                 let clampedLocation = min(selectedRange.location, text.utf16.count)

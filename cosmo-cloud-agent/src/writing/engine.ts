@@ -153,6 +153,7 @@ export class CloudWritingEngine {
   private blueprintAnchor: CompressedSwipe | null = null;
   private hasTruePrimaryBlueprint = false;
   private hasBlueprintProfile = false;
+  private hasWrittenDraft = false;
 
   // Deep analysis tracking — gates outline/draft/hooks behind substantive thinking
   // Uses analysisDepth as single gate (no boolean flags — they caused bypass-on-revision bugs)
@@ -283,13 +284,20 @@ export class CloudWritingEngine {
       this.hasCompletedSelfReview = false;
     }
 
-    // Draft phase uses 3-phase pipeline (Plan → Write → Self-Edit) on first draft
-    // Subsequent draft requests reuse the existing plan and go through normal conversation loop
+    // Draft phase: 3-state pipeline
+    // State 1: No plan → Phase 1 only (plan + outline + hooks) → return for user confirmation
+    // State 2: Plan exists, no draft written → Phase 2+3 (write + self-edit)
+    // State 3: Plan + draft exist → Revision mode
     if (phase === 'draft' && !this.writingPlan) {
-      return this.runDraftPipeline(instruction);
+      console.log(`  ⚛️ Pipeline State 1: No plan → running Phase 1 (physics plan + outline + hooks)`);
+      return this.runPlanPhaseOnly(instruction);
     }
-    if (phase === 'draft' && this.writingPlan) {
-      console.log(`  ✍️ Revision mode: existing plan (${this.writingPlan.split(/\s+/).length} words), applying user feedback surgically`);
+    if (phase === 'draft' && this.writingPlan && !this.hasWrittenDraft) {
+      console.log(`  ⚛️ Pipeline State 2: Plan ready (${this.writingPlan.split(/\s+/).length} words) → running Phase 2+3 (write + self-edit)`);
+      return this.runWriteAndEditPhases(instruction);
+    }
+    if (phase === 'draft' && this.writingPlan && this.hasWrittenDraft) {
+      console.log(`  ⚛️ Pipeline State 3: Revision mode (plan: ${this.writingPlan.split(/\s+/).length} words, draft exists)`);
     }
 
     // Brainstorm/polish/revision use normal conversation loop
@@ -335,10 +343,10 @@ USER FEEDBACK:
   }
 
   // ============================================================
-  // 3-Phase Draft Pipeline (Plan → Write → Self-Edit)
+  // Split Pipeline: Phase 1 (Plan) and Phase 2+3 (Write + Self-Edit)
   // ============================================================
 
-  private async runDraftPipeline(instruction: string): Promise<string> {
+  private logPipelineHeader() {
     const bp = this.blueprintAnchor;
     const profile = bp?.fullQuarkProfile;
     const profileSlides = profile?.slideQuarks?.length || 0;
@@ -346,44 +354,59 @@ USER FEEDBACK:
     const dominantFrame = profile?.arcQuarks?.dominantFrame?.type || 'none';
     const arcShape = profile?.arcQuarks?.shape ? profile.arcQuarks.shape.substring(0, 80) : 'none';
     const symmetryBreak = profile?.physicsEvents?.symmetryBreak?.slideNumber || '?';
-    const phaseTransition = profile?.physicsEvents?.phaseTransition ? `${profile.physicsEvents.phaseTransition.frameBefore} → ${profile.physicsEvents.phaseTransition.frameAfter}` : 'none';
+    const phaseTransitionLabel = profile?.physicsEvents?.phaseTransition ? `${profile.physicsEvents.phaseTransition.frameBefore} → ${profile.physicsEvents.phaseTransition.frameAfter}` : 'none';
     const peakGravity = profile?.physicsEvents?.peakGravity?.activeLoops || '?';
 
-    console.log(`\n  ═══ CONTENT PHYSICS DRAFT PIPELINE ═══`);
+    console.log(`\n  ═══ CONTENT PHYSICS PIPELINE ═══`);
     console.log(`  📋 Client: ${this.clientAtom?.title || 'none'} | Format: ${this.targetFormat} | Swipes: ${this.selectedSwipes.length}`);
     console.log(`  📋 Blueprint: ${bp ? `"${bp.title.substring(0, 60)}" (${this.hasTruePrimaryBlueprint ? 'TRUE PRIMARY' : 'INFERRED'}, score: ${bp.hookScore}/10)` : 'NONE'}`);
     if (bp?.beatSequence.length) console.log(`  📋 Blueprint beats: ${bp.beatSequence.join(' > ')}`);
     console.log(`  📋 Atomic Profile: ${this.hasBlueprintProfile ? `✅ LOADED (${profileSlides} slides, ${profileTransitions} transitions)` : '❌ NOT AVAILABLE — will use inline analysis'}`);
     if (this.hasBlueprintProfile) {
       console.log(`  📋 Physics: dominant_frame=${dominantFrame} | arc=${arcShape}`);
-      console.log(`  📋 Events: symmetry_break=slide${symmetryBreak} | phase_transition=${phaseTransition} | peak_gravity=${peakGravity}_loops`);
+      console.log(`  📋 Events: symmetry_break=slide${symmetryBreak} | phase_transition=${phaseTransitionLabel} | peak_gravity=${peakGravity}_loops`);
       if (profile?.antimatter?.length) console.log(`  📋 Antimatter: ${profile.antimatter.slice(0, 3).map(a => `"${a}"`).join(', ')}${(profile.antimatter.length || 0) > 3 ? ` (+${(profile.antimatter.length || 0) - 3} more)` : ''}`);
     }
     console.log(`  📋 Lessons: ${this.lessons.length} (${this.lessons.filter(l => l.enforcement === 'hard').length} hard, ${this.lessons.filter(l => l.enforcement !== 'hard').length} advisory)`);
     console.log(`  📋 Blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB${b.cacheControl ? ',cached' : ''})`).join(' + ')}`);
-    console.log(`  📋 Strategy: ${this.hasBlueprintProfile ? 'MAP profile → plan → write → physics self-edit' : 'Analyze blueprint → plan → write → self-edit'}`);
-    console.log(`  📋 Expected calls: ~7 (think→plan→text + write→text + think→write)`);
+  }
 
-    // PHASE 1: PLAN
-    console.log(`\n  ⚛️ ─── Phase 1: ${this.hasBlueprintProfile ? 'MAP PHYSICS + PLAN' : 'ANALYZE + PLAN'} ───`);
-    console.log(`  ⚛️ Mode: ${this.hasBlueprintProfile ? 'READ atomic profile → MAP to client → create plan (1 think)' : 'Inline analysis → create plan (1 think)'}`);
+  // Phase 1 ONLY — creates plan + outline + hooks, returns for user confirmation
+  private async runPlanPhaseOnly(instruction: string): Promise<string> {
+    this.logPipelineHeader();
+    console.log(`  📋 Strategy: Phase 1 only → plan + outline + hooks → user confirmation`);
+
+    console.log(`\n  ⚛️ ─── Phase 1: ${this.hasBlueprintProfile ? 'MAP PHYSICS + PLAN + HOOKS' : 'ANALYZE + PLAN + HOOKS'} ───`);
+    console.log(`  ⚛️ Mode: ${this.hasBlueprintProfile ? 'READ atomic profile → MAP to client → create plan with hooks (1 think)' : 'Inline analysis → create plan with hooks (1 think)'}`);
     console.log(`  ⚛️ Tools: think, create_writing_plan, search_swipes, read_swipe_body`);
-    await this.runPlanPhase(instruction);
+    const result = await this.runPlanPhase(instruction);
 
     if (!this.writingPlan) {
       console.log('  ⚠️ No writing plan created — falling back to normal conversation loop');
       const block3b = this.buildDynamicBlock();
       this.messages.push({ id: crypto.randomUUID(), role: 'user', content: instruction, timestamp: new Date().toISOString() });
-      const result = await this.runConversationLoop('draft', block3b);
+      const loopResult = await this.runConversationLoop('draft', block3b);
       await this.persistConversation();
-      return result;
+      return loopResult;
     }
 
-    // PHASE 2: WRITE — plan + full think + profile + swipes, direct write
+    console.log(`  ⚛️ Phase 1 complete: plan=${this.writingPlan.split(/\s+/).length} words, outline=${this.outline.length} slides, hooks=${this.hooks.length}`);
+    console.log(`  ⚛️ Waiting for user confirmation before Phase 2+3`);
+    await this.persistConversation();
+    return result;
+  }
+
+  // Phase 2+3 — writes the draft and self-edits, called after user confirms plan
+  private async runWriteAndEditPhases(instruction?: string): Promise<string> {
+    if (!this.writingPlan) {
+      console.log('  ⚠️ No writing plan — cannot run Phase 2+3');
+      return 'No writing plan exists. Run Phase 1 first.';
+    }
+
     console.log(`\n  ⚛️ ─── Phase 2: WRITE (direct from plan + think + profile) ───`);
     console.log(`  ⚛️ Sources: plan + full Phase 1 analysis + ${this.hasBlueprintProfile ? 'atomic profile' : 'inline analysis'} + swipe bodies`);
     console.log(`  ⚛️ Mode: NO think — write directly from plan (0 thinks, 1 write_draft)`);
-    console.log(`  ⚛️ Blocks: STABLE (same as Phase 1 — full cache hit expected)`);
+    console.log(`  ⚛️ Blocks: STABLE (full cache hit expected)`);
     await this.runWritePhase();
 
     const draftBody = this.contentAtom?.body || '';
@@ -391,12 +414,13 @@ USER FEEDBACK:
     const draftSlides = (draftBody.match(/^Slide \d+/gim) || []).length || (draftBody.match(/^[-=]{3,}$/gm) || []).length + 1;
     console.log(`  ⚛️ Draft written: ${draftWords} words, ~${draftSlides} slides`);
 
-    // PHASE 3: SELF-EDIT — physics comparison + universal checks
     console.log(`\n  ⚛️ ─── Phase 3: PHYSICS SELF-EDIT ───`);
-    console.log(`  ⚛️ Mode: 5-step structured think (extract physics → compare to ${this.hasBlueprintProfile ? 'profile' : 'plan'} → universal checks → plan fixes → verify) → write_draft`);
+    console.log(`  ⚛️ Mode: 5-step structured think → write_draft`);
     console.log(`  ⚛️ Priority: distance > techniques > speech act > frame > delta > transition`);
     console.log(`  ⚛️ Blocks: STABLE (full cache hit expected)`);
     const result = await this.runSelfEditPhase();
+
+    this.hasWrittenDraft = true;
 
     const finalBody = this.contentAtom?.body || '';
     const finalWords = finalBody.split(/\s+/).filter(Boolean).length;
@@ -407,7 +431,6 @@ USER FEEDBACK:
     console.log(`\n  ═══ CONTENT PHYSICS PIPELINE COMPLETE ═══`);
     console.log(`  📋 Final: ${finalWords} words, ~${finalSlides} slides`);
     console.log(`  📋 API calls: ${totalCalls} total (${totalThinks} thinks, ${totalWrites} writes, ${totalCalls - totalThinks - totalWrites} other)`);
-    console.log(`  📋 Physics: ${this.hasBlueprintProfile ? `profile-guided (${dominantFrame} frame, ${profileSlides} target slides)` : 'inline analysis (no profile)'}`);
     console.log(`  📋 Messages: ${this.messages.length}`);
 
     await this.persistConversation();
@@ -600,7 +623,29 @@ RSV PHYSICS
 ANTIMATTER (phrases, structures, or moves that would DESTROY this post's physics — never use in a draft):
   [List the specific antimatter derived from the blueprint's analysis. What would collapse the earned trust, break the voice, or annihilate the accumulated physics?]
 
-This plan is your construction blueprint. Phase 2 will follow it slide by slide.`;
+HOOK VARIANTS (pass 3-4 variants via the hookVariants parameter of create_writing_plan):
+${this.hasBlueprintProfile && this.blueprintAnchor?.fullQuarkProfile?.slideQuarks?.[0] ? `
+The blueprint's hook slide (slide 1) has these physics — your hooks must produce the SAME effects:
+  Speech Act: ${this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].speechAct?.type || '?'} — ${this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].speechAct?.mechanism || '?'}
+  Reader Delta: ${(this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].readerDeltas || []).map((d: any) => `${d.type}${d.mechanism ? ` (${d.mechanism})` : ''}`).join(', ') || '?'}
+  Distance: ${this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].experientialDistance?.level || '?'} — ${this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].experientialDistance?.mechanism || '?'}
+  Techniques: ${(this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].techniques || []).map((t: any) => t.technique).join(', ') || '?'}
+  Frame: ${this.blueprintAnchor.fullQuarkProfile.slideQuarks[0].frame?.type || '?'}` : 'Analyze the blueprint hook for speech act, reader delta, techniques, and distance.'}
+
+Your hook variants must produce the SAME physics:
+- If the blueprint creates curiosity+ via an open loop (stat list with no explanation) → your hooks must open the same kind of loop
+- If the blueprint creates tension+ via accusatory second-person "Your X costs Y% more" → replicate that tension mechanism
+- If the blueprint uses specific techniques (bullet list, number formatting, contrast structure, ALL CAPS) → use the same techniques
+- Match the experiential distance: if blueprint hook is zero-distance, don't write a far-distance hook that reports facts
+- Match case (ALL CAPS / Title / lowercase), person (first/third/second), structure (sentence skeleton), word count (±5), ending punctuation
+- Keep the same sentence skeleton as the user's title: "${this.contentAtom?.title || ''}"
+- Use real stats from the research briefing if available — no placeholders
+- Each variant takes a different angle/stat while maintaining identical physics
+Blueprint hook: "${this.blueprintAnchor?.hookText?.substring(0, 300) || ''}"
+
+Include the hookVariants array in your create_writing_plan call.
+
+This plan is your construction blueprint. The user will review the outline and hooks before Phase 2 writes the draft.`;
 
     this.messages.push({ id: crypto.randomUUID(), role: 'user', content: planInstruction, timestamp: new Date().toISOString() });
 
@@ -1500,7 +1545,30 @@ If ALL checks pass, present the draft.
         // Structured JSON log — Railway renders as ONE expandable entry
         console.log(JSON.stringify({ type: '📋 PLAN', words: planWords, slideEntries: hasSlideEntries, wordCountTargets: hasWordCounts, beatLabels: hasBeatLabels, distanceTargets: hasDistanceTargets, techniqueRefs: hasTechniqueEntries, writeInstructions: hasWriteInstructions, content: plan }));
 
-        return `Writing plan created (${planWords} words). Structured slide contract: ${structuredPlan.slides.length} slides. The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
+        // Store hook variants if provided (bundled with plan creation)
+        if (args.hookVariants && Array.isArray(args.hookVariants) && args.hookVariants.length > 0) {
+          this.hooks = (args.hookVariants as string[]);
+          await updateAtom(this.contentUUID, {
+            metadata: { hooks: this.hooks, inheritedHooks: this.hooks },
+          });
+          console.log(`    📋 Hooks bundled: ${this.hooks.length} variants`);
+        }
+
+        // Derive outline from structured slide plan
+        if (structuredPlan.slides.length > 0) {
+          this.outline = structuredPlan.slides.map((s: any, i: number) => ({
+            id: `slide_${s.slideNumber || i + 1}`,
+            title: `Slide ${s.slideNumber || i + 1}: ${s.beatFunction || 'Content'}`,
+            beatLabel: s.beatFunction || undefined,
+            sortOrder: i,
+          }));
+          await updateAtom(this.contentUUID, {
+            metadata: { outline: this.outline },
+          });
+          console.log(`    📋 Outline derived: ${this.outline.length} slides from structured plan`);
+        }
+
+        return `Writing plan created (${planWords} words, ${structuredPlan.slides.length} slides, ${this.hooks.length} hook variants). The plan includes per-slide physics targets, density targets, WRITE instructions, and hook variants. Ready for user confirmation before writing.`;
       }
 
       case 'read_draft': {
@@ -2101,7 +2169,7 @@ If ALL checks pass, present the draft.
     if (pipelineStep === 'plan') {
       return [
         { name: 'think', description: 'Internal reasoning — use before complex decisions', parameters: { type: 'object', properties: { thought: { type: 'string' } }, required: ['thought'] } },
-        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan. Must cover: content analysis, voice & style, slide-by-slide blueprint, rules checklist, quality targets. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' }, structuredPlan: { type: 'object', description: 'Structured slide contract for deterministic validation', properties: { voicePattern: { type: 'string' }, tensePattern: { type: 'string' }, directAddressPrefix: { type: 'string' }, slides: { type: 'array', items: { type: 'object', properties: { slideNumber: { type: 'number' }, beatFunction: { type: 'string' }, prerequisites: { type: 'string' }, targetWords: { type: 'number' }, targetSentences: { type: 'number' }, format: { type: 'string' }, content: { type: 'string' }, transitionExpectation: { type: 'string' }, depthType: { type: 'string', enum: ['sparse_emotional', 'bridge', 'proof', 'detail_dense', 'payoff', 'unknown'] }, allowedAdaptation: { type: 'string' } }, required: ['slideNumber', 'beatFunction'] } } } } }, required: ['plan'] } },
+        { name: 'create_writing_plan', description: 'Create a comprehensive writing plan with hook variants. Must cover: physics mapping, voice & style, slide-by-slide blueprint with per-slide quarks/distance/techniques, rules checklist, density targets, hook variants. The plan drives the entire draft.', parameters: { type: 'object', properties: { plan: { type: 'string', description: 'The complete writing plan text' }, hookVariants: { type: 'array', items: { type: 'string' }, description: '3-4 hook variants matching the blueprint hook format and physics' }, structuredPlan: { type: 'object', description: 'Structured slide contract for deterministic validation', properties: { voicePattern: { type: 'string' }, tensePattern: { type: 'string' }, directAddressPrefix: { type: 'string' }, slides: { type: 'array', items: { type: 'object', properties: { slideNumber: { type: 'number' }, beatFunction: { type: 'string' }, prerequisites: { type: 'string' }, targetWords: { type: 'number' }, targetSentences: { type: 'number' }, format: { type: 'string' }, content: { type: 'string' }, transitionExpectation: { type: 'string' }, depthType: { type: 'string', enum: ['sparse_emotional', 'bridge', 'proof', 'detail_dense', 'payoff', 'unknown'] }, allowedAdaptation: { type: 'string' } }, required: ['slideNumber', 'beatFunction'] } } } } }, required: ['plan'] } },
         { name: 'search_swipes', description: 'Search loaded swipe library', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
         { name: 'read_swipe_body', description: 'Load full swipe text', parameters: { type: 'object', properties: { swipe_id: { type: 'string' } }, required: ['swipe_id'] } },
         { name: 'analyze_swipe_patterns', description: 'Analyze patterns across swipe library', parameters: { type: 'object', properties: { focus: { type: 'string', enum: ['hooks', 'persuasion', 'emotional_arc', 'engagement', 'all'] } } } },

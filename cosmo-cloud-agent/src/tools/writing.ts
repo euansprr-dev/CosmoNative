@@ -106,10 +106,12 @@ export async function generateOutline(args: Record<string, any>): Promise<string
     instruction += `\n\n${blueprintUUIDs.length} blueprint swipes loaded as PRIMARY references. Study their structure and mirror it.`;
     instruction += ' Use BLUEPRINT-FIRST methodology.';
   }
-  instruction += '\nCall update_outline with the sections, then add_hooks with hook variants.';
+  instruction += '\nCreate the writing plan with outline, hooks, and per-slide physics targets via create_writing_plan.';
 
   try {
-    const response = await engine.sendMessage(instruction, 'brainstorm');
+    // Use 'draft' phase to trigger Phase 1 of the physics pipeline (not brainstorm loop)
+    // Phase 1 creates plan + outline + hooks with full Content Physics — then stops for user confirmation
+    const response = await engine.sendMessage(instruction, 'draft');
 
     const outline = engine.getOutline();
     const hooks = engine.getHooks();

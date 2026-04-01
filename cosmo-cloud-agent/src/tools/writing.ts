@@ -153,6 +153,12 @@ export async function generateDraft(args: Record<string, any>): Promise<string> 
     // DO NOT evictEngine here — preserves conversation context from outline phase
   }
 
+  // Save research briefing to content atom metadata (persists across all phases + revisions)
+  if (args.researchBriefing) {
+    await updateAtom(contentUUID, { metadata: { researchBriefing: args.researchBriefing } });
+    console.log(`  📋 Research briefing saved: ${(args.researchBriefing as string).length} chars`);
+  }
+
   const engine = await getOrCreateEngine(contentUUID);
 
   const direction = args.userDirection || 'Write the full first draft following the outline. Mirror the PRIMARY blueprint structure. Call write_draft with the complete draft.';

@@ -234,6 +234,7 @@ export async function updateContent(args: Record<string, any>): Promise<string> 
         }))
       : args.outline;
   }
+  if (args.researchBriefing) metaUpdates.researchBriefing = args.researchBriefing;
 
   if (args.clientName) {
     const client = await fuzzyFindClient(args.clientName);

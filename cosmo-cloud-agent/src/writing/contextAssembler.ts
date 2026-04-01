@@ -690,6 +690,14 @@ export function assembleBlock3Dynamic(
     sections.push(`Core Idea: ${truncated}`);
   }
 
+  // Research briefing (user-provided factual context, current events data, etc.)
+  const briefing = meta.researchBriefing as string | undefined;
+  if (briefing) {
+    sections.push('\n--- RESEARCH BRIEFING ---');
+    sections.push('(Factual data and context provided by the user. Use this as source material — real facts, events, data points. Do NOT invent details beyond what is provided here.)');
+    sections.push(briefing);
+  }
+
   // Outline
   if (outline && outline.length > 0) {
     sections.push('\nOutline:');

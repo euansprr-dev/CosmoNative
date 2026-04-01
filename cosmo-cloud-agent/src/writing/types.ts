@@ -309,7 +309,14 @@ export function formatCompressedSwipe(swipe: CompressedSwipe): string {
 
   if (swipe.fullBody) {
     lines.push(`--- FULL BODY ---`);
-    lines.push(swipe.fullBody);
+    // Parse slide markers for readability — bodies are often stored as one continuous string
+    // without line breaks between slides, making individual slides impossible to read
+    const hasSlideMarkers = /Slide\s*\d+/i.test(swipe.fullBody);
+    if (hasSlideMarkers) {
+      lines.push(swipe.fullBody.replace(/Slide\s*(\d+)/gi, '\n\n--- Slide $1 ---\n').trim());
+    } else {
+      lines.push(swipe.fullBody);
+    }
   }
 
   if (swipe.isPrimary && swipe.structuralBreakdown) {

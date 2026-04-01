@@ -667,7 +667,11 @@ This plan is your construction blueprint. The user will review the outline and h
     const bp = this.blueprintAnchor;
     const clientName = this.clientAtom?.title || 'the client';
     const voiceContext = this.buildCriticalVoiceContext();
-    const blueprintBody = bp?.fullBody || '[Blueprint body not available]';
+    const rawBody = bp?.fullBody || '[Blueprint body not available]';
+    // Parse slide markers for readability — bodies stored as one continuous string are unreadable
+    const blueprintBody = /Slide\s*\d+/i.test(rawBody)
+      ? rawBody.replace(/Slide\s*(\d+)/gi, '\n\n--- Slide $1 ---\n').trim()
+      : rawBody;
     const hardRules = this.lessons
       .filter((l: any) => l.enforcement === 'hard')
       .map((l: any) => `• ${(l.rule || '').split('\n')[0].replace(/^RULE:\s*/i, '')}`)
@@ -1010,7 +1014,7 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       const parsed = JSON.parse(body);
       if (parsed.slides) return parsed.slides.length;
     } catch { /* not JSON */ }
-    const slideMatches = body.match(/^Slide \d+/gim);
+    const slideMatches = body.match(/Slide\s*\d+/gi);
     if (slideMatches) return slideMatches.length;
     const separators = body.split(/^[-=]{3,}$/m).filter(s => s.trim().length > 0);
     if (separators.length > 1) return separators.length;
@@ -1219,7 +1223,8 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       // Detect extended analysis — nudge after consecutive thinks
       // Plan/edit phases: think ONCE then act. Write phase: think ONCE to compose (don't nudge on first think).
       // Revisions: allow 1-2 thinks for complex feedback.
-      const thinkNudgeThreshold = pipelineStep === 'write' ? 2 : (pipelineStep ? 1 : 2);
+      // Write + edit phases need one think to compose/review. Plan phase: think once then create_writing_plan.
+      const thinkNudgeThreshold = (pipelineStep === 'write' || pipelineStep === 'edit') ? 2 : (pipelineStep ? 1 : 2);
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;

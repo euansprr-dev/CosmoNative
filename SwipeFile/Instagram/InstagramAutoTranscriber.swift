@@ -1856,20 +1856,32 @@ final class InstagramAutoTranscriber: Sendable {
 
         mergedLines = deduplicateLinesPreservingOrder(mergedLines)
 
-        // For carousels: split joined text at sentence boundaries for readability.
-        // After OCR lines are merged, sentences run together — split them apart so
-        // each sentence gets its own line. BUT protect list items from splitting.
+        // For carousels: split joined text at sentence boundaries and list delimiters
+        // for readability. After OCR lines are merged, sentences/items run together —
+        // split them apart so each gets its own line. BUT protect list items from splitting.
         if isCarousel {
             mergedLines = mergedLines.flatMap { line -> [String] in
-                // Don't split lines that are list items (numbered, bulleted, arrow-delimited, step markers)
-                let listPattern = #"^(\d+[\.\)]\s|[→▸►•·\-\*]\s|--\s|#\d|Step\s)"#
+                // Don't split lines that are already list items
+                let listPattern = #"^(\d+[\.\)]\s|[→▸►•·\-\*\+]\s|--\s|#\d|Step\s)"#
                 if line.range(of: listPattern, options: .regularExpression) != nil {
                     return [line]  // Preserve list items as-is
                 }
-                // Also force line breaks before → characters mid-line
-                let arrowSplit = line.replacingOccurrences(of: " → ", with: "\n→ ")
-                if arrowSplit.contains("\n") {
-                    return arrowSplit.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                // Force line breaks before → characters mid-line
+                var working = line.replacingOccurrences(of: " → ", with: "\n→ ")
+                // Force line breaks before mid-line dash/plus list items: " - Item" or " + Item"
+                working = working.replacingOccurrences(
+                    of: #"(?<=\S)\s+[\-\+] (?=[A-Z])"#,
+                    with: "\n- ",
+                    options: .regularExpression
+                )
+                // Split "Label: +24% Label: +26%" stat-list patterns
+                working = working.replacingOccurrences(
+                    of: #"(%\s+)(?=[A-Z][a-z])"#,
+                    with: "%\n",
+                    options: .regularExpression
+                )
+                if working.contains("\n") {
+                    return working.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                 }
                 return splitAtSentenceBoundaries(line)
             }
@@ -1896,7 +1908,12 @@ final class InstagramAutoTranscriber: Sendable {
     }
 
     private func shouldJoinLine(previous: String, next: String, isCarousel: Bool = false) -> Bool {
-        if previous.hasSuffix("-") { return true }
+        // Hyphenated word wrap (e.g., "anti-\nestablishment") — only if it's a word fragment, not a list dash
+        if previous.hasSuffix("-") && previous.count > 1 {
+            let beforeDash = previous.dropLast()
+            // Only join if the character before the dash is alphanumeric (word hyphenation)
+            if let lastChar = beforeDash.last, lastChar.isLetter { return true }
+        }
         // Don't join numbered list items (e.g. "50. Mississippi ($186,618)" or "1- Item")
         let numberedPattern = #"^\d+[\.\)\-]\s?"#
         if previous.range(of: numberedPattern, options: .regularExpression) != nil ||
@@ -1904,11 +1921,13 @@ final class InstagramAutoTranscriber: Sendable {
             return false
         }
         // Don't join arrow or bullet list items
-        let bulletPattern = #"^[→▸►•·\-\*]\s"#
+        let bulletPattern = #"^[→▸►•·\-\*\+]\s"#
         if next.range(of: bulletPattern, options: .regularExpression) != nil ||
             previous.range(of: bulletPattern, options: .regularExpression) != nil {
             return false
         }
+        // For carousels: don't join after colon-ending lines (introduces a list or section)
+        if isCarousel && previous.hasSuffix(":") { return false }
         if next.count <= 3 {
             // For carousels, don't merge short words starting with uppercase (likely list items)
             if isCarousel, let first = next.first, first.isUppercase { return false }

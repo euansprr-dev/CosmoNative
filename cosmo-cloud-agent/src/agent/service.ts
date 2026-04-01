@@ -124,6 +124,47 @@ function escalateIntent(intent: AgentIntent, messages: AgentMessage[]): AgentInt
 }
 
 /**
+ * Fast-path inbox capture: if the user sends "inbox: some thought" or "inbox some thought",
+ * skip the LLM entirely and create a transport atom that the Mac app converts to an InboxItem.
+ */
+async function tryFastInboxCapture(
+  text: string,
+  chatId: string,
+  messages: AgentMessage[],
+): Promise<ProcessResult | null> {
+  const match = text.match(/^inbox[\s:]+(.+)/is);
+  if (!match) return null;
+
+  const rawText = match[1].trim();
+  if (!rawText) return null;
+
+  console.log(`📥 Fast-path inbox capture: "${rawText.substring(0, 80)}..."`);
+
+  const title = rawText.substring(0, 120);
+  const atom = await createAtom({
+    type: 'note',
+    title,
+    body: rawText,
+    metadata: {
+      isInboxCapture: true,
+      inboxSource: 'telegram_cloud',
+      captureSource: 'telegram_cloud',
+    },
+  });
+
+  const createdAtomUUIDs = atom?.uuid ? [atom.uuid] : [];
+  const response = atom
+    ? `📥 Captured to inbox\n"${title}"\nOpen CosmoOS to triage.`
+    : `Something went wrong capturing to inbox.`;
+
+  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'assistant', content: response });
+  await saveConversation(chatId, messages, { linkedAtomUUIDs: createdAtomUUIDs });
+
+  return { response, toolsUsed: ['capture_to_inbox'], createdAtomUUIDs, intent: 'capture' };
+}
+
+/**
  * Fast-path capture: if the user sends an obvious "swipe this [URL]" or "capture [URL]",
  * skip the LLM entirely and call capture_swipe directly. This avoids Haiku asking
  * unnecessary clarifying questions.
@@ -200,7 +241,11 @@ export async function processMessage(
 
   console.log(`🧠 Intent: ${intent} | Model: ${model} | Max iterations: ${iterationLimit}`);
 
-  // 1b. FAST PATH — deterministic capture for obvious swipe/capture commands
+  // 1b. FAST PATH — inbox capture (before swipe capture — inbox prefix takes priority)
+  const fastInboxResult = await tryFastInboxCapture(text, chatId, messages);
+  if (fastInboxResult) return fastInboxResult;
+
+  // 1c. FAST PATH — deterministic capture for obvious swipe/capture commands
   // Bypasses LLM entirely when intent is unambiguous (e.g. "swipe this" + URL)
   const fastCaptureResult = await tryFastCapture(text, intent, chatId, messages, onToolProgress);
   if (fastCaptureResult) return fastCaptureResult;

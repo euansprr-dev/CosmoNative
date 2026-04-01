@@ -1,128 +1,317 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/PhysicsRhythmView.swift
-// Density waveform + energy curve + silence markers
+// Triple stacked waveform charts: density bars + energy curve + info rate
 
 import SwiftUI
+import Charts
 
 struct PhysicsRhythmView: View {
     let rhythm: RhythmData?
+    @Binding var selectedSlide: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            Text("RHYTHM & PACING")
-                .font(DS.caption)
-                .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
-
+            sectionHeader
             if let r = rhythm {
-                densityBars(r)
-                momentumText(r)
-                silenceMarkers(r)
+                rhythmContent(r)
             } else {
-                Text("No rhythm data")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                emptyState
             }
         }
-        .padding(DS.space16)
+        .padding(DS.space20)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(DS.border, lineWidth: 1)
+        )
+        .dsRestingShadow()
     }
 
+    // MARK: - Header & Empty
+
+    private var sectionHeader: some View {
+        Text("RHYTHM & PACING")
+            .font(DS.caption)
+            .tracking(1.2)
+            .foregroundStyle(DS.green)
+    }
+
+    private var emptyState: some View {
+        Text("No rhythm data")
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
+    }
+
+    // MARK: - Main Content
+
     @ViewBuilder
-    private func densityBars(_ r: RhythmData) -> some View {
+    private func rhythmContent(_ r: RhythmData) -> some View {
         let density = r.densityWaveform ?? []
         let energy = r.energyCurve ?? []
-        let maxDensity = max(density.max() ?? 1.0, 1.0)
+        let infoRate = r.informationRate ?? []
+        let silences = r.silenceSlides ?? []
+        let hasEnergy = !energy.isEmpty
+        let hasInfoRate = !infoRate.isEmpty
 
+        let dataCount = max(density.count, energy.count, infoRate.count, 1)
+
+        VStack(spacing: DS.space16) {
+            if !density.isEmpty {
+                densityChart(
+                    density: density,
+                    silences: silences,
+                    hideXAxis: hasEnergy || hasInfoRate,
+                    dataCount: dataCount
+                )
+            }
+            if hasEnergy {
+                energyChart(
+                    energy: energy,
+                    silences: silences,
+                    hideXAxis: hasInfoRate,
+                    dataCount: dataCount
+                )
+            }
+            if hasInfoRate {
+                infoRateChart(infoRate: infoRate, silences: silences, dataCount: dataCount)
+            }
+        }
+
+        selectedSlideDetail(r)
+        callouts(r)
+    }
+
+    // MARK: - Density Chart
+
+    @ViewBuilder
+    private func densityChart(
+        density: [Double],
+        silences: [Int],
+        hideXAxis: Bool,
+        dataCount: Int
+    ) -> some View {
+        chartContainer(label: "Density", hideXAxis: hideXAxis, dataCount: dataCount) {
+            Chart {
+                ForEach(Array(density.enumerated()), id: \.offset) { index, value in
+                    BarMark(
+                        x: .value("Slide", index + 1),
+                        y: .value("Density", value)
+                    )
+                    .foregroundStyle(
+                        silences.contains(index + 1)
+                            ? DS.info.opacity(0.3)
+                            : DS.entitySwipe.opacity(0.6)
+                    )
+                }
+                ForEach(silences, id: \.self) { slide in
+                    RuleMark(x: .value("Silence", slide))
+                        .foregroundStyle(DS.info.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
+                if let s = selectedSlide {
+                    RuleMark(x: .value("Selected", s))
+                        .foregroundStyle(DS.green.opacity(0.7))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+            }
+            .chartOverlay { proxy in hoverOverlay(proxy: proxy) }
+        }
+    }
+
+    // MARK: - Energy Chart
+
+    @ViewBuilder
+    private func energyChart(
+        energy: [Double],
+        silences: [Int],
+        hideXAxis: Bool,
+        dataCount: Int
+    ) -> some View {
+        chartContainer(label: "Energy", hideXAxis: hideXAxis, dataCount: dataCount) {
+            Chart {
+                ForEach(Array(energy.enumerated()), id: \.offset) { index, value in
+                    AreaMark(
+                        x: .value("Slide", index + 1),
+                        y: .value("Energy", value)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(DS.green.opacity(0.15))
+
+                    LineMark(
+                        x: .value("Slide", index + 1),
+                        y: .value("Energy", value)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(DS.green)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(silences, id: \.self) { slide in
+                    RuleMark(x: .value("Silence", slide))
+                        .foregroundStyle(DS.info.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
+                if let s = selectedSlide {
+                    RuleMark(x: .value("Selected", s))
+                        .foregroundStyle(DS.green.opacity(0.7))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+            }
+            .chartOverlay { proxy in hoverOverlay(proxy: proxy) }
+        }
+    }
+
+    // MARK: - Information Rate Chart
+
+    @ViewBuilder
+    private func infoRateChart(infoRate: [Double], silences: [Int], dataCount: Int) -> some View {
+        chartContainer(label: "Info Rate", hideXAxis: false, dataCount: dataCount) {
+            Chart {
+                ForEach(Array(infoRate.enumerated()), id: \.offset) { index, value in
+                    LineMark(
+                        x: .value("Slide", index + 1),
+                        y: .value("Info Rate", value)
+                    )
+                    .foregroundStyle(DS.info)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+                }
+                ForEach(silences, id: \.self) { slide in
+                    RuleMark(x: .value("Silence", slide))
+                        .foregroundStyle(DS.info.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
+                if let s = selectedSlide {
+                    RuleMark(x: .value("Selected", s))
+                        .foregroundStyle(DS.green.opacity(0.7))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+            }
+            .chartOverlay { proxy in hoverOverlay(proxy: proxy) }
+        }
+    }
+
+    // MARK: - Chart Container
+
+    @ViewBuilder
+    private func chartContainer<C: View>(
+        label: String,
+        hideXAxis: Bool,
+        dataCount: Int,
+        @ViewBuilder chart: () -> C
+    ) -> some View {
         VStack(alignment: .leading, spacing: DS.space4) {
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(Array(density.enumerated()), id: \.offset) { index, wordCount in
-                    let height = max(CGFloat(wordCount / maxDensity) * 60, 4)
-                    let energyLevel = index < energy.count ? Int(energy[index]) : 3
-                    let silence = (r.silenceSlides ?? []).contains(index + 1)
+            Text(label)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
 
-                    VStack(spacing: 1) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(barColor(energyLevel: energyLevel, isSilence: silence))
-                            .frame(height: height)
+            chart()
+                .frame(height: 60)
+                .chartXScale(domain: 1 ... dataCount)
+                .chartXAxis(hideXAxis ? .hidden : .automatic)
+                .chartYAxis(.hidden)
+        }
+    }
 
-                        if density.count <= 30 {
-                            Text("\(index + 1)")
-                                .font(.system(size: 6, design: .monospaced))
-                                .foregroundStyle(DS.textMuted)
-                        }
+    // MARK: - Selected Slide Detail
+
+    @ViewBuilder
+    private func selectedSlideDetail(_ r: RhythmData) -> some View {
+        if let slide = selectedSlide {
+            let density = r.densityWaveform ?? []
+            let energy = r.energyCurve ?? []
+            let infoRate = r.informationRate ?? []
+            let index = slide - 1
+            let isSilence = (r.silenceSlides ?? []).contains(slide)
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("Slide \(slide)")
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+                HStack(spacing: DS.space16) {
+                    if index >= 0, index < density.count {
+                        detailMetric(label: "Density", value: String(format: "%.0f", density[index]), color: DS.entitySwipe)
                     }
-                    .frame(maxWidth: .infinity)
+                    if index >= 0, index < energy.count {
+                        detailMetric(label: "Energy", value: String(format: "%.1f", energy[index]), color: DS.green)
+                    }
+                    if index >= 0, index < infoRate.count {
+                        detailMetric(label: "Info Rate", value: String(format: "%.1f", infoRate[index]), color: DS.info)
+                    }
+                    if isSilence {
+                        detailMetric(label: "Type", value: "Silence", color: DS.info)
+                    }
                 }
             }
-            .frame(height: 76)
-
-            // Legend
-            HStack(spacing: DS.space10) {
-                legendDot(color: DS.green, label: "High energy")
-                legendDot(color: DS.entitySwipe, label: "Medium")
-                legendDot(color: DS.textMuted.opacity(0.4), label: "Low")
-                legendDot(color: DS.info.opacity(0.3), label: "Silence")
-            }
-            .font(.system(size: 8))
+            .padding(DS.space10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+            .transition(.opacity)
         }
     }
 
     @ViewBuilder
-    private func momentumText(_ r: RhythmData) -> some View {
-        VStack(alignment: .leading, spacing: DS.space4) {
-            if let momentum = r.momentumMechanism, !momentum.isEmpty {
-                HStack(alignment: .top, spacing: DS.space6) {
-                    Text("Momentum")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                    Text(momentum)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textSecondary)
-                }
-            }
-            if let pattern = r.pacingPattern, !pattern.isEmpty {
-                HStack(alignment: .top, spacing: DS.space6) {
-                    Text("Pattern")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                    Text(pattern)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textSecondary)
-                }
-            }
+    private func detailMetric(label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(DS.callout)
+                .foregroundStyle(color)
+            Text(label)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    // MARK: - Hover Overlay
+
+    private func hoverOverlay(proxy: ChartProxy) -> some View {
+        GeometryReader { geo in
+            Rectangle()
+                .fill(Color.clear)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard let plotFrame = proxy.plotFrame else { return }
+                            let x = value.location.x - geo[plotFrame].origin.x
+                            if let slide: Int = proxy.value(atX: x) {
+                                selectedSlide = max(1, slide)
+                            }
+                        }
+                        .onEnded { _ in
+                            selectedSlide = nil
+                        }
+                )
+        }
+    }
+
+    // MARK: - Callouts
+
+    @ViewBuilder
+    private func callouts(_ r: RhythmData) -> some View {
+        if let momentum = r.momentumMechanism, !momentum.isEmpty {
+            calloutBlock(label: "Momentum", text: momentum)
+        }
+        if let pattern = r.pacingPattern, !pattern.isEmpty {
+            calloutBlock(label: "Pacing", text: pattern)
         }
     }
 
     @ViewBuilder
-    private func silenceMarkers(_ r: RhythmData) -> some View {
-        if let silenceSlides = r.silenceSlides, !silenceSlides.isEmpty {
-            HStack(spacing: DS.space4) {
-                Text("🫧")
-                    .font(.system(size: 10))
-                Text("Silence slides: \(silenceSlides.map(String.init).joined(separator: ", "))")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
+    private func calloutBlock(label: String, text: String) -> some View {
+        HStack(spacing: DS.space10) {
+            Rectangle()
+                .fill(DS.green)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text(label)
+                    .font(DS.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(DS.green)
+
+                Text(text)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
             }
         }
-    }
-
-    @ViewBuilder
-    private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: 2) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).foregroundStyle(DS.textMuted)
-        }
-    }
-
-    private func barColor(energyLevel: Int, isSilence: Bool) -> Color {
-        if isSilence { return DS.info.opacity(0.3) }
-        switch energyLevel {
-        case 5: return DS.green
-        case 4: return DS.green.opacity(0.7)
-        case 3: return DS.entitySwipe
-        case 2: return DS.textMuted.opacity(0.5)
-        default: return DS.textMuted.opacity(0.3)
-        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

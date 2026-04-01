@@ -164,7 +164,15 @@ struct SwipeStudyFocusModeView: View {
         }
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
-            loadAtom()
+            // Fetch fresh atom from DB — the injected `atom` may be a stale snapshot
+            // (e.g., transcript was saved but parent view still holds the old value)
+            Task {
+                if let id = atom.id, let fresh = try? await AtomRepository.shared.fetch(id: id) {
+                    loadAtom(using: fresh)
+                } else {
+                    loadAtom()
+                }
+            }
             // Register context provider for global Cosmo window
             let provider = SwipeStudyContextProvider(atom: atom, analysisRef: { [self] in self.analysis }, transcriptRef: { [self] in self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText })
             if !isPaneContext || isPaneActive {
@@ -710,6 +718,12 @@ struct SwipeStudyFocusModeView: View {
         }
         .onDisappear {
             igPlayer?.pause()
+            // Flush any pending debounced slide save immediately so edits aren't lost
+            if slidesSaveTask != nil {
+                slidesSaveTask?.cancel()
+                slidesSaveTask = nil
+                saveSlideTranscript()
+            }
         }
     }
 
@@ -1041,13 +1055,26 @@ struct SwipeStudyFocusModeView: View {
                     isCarouselContent = true
                     igIsExtractingVideo = false
 
-                    let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
+                    let existingSlideCount = transcriptSlides.filter { !$0.text.isEmpty }.count
+                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
+
+                    // Check 1: No transcript at all — initial transcription needed
+                    let hasSlideContent = existingSlideCount > 0
                     let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     let hasSavedBody = !((currentAtom ?? atom).body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     let hasTranscriptStatus = (currentAtom ?? atom).richContent?.transcriptStatus == "available"
-                    let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: (currentAtom ?? atom).uuid)
-                    if !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing {
+                    let needsInitialTranscription = !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing
+
+                    // Check 2: More slides discovered than currently transcribed (incomplete carousel)
+                    let hasMoreSlides = items.count > existingSlideCount && existingSlideCount > 0
+                    let isDegraded = (currentAtom ?? atom).swipeAnalysis?.transcriptionQuality == .degraded
+                    let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing
+
+                    if needsInitialTranscription || needsReTranscription {
                         guard isViewingAtom(uuid: expectedUUID) else { return }
+                        if needsReTranscription {
+                            print("SwipeStudy: Auto-re-transcribing carousel — extracted \(items.count) items but only \(existingSlideCount) transcribed")
+                        }
                         await autoTranscribeCarousel(items: items)
                     }
                     return
@@ -1832,25 +1859,75 @@ struct SwipeStudyFocusModeView: View {
     }
 
     /// Clean up mid-sentence line breaks in slide text.
-    /// Joins lines that don't end with sentence-ending punctuation (. ! ? ...) into continuous sentences.
+    /// Joins lines that are clearly continuation of a sentence, but preserves
+    /// list items, bullet points, and lines after colons. Then splits any
+    /// merged list items and adds blank lines between logical sections.
     private func cleanSlideLineBreaks(_ text: String) -> String {
-        let lines = text.components(separatedBy: "\n")
-        guard lines.count > 1 else { return text }
-        var result = lines[0]
+        // Phase 1: Split merged list items within single lines
+        var working = text
+        // Split "Label: +24% Label: +26%" patterns (stat lists)
+        working = working.replacingOccurrences(
+            of: #"(%\s+)(?=[A-Z][a-z])"#,
+            with: "%\n",
+            options: .regularExpression
+        )
+        // Split mid-line dash list items: " - Item" → newline
+        working = working.replacingOccurrences(
+            of: #"(?<=\S)\s+- (?=[A-Z])"#,
+            with: "\n- ",
+            options: .regularExpression
+        )
+
+        let lines = working.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard lines.count > 1 else { return working.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        let bulletPattern = #"^[→▸►•·\-\*\+]\s"#
+        let numberedPattern = #"^\d+[\.\)\-]\s"#
+
+        // Phase 2: Join/preserve line breaks
+        var merged: [String] = [lines[0]]
         for i in 1..<lines.count {
-            let prev = result.trimmingCharacters(in: .whitespaces)
-            let next = lines[i].trimmingCharacters(in: .whitespaces)
-            guard !next.isEmpty else {
-                result += "\n"
+            let prev = merged.last ?? ""
+            let next = lines[i]
+            // Always preserve line break if next line is a list/bullet item
+            let nextIsBullet = next.range(of: bulletPattern, options: .regularExpression) != nil
+            let nextIsNumbered = next.range(of: numberedPattern, options: .regularExpression) != nil
+            if nextIsBullet || nextIsNumbered {
+                merged.append(next)
                 continue
             }
-            if prev.isEmpty || prev.hasSuffix(".") || prev.hasSuffix("!") || prev.hasSuffix("?") || prev.hasSuffix("…") {
-                result += "\n" + next
+            // Preserve line break after sentence-ending punctuation or colons
+            let lastChar = prev.last
+            let endsWithPunctuation = lastChar == "." || lastChar == "!" || lastChar == "?" || prev.hasSuffix("…") || lastChar == ":"
+            if prev.isEmpty || endsWithPunctuation {
+                merged.append(next)
             } else {
-                result += " " + next
+                merged[merged.count - 1] = prev + " " + next
             }
         }
-        return result
+
+        // Phase 3: Add blank lines between logical sections
+        // (transition from non-list → list, list → non-list, sentence → sentence)
+        func isList(_ line: String) -> Bool {
+            line.range(of: bulletPattern, options: .regularExpression) != nil ||
+            line.range(of: numberedPattern, options: .regularExpression) != nil
+        }
+        var spaced: [String] = []
+        for (idx, line) in merged.enumerated() {
+            if idx > 0 {
+                let prev = merged[idx - 1]
+                let prevIsList = isList(prev)
+                let currIsList = isList(line)
+                // Add blank line at list boundary transitions
+                if prevIsList != currIsList {
+                    spaced.append("")
+                }
+            }
+            spaced.append(line)
+        }
+        return spaced.joined(separator: "\n")
     }
 
     /// Apply line break cleanup to all transcript slides
@@ -2940,6 +3017,9 @@ struct SwipeStudyFocusModeView: View {
                 if let iet = arc.internalExternalTension, iet.present == true {
                     text += "Internal/External Tension: \(iet.description ?? "") (peak @slide \(iet.peakSlide ?? 0))\n"
                 }
+                if let df = arc.dominantFrame {
+                    text += "Dominant Frame: \(df.type ?? "")\(df.mechanism.map { " — \($0)" } ?? "")\n"
+                }
             }
 
             // Physics Events
@@ -2986,6 +3066,12 @@ struct SwipeStudyFocusModeView: View {
                     }
                     if let frame = q.frame {
                         text += "    Frame: \(frame.type ?? "")\(frame.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
+                    if let ed = q.experientialDistance {
+                        text += "    Distance: \(ed.type ?? "")\(ed.mechanism.map { " — \($0)" } ?? "")\n"
+                    }
+                    if let techs = q.techniques, !techs.isEmpty {
+                        text += "    Techniques: \(techs.map { "\($0.technique)\($0.usage.map { ": \($0)" } ?? "")" }.joined(separator: " | "))\n"
                     }
                 }
             }

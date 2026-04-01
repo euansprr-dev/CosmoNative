@@ -117,6 +117,9 @@ final class RealtimeSyncService {
             // Auto-process cloud-captured swipes (transcription + analysis)
             await autoProcessCloudSwipe(uuid: uuid, data: localData)
 
+            // Convert cloud inbox captures to local InboxItems
+            await convertCloudInboxCapture(uuid: uuid, data: localData)
+
         case .update(let update):
             let data = convertRecord(update.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
@@ -243,6 +246,83 @@ final class RealtimeSyncService {
 
         await MainActor.run {
             SwipeProcessingService.shared.processSwipeInBackground(uuid: uuid)
+        }
+    }
+
+    // MARK: - Convert Cloud Inbox Captures
+
+    /// When the cloud agent captures "inbox: text", it creates a transport atom with
+    /// `metadata.isInboxCapture: true`. Convert it to a local InboxItem and soft-delete the atom.
+    private func convertCloudInboxCapture(uuid: String, data: [String: Any]) async {
+        // Parse metadata
+        let metadataStr: String?
+        if let str = data["metadata"] as? String {
+            metadataStr = str
+        } else if let obj = data["metadata"], !(obj is NSNull),
+                  let jsonData = try? JSONSerialization.data(withJSONObject: obj),
+                  let str = String(data: jsonData, encoding: .utf8) {
+            metadataStr = str
+        } else {
+            metadataStr = nil
+        }
+
+        guard let metaStr = metadataStr,
+              let metaData = metaStr.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
+              meta["isInboxCapture"] as? Bool == true else { return }
+
+        let rawText = data["body"] as? String ?? data["title"] as? String ?? ""
+        guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let title = data["title"] as? String
+
+        print("📥 Realtime: converting cloud inbox capture \(uuid) to InboxItem")
+
+        await MainActor.run {
+            Task {
+                // Create local InboxItem
+                let item = InboxItem.new(
+                    source: .telegramText,
+                    rawText: rawText,
+                    title: title
+                )
+
+                do {
+                    let saved = try await InboxRepository.shared.create(item)
+
+                    // Classify asynchronously
+                    let classification = await InboxClassificationEngine.shared.classify(
+                        text: rawText,
+                        source: .telegramText
+                    )
+
+                    try await InboxRepository.shared.updateClassification(
+                        uuid: saved.uuid,
+                        classification: classification.classification,
+                        confidence: classification.confidence,
+                        title: classification.title,
+                        mergeTargetUuid: classification.mergeTarget?.atomUuid,
+                        mergeTargetTitle: classification.mergeTarget?.atomTitle,
+                        mergeTargetType: classification.mergeTarget?.atomType,
+                        mergePreview: classification.mergeTarget?.preview,
+                        placeThinkspaceId: classification.placeTarget?.thinkspaceId,
+                        placeThinkspaceName: classification.placeTarget?.thinkspaceName,
+                        placeAtomType: classification.placeTarget?.suggestedAtomType
+                    )
+
+                    print("📥 Realtime: InboxItem created from cloud capture — \(saved.uuid)")
+                } catch {
+                    print("⚠️ Realtime: Failed to create InboxItem from cloud capture: \(error)")
+                }
+
+                // Soft-delete the transport atom so it doesn't pollute the library
+                try? await CosmoDatabase.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                        arguments: [ISO8601DateFormatter().string(from: Date()), uuid]
+                    )
+                }
+            }
         }
     }
 

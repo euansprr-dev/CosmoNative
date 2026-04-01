@@ -15,8 +15,8 @@ import {
   ContentFormat, detectContentFormat, renderDraftForDisplay, validateDraft,
 } from './types';
 
-const MAX_INNER_ITERATIONS = 10;
-const MAX_PHASE_ITERATIONS = 5; // Pipeline phases (plan/write/edit) need fewer iterations than open-ended conversation
+const MAX_INNER_ITERATIONS = 5;  // Revisions: think + write + follow-up + safety
+const MAX_PHASE_ITERATIONS = 3;  // Pipeline phases: think + tool + text response (or tool + text + safety)
 
 type SlideDepthType = 'sparse_emotional' | 'bridge' | 'proof' | 'detail_dense' | 'payoff' | 'unknown';
 
@@ -152,6 +152,7 @@ export class CloudWritingEngine {
   // Blueprint anchor — resolved in initialize() (true primary or highest-scoring fallback)
   private blueprintAnchor: CompressedSwipe | null = null;
   private hasTruePrimaryBlueprint = false;
+  private hasBlueprintProfile = false;
 
   // Deep analysis tracking — gates outline/draft/hooks behind substantive thinking
   // Uses analysisDepth as single gate (no boolean flags — they caused bypass-on-revision bugs)
@@ -228,6 +229,7 @@ export class CloudWritingEngine {
     if (primary && primary.fullBody) {
       this.blueprintAnchor = primary;
       this.hasTruePrimaryBlueprint = true;
+      this.hasBlueprintProfile = !!primary.fullQuarkProfile;
     } else {
       const fallback = this.selectedSwipes
         .filter(s => s.fullBody)
@@ -287,18 +289,33 @@ export class CloudWritingEngine {
       return this.runDraftPipeline(instruction);
     }
     if (phase === 'draft' && this.writingPlan) {
-      console.log(`  ✍️ Draft request with existing plan (${this.writingPlan.split(/\s+/).length} words) — using conversation loop, not 3-phase pipeline`);
-      console.log(`  ✍️ To force fresh 3-phase pipeline: evict the engine cache for this content atom`);
+      console.log(`  ✍️ Revision mode: existing plan (${this.writingPlan.split(/\s+/).length} words), applying user feedback surgically`);
     }
 
     // Brainstorm/polish/revision use normal conversation loop
     console.log(`  ✍️ Conversation loop mode: ${phase} (${this.messages.length} existing messages, analysisDepth: ${this.analysisDepth})`);
     const block3b = this.buildDynamicBlock();
 
+    // Revision protocol: guide the model to think once + write once (not 10 exploratory iterations)
+    const isRevision = phase === 'draft' && this.writingPlan;
+    const revisionPrefix = isRevision ? `═══ REVISION MODE ═══
+Apply the user's feedback surgically. Your writing plan, the blueprint's physics profile,
+and all swipe examples are still in your system context. The draft is in conversation history.
+
+1. Think ONCE about what specific slides need to change — reference the plan's WRITE instructions and physics targets for those slides
+2. Make the MINIMAL targeted edits — do NOT rewrite slides that weren't flagged
+3. Call write_draft with the complete updated draft
+4. List what you changed and why
+
+Keep everything that already works. Fix only what the user asked for.
+
+USER FEEDBACK:
+` : '';
+
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
-      content: instruction,
+      content: revisionPrefix + instruction,
       timestamp: new Date().toISOString(),
     });
 
@@ -323,18 +340,34 @@ export class CloudWritingEngine {
 
   private async runDraftPipeline(instruction: string): Promise<string> {
     const bp = this.blueprintAnchor;
-    console.log(`\n  ═══ DRAFT PIPELINE START ═══`);
+    const profile = bp?.fullQuarkProfile;
+    const profileSlides = profile?.slideQuarks?.length || 0;
+    const profileTransitions = profile?.transitions?.length || 0;
+    const dominantFrame = profile?.arcQuarks?.dominantFrame?.type || 'none';
+    const arcShape = profile?.arcQuarks?.shape ? profile.arcQuarks.shape.substring(0, 80) : 'none';
+    const symmetryBreak = profile?.physicsEvents?.symmetryBreak?.slideNumber || '?';
+    const phaseTransition = profile?.physicsEvents?.phaseTransition ? `${profile.physicsEvents.phaseTransition.frameBefore} → ${profile.physicsEvents.phaseTransition.frameAfter}` : 'none';
+    const peakGravity = profile?.physicsEvents?.peakGravity?.activeLoops || '?';
+
+    console.log(`\n  ═══ CONTENT PHYSICS DRAFT PIPELINE ═══`);
     console.log(`  📋 Client: ${this.clientAtom?.title || 'none'} | Format: ${this.targetFormat} | Swipes: ${this.selectedSwipes.length}`);
-    console.log(`  📋 Blueprint: ${bp ? `"${bp.title.substring(0, 60)}" (${this.hasTruePrimaryBlueprint ? 'TRUE PRIMARY' : 'INFERRED — highest hookScore'}, score: ${bp.hookScore}/10)` : 'NONE'}`);
+    console.log(`  📋 Blueprint: ${bp ? `"${bp.title.substring(0, 60)}" (${this.hasTruePrimaryBlueprint ? 'TRUE PRIMARY' : 'INFERRED'}, score: ${bp.hookScore}/10)` : 'NONE'}`);
     if (bp?.beatSequence.length) console.log(`  📋 Blueprint beats: ${bp.beatSequence.join(' > ')}`);
+    console.log(`  📋 Atomic Profile: ${this.hasBlueprintProfile ? `✅ LOADED (${profileSlides} slides, ${profileTransitions} transitions)` : '❌ NOT AVAILABLE — will use inline analysis'}`);
+    if (this.hasBlueprintProfile) {
+      console.log(`  📋 Physics: dominant_frame=${dominantFrame} | arc=${arcShape}`);
+      console.log(`  📋 Events: symmetry_break=slide${symmetryBreak} | phase_transition=${phaseTransition} | peak_gravity=${peakGravity}_loops`);
+      if (profile?.antimatter?.length) console.log(`  📋 Antimatter: ${profile.antimatter.slice(0, 3).map(a => `"${a}"`).join(', ')}${(profile.antimatter.length || 0) > 3 ? ` (+${(profile.antimatter.length || 0) - 3} more)` : ''}`);
+    }
     console.log(`  📋 Lessons: ${this.lessons.length} (${this.lessons.filter(l => l.enforcement === 'hard').length} hard, ${this.lessons.filter(l => l.enforcement !== 'hard').length} advisory)`);
     console.log(`  📋 Blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB${b.cacheControl ? ',cached' : ''})`).join(' + ')}`);
+    console.log(`  📋 Strategy: ${this.hasBlueprintProfile ? 'MAP profile → plan → write → physics self-edit' : 'Analyze blueprint → plan → write → self-edit'}`);
+    console.log(`  📋 Expected calls: ~7 (think→plan→text + write→text + think→write)`);
 
-    // PHASE 1: PLAN — full context, create comprehensive writing plan
-    console.log(`\n  ✍️ ─── Phase 1: PLAN ───`);
-    console.log(`  ✍️ System blocks: ${this.blocks.length} (${this.blocks.map(b => b.label).join(', ')})`);
-    console.log(`  ✍️ Tools: think, create_writing_plan, search_swipes, read_swipe_body, analyze_swipe_patterns`);
-    console.log(`  ✍️ Goal: LLM studies swipes (beat map, density, format, hook anatomy) → absorbs client → creates writing plan`);
+    // PHASE 1: PLAN
+    console.log(`\n  ⚛️ ─── Phase 1: ${this.hasBlueprintProfile ? 'MAP PHYSICS + PLAN' : 'ANALYZE + PLAN'} ───`);
+    console.log(`  ⚛️ Mode: ${this.hasBlueprintProfile ? 'READ atomic profile → MAP to client → create plan (1 think)' : 'Inline analysis → create plan (1 think)'}`);
+    console.log(`  ⚛️ Tools: think, create_writing_plan, search_swipes, read_swipe_body`);
     await this.runPlanPhase(instruction);
 
     if (!this.writingPlan) {
@@ -346,28 +379,36 @@ export class CloudWritingEngine {
       return result;
     }
 
-    // PHASE 2: WRITE — plan + swipe examples context, focused draft
-    console.log(`\n  ✍️ ─── Phase 2: WRITE ───`);
-    console.log(`  ✍️ Tools: think, write_draft, read_draft`);
-    console.log(`  ✍️ Goal: LLM follows plan slide-by-slide, matches blueprint shape, checks word counts ±10%`);
+    // PHASE 2: WRITE — plan + full think + profile + swipes, direct write
+    console.log(`\n  ⚛️ ─── Phase 2: WRITE (direct from plan + think + profile) ───`);
+    console.log(`  ⚛️ Sources: plan + full Phase 1 analysis + ${this.hasBlueprintProfile ? 'atomic profile' : 'inline analysis'} + swipe bodies`);
+    console.log(`  ⚛️ Mode: NO think — write directly from plan (0 thinks, 1 write_draft)`);
+    console.log(`  ⚛️ Blocks: STABLE (same as Phase 1 — full cache hit expected)`);
     await this.runWritePhase();
 
     const draftBody = this.contentAtom?.body || '';
     const draftWords = draftBody.split(/\s+/).filter(Boolean).length;
     const draftSlides = (draftBody.match(/^Slide \d+/gim) || []).length || (draftBody.match(/^[-=]{3,}$/gm) || []).length + 1;
-    console.log(`  ✍️ Draft written: ${draftWords} words, ~${draftSlides} slides`);
+    console.log(`  ⚛️ Draft written: ${draftWords} words, ~${draftSlides} slides`);
 
-    // PHASE 3: SELF-EDIT — plan + skill modules + lessons, quality pass
-    console.log(`\n  ✍️ ─── Phase 3: SELF-EDIT ───`);
-    console.log(`  ✍️ Tools: think, write_draft, read_draft`);
-    console.log(`  ✍️ Goal: LLM runs 6-check scorecard (slide count, density, visual format, voice, specificity, hook format)`);
+    // PHASE 3: SELF-EDIT — physics comparison + universal checks
+    console.log(`\n  ⚛️ ─── Phase 3: PHYSICS SELF-EDIT ───`);
+    console.log(`  ⚛️ Mode: 5-step structured think (extract physics → compare to ${this.hasBlueprintProfile ? 'profile' : 'plan'} → universal checks → plan fixes → verify) → write_draft`);
+    console.log(`  ⚛️ Priority: distance > techniques > speech act > frame > delta > transition`);
+    console.log(`  ⚛️ Blocks: STABLE (full cache hit expected)`);
     const result = await this.runSelfEditPhase();
 
     const finalBody = this.contentAtom?.body || '';
     const finalWords = finalBody.split(/\s+/).filter(Boolean).length;
-    console.log(`\n  ═══ DRAFT PIPELINE COMPLETE ═══`);
-    console.log(`  📋 Final draft: ${finalWords} words`);
-    console.log(`  📋 Messages in conversation: ${this.messages.length}`);
+    const finalSlides = (finalBody.match(/^Slide \d+/gim) || []).length || (finalBody.match(/^[-=]{3,}$/gm) || []).length + 1;
+    const totalThinks = this.messages.filter(m => m.toolCalls?.some(tc => tc.name === 'think')).length;
+    const totalWrites = this.messages.filter(m => m.toolCalls?.some(tc => tc.name === 'write_draft')).length;
+    const totalCalls = this.messages.filter(m => m.role === 'assistant' && (m.toolCalls?.length || m.content)).length;
+    console.log(`\n  ═══ CONTENT PHYSICS PIPELINE COMPLETE ═══`);
+    console.log(`  📋 Final: ${finalWords} words, ~${finalSlides} slides`);
+    console.log(`  📋 API calls: ${totalCalls} total (${totalThinks} thinks, ${totalWrites} writes, ${totalCalls - totalThinks - totalWrites} other)`);
+    console.log(`  📋 Physics: ${this.hasBlueprintProfile ? `profile-guided (${dominantFrame} frame, ${profileSlides} target slides)` : 'inline analysis (no profile)'}`);
+    console.log(`  📋 Messages: ${this.messages.length}`);
 
     await this.persistConversation();
     return result;
@@ -377,19 +418,43 @@ export class CloudWritingEngine {
     const label = this.getBlueprintLabel();
     const clientName = this.clientAtom?.title || 'the client';
 
+    const hasProfile = this.hasBlueprintProfile;
     const planInstruction = `${instruction}
 
 ═══ PHASE 1: STUDY & PLAN ═══
 
-You're about to write a ${this.targetFormat} for ${clientName}. Before you write a single word, you need to reverse-engineer what makes the loaded reference posts work. You're not reading for enjoyment — you're dissecting a machine to understand how each part creates the output. Then you'll build a plan so detailed that writing becomes mechanical execution.
+You're about to write a ${this.targetFormat} for ${clientName}. Before you write a single word, you need to understand exactly what makes the loaded reference posts work — then build a plan so detailed that writing becomes mechanical execution.
 
-Your analysis must be comprehensive — this is where quality is determined. A thin analysis produces a thin plan which produces a thin draft. Spend the tokens. Cover every dimension below.
+Your analysis must be comprehensive — this is where quality is determined. A thin analysis produces a thin plan which produces a thin draft.
 
 ────────────────────────────────────────
-THINK 1: DISSECT THE ${label} (all dimensions in ONE think)
+THINK 1: ${hasProfile ? 'MAP THE BLUEPRINT\'S PHYSICS TO THE CLIENT\'S STORY' : `DISSECT THE ${label}`} (all dimensions in ONE think)
 ────────────────────────────────────────
 
-Call the think tool ONCE to analyze the ${label} across ALL of these dimensions. Find the swipe labeled [${label}] in your loaded examples — this is the post your draft must structurally ${this.hasTruePrimaryBlueprint ? 'mirror' : 'use as its primary reference'}. Work through EVERY item below in a single comprehensive analysis:
+${hasProfile ? `The ${label}'s complete atomic profile is loaded in your context under "BLUEPRINT PHYSICS SPECIFICATION." This was extracted by a dedicated 10-pass deep analysis — DO NOT re-analyze the blueprint's quarks from scratch. Instead, READ the profile and MAP it to the client's story.
+
+For each slide in the blueprint's profile:
+1. READ the slide's quarks: speech act + mechanism, reader delta + mechanism, experiential distance, techniques, frame
+2. DECIDE what client content fills this slot. Cite specific details from the brand story.
+3. NOTE any adaptation needed — where the client's story doesn't have a direct parallel, identify the EMOTIONAL EQUIVALENT that preserves the quark physics.
+4. FLAG slides where the experiential distance target is "zero" — these are the hardest to replicate. The client's version must also be INSIDE the moment (no explaining, no reporting, no "I decided to"). Zero distance = the reader IS there.
+
+Then MAP the macro physics to the client's story:
+- How does the client's story map to the blueprint's arc shape?
+- Which client events become the symmetry break, phase transition?
+- Which client details create the long-range bonds and entanglement pairs?
+- What is the client-specific antimatter? (phrases/structures that would collapse THEIR version)
+
+Also verify from the profile + blueprint body:
+1b. BEAT MAP — confirm slide count and beat functions (the profile's slideQuarks give you the function per slide)
+1c. DENSITY — read the rhythm.densityWaveform from the profile (these ARE your word-count targets per slide, ±10%)
+1d. VISUAL FORMAT — read techniques per slide for formatting cues (line breaks, ALL CAPS, bullets, fragments)
+1e. HOOK ANATOMY — read slide 1's techniques, experiential distance, and the blueprint's actual hook text. Match: Case, Person, Structure, Word count, Ending punctuation.
+1f. TRANSITIONS — read the transitions array (pre-analyzed with mechanisms and swap tests)
+1g. COLD AUDIENCE TEST — still required: read the CLIENT'S story slide by slide as a STRANGER. Flag any slide that references unestablished context or makes emotional jumps without bridges. Note prerequisites.
+1h. FORMAT CONSISTENCY & TENSE — identify from the blueprint body: voice pattern (e.g., "Dad, I..."), tense pattern (consistent past? past→present payoff?), WHERE any shifts occur.`
+
+: `Call the think tool ONCE to analyze the ${label} across ALL of these dimensions. Find the swipe labeled [${label}] in your loaded examples — this is the post your draft must structurally ${this.hasTruePrimaryBlueprint ? 'mirror' : 'use as its primary reference'}. Work through EVERY item below in a single comprehensive analysis:
 
 1a. SLIDE COUNT
     Go through the ${label}'s body text. Each "Slide N" marker (or separator like ---) is a new slide.
@@ -398,117 +463,63 @@ Call the think tool ONCE to analyze the ${label} across ALL of these dimensions.
 1b. BEAT MAP
     For each slide, identify TWO things:
     - Its FUNCTION — what job does this slide do? Common beat functions: Hook, Context, Teach, Prove, Story, Reframe, Reveal, CTA.
-    - Its SPECIFIC CONTENT vs its FUNCTION — note these separately. If a slide shows a luxury gift, the FUNCTION is "gratitude gesture to parent" not "gives luxury watch." When you plan your draft, you'll adapt the FUNCTION to the client's authentic story. Don't force material parallels that don't fit — adapt the emotion and beat function instead.
-
+    - Its SPECIFIC CONTENT vs its FUNCTION — note these separately.
     Write it out: Slide 1 = [Hook] — opens with a surprising claim. Slide 2 = [Context] — explains origin...
-    This beat map is the skeleton of your draft — same number of slides, same beat functions, same order.
 
 1c. DENSITY MEASUREMENT
-    For slides 1, 3, the middle slide, and the last slide of the ${label}, count:
-    - Words: split the text by spaces and count. Write the number.
-    - Sentences: count the periods, question marks, and exclamation marks. Write the number.
-    - Lines: count the line breaks within the slide. Write the number.
-    These are your exact density targets per slide position (±10%). The blueprint's density IS the standard.
+    For slides 1, 3, the middle slide, and the last slide, count: Words, Sentences, Lines.
+    These are your exact density targets per slide position (±10%).
 
 1d. VISUAL FORMAT
-    For each slide, note: bullet points? line breaks within slide? short fragments or flowing sentences? ALL CAPS? Dense paragraph or whitespace? Write a format tag per slide.
+    For each slide, note: bullet points? line breaks? short fragments or flowing sentences? ALL CAPS?
 
 1e. HOOK ANATOMY
-    Look at slide 1 and answer EXACTLY: Case (ALL CAPS / Title Case / lowercase), Person (first/third/second), Structure (sentence skeleton), Word count, Ending punctuation. Your hook must match ALL of these.
+    Slide 1: Case (ALL CAPS / Title / lowercase), Person (first/third/second), Structure (sentence skeleton), Word count, Ending punctuation.
 
 1f. TRANSITIONS
-    For 3-4 consecutive slide pairs, identify the invisible connector ("so..." / "but..." / "and that's when..." / chronological / emotional escalation). Note the pattern.
+    For 3-4 consecutive slide pairs, identify the invisible connector.
 
 1g. COLD AUDIENCE TEST
-    Read slide by slide as a STRANGER. Flag any slide that references unestablished context or makes emotional jumps without bridges. Note prerequisites per slide.
+    Read slide by slide as a STRANGER. Flag unestablished context or emotional jumps.
 
 1h. FORMAT CONSISTENCY & TENSE PATTERN
-    What voice pattern does the ${label} maintain? (e.g., "Dad, I..." dialogue, third-person narration, year markers)
-    What TENSE PATTERN does it use? Options:
-    (a) Consistent past tense throughout
-    (b) Consistent present tense
-    (c) Chronological past → present-tense payoff/resolution at the end (note which slide the shift happens)
-    (d) Mixed with purpose (each shift marks a narrative beat — note where)
-    Your draft must follow the same tense pattern at the same structural positions. Note the pattern and WHERE any shifts occur.
+    Voice pattern, tense pattern (a-d), where shifts occur.
 
 1i. QUARK ANALYSIS (three passes — reference the Quark Layer section in your methodology)
 
-    PASS 1 — MICRO (per slide): For each slide, identify its quark chord AND the mechanism:
-    - Speech act: What is the speaker doing? Name it AND note the writing technique that makes it that speech act.
-      (e.g., "confession — 6 words, direct address, names the failure, no excuse given")
-    - Reader delta: What 1-2 things change in the reader? Name the delta AND what in the TEXT creates it.
-      (e.g., "empathy+ — 'scraping popcorn ceilings' is sensory, reader simulates the experience")
-    - Proof type (if evidence present): What type and WHY that type fits this slide's function?
-    - Motivation (if decision/action): What PRESSURE in the text makes this action feel forced, not random?
-    - Compression (if time skip): Is it earned? What directional signal makes the reader accept the jump?
-    Format per slide: "Slide 4: confession — 6 words, direct, names failure, no excuse. Reader: empathy+ (sensory detail), identification+ (universal gap between expectation and reality). Proof: sensory + contradiction."
+    PASS 1 — MICRO (per slide): Speech act + mechanism, reader delta + text mechanism, proof type, motivation, compression.
+    Format: "Slide 4: confession — 6 words, direct, names failure, no excuse. Reader: empathy+ (sensory detail), identification+ (universal gap)."
 
-    PASS 2 — MESO (per slide pair): For each consecutive pair:
-    - Name the transition type AND the mechanism: what in slide N creates a pressure or question that ONLY slide N+1 resolves?
-    - The inevitability test: could you swap these two slides without the reader noticing? If yes, the transition is broken.
-    Format: "Slide 5→6: doubt→reaffirmation — 'Maybe I should quit' creates reader need to know outcome. '$1M' directly resolves that doubt. Swap: impossible."
+    PASS 2 — MESO (per slide pair): Transition type + mechanism, inevitability test.
+    Format: "Slide 5→6: doubt→reaffirmation — creates reader need to know outcome. Swap: impossible."
 
-    PASS 3 — MACRO (full post): Describe the arc:
-    - Win/loss alternation: does fortune oscillate or plateau? Where are the reversals?
-    - Tension curve: where are the peaks? Where does it breathe?
-    - Internal/external tension: does external success coexist with internal struggle? Where?
-    - Payoff uniqueness: does the ending do something no earlier slide did?
+    PASS 3 — MACRO: Win/loss alternation, tension curve, internal/external tension, payoff uniqueness.
 
-    PASS 4 — RSV TRAJECTORY (the reader's cumulative mind through the whole post):
-    Trace the Reader State Vector at 5 key boundaries — after slide 1, after ~slide 5, at the midpoint, at the phase transition, and at the final slide:
+    PASS 4 — RSV TRAJECTORY at 5 key boundaries: open loops, trust, tension, pattern expectation, frame, energy balance.
+    Then identify: SYMMETRY BREAK, PHASE TRANSITION, ENERGY RESOLUTION, PEAK GRAVITY.
 
-    For each boundary, note:
-    - Open loops: How many active? List them. (Compound gravitational pull — at 4+ the reader can't stop.)
-    - Trust: Low / building / high / maxed? What accumulated it?
-    - Tension: Level and type — external (survival/outcome) or internal (identity/meaning)?
-    - Pattern expectation: What does the reader now expect the next slide to be?
-    - Frame: What kind of story does the reader think this is RIGHT NOW?
-    - Energy balance: How much has been charged (buildup) vs discharged (release)?
+    Compare to the CONTENT PHYSICS CODEX (if present).`}
 
-    Then identify the four physics events:
-    - SYMMETRY BREAK: Which slide breaks the pattern established by slides 1-5? What pattern? This is the post's emotional fulcrum.
-    - PHASE TRANSITION: Which slide shifts the reader's FRAME from story type A to story type B? What are A and B?
-    - ENERGY RESOLUTION: Where does accumulated tension convert to catharsis/meaning/action? Is the resolution proportional to the buildup?
-    - PEAK GRAVITY: At which slide boundary are the most open loops active? Does this coincide with the phase transition?
+Also in the SAME think, cover:
 
-    Compare your findings to the CONTENT PHYSICS CODEX in your context (if present). Does the blueprint follow the statistical patterns (e.g., symmetry break position, open loops at transition)? Where does it deviate? Deviations may be innovations worth preserving OR weaknesses to address.
-
-────────────────────────────────────────
-THINK 2: CROSS-REFERENCE SWIPES + ABSORB CLIENT (all in ONE think)
-────────────────────────────────────────
-
-Call the think tool ONCE more to cover ALL of the following:
-
-SWIPE CALIBRATION (scan 3-5 of the other loaded swipes):
-
-2a. DENSITY RANGE — Count words in 3 swipes' slide 1, middle, and last. The ${label}'s density is your TARGET. The range tells you what's acceptable vs too thin/dense.
-
-2b. FORMAT DNA — What formatting patterns appear in MOST swipes? (line breaks, dashes, sentence length) Things in 5+ swipes = format requirement. Things in 1-2 = that author's style.
-
-2c. WHAT SWIPES TEACH — The swipes demonstrate how abstract rules look in practice. When Voice DNA says "vary sentence length" — what's the ACTUAL range in the swipes? The swipes are the answer key for every rule.
-
-2d. DEPTH RHYTHM — For 3-5 swipes, measure DEPTH per slide — not just word count, but information density. How many facts/details per slide? Some slides are one raw emotional statement with zero facts. Others pack 3 specific numbers into 2 sentences. Note which beat positions are dense with information vs sparse/emotional. Your draft must match this rhythm — don't pad emotional beats with information, and don't strip detail from teaching beats.
-
-2e. QUARK PATTERNS — Cross-reference the quark summaries in your loaded swipes AND the Content Physics Codex (if present in your context). The codex shows statistical laws from all analyzed viral posts in the library.
-    - What transition types repeat across 3+ swipes at similar positions? Do they match the codex's statistics?
-    - What reader deltas are most common at hook, middle, and ending positions?
-    - What arc shapes appear in the best-performing swipes? (Oscillating win/loss? Linear rise? Rise-crash-rise?)
-    - What makes the best swipes' decisions feel motivated vs the weaker ones' decisions feel random?
-    - Where does the blueprint align with the codex's proven patterns? Where does it deviate?
+SWIPE CALIBRATION (scan 3-5 support swipes):
+- DENSITY RANGE: Count words in 3 swipes' slide 1, middle, and last. The ${label}'s density is your TARGET. The range tells you acceptable bounds.
+- FORMAT DNA: What formatting patterns appear in MOST swipes? (line breaks, dashes, sentence length) 5+ swipes = requirement. 1-2 = that author's style.
+- DEPTH RHYTHM: Measure information density per slide. Sparse emotional beats vs dense proof beats. Your draft must match this rhythm.
+- QUARK PATTERNS: ${hasProfile ? 'Cross-reference support swipes\' quark summaries against the blueprint\'s profile. What patterns repeat? Where does the blueprint deviate?' : 'Cross-reference quark summaries across swipes.'}
 
 CLIENT ABSORPTION:
+- REAL DETAILS: Pull every specific detail from the brand story — names, numbers, dates, locations. MANDATORY.
+- VOICE FINGERPRINT: Sentence length targets, banned phrases (memorize), signature phrases (use 2-3 naturally). Read TOP PERFORMING POSTS for rhythm and word choices.
+- LESSONS: Read LEARNED WRITING RULES. Hard rules = non-negotiable. Note how each applies to THIS draft.
 
-3a. REAL DETAILS — Read the brand story. Pull out every specific detail you'll use: names, numbers, dates, locations. These are MANDATORY — a draft without real details is generic. Don't make up details when real ones are loaded.
-
-3b. VOICE FINGERPRINT — Read voice targets: sentence length, banned phrases (memorize them), signature phrases (use 2-3 naturally). Read TOP PERFORMING POSTS — notice rhythm, word choices, formality. Your draft must sound like the same person wrote it.
-
-3c. LESSONS — Read LEARNED WRITING RULES. Hard rules = non-negotiable, automatic rewrite if violated. For each hard rule, note how it applies to THIS specific draft.
+This is ONE think covering the full analysis. Do NOT call think a second time.
 
 ────────────────────────────────────────
-STEP 3: BUILD THE WRITING PLAN
+STEP 2: BUILD THE WRITING PLAN
 ────────────────────────────────────────
 
-Now you have all the data. Call create_writing_plan with a plan structured EXACTLY like this:
+IMMEDIATELY after your think, call create_writing_plan with a plan structured EXACTLY like this:
 
 STRUCTURAL TEMPLATE
 For EACH slide (same count as ${label}), write:
@@ -516,12 +527,15 @@ For EACH slide (same count as ${label}), write:
   Quarks: [speech act — technique that makes it this act] | Reader: [delta — what in the text creates it] | Proof: [type, if present]
   Transition to N+1: [type — what pressure in THIS slide forces the reader to the next? Be specific about the mechanism.]
   Motivation: [if decision/action — what pressure visible in the text?] | Compression: [if time skip — earned/intriguing/confusing? what signal?]
+  Distance: [zero/near/far — ${hasProfile ? 'from blueprint profile' : 'from your analysis'}. zero = inside the moment, no explanation. near = vivid storytelling. far = reporting (almost always wrong). MUST match blueprint.]
+  Techniques: [${hasProfile ? 'from blueprint profile — ' : ''}list every craft move: subject-drop, ALL CAPS, ellipsis, maximum-compression, casual spelling, POV framing, direct address, number formatting, parenthetical aside, repetition, contrast structure, etc.]
+  Dominant Frame: [${hasProfile ? 'from arcQuarks.dominantFrame — ' : ''}every slide must conform to this post's dominant identity: museum_of_failures / chronological_journey / dialogue / tutorial / letter_to_someone / testimony / listicle]
   Entangled with: [slide numbers whose meaning DEPENDS on this slide — if this slide were removed, which others collapse?]
   Prerequisites: [what the audience must already know from previous slides]
-  Words: [target from your density measurement] | Sentences: [target] | Lines: [target]
-  Format: [from your visual format analysis — bullets? breaks? fragments?]
+  Words: [target ${hasProfile ? 'from rhythm.densityWaveform' : 'from your density measurement'}] | Sentences: [target] | Lines: [target]
+  Format: [from ${hasProfile ? 'techniques per slide' : 'your visual format analysis'} — bullets? breaks? fragments?]
   Content: [what specific information goes here — cite real client details by name]
-  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION — translate the blueprint's mechanism into a specific writing direction for the client's version. Include: target word count, sentence structure, what to include vs omit, how it should feel when read aloud, and WHY this technique creates the planned reader delta. Reference the blueprint's actual slide as the model to match. Different blueprints → different WRITE instructions.]
+  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION — translate the blueprint's mechanism into a specific writing direction for the client's version. Include: target word count, target experiential distance, specific techniques to use, sentence structure, what to include vs omit, how it should feel when read aloud, and WHY this technique creates the planned reader delta. Reference the blueprint's actual slide as the model to match. Different blueprints → different WRITE instructions.]
 
 The quark annotations AND WRITE instructions should be SPECIFIC to the blueprint's mechanisms, not generic labels.
 Good quarks: "confession — 10 words, direct address, names the failure, no excuse. Reader: curiosity+ (no explanation = open loop), empathy+ (vulnerability of admitting)."
@@ -596,33 +610,30 @@ This plan is your construction blueprint. Phase 2 will follow it slide by slide.
   }
 
   private async runWritePhase(): Promise<string> {
-    // Swap system prompt to plan + swipe examples (focused context)
-    const originalBlocks = this.blocks;
-
-    const planBlock: WritingBlock = {
-      label: 'Writing Plan',
-      content: `═══ YOUR WRITING PLAN ═══\nFollow this plan EXACTLY. Every detail was derived from studying 20 high-performing examples + client profile + learned rules.\n\n${this.writingPlan}${this.buildStructuredPlanSummary()}`,
-      cacheControl: true, // Plan is stable across Phase 2 iterations — use 4th cache breakpoint (Block1 + Block2 + plan + last user msg = 4)
-    };
-
-    const examplesBlock: WritingBlock = {
-      label: 'Reference Examples',
-      content: this.buildSwipeReferenceBlock(),
-      cacheControl: false, // Covered by message-level cache breakpoint — saves a cache slot
-    };
-
-    // Keep Block 1 (methodology + system prompt + density override) and Block 2 (client intelligence)
-    // as prefix — they're already cached from Phase 1 (Anthropic prefix caching = cache hit).
-    // Without these, the LLM has no writing methodology, no client voice, no brand story.
-    this.blocks = [originalBlocks[0], originalBlocks[1], planBlock, examplesBlock];
-    console.log(`  ✍️ Write phase blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')}`);
+    // CACHE OPTIMIZATION: Keep blocks as [block1, block2, block3a] — same as Phase 1.
+    // This preserves the prefix cache from Phase 1 (~85%+ hit rate on all Phase 2 calls).
+    // Previously we swapped blocks here, which busted the cache and cost ~$0.35/call extra.
+    // The plan and swipe data are either in conversation history or Block 3A already.
+    console.log(`  ✍️ Write phase: keeping stable blocks for cache (${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')})`);
 
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
       content: `Your writing plan is ready. Now write the draft.
 
-You are a ghostwriter. Your job is to produce a draft that LOOKS and FEELS like the loaded reference posts, but talks about ${this.clientAtom?.title || 'the client'}'s topic using their voice. The plan you created tells you exactly what to write in each slide. Follow it mechanically.
+═══ YOUR WRITING PLAN ═══
+${this.writingPlan}${this.buildStructuredPlanSummary()}
+
+═══ WRITE THE DRAFT ═══
+
+You are a ghostwriter. Write the draft NOW using ALL of the following:
+- The WRITING PLAN above — per-slide WRITE instructions with exact craft directions
+- Your FULL Phase 1 analysis (in dynamic context) — your mapping of blueprint physics to client content
+- The blueprint's COMPLETE atomic profile (in system context under "BLUEPRINT PHYSICS SPECIFICATION") — per-slide quarks, transitions, rhythm waveform, physics events, antimatter
+- All swipe full bodies (in system context) — reference these for voice, density, formatting
+- The client's voice fingerprint, brand story, and lessons (in system context)
+
+DO NOT call think — the plan + your analysis + the profile + the swipes ARE your thinking. For each slide: follow the WRITE instruction from your plan, match the blueprint's experiential distance and techniques, reference the corresponding swipe slide for visual shape, and use the client's real details and voice.
 
 ────────────────────────────────────────
 HOW TO WRITE EACH SLIDE
@@ -630,7 +641,13 @@ HOW TO WRITE EACH SLIDE
 
 Work through your plan slide by slide. For each slide:
 
-1. READ YOUR PLAN'S WRITE INSTRUCTION for this slide. It tells you the exact craft direction: word count target, sentence structure, what to include vs omit, how it should feel when read aloud. Follow the WRITE instruction as your primary guide. Then cross-reference the quark annotation — does your slide hit the planned speech act, reader delta, and transition? The WRITE instruction is the HOW. The quarks are the WHAT. Both must be present.
+1. READ YOUR PLAN'S PHYSICS SPEC for this slide:
+   - Target speech act + mechanism (HOW to write it, not just what it is)
+   - Target experiential distance (zero = BE inside the moment. No explaining, no "I decided to." Near = telling a friend. Far = reporting — almost always wrong.)
+   - Target techniques (subject-drop = don't start with "I". ALL CAPS = capitalize the key word. Maximum-compression = cut every word that isn't load-bearing. These are the TOOLS that produce the physics.)
+   - Target reader delta + the text mechanism that creates it
+   - Target frame (in a museum_of_failures, this slide IS a failure — not a step toward one)
+   - WRITE instruction: the specific craft direction. Follow it as your primary guide.
 
 2. LOOK AT THE CORRESPONDING SLIDE in the ${this.getBlueprintLabel()}. Your slide must MATCH ITS SHAPE:
    - If the ${this.getBlueprintLabel()}'s slide 3 has 4 short lines separated by line breaks → yours has 4 short lines separated by line breaks
@@ -644,10 +661,13 @@ Work through your plan slide by slide. For each slide:
 
 5. For slides marked ADAPTED in your plan: match the EMOTION and BEAT FUNCTION of the blueprint slide. Don't copy its literal content. If the blueprint gives a luxury gift and the client's story doesn't have one, write what the CLIENT would actually do at this emotional moment. Authenticity > equivalence.
 
-6. QUARK CHECK — before moving to the next slide:
+6. PHYSICS CHECK — before moving to the next slide:
+   - EXPERIENTIAL DISTANCE: Read your slide. Is it at the target distance? Zero = "Slept in my car" (you ARE there). If yours reads like "I ended up sleeping in my car because I had nowhere else to go" — that's NEAR, not zero. Cut the explanation. Distance is the #1 quality signal.
+   - TECHNIQUES: Does your slide use the planned techniques? If plan says "subject-drop" and your slide starts with "I" — fix it. If plan says "ALL CAPS" on the key word — add it. If plan says "maximum-compression" and you wrote 15 words — cut to 4.
+   - DOMINANT FRAME: Does this slide conform to the post's dominant frame? In a museum_of_failures, even positive events must be FRAMED as losses/traps. "Got promoted" → "Got promoted. Hated it."
    - STATE CHANGE: Does this slide change at least ONE thing in the reader's mind? If nothing changes, the slide is dead weight — rewrite to create a delta.
    - CAUSALITY: Is the transition to the next slide causal? The reader should feel pulled forward. If "and then..." is the only connector, the transition is broken — add the pressure or question that makes the next slide inevitable.
-   - EARNED-NESS: If this is a decision/action, is the motivation VISIBLE in the text? If there's a time jump, is the skip earned? If there's a payoff, was it set up? The reader should never ask "but why?" or "wait, what happened?"
+   - EARNED-NESS: If this is a decision/action, is the motivation VISIBLE in the text? If there's a time jump, is the skip earned? If there's a payoff, was it set up?
    - SPEECH ACT: Does it match your plan? A planned confession should FEEL like a confession (short, direct, specific, no excuse) — not read like a report or narration.
    - RSV TRAJECTORY: Check your plan's RSV targets. At this slide, does the reader's cumulative state match? Are the right loops open? Is trust/tension where it should be? At the symmetry break slide: does your text actually BREAK the pattern? At the phase transition slide: does the reader's frame actually SHIFT?
 
@@ -663,11 +683,12 @@ Work through your plan slide by slide. For each slide:
 THE VISUAL SHAPE TEST
 ────────────────────────────────────────
 
-After writing the full draft, imagine printing your draft and the ${this.getBlueprintLabel()} side by side. Squint so you can't read the words — you can only see the SHAPES. The blocks of text, the whitespace, the line breaks, the bullet indentation.
+Your draft must produce the same PHYSICS as the ${this.getBlueprintLabel()}. ${this.hasBlueprintProfile ? 'The rhythm.densityWaveform in the profile gives you exact word counts per slide. The techniques per slide give you the visual format. The experiential distance per slide gives you the psychological depth.' : 'The density targets in your plan give you exact word counts. The format tags give you the visual shape.'}
 
-They should look like the same document. Same number of sections. Same density per section. Same rhythm of short-lines-then-long-lines or dense-paragraph-then-breathing-space.
+If you squint at both drafts side by side, they should LOOK the same (density, whitespace, formatting).
+If you READ both drafts, they should FEEL the same (distance, techniques, deltas).
 
-The words are different. The visual shape is identical.
+The words are different. The physics are identical.
 
 ────────────────────────────────────────
 WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
@@ -679,6 +700,9 @@ WHAT MAKES A DRAFT FAIL (INSTANT REWRITES)
 - HOOK FORMAT MISMATCH: Your hook doesn't match the ${this.getBlueprintLabel()}'s format (case, person, structure, word count). Fix: rewrite matching the hook specification from your plan.
 - BANNED PHRASES: If any phrase from the BANNED list appears ANYWHERE, replace it immediately. Common traps: "in today's", "leverage", "game-changer", "let that sink in", "this isn't X, this is Y."
 - AI VOICE DRIFT: Sentences getting longer and more sophisticated. Vocabulary feels elevated. Hedging with "perhaps" and "it might be." Fix: rewrite as shorter, more direct, more like the client's real posts.
+- DISTANCE VIOLATION: Your slide reads like a report but the blueprint's slide is zero-distance lived experience. Fix: cut all explanation, put the reader INSIDE the moment. "I decided to leave" → "Left."
+- TECHNIQUE MISMATCH: Blueprint uses subject-drop + maximum-compression, your slide is a full grammatical sentence with "I" subject. Fix: rewrite using the planned techniques.
+- FRAME VIOLATION: Blueprint is museum_of_failures but your slide reads like a success or neutral event. Fix: reframe the same content as a loss, consequence, or absurd moment.
 
 Call write_draft with the complete content.
 
@@ -687,199 +711,116 @@ FINAL CHECK BEFORE SUBMITTING: Count your total slides. Does it match the ${this
     });
 
     const block3b = this.buildDynamicBlock();
-    const result = await this.runConversationLoop('draft', block3b, 'write');
-
-    this.blocks = originalBlocks;
-    return result;
+    return this.runConversationLoop('draft', block3b, 'write');
   }
 
   private async runSelfEditPhase(): Promise<string> {
-    const originalBlocks = this.blocks;
-
-    // Load methodology for quality criteria
-    const methodology = await loadPromptTemplate('methodology');
+    // CACHE OPTIMIZATION: Keep blocks as [block1, block2, block3a] — same as Phase 1 & 2.
+    // This preserves the prefix cache across ALL phases.
+    // Previously we swapped blocks here with a qualityBlock, which busted the cache.
+    // Methodology is already in Block 1. Blueprint profile is already in Block 3A.
+    // Swipe examples stay available in Block 3A (bonus: model can compare draft against them).
+    // Quality rules, plan reference, and blueprint summary go in the user message.
+    console.log(`  ✍️ Self-edit: keeping stable blocks for cache (${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')})`);
 
     const blueprintSummary = this.getBlueprintStructuralSummary();
-
-    const qualityBlock: WritingBlock = {
-      label: 'Self-Edit Context',
-      content: [
-        '═══ SELF-EDIT PASS ═══',
-        'Review the draft against your writing plan and quality rules.',
-        'Run all self-edit checks. Fix any issues. Call write_draft with the corrected version.',
-        '',
-        '--- WRITING PLAN (reference) ---',
-        this.writingPlan || '',
-        '',
-        ...(blueprintSummary ? [blueprintSummary, ''] : []),
-        '--- QUALITY RULES ---',
-        this.buildCriticalRulesReminder(),
-        '',
-        ...(methodology ? ['--- SKILL MODULES (quality criteria) ---', methodology, ''] : []),
-        '--- CURRENT DRAFT ---',
-        this.contentAtom?.body || '[no draft yet]',
-      ].join('\n'),
-      cacheControl: false,
-    };
-
-    // Keep Block 1 (system prompt + density override) and Block 2 (client intelligence) as prefix
-    // for cache hit + full writing context during self-edit
-    this.blocks = [originalBlocks[0], originalBlocks[1], qualityBlock];
-    console.log(`  ✍️ Self-edit blocks: ${this.blocks.map(b => `${b.label}(${(b.content.length / 1024).toFixed(0)}KB)`).join(' + ')}`);
-
-    const structuralCheck = blueprintSummary
-      ? ` Also verify structural fidelity: does your draft's beat sequence match the ${this.getBlueprintLabel()}? Does slide count match? Does hook format match?`
-      : '';
+    const qualityRules = this.buildCriticalRulesReminder();
 
     this.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
-      content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed. You have the writing plan, the ${this.getBlueprintLabel()} structural summary, the quality rules, and the current draft.
+      content: `Self-edit pass. You are now the EDITOR, not the writer. Your job is to catch everything the writer missed.
 
-Call the think tool ONCE to run ALL 8 checks below in a single comprehensive analysis. For each check, write PASS or FAIL with specific evidence (quote the slide text, cite the word count). Then fix everything that fails and call write_draft with the corrected version. If all 8 pass, respond with a brief summary listing each check and its result.
+Your system context contains: the writing methodology (Block 1), the client profile and voice targets (Block 2), the swipe examples${this.hasBlueprintProfile ? ', the blueprint\'s full atomic profile,' : ''} and pattern intelligence (Block 3A). Reference these as needed.
 
-The two hard gates are:
-- CONVERSATIONALITY: slides must sound like speech, not narration or caption copy
-- BLUEPRINT FIDELITY: each slide must still be doing the same job as the blueprint slide in that position
+${blueprintSummary ? `--- BLUEPRINT STRUCTURAL SUMMARY ---\n${blueprintSummary}\n` : ''}${qualityRules ? `--- QUALITY RULES ---\n${qualityRules}\n` : ''}
+Call the think tool ONCE. In this single think, work through FIVE steps in order. Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call think a second time. One think → one write → done.
 
-────────────────────────────────────────
-CHECK 1: SLIDE COUNT
-────────────────────────────────────────
-Procedure:
-- Look at the ${this.getBlueprintLabel()} STRUCTURAL SUMMARY in your context. It says "Slide count: N".
-- Count the slides in your draft (look for "Slide N" markers or --- separators).
-- Compare.
-Pass: Same number. Fail: Different number → add missing slides or merge extras.
+The two hard gates: CONVERSATIONALITY (speech, not narration) and BLUEPRINT FIDELITY (each slide does the same job as the blueprint slide in that position).
 
 ────────────────────────────────────────
-CHECK 2: DENSITY PER SLIDE
+STEP 1 — EXTRACT YOUR DRAFT'S ACTUAL PHYSICS
 ────────────────────────────────────────
-Procedure:
-- Open your writing plan. It has word count targets for each slide position.
-- For your draft's slide 1, split the text by spaces and count words.
-- Compare to the plan's target for slide 1.
-- Repeat for slides 3, the middle slide, and the last slide (minimum 4 spot checks).
-Pass: Each checked slide is within ±10% of the plan target (e.g., 47-word target → 42-52 is pass).
-Fail: Outside ±10% → cut words from too-dense slides or add specific details to too-thin slides.
+For each slide you wrote, identify what you ACTUALLY produced (not what you planned — what you WROTE):
+- Speech act: what is this slide actually doing? (Name based on what you wrote, not what you planned)
+- Reader delta: what genuinely changes in the reader? (Read it fresh — what genuinely changes?)
+- Experiential distance: zero (inside moment, sensory, no explanation), near (telling friend, vivid past tense), far (reporting, formal, observer)?
+- Techniques used: what craft moves did you actually use? (subject-drop? ALL CAPS? maximum-compression? casual spelling? ellipsis? direct address? number formatting?)
+- Frame: how does this slide position its content? (loss, decision, consequence, success, observation, setup, absurd, compression-punch, transformation)
+
+Write compact per slide: "Slide 1: confession | empathy+,curiosity+ | dist=zero | tech=[subject-drop,compression] | frame=loss"
 
 ────────────────────────────────────────
-CHECK 3: VISUAL FORMAT
+STEP 2 — COMPARE PHYSICS TO ${this.hasBlueprintProfile ? 'BLUEPRINT PROFILE' : 'PLAN'}
 ────────────────────────────────────────
-Procedure:
-- Pick slide 3 from your draft and slide 3 from the ${this.getBlueprintLabel()} (in the loaded examples).
-- Compare: same number of lines? Same formatting (bullets, line breaks, fragments vs paragraphs)?
-- Repeat for slide 1 and one other slide.
-Pass: Your slides look like they came from the same template. Fail: Different format → reformat to match.
+Put your draft's physics next to the ${this.hasBlueprintProfile ? 'blueprint\'s atomic profile' : 'plan\'s quarks'}, slide by slide. Flag every mismatch in priority order:
+
+1. EXPERIENTIAL DISTANCE (priority #1): actual vs target. This determines whether the reader FEELS or just PROCESSES.
+   If target is "zero" and your slide reads like "near" or "far" — REWRITE. Zero distance = no explanation, sensory detail, reader simulates directly. "Slept in my car" not "I ended up sleeping in my car because I had nowhere else to go."
+   Far distance is almost always wrong for viral content.
+
+2. TECHNIQUES (priority #2): actual vs target. If target says [subject-drop, maximum-compression] and your slide starts with "I" and has 12 words — technique mismatch.
+   Techniques are the TOOLS that produce the physics. Wrong tools = wrong physics.
+
+3. SPEECH ACT: actual vs target. "confession" vs "report" = MISS.
+   The MECHANISM must match too — if target says "4 words, no explanation" and you wrote 15 words with explanation, the act label might match but the physics don't.
+
+4. DOMINANT FRAME: Does every slide conform to the post's dominant frame?
+   A "success" slide in a "museum_of_failures" post breaks the post's identity. Even positive events must be reframed as losses/traps.
+
+5. READER DELTA: actual vs target. If target says "empathy+" and your slide creates "curiosity+" — different physics, different reader experience. Test: can the reader skip this slide without noticing? If yes, delta is zero.
+
+6. TRANSITION: actual vs target. Can you swap this slide and the next without the reader noticing? If yes, transition is broken. Decision/action slides without visible motivation = broken causality.
 
 ────────────────────────────────────────
-CHECK 4: VOICE MATCH
+STEP 3 — UNIVERSAL CHECKS
 ────────────────────────────────────────
-Procedure:
-- Read your slide 5 as if reading aloud at dinner.
-- Compare to the client's TOP PERFORMING POSTS from the client profile.
-- Do they sound like the same person?
-What voice drift looks like: sentences getting longer/more complex, sophisticated vocabulary, hedging ("perhaps", "it might be"), sounds "written" instead of "spoken."
-Pass: Same person, same day. Fail: Voice drift → rewrite with shorter sentences, client's vocabulary, their signature phrases.
+Run each of these. For each: PASS or FAIL with specific evidence.
+
+SLIDE COUNT: Look at the ${this.getBlueprintLabel()} STRUCTURAL SUMMARY. Count your slides (look for "Slide N" markers or --- separators). Same number? If different → add missing or merge extras.
+
+DENSITY PER SLIDE: Open your writing plan — it has word count targets per slide position. For your draft's slide 1, split text by spaces and count words. Compare to plan target. Repeat for slides 3, the middle slide, and the last slide (minimum 4 spot checks). Pass: each within ±10% of target (e.g., 47-word target → 42-52 is pass). Fail: cut words from too-dense slides or add specific details to too-thin.
+
+VISUAL FORMAT: Pick slide 3 from your draft and slide 3 from the ${this.getBlueprintLabel()} in your loaded examples. Compare: same number of lines? Same formatting (bullets, line breaks, fragments vs paragraphs)? Repeat for slide 1 and one other. Pass: slides look like they came from the same template.
+
+VOICE MATCH: Read your slide 5 as if reading aloud at dinner. Compare to the client's TOP PERFORMING POSTS from the client profile. Do they sound like the same person? What voice drift looks like: sentences getting longer/more complex, sophisticated vocabulary, hedging ("perhaps", "it might be"), sounds "written" instead of "spoken." Pass: same person, same day. Fail: rewrite with shorter sentences, client's vocabulary, their signature phrases.
+
+SPECIFICITY: Count every specific detail in your draft: numbers, names, dates, places, dollar amounts, percentages. Count the same in the ${this.getBlueprintLabel()}. Pass: your count is within 50% of the blueprint's count. Fail: replace generic claims with real details from the brand story.
+
+HOOK FORMAT: Compare your hook (slide 1) to the ${this.getBlueprintLabel()}'s hook on 5 properties: Case (ALL CAPS/lowercase/Title), Person (first/third/second), Structure (sentence skeleton), Length (±5 words), Ending punctuation. All 5 must match.
+
+COLD AUDIENCE FLOW: Read your draft from slide 1 to end as a COMPLETE STRANGER who has never seen this person. For each slide ask: "Do I understand this based ONLY on what previous slides told me?" Flag any slide that: references a role/relationship/place not yet established (e.g., "my head chef" before saying they worked as a chef), makes an emotional jump without a bridge (e.g., "I want to destroy myself" → "I quit everything" with no WHY), uses inside knowledge the audience doesn't have. Example fix: "My head chef threw his cigarette on the floor" → either cut it, or add "Mom, I started working in a kitchen..." before it.
+
+FORMAT CONSISTENCY & TENSE: Identify the voice pattern established in slides 1-3 (e.g., "Mom, I..." dialogue, year markers, first-person narration). Read every slide — does each maintain that exact pattern? Flag any that break it (switches to narration, drops address, changes person/tense). TENSE CHECK: Identify every point where tense changes. Is each shift at a structural beat transition (story→payoff)? Or random mid-section? Tense shifts only at narrative arc transitions.
 
 ────────────────────────────────────────
-CHECK 5: SPECIFICITY
+STEP 4 — THREE FORCES + RSV PHYSICS + PLAN ALL FIXES
 ────────────────────────────────────────
-Procedure:
-- Count every specific detail in your draft: numbers, names, dates, places, dollar amounts, percentages.
-- Count the same in the ${this.getBlueprintLabel()}.
-Pass: Your count is within 50% of the ${this.getBlueprintLabel()}'s count. Fail: Too few → replace generic claims with real details from the brand story.
 
-────────────────────────────────────────
-CHECK 6: HOOK FORMAT
-────────────────────────────────────────
-Procedure:
-- Compare your hook (slide 1) to the ${this.getBlueprintLabel()}'s hook on 5 properties:
-  Case (ALL CAPS/lowercase/Title), Person (first/third/second), Structure (sentence skeleton), Length (±5 words), Ending punctuation.
-Pass: All 5 match. Fail: Any mismatch → rewrite the hook to match.
+STATE CHANGE: For each slide, does it change at least ONE reader state? A zero-delta slide (nothing changes) is dead weight — the reader's mind processes it without transitioning. Consecutive slides changing SAME thing in SAME direction are redundant — combine or differentiate.
 
-────────────────────────────────────────
-CHECK 7: COLD AUDIENCE FLOW
-────────────────────────────────────────
-Procedure:
-- Read your draft from slide 1 to the end as a COMPLETE STRANGER who has never seen this person.
-- For each slide, ask: "Do I understand this based ONLY on what the previous slides told me?"
-- Flag any slide that:
-  • References a role, relationship, or place not yet established (e.g., "my head chef" before saying they worked as a chef)
-  • Makes an emotional jump without a bridge (e.g., "I want to destroy myself" → "I quit everything" with no reason WHY)
-  • Uses inside knowledge the audience doesn't have yet
+CAUSALITY: For each slide pair, is the transition causal? Insert "so...", "but...", or "that's when..." between them. If none fits AND you can swap them unnoticed, the transition is broken. The arc should show win/loss oscillation. If 3+ consecutive slides are all wins or all losses, the rhythm is broken.
 
-Pass: Every slide is self-contained or builds on what came before. A stranger follows the entire story.
-Fail: Any slide references unestablished context or makes an unexplained jump.
-Fix: Add a bridge slide before the confusing one, or rewrite to be self-explanatory.
-Example fix: "My head chef threw his cigarette on the floor" → either cut it, or add "Mom, I started working in a kitchen..." before it.
+EARNED-NESS: For major moments (decisions, losses, payoffs, relational callbacks): was this moment set up by earlier slides? A relational payoff ("Dad, thank you") requires prior relational investment. Is any compression earned? A time jump after an emotional slide with no directional signal = confusing, not intriguing. Is the ending payoff UNIQUE? If it repeats an earlier slide's beat, the post deflates instead of resolving.
 
-────────────────────────────────────────
-CHECK 8: FORMAT CONSISTENCY & TENSE
-────────────────────────────────────────
-Procedure:
-- Identify the voice pattern established in slides 1-3 (e.g., "Mom, I..." dialogue, year markers, first-person narration).
-- Read every slide. Does each one maintain that exact pattern?
-- Flag any slide that breaks it (switches to narration, drops the address, changes person/tense).
-- TENSE CHECK: Identify every point where tense changes. Is each shift at a structural beat transition (story→payoff)? Or is it random mid-section?
-
-Pass: Every slide matches the established pattern. The voice never breaks. Tense shifts only at narrative arc transitions (e.g., past story → present-tense resolution/payoff).
-Fail: Any slide breaks the pattern, or tense switches randomly mid-section.
-Fix: Rewrite the breaking slide to match. If the pattern is "Mom, I..." then EVERY slide must be addressed to Mom.
-
-────────────────────────────────────────
-CHECK 9: QUARK INTEGRITY (the three forces)
-────────────────────────────────────────
-Procedure:
-Read your draft against the quark annotations in your plan. Check the three fundamental forces:
-
-STATE CHANGE: For each slide, does it change at least ONE reader state?
-- A zero-delta slide (nothing changes) is dead weight — the reader's mind processes it without transitioning.
-- If you find a dead slide: cut it, merge it with an adjacent slide, or rewrite to create a delta.
-- Consecutive slides that change the SAME thing in the SAME direction are redundant — combine or differentiate.
-
-CAUSALITY: For each slide pair, is the transition causal?
-- Insert "so...", "but...", or "that's when..." between them. If none fits AND you can swap them unnoticed, the transition is broken.
-- Decision/action slides without visible motivation = broken causality. The reader asks "but why?" Fix: add the motivation (even one clause: "I couldn't do this forever, so I quit").
-- The arc should show win/loss oscillation. If 3+ consecutive slides are all wins or all losses, the rhythm is broken.
-
-EARNED-NESS: For major moments (decisions, losses, payoffs, relational callbacks):
-- Was this moment set up by earlier slides? A relational payoff ("Dad, thank you") requires prior relational investment.
-- Is any compression earned? A time jump after an emotional slide with no directional signal = confusing, not intriguing.
-- Is the ending payoff UNIQUE? If it repeats an earlier slide's beat, the post deflates instead of resolving.
-
-RSV PHYSICS: Check the four physics events against your plan:
+RSV PHYSICS:
 - ENERGY CONSERVATION: Count open loops at the post's peak. Count resolutions by the end. If major loops are unresolved or the biggest tension resolves in 1 weak line after 10+ slides of buildup, the energy balance is broken. Fix: add resolution or strengthen the payoff.
 - SYMMETRY BREAKING: Read slides 1-5, note what pattern they establish. Find the slide that BREAKS it. If no pattern breaks — the post has no emotional core. If the break is too early (before tension peaks) or too late (no time to resolve), adjust.
 - PHASE TRANSITION: Identify where the reader's frame shifts from story type A to type B. If you can describe the post as ONLY one story type start to finish, the phase transition is missing. The strongest posts are TWO stories — the frame shifts mid-post.
 - CUMULATIVE GRAVITY: At the phase transition point, are there 3+ active open loops? If fewer, the reader might scroll away before the transition hits. Open more loops in the first half.
 
-QUARK AUDIT (slide-by-slide precision check):
+ENTANGLEMENT: For each entangled pair in the plan — if you removed your slide X, would your slide Y still make sense? If the bond is broken, fix BOTH sides.
 
-STEP 1 — EXTRACT YOUR DRAFT'S ACTUAL QUARKS: Before comparing, identify what you ACTUALLY wrote. For each slide, extract:
-- What speech act IS this slide performing? (Name it based on what you wrote, not what you planned)
-- What reader delta does it ACTUALLY create? (Read it fresh — what genuinely changes?)
-- What is the actual transition mechanism to the next slide?
-Write compact: "Slide 1: [actual act] | [actual delta] | → [actual transition to 2]"
+DETECTABILITY: Read the full draft as a SKEPTIC. Flag any slide where the engineering is visible: generic motivation language, manufactured emotional beats, mechanical transitions, CTA that breaks voice. Invisible physics = powerful. Visible physics = collapsed.
 
-STEP 2 — COMPARE TO PLAN: Put your draft's quarks next to the plan's quarks, slide by slide:
-- SPEECH ACT: Does the actual act match the planned act? "confession" vs "report" = MISS.
-  Check if the MECHANISM from the WRITE instruction is present (word count, structure, what's included/omitted).
-- READER DELTA: Does the actual delta match? "tension+" vs "identification+" = different physics.
-  Test: can the reader skip this slide without noticing? If yes, delta is zero.
-- TRANSITION: Does the actual bridge match? Can you swap this slide and the next? If yes, broken.
-- WRITE INSTRUCTION: Does the specific craft technique from the WRITE field appear in your text?
-
-STEP 3 — ENTANGLEMENT CHECK: For each entangled pair in the plan — if you removed your slide X, would your slide Y still make sense? If the bond is broken, fix BOTH sides.
-
-STEP 4 — DETECTABILITY: Read the full draft as a SKEPTIC. Flag any slide where the engineering is visible: generic motivation language, manufactured emotional beats, mechanical transitions, CTA that breaks voice. Invisible physics = powerful. Visible physics = collapsed.
-
-For each MISS: rewrite using the WRITE instruction from your plan.
-
-Pass: Every slide has a delta, every transition is causal, every major moment is earned, the arc oscillates, energy is conserved, the pattern breaks, the frame shifts, gravity peaks at the transition, AND every slide's actual quarks match the planned quarks.
-Fail: Fix flagged slides and call write_draft.
+NOW PLAN ALL FIXES: For each flagged issue, write the specific fix — what slide, what changes, what the corrected text should achieve. Priority order: distance > techniques > speech act > frame > delta > transition > universal checks.
 
 ────────────────────────────────────────
-After all 9 checks: fix failures and call write_draft, or respond with a summary if all passed.`,
+STEP 5 — MENTALLY APPLY AND VERIFY
+────────────────────────────────────────
+Before writing: mentally apply ALL your planned fixes. Re-read the corrected draft in your head. Does it now pass every check? Does the arc oscillate? Does energy conserve? Does the pattern break? Does the frame shift? Are distance and techniques correct on every slide? Would a stranger follow every slide? Does the voice match the client's real posts?
+
+Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call think again. One think → one write → done.`,
       timestamp: new Date().toISOString(),
     });
 
@@ -899,7 +840,6 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
       result = await this.runConversationLoop('draft', this.buildDynamicBlock(), 'edit');
     }
 
-    this.blocks = originalBlocks;
     return result;
   }
 
@@ -1176,8 +1116,8 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
       }
 
       // Detect extended analysis — nudge after consecutive thinks
-      // Pipeline phases (plan/write/edit) expect 2 consolidated thinks max, so nudge earlier
-      const thinkNudgeThreshold = pipelineStep ? 2 : 4;
+      // Pipeline phases: think ONCE then act. Revisions: allow 1-2 thinks for complex feedback.
+      const thinkNudgeThreshold = pipelineStep ? 1 : 2;
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;
@@ -1220,7 +1160,7 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
         const thought = (args.thought as string) || '';
         const wordCount = thought.split(/\s+/).length;
 
-        // Log full think content — essential for debugging and optimizing the writing system
+        // Log full think content — essential for debugging Content Physics pipeline
         const thinkTopics: string[] = [];
         if (/slide|density|word.?count/i.test(thought)) thinkTopics.push('density');
         if (/beat|hook|structure/i.test(thought)) thinkTopics.push('structure');
@@ -1229,28 +1169,37 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
         if (/rule|lesson|ban/i.test(thought)) thinkTopics.push('rules');
         if (/plan|outline|approach/i.test(thought)) thinkTopics.push('planning');
         if (/edit|check|fix|rewrite|correct/i.test(thought)) thinkTopics.push('editing');
+        // Content Physics topics
         if (/speech act|reader delta|quark|transition.*→|inevitability|state change|causality|earned/i.test(thought)) thinkTopics.push('quarks');
+        if (/experiential.?distance|zero.?distance|near.?distance|far.?distance/i.test(thought)) thinkTopics.push('distance');
+        if (/technique|subject.?drop|all.?caps|compression|ellipsis|casual.?spelling/i.test(thought)) thinkTopics.push('techniques');
+        if (/dominant.?frame|museum.?of|chronological|dialogue|tutorial|letter.?to|testimony|listicle/i.test(thought)) thinkTopics.push('frame');
+        if (/symmetry.?break|phase.?transition|peak.?gravity|energy.?(conservation|resolution)/i.test(thought)) thinkTopics.push('physics-events');
+        if (/rsv|reader.?state|open.?loop|superposition|entangle/i.test(thought)) thinkTopics.push('rsv');
+        if (/antimatter|destroy|collapse|annihilate/i.test(thought)) thinkTopics.push('antimatter');
+        if (/arc.?shape|win.?loss|reversal|tension.?peak/i.test(thought)) thinkTopics.push('arc');
         // Structured JSON log — Railway renders as ONE expandable entry
         console.log(JSON.stringify({ type: '💭 THINK', words: wordCount, topics: thinkTopics, content: thought }));
 
         // Track analysis depth for pre-write/outline gate
         if (wordCount > 200) {
           this.analysisDepth++;
-          // Always capture substantial analysis — no keyword gating
-          this.writingContext.latestAnalysis = thought.substring(0, 4000);
+          // Capture FULL analysis — no truncation. With fewer think calls (2 vs 4),
+          // total think content is smaller than before even without truncation.
+          this.writingContext.latestAnalysis = thought;
           // Also capture into specific buckets IF keywords match (additive, not exclusive)
           if (/swipe|pattern|density|hook|voice|structure|transition|punctuation/i.test(thought)) {
-            this.writingContext.swipePatternAnalysis = thought.substring(0, 4000);
+            this.writingContext.swipePatternAnalysis = thought;
           }
           if (/plan|approach|strategy|will write|going to|outline|structure/i.test(thought)) {
-            this.writingContext.structuralPlan = thought.substring(0, 2000);
+            this.writingContext.structuralPlan = thought;
           }
           this.writingContext.analysisDepth = this.analysisDepth;
         }
 
         // Capture self-review findings
         if (this.hasCompletedSelfReview && wordCount > 100) {
-          this.writingContext.selfReviewFindings = thought.substring(0, 2000);
+          this.writingContext.selfReviewFindings = thought;
         }
 
         // Guard against garbage/truncated thinks — never confirm ultra-short thoughts
@@ -1263,25 +1212,31 @@ After all 9 checks: fix failures and call write_draft, or respond with a summary
           return `Analysis received (${wordCount} words). Before writing, ensure you've analyzed your loaded swipes through EVERY lens: density patterns, punctuation usage, hook mechanics, voice characteristics, transition patterns, CTA structure. Reference the Slide Density, Dinner Table Test, Voice Matching, Hook Craft, Causal Chaining, and CTA Craft modules in your context for what to look for.`;
         }
 
-        // Quality signal check — ensure first think is genuinely comprehensive (not just long)
+        // Quality signal check — ensure first think covers Content Physics dimensions
         if (this.analysisDepth === 1 && wordCount >= 200) {
           const hasDensity = /\d+\s*words/.test(thought) && /slide\s*\d/i.test(thought);
           const hasBeatMap = /\[(Hook|Context|Teach|Prove|Story|Reframe|Reveal|CTA)\]/i.test(thought);
           const hasHookAnalysis = /(case|person|structure).{0,40}(hook|slide.?1)/i.test(thought);
           const hasTensePattern = /tense.{0,30}(past|present|pattern)/i.test(thought);
           const hasQuarks = /(speech act|reader delta|quark|transition.*→|inevitability|state change|causality)/i.test(thought);
-          const signals = [hasDensity, hasBeatMap, hasHookAnalysis, hasTensePattern, hasQuarks];
+          const hasDistance = /experiential.?distance|zero.?distance|distance.{0,10}(zero|near|far)/i.test(thought);
+          const hasTechniques = /technique|subject.?drop|all.?caps|compression/i.test(thought);
+          const hasPhysicsMapping = /map|mapping|client.{0,20}(content|story|detail)|adapt/i.test(thought);
+          const signals = [hasDensity, hasBeatMap, hasHookAnalysis, hasTensePattern, hasQuarks, hasDistance, hasTechniques, hasPhysicsMapping];
           const signalCount = signals.filter(Boolean).length;
 
-          if (signalCount < 4) {
+          if (signalCount < 5) {
             const missing: string[] = [];
-            if (!hasDensity) missing.push('DENSITY: Count actual words per slide in the blueprint');
-            if (!hasBeatMap) missing.push('BEAT MAP: Label each slide with function [Hook/Context/Teach/etc.]');
-            if (!hasHookAnalysis) missing.push('HOOK ANATOMY: Case, person, structure of slide 1');
-            if (!hasTensePattern) missing.push('TENSE PATTERN: Identify the tense pattern and where shifts occur');
-            if (!hasQuarks) missing.push('QUARKS: Run the three-pass quark analysis (micro/meso/macro) on the blueprint');
-            console.log(`    ⚠️ Think quality check: ${signalCount}/4 signals (missing: ${missing.join(', ')})`);
-            return `Analysis received (${wordCount} words) but missing key dimensions:\n${missing.map(m => `- ${m}`).join('\n')}\n\nContinue your analysis and cover the missing dimensions. These are critical for a quality plan.`;
+            if (!hasDensity) missing.push('DENSITY: Word counts per slide position');
+            if (!hasBeatMap) missing.push('BEAT MAP: Slide functions [Hook/Context/Teach/etc.]');
+            if (!hasHookAnalysis) missing.push('HOOK: Case, person, structure of slide 1');
+            if (!hasTensePattern) missing.push('TENSE: Pattern and shift positions');
+            if (!hasQuarks) missing.push('QUARKS: Speech acts + reader deltas per slide');
+            if (!hasDistance) missing.push('DISTANCE: Experiential distance per slide (zero/near/far)');
+            if (!hasTechniques) missing.push('TECHNIQUES: Craft moves per slide (subject-drop, ALL CAPS, etc.)');
+            if (!hasPhysicsMapping) missing.push('MAPPING: Client content mapped to blueprint physics');
+            console.log(`    ⚠️ Think quality: ${signalCount}/8 physics signals (missing: ${missing.join(', ')})`);
+            return `Analysis received (${wordCount} words) but missing key Content Physics dimensions:\n${missing.map(m => `- ${m}`).join('\n')}\n\nContinue your analysis and cover the missing dimensions. These are critical for a physics-accurate plan.`;
           }
         }
 
@@ -1526,12 +1481,24 @@ If ALL checks pass, present the draft.
         const hasBeatLabels = (plan.match(/\[(Hook|Context|Teach|Prove|Story|Reframe|Reveal|CTA)\]/gi) || []).length;
         const hasBannedSection = /banned|ban list/i.test(plan);
         const hasHookSpec = /hook.*(case|person|structure|caps)/i.test(plan);
+        // Content Physics plan signals
+        const hasDistanceTargets = (plan.match(/distance.{0,5}(zero|near|far)/gi) || []).length;
+        const hasTechniqueEntries = (plan.match(/technique|subject.?drop|all.?caps|compression|ellipsis/gi) || []).length;
+        const hasDominantFrame = /dominant.?frame/i.test(plan);
+        const hasWriteInstructions = (plan.match(/WRITE:/gi) || []).length;
+        const hasAntimatter = /antimatter/i.test(plan);
+        const hasRSV = /rsv|reader.?state/i.test(plan);
+
         console.log(`    📋 Plan created: ${planWords} words`);
-        console.log(`    📋 Plan quality: ${hasSlideEntries} slide entries, ${hasWordCounts} word count targets, ${hasBeatLabels} beat labels, banned section: ${hasBannedSection ? 'yes' : 'NO'}, hook spec: ${hasHookSpec ? 'yes' : 'NO'}`);
-        if (hasSlideEntries < 3) console.log(`    ⚠️ Plan has few slide entries (${hasSlideEntries}) — may not have per-slide detail`);
-        if (hasWordCounts < 2) console.log(`    ⚠️ Plan has few word count targets (${hasWordCounts}) — density may be vague`);
+        console.log(`    📋 Structure: ${hasSlideEntries} slides, ${hasBeatLabels} beat labels, ${hasWordCounts} word targets, ${hasWriteInstructions} WRITE instructions`);
+        console.log(`    📋 Physics: ${hasDistanceTargets} distance targets, ${hasTechniqueEntries} technique refs, frame=${hasDominantFrame ? 'yes' : 'NO'}, antimatter=${hasAntimatter ? 'yes' : 'NO'}, RSV=${hasRSV ? 'yes' : 'NO'}`);
+        console.log(`    📋 Quality: banned=${hasBannedSection ? 'yes' : 'NO'}, hook_spec=${hasHookSpec ? 'yes' : 'NO'}`);
+        if (hasSlideEntries < 3) console.log(`    ⚠️ Few slide entries (${hasSlideEntries}) — may lack per-slide detail`);
+        if (hasWordCounts < 2) console.log(`    ⚠️ Few word count targets (${hasWordCounts}) — density may be vague`);
+        if (hasDistanceTargets < 2) console.log(`    ⚠️ Few distance targets (${hasDistanceTargets}) — experiential distance may be unspecified`);
+        if (hasWriteInstructions < 3) console.log(`    ⚠️ Few WRITE instructions (${hasWriteInstructions}) — craft direction may be vague`);
         // Structured JSON log — Railway renders as ONE expandable entry
-        console.log(JSON.stringify({ type: '📋 PLAN', words: planWords, slideEntries: hasSlideEntries, wordCountTargets: hasWordCounts, beatLabels: hasBeatLabels, content: plan }));
+        console.log(JSON.stringify({ type: '📋 PLAN', words: planWords, slideEntries: hasSlideEntries, wordCountTargets: hasWordCounts, beatLabels: hasBeatLabels, distanceTargets: hasDistanceTargets, techniqueRefs: hasTechniqueEntries, writeInstructions: hasWriteInstructions, content: plan }));
 
         return `Writing plan created (${planWords} words). Structured slide contract: ${structuredPlan.slides.length} slides. The engine will now switch to WRITE mode with focused context. Your plan will drive the draft.`;
       }

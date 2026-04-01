@@ -1,216 +1,369 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/PhysicsReaderJourneyView.swift
-// Reader state vector trajectory — multi-line visualization + tap for detail
+// Reader investment trajectory — Swift Charts area chart with physics event overlays
 
+import Charts
 import SwiftUI
 
 struct PhysicsReaderJourneyView: View {
     let simulation: [ReaderState]
     let rsvPoints: [RSVPoint]
     let physicsEvents: PhysicsEvents?
-
-    @State private var selectedSlide: Int?
+    @Binding var selectedSlide: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            Text("READER JOURNEY")
-                .font(DS.caption)
-                .tracking(1.2)
-                .foregroundStyle(DS.textMuted)
-
+            sectionHeader
             if !simulation.isEmpty {
-                readerChart
-                selectedDetail
+                investmentChart
+                chartLegend
+                selectedSlideDetail
             } else if !rsvPoints.isEmpty {
                 rsvSummary
             } else {
-                Text("No reader simulation data")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                emptyState
             }
         }
         .padding(DS.space16)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+        .dsRestingShadow()
+    }
+}
+
+// MARK: - Header & Empty State
+
+private extension PhysicsReaderJourneyView {
+    var sectionHeader: some View {
+        Text("READER JOURNEY")
+            .font(DS.caption)
+            .tracking(1.2)
+            .foregroundStyle(DS.orange)
     }
 
-    @ViewBuilder
-    private var readerChart: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            // Investment progression as colored bar segments
-            HStack(spacing: 0) {
-                ForEach(simulation) { state in
-                    let isSelected = selectedSlide == state.afterSlide
-                    Rectangle()
-                        .fill(investmentColor(state.investmentLevel ?? "low"))
-                        .frame(height: 24)
-                        .overlay {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .stroke(DS.accent, lineWidth: 2)
-                            }
-                        }
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.2)) {
-                                selectedSlide = isSelected ? nil : state.afterSlide
-                            }
-                        }
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: DS.radiusXSmall))
+    var emptyState: some View {
+        Text("No reader simulation data")
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
+    }
+}
 
-            // Slide number labels
-            HStack(spacing: 0) {
-                ForEach(simulation) { state in
-                    Text("\(state.afterSlide)")
-                        .font(.system(size: 7, weight: .medium, design: .monospaced))
-                        .foregroundStyle(DS.textMuted)
-                        .frame(maxWidth: .infinity)
-                }
-            }
+// MARK: - Investment Chart
 
-            // Physics event markers
-            eventMarkers
-
-            // Legend
-            HStack(spacing: DS.space12) {
-                legendItem(color: DS.textMuted.opacity(0.3), label: "Low")
-                legendItem(color: DS.info.opacity(0.5), label: "Medium")
-                legendItem(color: DS.orange.opacity(0.7), label: "High")
-                legendItem(color: DS.red, label: "Locked In")
-            }
-            .font(.system(size: 9))
+private extension PhysicsReaderJourneyView {
+    var investmentChart: some View {
+        Chart {
+            chartAreaAndLine
+            chartSelectedPoint
+            chartEventRules
+        }
+        .frame(height: 160)
+        .chartXScale(domain: 1 ... max(simulation.map(\.afterSlide).max() ?? 1, 1))
+        .chartYScale(domain: 0.5 ... 4.5)
+        .chartYAxis { yAxisContent }
+        .chartXAxis { xAxisContent }
+        .chartOverlay { proxy in
+            chartDragOverlay(proxy: proxy)
         }
     }
 
-    @ViewBuilder
-    private var eventMarkers: some View {
+    @ChartContentBuilder
+    var chartAreaAndLine: some ChartContent {
+        ForEach(simulation) { state in
+            AreaMark(
+                x: .value("Slide", state.afterSlide),
+                y: .value("Investment", numericLevel(for: state.investmentLevel))
+            )
+            .foregroundStyle(
+                .linearGradient(
+                    colors: [DS.orange.opacity(0.4), DS.orange.opacity(0.08)],
+                    startPoint: .bottom,
+                    endPoint: .top
+                )
+            )
+            .interpolationMethod(.catmullRom)
+
+            LineMark(
+                x: .value("Slide", state.afterSlide),
+                y: .value("Investment", numericLevel(for: state.investmentLevel))
+            )
+            .foregroundStyle(DS.orange)
+            .lineStyle(StrokeStyle(lineWidth: 2))
+            .interpolationMethod(.catmullRom)
+        }
+    }
+
+    @ChartContentBuilder
+    var chartSelectedPoint: some ChartContent {
+        if let slide = selectedSlide,
+           let state = simulation.first(where: { $0.afterSlide == slide }) {
+            PointMark(
+                x: .value("Slide", state.afterSlide),
+                y: .value("Investment", numericLevel(for: state.investmentLevel))
+            )
+            .foregroundStyle(DS.orange)
+            .symbolSize(64)
+        }
+    }
+
+    @ChartContentBuilder
+    var chartEventRules: some ChartContent {
         if let events = physicsEvents {
-            HStack(spacing: DS.space8) {
-                if let brk = events.symmetryBreak?.slideNumber, brk > 0 {
-                    Text("⚡ Break @\(brk)")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(DS.orange)
-                }
-                if let pt = events.phaseTransition?.slideNumber, pt > 0 {
-                    Text("🔮 Transition @\(pt)")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(DS.info)
-                }
-                if let pg = events.peakGravity?.slideNumber, pg > 0 {
-                    Text("🌀 Gravity @\(pg)")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(DS.entitySwipe)
-                }
+            if let brk = events.symmetryBreak?.slideNumber, brk > 0 {
+                RuleMark(x: .value("Event", brk))
+                    .foregroundStyle(DS.orange.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+            if let pt = events.phaseTransition?.slideNumber, pt > 0 {
+                RuleMark(x: .value("Event", pt))
+                    .foregroundStyle(DS.info.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+            if let pg = events.peakGravity?.slideNumber, pg > 0 {
+                RuleMark(x: .value("Event", pg))
+                    .foregroundStyle(DS.entitySwipe.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
             }
         }
     }
 
-    @ViewBuilder
-    private var selectedDetail: some View {
-        if let slideNum = selectedSlide, let state = simulation.first(where: { $0.afterSlide == slideNum }) {
-            VStack(alignment: .leading, spacing: DS.space6) {
-                Text("After Slide \(slideNum)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.text)
-
-                if let emotion = state.dominantEmotion {
-                    detailRow(label: "Emotion", value: emotion, color: DS.entitySwipe)
-                }
-                if let investment = state.investmentLevel {
-                    detailRow(label: "Investment", value: investment, color: investmentColor(investment))
-                }
-                if let prediction = state.prediction, !prediction.isEmpty {
-                    detailRow(label: "Predicts", value: prediction, color: DS.info)
-                }
-                if let questions = state.activeQuestions, !questions.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Open Questions (\(questions.count))")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DS.textMuted)
-                        ForEach(questions.prefix(5), id: \.self) { q in
-                            Text("• \(q)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textSecondary)
-                        }
-                    }
-                }
-                if let assumptions = state.builtAssumptions, !assumptions.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Assumptions Built")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DS.textMuted)
-                        ForEach(assumptions.prefix(3), id: \.self) { a in
-                            Text("• \(a)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textSecondary)
-                        }
-                    }
-                }
+    @AxisContentBuilder
+    var yAxisContent: some AxisContent {
+        AxisMarks(values: [1, 2, 3, 4]) { value in
+            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                .foregroundStyle(DS.border)
+            AxisValueLabel {
+                Text(yAxisLabel(for: value.as(Int.self) ?? 1))
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
             }
-            .padding(DS.space12)
-            .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
-            .transition(.opacity)
         }
     }
 
-    @ViewBuilder
-    private var rsvSummary: some View {
-        ForEach(rsvPoints) { point in
-            HStack(spacing: DS.space8) {
-                Text("@\(point.afterSlide)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(DS.text)
-                    .frame(width: 30)
-                if let loops = point.openLoops {
-                    Text("\(loops.count) loops")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DS.info)
-                }
-                if let trust = point.trust {
-                    Text(trust)
-                        .font(.system(size: 9))
-                        .foregroundStyle(DS.green)
-                }
-                if let frame = point.frame {
-                    Text(frame)
-                        .font(.system(size: 9))
+    @AxisContentBuilder
+    var xAxisContent: some AxisContent {
+        AxisMarks(values: Array(simulation.map(\.afterSlide))) { value in
+            AxisValueLabel {
+                if let slide = value.as(Int.self) {
+                    Text("\(slide)")
+                        .font(DS.caption2)
+                        .monospacedDigit()
                         .foregroundStyle(DS.textMuted)
+                }
+            }
+            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                .foregroundStyle(DS.borderSubtle)
+        }
+    }
 
+    func chartDragOverlay(proxy: ChartProxy) -> some View {
+        GeometryReader { geometry in
+            Rectangle()
+                .fill(Color.clear)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            let origin = geometry[proxy.plotFrame!].origin
+                            let location = CGPoint(
+                                x: drag.location.x - origin.x,
+                                y: drag.location.y - origin.y
+                            )
+                            if let slideValue: Int = proxy.value(atX: location.x) {
+                                let nearest = simulation
+                                    .min(by: { abs($0.afterSlide - slideValue) < abs($1.afterSlide - slideValue) })
+                                withAnimation(.snappy(duration: 0.15)) {
+                                    selectedSlide = nearest?.afterSlide
+                                }
+                            }
+                        }
+                        .onEnded { _ in
+                            withAnimation(.snappy(duration: 0.15)) {
+                                selectedSlide = nil
+                            }
+                        }
+                )
+        }
+    }
+}
+
+// MARK: - Legend
+
+private extension PhysicsReaderJourneyView {
+    var chartLegend: some View {
+        HStack(spacing: DS.space12) {
+            legendItem(color: DS.orange, label: "Investment", dashed: false)
+            if physicsEvents != nil {
+                legendItem(color: DS.info, label: "Open Loops", dashed: true)
+            }
+        }
+    }
+
+    func legendItem(color: Color, label: String, dashed: Bool) -> some View {
+        HStack(spacing: 4) {
+            if dashed {
+                dashedLegendLine(color: color)
+            } else {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(color)
+                    .frame(width: 14, height: 3)
+            }
+            Text(label)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    func dashedLegendLine(color: Color) -> some View {
+        HStack(spacing: 2) {
+            ForEach(0..<3, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color)
+                    .frame(width: 3, height: 2)
+            }
+        }
+        .frame(width: 14)
+    }
+}
+
+// MARK: - Selected Slide Detail
+
+private extension PhysicsReaderJourneyView {
+    @ViewBuilder
+    var selectedSlideDetail: some View {
+        if let slideNum = selectedSlide,
+           let state = simulation.first(where: { $0.afterSlide == slideNum }) {
+            slideDetailCard(slideNum: slideNum, state: state)
+                .transition(.opacity)
+        }
+    }
+
+    func slideDetailCard(slideNum: Int, state: ReaderState) -> some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            Text("After Slide \(slideNum)")
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+
+            detailFields(state: state)
+            questionsSection(state: state)
+            assumptionsSection(state: state)
+        }
+        .padding(DS.space12)
+        .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    @ViewBuilder
+    func detailFields(state: ReaderState) -> some View {
+        if let emotion = state.dominantEmotion {
+            detailRow(label: "Emotion", value: emotion, color: DS.entitySwipe)
+        }
+        if let investment = state.investmentLevel {
+            detailRow(label: "Investment", value: investment, color: DS.orange)
+        }
+        if let prediction = state.prediction, !prediction.isEmpty {
+            detailRow(label: "Predicts", value: prediction, color: DS.info)
+        }
+    }
+
+    @ViewBuilder
+    func questionsSection(state: ReaderState) -> some View {
+        if let questions = state.activeQuestions, !questions.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Open Questions (\(questions.count))")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                ForEach(questions.prefix(5), id: \.self) { q in
+                    Text("- \(q)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func detailRow(label: String, value: String, color: Color) -> some View {
+    func assumptionsSection(state: ReaderState) -> some View {
+        if let assumptions = state.builtAssumptions, !assumptions.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Assumptions Built")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                ForEach(assumptions.prefix(3), id: \.self) { a in
+                    Text("- \(a)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
+                }
+            }
+        }
+    }
+
+    func detailRow(label: String, value: String, color: Color) -> some View {
         HStack(spacing: DS.space6) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 65, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.callout)
                 .foregroundStyle(color)
         }
     }
+}
 
-    @ViewBuilder
-    private func legendItem(color: Color, label: String) -> some View {
-        HStack(spacing: 3) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color)
-                .frame(width: 12, height: 8)
-            Text(label)
-                .foregroundStyle(DS.textMuted)
+// MARK: - RSV Fallback
+
+private extension PhysicsReaderJourneyView {
+    var rsvSummary: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            ForEach(rsvPoints) { point in
+                rsvRow(point: point)
+            }
         }
     }
 
-    private func investmentColor(_ level: String) -> Color {
-        switch level.lowercased() {
-        case "locked-in", "locked in": return DS.red
-        case "high": return DS.orange.opacity(0.7)
-        case "medium", "building": return DS.info.opacity(0.5)
-        default: return DS.textMuted.opacity(0.3)
+    func rsvRow(point: RSVPoint) -> some View {
+        HStack(spacing: DS.space8) {
+            Text("@\(point.afterSlide)")
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
+                .frame(width: 30)
+            if let loops = point.openLoops {
+                Text("\(loops.count) loops")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.info)
+            }
+            if let trust = point.trust {
+                Text(trust)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.green)
+            }
+            if let frame = point.frame {
+                Text(frame)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+    }
+}
+
+// MARK: - Helpers
+
+private extension PhysicsReaderJourneyView {
+    func numericLevel(for level: String?) -> Int {
+        switch (level ?? "low").lowercased() {
+        case "locked-in", "locked in": return 4
+        case "high": return 3
+        case "medium", "building": return 2
+        default: return 1
+        }
+    }
+
+    func yAxisLabel(for value: Int) -> String {
+        switch value {
+        case 1: return "Low"
+        case 2: return "Med"
+        case 3: return "High"
+        case 4: return "Locked"
+        default: return ""
         }
     }
 }

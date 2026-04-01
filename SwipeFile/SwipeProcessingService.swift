@@ -172,7 +172,7 @@ final class SwipeProcessingService {
             return nil
         }
 
-        let mediaData: InstagramMediaData
+        var mediaData: InstagramMediaData
         do {
             mediaData = try await InstagramMediaCache.shared.getMedia(for: url)
         } catch {
@@ -180,6 +180,23 @@ final class SwipeProcessingService {
             atom.processingStatus = "error"
             _ = try? await AtomRepository.shared.update(atom)
             return nil
+        }
+
+        // Retry once for likely carousel URLs that got incomplete extraction
+        let urlPath = url.path.lowercased()
+        let isLikelyCarousel = urlPath.contains("/p/") || urlPath.contains("/share/p/")
+        if isLikelyCarousel
+            && (mediaData.carouselItems ?? []).isEmpty
+            && mediaData.videoURL == nil
+            && mediaData.thumbnailURL != nil {
+            print("SwipeProcessingService: Likely carousel but no items extracted, retrying for \(uuid)")
+            try? await Task.sleep(for: .seconds(2))
+            await MainActor.run { InstagramMediaCache.shared.invalidate(for: url) }
+            if let retryData = try? await InstagramMediaCache.shared.getMedia(for: url),
+               let retryItems = retryData.carouselItems, !retryItems.isEmpty {
+                print("SwipeProcessingService: Retry succeeded — got \(retryItems.count) carousel items for \(uuid)")
+                mediaData = retryData
+            }
         }
 
         // Update status
@@ -248,6 +265,14 @@ final class SwipeProcessingService {
             if isVideoContent {
                 transcriptionResult.quality = .degraded
                 let warning = "Video extraction failed; transcript was generated from a thumbnail only."
+                if !transcriptionResult.warnings.contains(warning) {
+                    transcriptionResult.warnings.append(warning)
+                }
+            }
+
+            if isLikelyCarousel {
+                transcriptionResult.quality = .degraded
+                let warning = "Carousel extraction incomplete; only the first slide was transcribed."
                 if !transcriptionResult.warnings.contains(warning) {
                     transcriptionResult.warnings.append(warning)
                 }

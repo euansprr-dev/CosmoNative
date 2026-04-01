@@ -185,6 +185,7 @@ YOUR ANALYSIS: DISCOVER THE LAWS
 Work through these 9 phases IN ORDER. Each builds on the last.
 
 PHASE 1 — RAW OBSERVATION: Read every profile. Catalog everything that appears across multiple posts. What appears in 90%+ of posts? What appears in top-scoring (8+) but not lower? What appears in one format but not others? What never appears together? What always appears together? What surprised you?
+Additionally examine: What experiential distance patterns appear (zero/near/far distributions)? Do top-scoring posts have different distance distributions than lower-scoring ones? What craft techniques appear most frequently? Are there techniques that ONLY appear in high-scoring posts? What dominant frames exist in the dataset? Do some frames correlate with higher scores than others?
 
 PHASE 2 — QUANTIFICATION: For every pattern, attach numbers. Frequency (X/${N}). Average hook score with vs without. Format distribution. Position stats (mean, σ, range). Co-occurrence.
 
@@ -213,9 +214,12 @@ PHASE 8 — TEST THESE HYPOTHESES (from our manual analysis of 3 posts):
 12. Participatory Validation: reader-verified claims > all other proof types
 13. Meaning Sandwich: FEELING → SUBSTANCE → FEELING universal structure
 14. V=A/D: Virality = Reader Agency / Engineering Detectability
+15. Experiential Distance: Viral content is predominantly written at zero or near distance. Far distance correlates with lower engagement.
+16. Technique Transfer: The specific craft techniques a blueprint uses must be replicated in the draft — correct quarks with wrong techniques produce flat content.
+17. Dominant Frame Consistency: Every slide in a viral post conforms to the post's dominant frame. Frame violations (a "success" slide in a "museum of failures") break the post's identity.
 For each: CONFIRMED / MODIFIED / DENIED / INSUFFICIENT DATA with evidence.
 
-PHASE 9 — THE LEXICON: Complete vocabulary of content physics. Every term with: definition, category, measurement method, example (post title + slide). Usable by someone who has never read our framework.
+PHASE 9 — THE LEXICON: Complete vocabulary of content physics. Every term with: definition, category, measurement method, example (post title + slide). Usable by someone who has never read our framework. Include experiential distance (zero/near/far), technique inventory (craft moves catalog), and dominant frame (post-level identity) as lexicon entries with definitions, measurements, and examples from the dataset.
 
 Structure your output as 10 parts:
 I. OBSERVATION LOG

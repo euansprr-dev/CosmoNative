@@ -16,6 +16,9 @@ export type ModelTier = 'sensor' | 'strategist' | 'writer';
 export function classifyIntent(text: string): AgentIntent {
   const lower = text.toLowerCase().trim();
 
+  // Inbox prefix — highest priority, fast-path in service.ts
+  if (/^inbox[\s:]/i.test(lower)) return 'capture';
+
   // Quick patterns (highest priority)
   if (/^idea\s+(for\s+)?/i.test(lower) || lower.startsWith('save idea') || lower.startsWith('new idea')) {
     return 'capture';

@@ -56,6 +56,13 @@ struct SlideQuark: Codable, Identifiable {
     let compression: CompressionQuark?
     let resonanceFrequency: ResonanceFrequency?
     let frame: QuarkMechanism?
+    let experientialDistance: QuarkMechanism?  // level: zero/near/far + mechanism
+    let techniques: [TechniqueEntry]?         // craft moves that produce the quarks
+}
+
+struct TechniqueEntry: Codable {
+    let technique: String
+    let usage: String?
 }
 
 struct ResonanceFrequency: Codable {
@@ -95,6 +102,7 @@ struct ArcQuarks: Codable {
     let winLossReversals: Int?
     let sparseDensePattern: String?
     let internalExternalTension: InternalExternalTension?
+    let dominantFrame: QuarkMechanism?  // post-level identity (museum_of_failures, dialogue, etc.)
 
     // tensionPeaks: Opus may output [Int], [{"slide":N}], or other shapes — decode flexibly
     let tensionPeaks: [FlexibleJSONValue]?

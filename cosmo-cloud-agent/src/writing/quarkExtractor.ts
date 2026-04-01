@@ -58,6 +58,18 @@ For EVERY slide, extract:
 4. MOTIVATION — If decision/action: what PRESSURE makes it inevitable, not random?
 5. COMPRESSION — If time skip: how large, what earns it, intrigue or confusion?
 6. FRAME — How does this slide POSITION itself? Is it a loss, decision, consequence, success, observation, setup, absurd, compression-punch, or transformation? The frame determines how the reader CATEGORIZES this information. A "museum of failures" post frames nearly every slide as a loss. A tutorial frames as steps. Name the frame AND explain why.
+7. EXPERIENTIAL DISTANCE — How close is the writer to the event?
+   zero (inside the moment, sensory, no explanation — "Slept in my car"),
+   near (telling a friend, vivid past tense — "Had $1k left to my name"), or
+   far (reporting, formal, observer — "I made the decision to leave").
+   Name the distance AND identify what specific text creates it
+   (word choice, tense, level of explanation, sensory detail presence).
+8. TECHNIQUES — What specific craft moves does this slide use? List EVERY
+   technique: ALL CAPS, ellipsis, subject drop, casual spelling, present
+   tense shift, POV framing, direct address, number formatting, maximum
+   compression, parenthetical aside, repetition, contrast structure, or
+   any other technique you observe. Name each one and note its specific
+   usage on this slide. These are the TOOLS that produce the quarks.
 
 PASS 2 — MESO QUARKS (per slide pair):
 For EVERY consecutive pair:
@@ -71,6 +83,11 @@ PASS 3 — MACRO QUARKS:
 2. TENSION CURVE — Where are peaks? Where does it breathe? Single peak, multiple, or sustained?
 3. SPARSE/DENSE RHYTHM — Which slides sparse (raw emotion, few words), which dense (details/proof)?
 4. INTERNAL/EXTERNAL TENSION — Does external success coexist with internal struggle? Where?
+5. DOMINANT FRAME — What is the overarching identity of this ENTIRE post?
+   museum_of_failures / chronological_journey / dialogue / tutorial /
+   letter_to_someone / testimony / listicle / other (name it).
+   The dominant frame determines what Frame quark most slides should have.
+   Explain WHY this is the dominant frame and how it shapes every slide.
 
 PASS 4 — RSV TRAJECTORY:
 Trace the Reader State Vector at 5 boundaries (after slide 1, after ~slide 5, midpoint, most powerful moment, final slide):
@@ -127,9 +144,9 @@ Write 500-1000 words of free-form synthesis. Cite specific slides, quarks, reade
 Output ONLY valid JSON matching this exact schema (no markdown, no explanation outside JSON):
 {
   "version": 1,
-  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}, "frame": {"type": "loss", "mechanism": "..."}}],
+  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}, "frame": {"type": "loss", "mechanism": "..."}, "experientialDistance": {"level": "zero", "mechanism": "4 words, no explanation — reader simulates directly"}, "techniques": [{"technique": "subject-drop", "usage": "implied 'I' — starts with verb"}, {"technique": "maximum-compression", "usage": "2 words, no context"}]}],
   "transitions": [{"from": 1, "to": 2, "type": "...", "mechanism": "...", "swapTestPasses": false, "doubleHelix": true, "doubleHelixDetail": "..."}],
-  "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}},
+  "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}, "dominantFrame": {"type": "museum_of_failures", "mechanism": "Hook establishes 'L's' framing — every slide IS a loss"}},
   "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging", "superpositionCount": 2, "superpositions": ["success story", "love letter"]}]},
   "physicsEvents": {"symmetryBreak": {"slideNumber": 0, "patternEstablished": "...", "whatBreaks": "...", "whyDevastating": "..."}, "phaseTransition": {"slideNumber": 0, "frameBefore": "...", "frameAfter": "...", "recontextualization": "..."}, "energyResolution": {"proportional": true, "loopsClosed": [{"loop": "...", "closedAtSlide": 0}], "loopsUnclosed": [], "assessment": "..."}, "peakGravity": {"slideNumber": 0, "activeLoops": 0, "coincidesWithTransition": true}},
   "novelDiscoveries": ["..."],

@@ -64,6 +64,7 @@ struct PhysicsSlideQuarksView: View {
                 deltasPills(quark)
                 propertyPill("Proof", quark.proofType?.type, DS.green)
                 propertyPill("Motive", quark.motivation?.type, DS.orange)
+                propertyPill("Dist", quark.experientialDistance?.type, distanceColor(for: quark.experientialDistance?.type ?? ""))
             }
             .padding(DS.space10)
             .frame(width: 150, alignment: .leading)
@@ -132,6 +133,8 @@ struct PhysicsSlideQuarksView: View {
             optionalRow(label: "Motivation", qm: quark.motivation, color: DS.orange)
             compressionRow(quark)
             optionalRow(label: "Frame", qm: quark.frame, color: DS.orange)
+            experientialDistanceRow(quark)
+            techniquesSection(quark)
             resonanceCard(quark)
         }
         .padding(DS.space12)
@@ -193,6 +196,53 @@ struct PhysicsSlideQuarksView: View {
                 DS.entitySwipe.frame(width: 3).clipShape(.rect(cornerRadius: 2))
             }
             .background(DS.entitySwipe.opacity(DS.opacitySubtle), in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        }
+    }
+
+    // MARK: - Experiential Distance
+
+    @ViewBuilder
+    private func experientialDistanceRow(_ quark: SlideQuark) -> some View {
+        if let ed = quark.experientialDistance {
+            quarkRow(label: "Distance", type: ed.type, mechanism: ed.mechanism, color: distanceColor(for: ed.type ?? ""))
+        }
+    }
+
+    private func distanceColor(for level: String) -> Color {
+        switch level.lowercased() {
+        case "zero": return DS.red
+        case "near": return DS.orange
+        case "far": return DS.textMuted
+        default: return DS.textMuted
+        }
+    }
+
+    // MARK: - Techniques
+
+    @ViewBuilder
+    private func techniquesSection(_ quark: SlideQuark) -> some View {
+        if let techniques = quark.techniques, !techniques.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Techniques")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                ForEach(Array(techniques.enumerated()), id: \.offset) { _, tech in
+                    HStack(spacing: DS.space4) {
+                        Text(tech.technique)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.info)
+                            .padding(.horizontal, DS.space4)
+                            .padding(.vertical, 1)
+                            .background(DS.info.opacity(DS.opacitySubtle), in: Capsule())
+                        if let usage = tech.usage, !usage.isEmpty {
+                            Text(usage)
+                                .font(DS.caption2)
+                                .foregroundStyle(DS.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
         }
     }
 

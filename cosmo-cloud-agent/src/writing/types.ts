@@ -121,6 +121,7 @@ export interface CompressedSwipe {
   structuralRecipe: string;   // Step-by-step writing recipe
   voiceMarkers: string[];     // Voice traits (e.g., ["conversational", "data-driven"])
   quarkSummary?: QuarkSummary; // Pre-extracted Content Physics summary (from Opus extraction)
+  fullQuarkProfile?: QuarkProfile; // Full atomic profile — only populated for primary blueprint
 }
 
 // ============================================================
@@ -155,6 +156,8 @@ export interface QuarkProfile {
     compression?: { type: string; size: string; mechanism: string };
     resonanceFrequency?: { detail: string; unspokenExperience: string; estimatedReach: string };
     frame?: { type: string; mechanism: string };
+    experientialDistance?: { level: string; mechanism: string };  // zero | near | far
+    techniques?: Array<{ technique: string; usage: string }>;    // craft moves that produce the quarks
   }>;
 
   transitions: Array<{
@@ -177,6 +180,7 @@ export interface QuarkProfile {
       peakSlide: number;
       description: string;
     };
+    dominantFrame?: { type: string; mechanism: string };  // post-level identity (museum_of_failures, dialogue, tutorial, etc.)
   };
 
   rsv: {

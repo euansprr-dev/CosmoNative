@@ -5,242 +5,298 @@ import SwiftUI
 
 struct PhysicsBondsView: View {
     let interactions: LongRangeInteractions?
+    let totalSlides: Int
+    @Binding var selectedSlide: Int?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            HStack {
-                Text("LONG-RANGE BONDS")
-                    .font(DS.caption)
-                    .tracking(1.2)
-                    .foregroundStyle(DS.textMuted)
-                Spacer()
-                if let bonds = interactions?.setupPayoffBonds {
-                    Text("\(bonds.count) bonds")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: DS.space16) {
+            headerRow
             if let inter = interactions {
-                bondsList(inter)
-                entanglementList(inter)
-                echoList(inter)
-                interferenceList(inter)
-                absenceList(inter)
+                bondArcSection(inter)
+                entanglementSection(inter)
+                echoSection(inter)
+                interferenceSection(inter)
+                absenceSection(inter)
             } else {
-                Text("No long-range interaction data")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                emptyState
             }
         }
         .padding(DS.space16)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+        .dsRestingShadow()
     }
 
+    // MARK: - Header
+
     @ViewBuilder
-    private func bondsList(_ inter: LongRangeInteractions) -> some View {
+    private var headerRow: some View {
+        HStack {
+            Text("LONG-RANGE BONDS")
+                .font(DS.caption)
+                .tracking(1.2)
+                .foregroundStyle(DS.entityConnection)
+            Spacer()
+            if let bonds = interactions?.setupPayoffBonds {
+                Text("\(bonds.count) bonds")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.entityConnection)
+            }
+        }
+    }
+
+    // MARK: - Empty
+
+    @ViewBuilder
+    private var emptyState: some View {
+        Text("No long-range interaction data")
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
+    }
+
+    // MARK: - Bond Cards
+
+    @ViewBuilder
+    private func bondArcSection(_ inter: LongRangeInteractions) -> some View {
         if let bonds = inter.setupPayoffBonds, !bonds.isEmpty {
-            ForEach(bonds.sorted(by: { ($0.distance ?? 0) > ($1.distance ?? 0) })) { bond in
-                bondRow(bond)
+            VStack(alignment: .leading, spacing: DS.space8) {
+                ForEach(bonds.sorted(by: { ($0.distance ?? 0) > ($1.distance ?? 0) })) { bond in
+                    bondCard(bond)
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func bondRow(_ bond: SetupPayoffBond) -> some View {
-        VStack(alignment: .leading, spacing: DS.space4) {
-            HStack(spacing: DS.space6) {
+    private func bondCard(_ bond: SetupPayoffBond) -> some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            HStack(spacing: DS.space8) {
                 Text("Slide \(bond.setupSlide)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(DS.caption)
+                    .monospacedDigit()
                     .foregroundStyle(DS.text)
-
-                DashedLine()
-                    .stroke(DS.entitySwipe.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .frame(height: 1)
-
+                Image(systemName: "arrow.right")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.entityConnection)
+                    .accessibilityHidden(true)
                 Text("Slide \(bond.payoffSlide)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(DS.caption)
+                    .monospacedDigit()
                     .foregroundStyle(DS.text)
-
                 if let dist = bond.distance {
                     Text("(\(dist) apart)")
-                        .font(.system(size: 9))
+                        .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
             }
-
             if let planted = bond.planted {
-                HStack(spacing: DS.space4) {
-                    Text("planted:")
-                        .font(.system(size: 9, weight: .semibold))
+                HStack(alignment: .top, spacing: DS.space4) {
+                    Image(systemName: "leaf.fill")
+                        .font(DS.caption2)
                         .foregroundStyle(DS.green)
+                        .accessibilityHidden(true)
                     Text(planted)
                         .font(DS.caption2)
-                        .foregroundStyle(DS.textSecondary)
-
+                        .foregroundStyle(DS.green)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let harvested = bond.harvested {
-                HStack(spacing: DS.space4) {
-                    Text("harvested:")
-                        .font(.system(size: 9, weight: .semibold))
+                HStack(alignment: .top, spacing: DS.space4) {
+                    Image(systemName: "sparkles")
+                        .font(DS.caption2)
                         .foregroundStyle(DS.entitySwipe)
+                        .accessibilityHidden(true)
                     Text(harvested)
                         .font(DS.caption2)
-                        .foregroundStyle(DS.textSecondary)
-
+                        .foregroundStyle(DS.entitySwipe)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .padding(.vertical, DS.space4)
+        .padding(DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.surfaceHover, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
     }
 
+    // MARK: - Entanglement Pairs
+
     @ViewBuilder
-    private func entanglementList(_ inter: LongRangeInteractions) -> some View {
+    private func entanglementSection(_ inter: LongRangeInteractions) -> some View {
         if let pairs = inter.entanglementPairs, !pairs.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space6) {
+            VStack(alignment: .leading, spacing: DS.space16) {
                 Text("ENTANGLED PAIRS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.red)
+                    .padding(.bottom, DS.space4)
 
                 ForEach(pairs) { pair in
-                    VStack(alignment: .leading, spacing: DS.space4) {
-                        HStack(spacing: DS.space6) {
-                            Text("Slide \(pair.slideA)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            Text("⟷")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(DS.red)
-                            Text("Slide \(pair.slideB)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            Text("(entangled)")
-                                .font(.system(size: 9))
-                                .foregroundStyle(DS.red)
-                        }
-                        if let ifA = pair.ifARemoved {
-                            Text("If \(pair.slideA) removed: \(ifA)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.red.opacity(0.8))
-
-                        }
-                        if let ifB = pair.ifBRemoved {
-                            Text("If \(pair.slideB) removed: \(ifB)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.red.opacity(0.8))
-
-                        }
-                    }
+                    entanglementRow(pair)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func echoList(_ inter: LongRangeInteractions) -> some View {
+    private func entanglementRow(_ pair: EntanglementPair) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space6) {
+                Text("Slide \(pair.slideA)")
+                    .font(DS.caption)
+                    .monospaced()
+                    .foregroundStyle(DS.text)
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
+                    .accessibilityLabel("entangled with")
+                Text("Slide \(pair.slideB)")
+                    .font(DS.caption)
+                    .monospaced()
+                    .foregroundStyle(DS.text)
+            }
+            if let ifA = pair.ifARemoved {
+                Text("If \(pair.slideA) removed: \(ifA)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red.opacity(0.8))
+            }
+            if let ifB = pair.ifBRemoved {
+                Text("If \(pair.slideB) removed: \(ifB)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red.opacity(0.8))
+            }
+        }
+    }
+
+    // MARK: - Echo Patterns
+
+    @ViewBuilder
+    private func echoSection(_ inter: LongRangeInteractions) -> some View {
         if let echoes = inter.echoPatterns, !echoes.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space6) {
-                Text("ECHOES")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
+            VStack(alignment: .leading, spacing: DS.space16) {
+                Text("ECHO PATTERNS")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.info)
+                    .padding(.bottom, DS.space4)
 
                 ForEach(echoes) { echo in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: DS.space4) {
-                            Text("\"\(echo.quarkType)\"")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(DS.info)
-                            if let positions = echo.positions {
-                                Text("@ slides \(positions.map(String.init).joined(separator: ", "))")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(DS.textMuted)
-                            }
-                        }
-                        if let transformation = echo.transformation, !transformation.isEmpty {
-                            Text(transformation)
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textSecondary)
-
-                        }
-                    }
+                    echoRow(echo)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func interferenceList(_ inter: LongRangeInteractions) -> some View {
+    private func echoRow(_ echo: EchoPattern) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space4) {
+                Text(echo.quarkType)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.info)
+                if let positions = echo.positions {
+                    Text("@slides [\(positions.map(String.init).joined(separator: ", "))]")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+            if let transformation = echo.transformation, !transformation.isEmpty {
+                Text(transformation)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
+            }
+        }
+    }
+
+    // MARK: - Interference
+
+    @ViewBuilder
+    private func interferenceSection(_ inter: LongRangeInteractions) -> some View {
         if let interferences = inter.interferences, !interferences.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space6) {
-                Text("INTERFERENCE EFFECTS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
+            VStack(alignment: .leading, spacing: DS.space16) {
+                Text("INTERFERENCE")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.orange)
+                    .padding(.bottom, DS.space4)
 
                 ForEach(interferences) { interference in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: DS.space4) {
-                            if let slides = interference.slides {
-                                Text("@\(slides.map(String.init).joined(separator: ","))")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(DS.text)
-                            }
-                            ForEach(interference.forces, id: \.self) { force in
-                                Text(force)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(DS.orange)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(DS.orangeSoft, in: Capsule())
-                            }
-                        }
-                        if let effect = interference.emergentEffect, !effect.isEmpty {
-                            Text("→ \(effect)")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textSecondary)
-
-                        }
-                    }
+                    interferenceRow(interference)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func absenceList(_ inter: LongRangeInteractions) -> some View {
+    private func interferenceRow(_ interference: Interference) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack(spacing: DS.space4) {
+                if let slides = interference.slides {
+                    Text("@\(slides.map(String.init).joined(separator: ","))")
+                        .font(DS.caption)
+                        .monospaced()
+                        .foregroundStyle(DS.text)
+                }
+                forcePills(interference.forces)
+            }
+            if let effect = interference.emergentEffect, !effect.isEmpty {
+                Text("-> \(effect)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textSecondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func forcePills(_ forces: [String]) -> some View {
+        ForEach(forces, id: \.self) { force in
+            Text(force)
+                .font(DS.caption2)
+                .foregroundStyle(DS.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.orangeSoft, in: Capsule())
+        }
+    }
+
+    // MARK: - Deliberate Absences
+
+    @ViewBuilder
+    private func absenceSection(_ inter: LongRangeInteractions) -> some View {
         if let absences = inter.deliberateAbsences, !absences.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space6) {
+            VStack(alignment: .leading, spacing: DS.space16) {
                 Text("DELIBERATE ABSENCES")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.textMuted)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.red)
+                    .padding(.bottom, DS.space4)
 
                 ForEach(absences) { absence in
-                    HStack(alignment: .top, spacing: DS.space6) {
-                        Text("⊘")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DS.red)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(absence.what)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(DS.text)
-                            if let effect = absence.effect {
-                                Text(effect)
-                                    .font(DS.caption2)
-                                    .foregroundStyle(DS.textMuted)
-    
-                            }
-                        }
-                    }
+                    absenceRow(absence)
                 }
             }
         }
     }
-}
 
-private struct DashedLine: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path { path in
-            path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+    @ViewBuilder
+    private func absenceRow(_ absence: DeliberateAbsence) -> some View {
+        HStack(alignment: .top, spacing: DS.space6) {
+            Image(systemName: "circle.slash")
+                .font(DS.caption)
+                .foregroundStyle(DS.red)
+                .accessibilityLabel("Absent")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(absence.what)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                if let effect = absence.effect {
+                    Text(effect)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+        }
+        .padding(.leading, 4)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(DS.red)
+                .frame(width: 3)
         }
     }
 }

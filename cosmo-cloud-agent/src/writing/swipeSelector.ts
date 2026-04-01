@@ -278,6 +278,7 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
     structuralRecipe: (analysis.structuralRecipe as string) || '',
     voiceMarkers: (analysis.voiceMarkers as string[]) || [],
     quarkSummary: buildQuarkSummaryFromAtom(atom),
+    fullQuarkProfile: isPrimary ? (atom.structured?.contentPhysics as any) : undefined,
   };
 }
 

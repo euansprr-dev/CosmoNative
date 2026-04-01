@@ -218,6 +218,7 @@ final class UnifiedWritingEngine: ObservableObject {
 
     private var cachedBlock1: String?
     private var cachedBlock2: String?
+    private var cachedBlock3A: String?
     private var cachedContextVersion: UUID?
     private var contentAtom: Atom?
     private var clientProfileAtom: Atom?
@@ -439,9 +440,9 @@ final class UnifiedWritingEngine: ObservableObject {
         guard let currentAtom = self.contentAtom else { return }
         await loadClientProfile(contentAtom: currentAtom)
         cachedBlock2 = nil
+        cachedBlock3A = nil
         cachedReferenceMaterial.removeAll()
         buildCachedBlocks(contentAtom: currentAtom)
-        await autoLoadPrimarySwipeBody()
     }
 
     // MARK: - Conversation
@@ -1152,7 +1153,9 @@ final class UnifiedWritingEngine: ObservableObject {
         "add_hooks",
         "write_draft",
         "edit_section",
-        "get_client_profile"
+        "get_client_profile",
+        "read_client_post",
+        "read_swipe_body"
     ]
 
     nonisolated private static func compactedAssistantSummary(
@@ -1344,6 +1347,7 @@ final class UnifiedWritingEngine: ObservableObject {
 
     /// Block 3A: Session-stable swipe/reference context.
     private func assembleStableBlock3() -> String {
+        if let cached = cachedBlock3A { return cached }
         guard let atom = contentAtom else { return "" }
 
         var lines: [String] = []
@@ -1399,26 +1403,15 @@ final class UnifiedWritingEngine: ObservableObject {
             lines.append("")
         }
 
-        // On-demand reference material (loaded via tools, persists across all turns)
-        if !cachedReferenceMaterial.isEmpty {
-            lines.append("")
-            lines.append("=== REFERENCE MATERIAL (loaded on demand — always available) ===")
-            lines.append("These full-text bodies persist across all turns. Reference them directly.")
-            lines.append("")
-            for (key, content) in cachedReferenceMaterial.sorted(by: { $0.key < $1.key }) {
-                lines.append("--- \(key.uppercased()) ---")
-                lines.append(content)
-                lines.append("")
-            }
-        }
-
         // Experience buffer (pre-fetched during initialize)
         if !cachedExperienceBuffer.isEmpty {
             lines.append("")
             lines.append(cachedExperienceBuffer)
         }
 
-        return lines.joined(separator: "\n")
+        let result = lines.joined(separator: "\n")
+        cachedBlock3A = result
+        return result
     }
 
     /// Block 3B: Mutable per-turn context.
@@ -1465,10 +1458,7 @@ final class UnifiedWritingEngine: ObservableObject {
                 }
             }
             if !focusState.draftContent.isEmpty {
-                let draftExcerpt = focusState.draftContent.count > 6000
-                    ? String(focusState.draftContent.prefix(6000)) + "\n... [truncated, \(focusState.draftContent.count) chars total. Use read_draft for full text.]"
-                    : focusState.draftContent
-                lines.append("Current Draft:\n\(draftExcerpt)")
+                lines.append("Current Draft: \(focusState.draftContent.count) chars written. Use read_draft tool to access full text.")
             }
         }
 
@@ -1657,7 +1647,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // read_client_post — always available
         tools.append(buildTool(
             name: "read_client_post",
-            description: "Load a client post's full body text into the REFERENCE MATERIAL section (persists across all turns). Use list_client_posts first to find the post ID.",
+            description: "Read a client post's full body text. Returns the complete post content. Use list_client_posts first to find the post ID.",
             properties: [
                 "post_id": ["type": "string", "description": "The UUID of the client post to load"]
             ],
@@ -1667,7 +1657,7 @@ final class UnifiedWritingEngine: ObservableObject {
         // read_swipe_body — always available
         tools.append(buildTool(
             name: "read_swipe_body",
-            description: "Load a swipe's full body text into the REFERENCE MATERIAL section (persists across all turns). Use the UUID from the swipe examples or search_swipes results.",
+            description: "Read a swipe's full body text. Returns the complete swipe content. Use the UUID from the swipe examples or search_swipes results.",
             properties: [
                 "swipe_id": ["type": "string", "description": "The UUID of the swipe to load"]
             ],
@@ -2530,7 +2520,7 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         lines.append("RECOMMENDATION: Load 4-5 same-format posts + 1-2 underperforming for voice reference.")
-        lines.append("Use read_client_post with the post ID to load body text into REFERENCE MATERIAL.")
+        lines.append("Use read_client_post with the post ID to read the full body text.")
         return lines.joined(separator: "\n")
     }
 
@@ -2542,8 +2532,8 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Check if already loaded
         let cacheKey = "client_post:\(postId.uuidString)"
-        if cachedReferenceMaterial[cacheKey] != nil {
-            return "This client post is already loaded in REFERENCE MATERIAL. Read it directly from the system prompt."
+        if let cached = cachedReferenceMaterial[cacheKey] {
+            return cached
         }
 
         // Find the document
@@ -2570,7 +2560,7 @@ final class UnifiedWritingEngine: ObservableObject {
         """
 
         print("🔧 [UnifiedWritingEngine] Loaded client post into reference material: \(doc.title) (\(bodySize) chars)")
-        return "Loaded \"\(doc.title)\" (\(bodySize) chars) into REFERENCE MATERIAL section. It is now visible in the system prompt above — read it directly from there."
+        return cachedReferenceMaterial[cacheKey]!
     }
 
     private func handleReadSwipeBody(_ input: [String: Any]) async -> String {
@@ -2581,8 +2571,8 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Check if already loaded
         let cacheKey = "swipe:\(swipeUUID.uuidString)"
-        if cachedReferenceMaterial[cacheKey] != nil {
-            return "This swipe body is already loaded in REFERENCE MATERIAL. Read it directly from the system prompt."
+        if let cached = cachedReferenceMaterial[cacheKey] {
+            return cached
         }
 
         // Fetch from database
@@ -2607,7 +2597,7 @@ final class UnifiedWritingEngine: ObservableObject {
         """
 
         print("🔧 [UnifiedWritingEngine] Loaded swipe body into reference material: \(title) (\(body.count) chars)")
-        return "Loaded swipe \"\(title)\" (\(body.count) chars) into REFERENCE MATERIAL section. It is now visible in the system prompt above — read it directly from there."
+        return cachedReferenceMaterial[cacheKey]!
     }
 
     private func handleRunScorecard() async -> String {
@@ -2895,7 +2885,6 @@ final class UnifiedWritingEngine: ObservableObject {
                 print("⚠️ [UnifiedWritingEngine] Same-type swipe shortfall: loaded \(selectedSwipes.count)/\(targetSwipeCount) for \(targetWritingFormat.displayName)")
             }
             await buildClientPostIndex(targetFormat: targetWritingFormat)
-            await autoLoadPrimarySwipeBody()
             return
         }
 
@@ -3026,7 +3015,6 @@ final class UnifiedWritingEngine: ObservableObject {
 
         // Build metadata-only client post index (bodies loaded on demand via tools)
         await buildClientPostIndex(targetFormat: targetWritingFormat)
-        await autoLoadPrimarySwipeBody()
     }
 
     /// Same-type fallback search when scored selection does not fill the target set.
@@ -3251,19 +3239,6 @@ final class UnifiedWritingEngine: ObservableObject {
     }
 
     /// Auto-load the primary (blueprint) swipe body into reference material so it's always available.
-    private func autoLoadPrimarySwipeBody() async {
-        guard let primary = selectedSwipes.first(where: { $0.isPrimary }) else { return }
-        let uuid = primary.id.uuidString
-        guard let atom = try? await database.asyncRead({ db in
-            try Atom.filter(Column("uuid") == uuid).filter(Column("is_deleted") == false).fetchOne(db)
-        }), let body = atom.body, !body.isEmpty else { return }
-        cachedReferenceMaterial["swipe:\(uuid)"] = """
-        [PRIMARY BLUEPRINT SWIPE] "\(primary.title)"
-        Full body text:
-        \(body)
-        """
-        print("🔧 [UnifiedWritingEngine] Auto-loaded primary swipe body: \(primary.title) (\(body.count) chars)")
-    }
 
     /// Format engagement metrics from a ProfileDocument into a human-readable string.
     private func formatEngagement(doc: ProfileDocument?) -> String {

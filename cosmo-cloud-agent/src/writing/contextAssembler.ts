@@ -8,7 +8,7 @@
 // Block 3B (Dynamic): Current content state, outline, hooks, draft preview
 
 import { Atom, fetchAtom, fetchAllByType, loadPromptTemplate } from '../db/queries';
-import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem } from './types';
+import { CompressedSwipe, ContentFormat, formatCompressedSwipe, OutlineItem, QuarkProfile } from './types';
 import { getCodexText } from './codex';
 import { computeSwipeIntelligenceBrief } from './swipeSelector';
 
@@ -16,6 +16,163 @@ export interface WritingBlock {
   label: string;
   content: string;
   cacheControl: boolean;
+}
+
+// ============================================================
+// Content Physics: Format full profile for prompt context
+// ============================================================
+
+export function formatQuarkProfileForPrompt(profile: QuarkProfile): string {
+  const lines: string[] = [];
+
+  // Dominant Frame
+  const df = profile.arcQuarks?.dominantFrame;
+  if (df?.type) {
+    lines.push(`DOMINANT FRAME: ${df.type}${df.mechanism ? ` — ${df.mechanism}` : ''}`);
+    lines.push('');
+  }
+
+  // Slide-by-slide physics
+  if (profile.slideQuarks?.length) {
+    lines.push('SLIDE-BY-SLIDE PHYSICS:');
+    for (const sq of profile.slideQuarks) {
+      lines.push(`Slide ${sq.slideNumber}: "${(sq.text || '').substring(0, 80)}${(sq.text || '').length > 80 ? '...' : ''}"`);
+      lines.push(`  Speech Act: ${sq.speechAct?.type || '?'}${sq.speechAct?.mechanism ? ` — ${sq.speechAct.mechanism}` : ''}`);
+      if (sq.readerDeltas?.length) {
+        lines.push(`  Reader Delta: ${sq.readerDeltas.map(d => `${d.type || '?'}${d.mechanism ? ` (${d.mechanism})` : ''}`).join(', ')}`);
+      }
+      const framePart = sq.frame?.type ? `Frame: ${sq.frame.type}` : '';
+      const distPart = sq.experientialDistance?.level ? `Distance: ${sq.experientialDistance.level}${sq.experientialDistance.mechanism ? ` — ${sq.experientialDistance.mechanism}` : ''}` : '';
+      if (framePart || distPart) {
+        lines.push(`  ${[framePart, distPart].filter(Boolean).join(' | ')}`);
+      }
+      if (sq.techniques?.length) {
+        lines.push(`  Techniques: ${sq.techniques.map(t => `${t.technique}${t.usage ? `: ${t.usage}` : ''}`).join(', ')}`);
+      }
+      if (sq.proofType?.type) lines.push(`  Proof: ${sq.proofType.type}${sq.proofType.mechanism ? ` — ${sq.proofType.mechanism}` : ''}`);
+      if (sq.motivation?.type) lines.push(`  Motivation: ${sq.motivation.type}${sq.motivation.mechanism ? ` — ${sq.motivation.mechanism}` : ''}`);
+      if (sq.compression?.type) lines.push(`  Compression: ${sq.compression.type}${sq.compression.size ? ` (${sq.compression.size})` : ''}${sq.compression.mechanism ? ` — ${sq.compression.mechanism}` : ''}`);
+      if (sq.resonanceFrequency?.detail) lines.push(`  Resonance: ${sq.resonanceFrequency.detail}${sq.resonanceFrequency.estimatedReach ? ` (reach: ${sq.resonanceFrequency.estimatedReach})` : ''}`);
+    }
+    lines.push('');
+  }
+
+  // Transitions
+  if (profile.transitions?.length) {
+    lines.push('TRANSITIONS:');
+    for (const t of profile.transitions) {
+      let line = `${t.from}→${t.to}: ${t.type}${t.mechanism ? ` — ${t.mechanism}` : ''}`;
+      if (t.swapTestPasses === false) line += ' [can\'t swap]';
+      if (t.doubleHelix) line += ` 🧬${t.doubleHelixDetail ? ` ${t.doubleHelixDetail}` : ''}`;
+      lines.push(`  ${line}`);
+    }
+    lines.push('');
+  }
+
+  // Arc
+  if (profile.arcQuarks) {
+    const a = profile.arcQuarks;
+    lines.push(`ARC: ${a.shape || '?'}`);
+    if (a.winLossReversals) lines.push(`  Win/Loss Reversals: ${a.winLossReversals}`);
+    if (a.tensionPeaks?.length) lines.push(`  Tension peaks: slides ${a.tensionPeaks.join(', ')}`);
+    if (a.sparseDensePattern) lines.push(`  Sparse/Dense: ${a.sparseDensePattern}`);
+    if (a.internalExternalTension?.present) {
+      lines.push(`  Internal/External: peaks at slide ${a.internalExternalTension.peakSlide || '?'} — ${a.internalExternalTension.description || ''}`);
+    }
+    lines.push('');
+  }
+
+  // Physics events
+  if (profile.physicsEvents) {
+    const pe = profile.physicsEvents;
+    lines.push('PHYSICS EVENTS:');
+    if (pe.symmetryBreak) {
+      lines.push(`  Symmetry Break: slide ${pe.symmetryBreak.slideNumber || '?'} — ${pe.symmetryBreak.patternEstablished || ''} → ${pe.symmetryBreak.whatBreaks || ''}${pe.symmetryBreak.whyDevastating ? `. ${pe.symmetryBreak.whyDevastating}` : ''}`);
+    }
+    if (pe.phaseTransition) {
+      lines.push(`  Phase Transition: slide ${pe.phaseTransition.slideNumber || '?'} — "${pe.phaseTransition.frameBefore || '?'}" → "${pe.phaseTransition.frameAfter || '?'}"${pe.phaseTransition.recontextualization ? `. ${pe.phaseTransition.recontextualization}` : ''}`);
+    }
+    if (pe.peakGravity) {
+      lines.push(`  Peak Gravity: slide ${pe.peakGravity.slideNumber || '?'} — ${pe.peakGravity.activeLoops || 0} active loops${pe.peakGravity.coincidesWithTransition ? ' (coincides with transition)' : ''}`);
+    }
+    if (pe.energyResolution) {
+      lines.push(`  Energy Resolution: ${pe.energyResolution.proportional ? 'proportional' : 'disproportional'} — ${pe.energyResolution.assessment || ''}`);
+    }
+    lines.push('');
+  }
+
+  // RSV trajectory (compact)
+  if (profile.rsv?.trajectoryPoints?.length) {
+    lines.push('RSV AT KEY BOUNDARIES:');
+    for (const pt of profile.rsv.trajectoryPoints) {
+      let line = `After slide ${pt.afterSlide}: ${pt.openLoops?.count || 0} loops, trust=${pt.trust || '?'}, tension=${pt.tension?.level || '?'}/${pt.tension?.type || '?'}, frame="${pt.frame || '?'}", energy=${pt.energyBalance || '?'}`;
+      if (pt.superpositionCount && pt.superpositionCount > 1) {
+        line += `, ${pt.superpositionCount} superpositions`;
+        if (pt.superpositions?.length) line += ` (${pt.superpositions.join(', ')})`;
+      }
+      lines.push(`  ${line}`);
+    }
+    lines.push('');
+  }
+
+  // Rhythm (compact waveforms)
+  if (profile.rhythm) {
+    const r = profile.rhythm;
+    lines.push('RHYTHM:');
+    if (r.densityWaveform?.length) lines.push(`  Density waveform: [${r.densityWaveform.join(', ')}]`);
+    if (r.energyCurve?.length) lines.push(`  Energy curve: [${r.energyCurve.join(', ')}]`);
+    if (r.informationRate?.length) lines.push(`  Info rate: [${r.informationRate.join(', ')}]`);
+    if (r.silenceSlides?.length) lines.push(`  Silence slides: ${r.silenceSlides.join(', ')}`);
+    if (r.momentumMechanism) lines.push(`  Momentum: ${r.momentumMechanism}`);
+    if (r.pacingPattern) lines.push(`  Pacing: ${r.pacingPattern}`);
+    lines.push('');
+  }
+
+  // Antimatter
+  if (profile.antimatter?.length) {
+    lines.push(`ANTIMATTER: ${profile.antimatter.map(a => `"${a}"`).join(', ')}`);
+    lines.push('');
+  }
+
+  // Long-range bonds (compact)
+  if (profile.longRangeInteractions) {
+    const lri = profile.longRangeInteractions;
+    if (lri.setupPayoffBonds?.length) {
+      lines.push('LONG-RANGE BONDS:');
+      for (const b of lri.setupPayoffBonds) {
+        lines.push(`  Slide ${b.setupSlide} → Slide ${b.payoffSlide} (${b.distance || '?'} apart): planted "${b.planted || '?'}", harvested "${b.harvested || '?'}"`);
+      }
+    }
+    if (lri.entanglementPairs?.length) {
+      lines.push('ENTANGLEMENT:');
+      for (const p of lri.entanglementPairs) {
+        lines.push(`  Slide ${p.slideA} ⟷ Slide ${p.slideB}: if ${p.slideA} removed → ${p.ifARemoved || '?'}. If ${p.slideB} removed → ${p.ifBRemoved || '?'}`);
+      }
+    }
+    if (lri.echoPatterns?.length) {
+      lines.push('ECHO PATTERNS:');
+      for (const e of lri.echoPatterns) {
+        lines.push(`  "${e.quarkType}" @ slides ${e.positions?.join(', ') || '?'}: ${e.transformation || ''}`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Novel discoveries (compact)
+  if (profile.novelDiscoveries?.length) {
+    lines.push(`NOVEL DISCOVERIES: ${profile.novelDiscoveries.join('; ')}`);
+    lines.push('');
+  }
+
+  // Deep fabric excerpt
+  if (profile.deepFabric) {
+    lines.push('DEEP FABRIC (synthesis):');
+    lines.push(profile.deepFabric.substring(0, 800));
+    if (profile.deepFabric.length > 800) lines.push('...');
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 // ============================================================
@@ -434,6 +591,18 @@ export async function assembleBlock3Stable(
     sections.push(codexText);
   }
 
+  // Blueprint Physics Specification (full atomic profile for primary blueprint)
+  const primarySwipeForProfile = swipes.find(s => s.isPrimary && s.fullQuarkProfile);
+  if (primarySwipeForProfile?.fullQuarkProfile) {
+    sections.push('');
+    sections.push('=== BLUEPRINT PHYSICS SPECIFICATION ===');
+    sections.push('(The complete atomic profile of the primary blueprint — extracted via 10-pass deep analysis.');
+    sections.push('This is your replication target. Every quark, transition, and physics event below');
+    sections.push('is what your draft must reproduce using the client\'s content.)');
+    sections.push('');
+    sections.push(formatQuarkProfileForPrompt(primarySwipeForProfile.fullQuarkProfile));
+  }
+
   // Swipe examples
   sections.push(`\n--- SAME-TYPE SWIPE EXAMPLES (${swipes.length} selected) ---`);
   for (const swipe of swipes) {
@@ -816,6 +985,27 @@ THREE SCALES — quarks operate at micro (single slide), meso (slide pairs/trans
    compression-punch (max compression, max impact, no context — "Car accident", "Three lawsuits at once")
    transformation (signals change/forward momentum — "Got DESTROYED... Day 0 im 6'3, 133 pounds")
    The frame quark tells you HOW content is positioned, not WHAT it contains. In a "museum of failures" post, Frame should be loss/consequence/absurd on nearly every slide. In a "tutorial" post, Frame should be step/proof/result. The blueprint's dominant frame IS the frame the draft must replicate.
+
+10. EXPERIENTIAL DISTANCE — How close the writer is to the event in the text.
+   zero: The writer IS inside the moment. Present sensory detail. No explanation. The reader simulates the experience directly. Sounds like: "Slept in my car" / "Car accident" / "A bird jus flew by and shi in my hair bro". Test: Can you FEEL it? Can you see/hear/touch it? Does your body respond?
+   near: The writer is telling a friend about it. Past tense but vivid, specific. The reader hears a story being told with feeling. Sounds like: "Had $1k left to my name so lived in a hotel for a year. Didn't even have a stove". Test: Can you hear someone SAYING this at a dinner table?
+   far: The writer is reporting an event. Formal, explanatory, observer-like. The reader processes information without emotional simulation. Sounds like: "I made the decision to leave medical school two weeks prior to graduation". Test: Does it sound like a resume, a report, or a news article? If yes = too far.
+   In most viral posts, dominant distance is zero or near. Far distance kills empathy+ and identification+. The blueprint's distance IS the target the draft must match.
+
+11. TECHNIQUE INVENTORY — The specific craft moves used on each slide. These are the tools that PRODUCE the quarks, not the quarks themselves.
+   Common techniques (catalog what's ACTUALLY used, not a generic list):
+   ALL CAPS emphasis (words in capitals for emotional peak), ellipsis trailing (... for emotional continuation/silence), subject drop (no "I" — "Got kicked out" not "I got kicked out"), casual spelling (abbreviations, slang: "yrs", "bday", "jus", "shi", "n"), present tense shift (switching from past to present for immediacy), POV framing ("Pov:" prefix), direct address ("bro", "babe" — speaking to someone specific), number formatting (digits not words, full zeros "$30,000,000" not "$30M"), maximum compression (2-4 words for maximum impact, no context), parenthetical aside (age/detail in parentheses: "(18)"), repetition device (same phrase repeated across slides), contrast structure (expectation... reality in same slide with pause)
+   The technique inventory is a CATALOG of what THIS specific slide uses. Different blueprints use different techniques. The writer replicates the blueprint's techniques, not a generic list.
+
+12. DOMINANT FRAME — The overarching identity of the entire post (macro level, not per-slide).
+   museum_of_failures: Every slide IS a loss. Curated list of worst moments. → Dominant slide frame: loss, consequence, absurd, compression-punch
+   chronological_journey: Timeline from point A to B. Year markers, milestones. → Dominant slide frame: varies (loss, success, consequence, transformation)
+   dialogue: Conversation between characters. Back-and-forth format. → Dominant slide frame: proposal, objection, solution, reaction
+   tutorial: Step-by-step instruction. Numbered list, actionable. → Dominant slide frame: step, proof, result, example
+   letter_to_someone: Addressed to a specific person. "Dad, I..." format. → Dominant slide frame: confession, update, gratitude, revelation
+   testimony: "Here's what happened to me." Linear narrative. → Dominant slide frame: event, consequence, realization
+   listicle: "5 things that..." Discrete items, not a continuous narrative. → Dominant slide frame: item, proof, example
+   The dominant frame is the IDENTITY the writer must preserve. If the blueprint is a museum_of_failures, every slide must be framed as a failure — even if the client's story has "positive" events in it.
 
 ## The Reader State Vector (RSV): Synthesis Layer
 

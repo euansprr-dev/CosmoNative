@@ -405,7 +405,7 @@ USER FEEDBACK:
 
     console.log(`\n  ⚛️ ─── Phase 2: WRITE (direct from plan + think + profile) ───`);
     console.log(`  ⚛️ Sources: plan + full Phase 1 analysis + ${this.hasBlueprintProfile ? 'atomic profile' : 'inline analysis'} + swipe bodies`);
-    console.log(`  ⚛️ Mode: NO think — write directly from plan (0 thinks, 1 write_draft)`);
+    console.log(`  ⚛️ Mode: Compose inside think → write_draft (1 think, 1 write)`);
     console.log(`  ⚛️ Blocks: STABLE (full cache hit expected)`);
     await this.runWritePhase();
 
@@ -544,33 +544,39 @@ STEP 2: BUILD THE WRITING PLAN
 
 IMMEDIATELY after your think, call create_writing_plan with a plan structured EXACTLY like this:
 
-PHYSICS MAP
-Divide the blueprint's emotional arc into ZONES. A zone is a stretch of content that does one physics job. The blueprint might achieve a zone in 1 slide; you might need 2. Or vice versa. What matters is the zone's physics land — not the slide count.
+PHYSICS MAP + SLIDE-BY-SLIDE CRAFT PLAN
+First, divide the blueprint's emotional arc into ZONES. Then, for each zone, write per-slide WRITE instructions. You need BOTH the physics understanding AND the concrete craft direction.
 
-For each zone, describe:
-  ZONE N: [emotional job — what the reader should FEEL entering and exiting this zone]
-  Physics: [speech acts, reader deltas, experiential distance — describe WHY they work, not just labels.
-    Example of WHY: "Second-person 'Your' collapses distance between abstract data and daily life.
-    The reader isn't reading about inflation — they're feeling their wallet shrink. That's why distance is zero."]
-  Techniques the blueprint uses: [from profile — these are INSPIRATION, not prescription.
-    You don't have to use the exact same techniques. If the blueprint uses bullet points but short
-    declarative sentences serve the same physics better for your content, use those.]
-  Transition pressure to next zone: [what unresolved tension pushes the reader forward?]
-  Client content: [real details from brand story and research briefing that serve this emotional job]
-  Density feel: sparse / moderate / dense (reference the ACTUAL blueprint body, not waveform numbers)
-  Structure guidance: [approximate slide count (e.g., "2-3 slides"), density per slide
-    (e.g., "each slide 40-60 words"). Get these by READING the blueprint body's corresponding
-    section. This is structural GUIDANCE, not a template to copy.]
-  Antimatter for this zone: [what would kill the physics HERE specifically]
+For each zone:
+  ZONE N: [emotional job — what the reader should FEEL entering and exiting]
+  Physics: [WHY the blueprint's approach works — not just quark labels, but the mechanism.
+    Example: "Second-person 'Your' collapses distance between abstract data and daily life.
+    The reader isn't reading about inflation — they're feeling their wallet shrink."]
+  Transition pressure to next zone: [what pulls the reader forward?]
 
-Where the client's story doesn't have a direct parallel to the blueprint, note:
+Then, for EACH SLIDE within the zone:
+  Slide N: [beat function]
+  Quarks: [speech act — technique that makes it this act] | Reader: [delta — what creates it]
+  Distance: [zero/near/far. zero = inside the moment. near = telling a friend. far = reporting (almost always wrong)]
+  Techniques: [craft moves to use — subject-drop, ALL CAPS, bullets, compression, etc. INSPIRED by the blueprint but not necessarily identical]
+  Content: [what specific client details go here — names, numbers, dates from brand story and research briefing]
+  WRITE: [PRESCRIPTIVE CRAFT INSTRUCTION. How to write this specific slide. Target density
+    (reference the ACTUAL blueprint body's slide length — READ it, don't use waveform numbers).
+    Sentence structure. What to include vs omit. How it should feel when read aloud.
+    WHY this technique creates the planned reader delta. Must pass the Dinner Table Test —
+    would the client say this at dinner?]
+  Dominant Frame: [how this slide positions its content within the post's overall identity]
+
+Good WRITE: "40 words max. 3 dash bullets with 'Your' + specific %. Contrast line breaks the bullet pattern. Agenda line with colon. Should feel like being accused by statistics. Model: blueprint's slide 1 density."
+Bad WRITE: "Write an alarm slide." (too vague — no craft direction)
+
+Where the client's story doesn't have a direct parallel:
   ADAPTED: [blueprint function] → [client equivalent that preserves the physics]
 
-STRUCTURAL GUIDANCE (not structural copying):
+STRUCTURAL GUIDANCE:
 - Total slide count should be SIMILAR to the blueprint (±2-3 slides), not exact.
-- Each slide must fit on a single carousel card. Look at the blueprint body's actual slide lengths.
+- Each slide must fit on a single carousel card. READ the blueprint body's actual slide lengths.
 - Sparse zones feel sparse (1-2 short sentences per slide). Dense zones feel substantive.
-  Match the FEEL of the blueprint body, not waveform numbers.
 - Your formatting may differ from the blueprint. Same physics, your structure.
 - What should NOT differ: the emotional arc, the tension peaks, the physics events, the payoff.
 
@@ -706,22 +712,30 @@ For each zone in your plan:
 After composing every zone inside your think, call write_draft with the complete draft.
 
 ────────────────────────────────────────
-WHILE COMPOSING EACH ZONE
+WHILE COMPOSING EACH SLIDE
 ────────────────────────────────────────
 
-PHYSICS FIRST: The plan tells you what the reader should FEEL. That's your target. Not word count. Not formatting. The emotional effect.
+FOR EACH SLIDE, follow the WRITE instruction from your plan. The WRITE instruction tells you: target density, sentence structure, what to include vs omit, how it should feel when read aloud. Follow it as your primary guide. Then check:
 
-BLUEPRINT AS INSPIRATION: The blueprint body shows you ONE way to achieve the physics. Study it for density (how sparse or dense are its slides?), for voice (how does it phrase things?), for rhythm (short slides vs long slides). Then write YOUR version that creates the same feeling through the client's authentic content.
+1. PHYSICS: Does this slide produce the planned speech act and reader delta? Is the experiential distance right (zero/near/far)? Does it use the planned techniques?
 
-DENSITY FROM THE BODY: Look at the actual blueprint slides in your context. If the blueprint's slides in this zone are ~50 words each, yours should feel similarly concise. If they're ~80 words, yours can be similarly dense. Don't follow numbers from the plan or the waveform — READ the blueprint body.
+2. DENSITY FROM THE BODY: Look at the corresponding section of the BLUEPRINT BODY in your loaded examples. How many words per slide? Match that density — not the plan's numbers, not the waveform. READ the body.
 
-VOICE: Would ${this.clientAtom?.title || 'the client'} say this at dinner? Not at a podium. Not in a caption. At dinner, to a friend. The Dinner Table Test is non-negotiable.
+3. DINNER TABLE TEST: Would ${this.clientAtom?.title || 'the client'} say this exact thing to a friend at dinner? If it sounds like a caption, a thesis statement, news reporting, or marketing copy — it FAILS. Rewrite as speech. Read the client's TOP PERFORMING POSTS in your context — your slides must sound like the same person wrote them.
 
-ORIGINAL STRUCTURE: Your post should NOT be recognizable as the blueprint with different words. Same physics, different structure. If someone saw both posts, they should think "these create the same feeling" not "this is copied."
+4. CLIENT VOICE: Use their real details from the brand story (names, numbers, places). Use their signature phrases where they fit naturally. Keep sentences close to the target length from the voice fingerprint. The client's voice is in Block 2 — reference it.
 
-TENSE: Follow the tense pattern from your plan. Shifts only at structural beat transitions.
+5. BANNED PHRASES: Check every sentence. NO em-dashes. NO "leverage," "game-changer," "let that sink in." NO "This isn't X, this is Y" or ANY variation (Not X. Y. / Forget X. / Less X, more Y.). NO triple-beat patterns (X. Y. Z.). If ANY banned phrase appears, rewrite immediately.
 
-EACH ZONE EARNS ITS PLACE: If a zone doesn't change something in the reader's mind, cut it. If two zones say the same thing, merge. Every zone must introduce something new.
+6. CAUSALITY: Is the transition to the next slide causal? The reader should feel pulled forward. If "and then..." is the only connector, add the pressure or question that makes the next slide inevitable.
+
+7. STATE CHANGE: Does this slide change at least ONE thing in the reader's mind? Zero-delta slides are dead weight.
+
+8. TENSE: Follow the tense pattern from your plan. Shifts only at structural beat transitions. No random tense switching mid-section.
+
+BLUEPRINT AS INSPIRATION, NOT TEMPLATE: Your post should NOT be recognizable as the blueprint with different words. Same physics, different structure. If someone saw both posts, they should think "these create the same feeling" not "this is copied."
+
+EACH ZONE EARNS ITS PLACE: If a zone doesn't change something in the reader's mind, cut it. If two zones say the same thing, merge.
 
 ────────────────────────────────────────
 THE PHYSICS SHAPE TEST
@@ -1159,8 +1173,9 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       }
 
       // Detect extended analysis — nudge after consecutive thinks
-      // Pipeline phases: think ONCE then act. Revisions: allow 1-2 thinks for complex feedback.
-      const thinkNudgeThreshold = pipelineStep ? 1 : 2;
+      // Plan/edit phases: think ONCE then act. Write phase: think ONCE to compose (don't nudge on first think).
+      // Revisions: allow 1-2 thinks for complex feedback.
+      const thinkNudgeThreshold = pipelineStep === 'write' ? 2 : (pipelineStep ? 1 : 2);
       const allThinks = response.toolCalls.every(tc => tc.name === 'think');
       if (allThinks) {
         consecutiveThinks++;

@@ -32,8 +32,14 @@ export async function selectSwipes(
   const allResearch = await fetchAllByType('research', { limit: MAX_SWIPE_POOL * 2 });
   const allSwipes = allResearch.filter(isSwipeFileAtom);
 
+  // Count format distribution for debugging
+  const formatCounts = new Map<string, number>();
+  for (const s of allSwipes) {
+    const f = detectSwipeFormat(s);
+    formatCounts.set(f, (formatCounts.get(f) || 0) + 1);
+  }
   console.log(`    ✍️ Swipe pool: ${allSwipes.length} swipes from ${allResearch.length} research atoms`);
-  // Log first 5 swipe titles for debugging blueprint search mismatches
+  console.log(`    ✍️ Format distribution: ${[...formatCounts.entries()].map(([k, v]) => `${k}=${v}`).join(', ')} | target=${targetFamily}`);
   if (allSwipes.length > 0) {
     const sample = allSwipes.slice(0, 5).map(s => `"${(s.title || '').substring(0, 60)}"`);
     console.log(`    ✍️ Sample titles: ${sample.join(', ')}`);
@@ -64,9 +70,11 @@ export async function selectSwipes(
 
     const isPrimary = primarySwipeUUIDs.includes(swipe.uuid);
 
-    // Axis 1: Format match — soft penalty for wrong format (was hard exclude, but that killed pool diversity)
+    // Axis 1: Format match — hard filter for wrong format (reels ≠ carousels, different physics entirely)
+    // Primary swipes bypass the filter (user explicitly chose them)
     const swipeFormat = detectSwipeFormat(swipe);
-    const formatScore = swipeFormat === targetFamily ? 1.0 : 0.15;
+    if (!isPrimary && swipeFormat !== targetFamily) continue; // Skip wrong format entirely
+    const formatScore = 1.0; // All remaining swipes match format
 
     // Axis 2: Structural — beat pattern quality (check against top patterns)
     const fingerprint = analysis.beatFingerprint as string;
@@ -91,6 +99,8 @@ export async function selectSwipes(
 
     scored.push({ atom: swipe, score: finalScore, isPrimary });
   }
+
+  console.log(`    ✍️ Format filter: ${scored.length} swipes match ${targetFamily} (from ${allSwipes.length} total)`);
 
   // Phase 2b: Recency diversity — light deprioritization of swipes used in the last 3 content atoms
   const recentlyUsed = await getRecentlySelectedSwipeUUIDs(3);

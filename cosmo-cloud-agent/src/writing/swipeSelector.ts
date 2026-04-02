@@ -264,16 +264,6 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
   const emotions = (analysis.emotions as any[]) || [];
   const emotionalArc = emotions.slice(0, 6).map((e: any) => typeof e === 'string' ? e : e.name || String(e));
 
-  // Structural breakdown for primary swipes
-  let structuralBreakdown = '';
-  if (isPrimary && sections.length > 0) {
-    structuralBreakdown = sections.map((s: any, i: number) => {
-      const beat = s.beatLabel || s.title || `Section ${i + 1}`;
-      const role = s.function || s.role || 'Content';
-      return `${i + 1}. [${beat}] ${role}`;
-    }).join('\n');
-  }
-
   return {
     uuid: atom.uuid,
     title: atom.title || 'Untitled Swipe',
@@ -290,12 +280,12 @@ function compressSwipe(atom: Atom, isPrimary: boolean): CompressedSwipe {
     isClientExample: false,
     engagementSummary: '',
     fullBody: body,
-    structuralBreakdown,
+    structuralBreakdown: '', // deprecated — Content Physics replaces this
     persuasionTechniques,
     emotionalArc,
     hookScoreReason: (analysis.hookScoreReason as string) || '',
     hookMechanism: (analysis.hookMechanism as string) || '',
-    structuralRecipe: (analysis.structuralRecipe as string) || '',
+    structuralRecipe: '', // deprecated — Content Physics replaces this
     voiceMarkers: (analysis.voiceMarkers as string[]) || [],
     quarkSummary: buildQuarkSummaryFromAtom(atom),
     fullQuarkProfile: isPrimary ? (atom.structured?.contentPhysics as any) : undefined,
@@ -373,14 +363,8 @@ export function computeSwipeIntelligenceBrief(swipes: CompressedSwipe[]): string
     lines.push(`‣ Most common pattern: ${topFP[0]}`);
   }
 
-  // Best swipe's recipe
+  // Best swipe reference (structural recipe removed — Content Physics replaces this)
   const bestSwipe = swipes.reduce((best, s) => s.hookScore > best.hookScore ? s : best, swipes[0]);
-  if (bestSwipe.structuralRecipe) {
-    lines.push(`‣ Recipe from best swipe (${bestSwipe.hookScore}/10):`);
-    for (const line of bestSwipe.structuralRecipe.split('\n')) {
-      lines.push(`    ${line.trim()}`);
-    }
-  }
 
   // VOICE PATTERNS
   const allVoiceMarkers: Record<string, number> = {};

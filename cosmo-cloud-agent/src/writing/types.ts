@@ -285,10 +285,6 @@ export function formatCompressedSwipe(swipe: CompressedSwipe): string {
     lines.push(`Hook Mechanism: ${swipe.hookMechanism}`);
   }
   lines.push(`Beat Pattern: ${swipe.beatSequence.join(' > ')}`);
-  if (swipe.structuralRecipe) {
-    lines.push(`Structural Recipe:`);
-    lines.push(`  ${swipe.structuralRecipe}`);
-  }
   lines.push(`Framework: ${swipe.framework} | Format: ${swipe.format}${swipe.isPrimary ? ' [PRIMARY BLUEPRINT]' : ''}`);
   if (swipe.voiceMarkers.length > 0) {
     lines.push(`Voice: ${swipe.voiceMarkers.join(', ')}`);
@@ -317,11 +313,6 @@ export function formatCompressedSwipe(swipe: CompressedSwipe): string {
     } else {
       lines.push(swipe.fullBody);
     }
-  }
-
-  if (swipe.isPrimary && swipe.structuralBreakdown) {
-    lines.push(`--- STRUCTURAL BLUEPRINT ---`);
-    lines.push(swipe.structuralBreakdown);
   }
 
   if (swipe.quarkSummary) {

@@ -1126,14 +1126,8 @@ Then IMMEDIATELY call write_draft with the fully corrected version. Do NOT call 
       if (bp.framework && bp.framework !== 'Original') {
         sections.push(`Framework: ${bp.framework}`);
       }
-      if (bp.structuralBreakdown) {
-        sections.push(`Structural Breakdown: ${bp.structuralBreakdown}`);
-      }
       if (bp.keyTransitions.length > 0) {
         sections.push(`Key Transitions: ${bp.keyTransitions.join(', ')}`);
-      }
-      if (bp.structuralRecipe) {
-        sections.push(`Structural Recipe: ${bp.structuralRecipe}`);
       }
       sections.push('');
       sections.push(bp.fullBody);
@@ -2375,7 +2369,7 @@ If ALL checks pass, present the draft.
         emotionalArc: ((analysis.emotions as any[]) || []).slice(0, 6).map((e: any) => typeof e === 'string' ? e : e.name || ''),
         hookScoreReason: (analysis.hookScoreReason as string) || '',
         hookMechanism: (analysis.hookMechanism as string) || '',
-        structuralRecipe: (analysis.structuralRecipe as string) || '',
+        structuralRecipe: '', // deprecated
         voiceMarkers: (analysis.voiceMarkers as string[]) || [],
       });
     }

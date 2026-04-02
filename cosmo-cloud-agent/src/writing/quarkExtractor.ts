@@ -34,7 +34,7 @@ Hook Mechanism: ${analysis.hookMechanism || 'not analyzed'}
 Hook Score Reason: ${analysis.hookScoreReason || 'not analyzed'}
 Beat Fingerprint: ${analysis.beatFingerprint || 'not analyzed'}
 ${sections ? `Sections: ${sections.map(s => `${s.label} (${s.purpose}, ${s.emotion}, ${s.sizePercent}%)`).join(' | ')}` : ''}
-Structural Recipe: ${analysis.structuralRecipe || 'not analyzed'}
+// structuralRecipe removed — Content Physics replaces this with per-slide analysis from the actual body
 Structure Complexity: ${analysis.structureComplexity ?? 'N/A'}
 Framework Type: ${analysis.frameworkType || 'unknown'}
 ${emotionalArc ? `Emotional Arc: ${emotionalArc.map(p => `${p.emotion}@${(p.position * 100).toFixed(0)}%(${p.intensity.toFixed(1)})`).join(' → ')}` : ''}

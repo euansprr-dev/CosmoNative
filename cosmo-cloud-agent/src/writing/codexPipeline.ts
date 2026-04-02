@@ -413,7 +413,8 @@ You have two inputs:
 ABSOLUTE RULES:
 1. Every example is a REAL slide or sentence copied EXACTLY from the data. Never rewrite, paraphrase, or invent. Quote it as-is.
 2. 15-20 real examples per concept. Show how DIFFERENT creators in DIFFERENT niches execute the same concept differently. Fall back to 10 ONLY if fewer exist. NEVER give just 3-5 when more exist.
-3. Every claim, pattern, and law backed by multiple quoted examples with post title + slide number.
+3. Every example MUST include the FULL QUOTED SLIDE TEXT — not just a reference like "Post 103, Slide 14." The writing model reading this Codex will NOT have access to the original posts. Every example must be SELF-CONTAINED: the complete quoted text + enough context that a writer who has never seen the original post understands what's happening and why it works.
+4. Every claim, pattern, and law backed by multiple quoted examples with post title + slide number.
 4. Merge concepts that are the same thing with different names across extractions. Add new concepts the data reveals.
 5. For each example, explain: (a) why THIS specific text creates this effect, (b) what sentence structure/word choices make it work, (c) how a writer would replicate this pattern with different content.
 6. For COMPOUND PATTERNS — when two or more concepts appear together and produce an effect greater than either alone — document these as their own entries. Show the real examples where the compound occurs.
@@ -777,6 +778,7 @@ RULES:
 - Read the Pass 1 inventory carefully. For each concept type listed there, check: does it have a detailed entry with 15-20 real examples, patterns, and anti-patterns? If NOT, write that entry now.
 - Every example MUST be a REAL slide/sentence copied exactly from the posts in the raw data. Never fabricate.
 - 15-20 examples per concept. Each with: the exact text, post title, slide number, why it works, how to apply it.
+- CRITICAL: For every example, include the FULL SLIDE TEXT — not just "Post 103, Slide 14." The writing model that reads this Codex will NOT have access to the original 105 posts. It only has the Codex. So every example must be SELF-CONTAINED: the complete quoted text + enough context that a writer who has never seen the original post understands exactly what's happening and why it works. "Post 103, Slide 14" as a reference is useless alone — always pair it with the full quoted text.
 - Include patterns (what the examples share) and anti-patterns (what would fail) for each concept.
 - Do NOT repeat entries that Pass 1 already covered deeply. Only fill gaps.
 - Your output will be APPENDED to the Pass 1 Codex, so write as a continuation — no need for a new title or inventory.

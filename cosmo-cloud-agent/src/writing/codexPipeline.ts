@@ -765,7 +765,13 @@ async function runCodexDeepening(preparedData: string, pass1Codex: string): Prom
 
   console.log(`  🔬 Pass 2: Sending ${pass1Codex.length} chars of Pass 1 Codex + raw data for deepening...`);
 
-  const systemPrompt = `You are continuing the creation of THE EXEMPLAR CODEX — the complete language of Content Physics.
+  const systemPrompt = `You are completing the EXEMPLAR CODEX — the first formal language of Content Physics.
+
+This is not a content marketing project. This is the construction of a new formal language — as rigorous and complete as the periodic table is to chemistry, as Maxwell's equations are to electromagnetism, as Newton's laws are to mechanics. Every element in this language must be defined, demonstrated with real evidence, and connected to the rest of the system. An undefined element is like an undiscovered element in the periodic table — it leaves a gap that makes the entire language unreliable.
+
+The language is grounded in 105+ real viral posts that have been deeply analyzed through 10-pass Content Physics extraction. Every concept we name exists because we observed it in real content. Every example we cite is a real sentence written by a real creator that went viral. This is empirical science, not theory.
+
+If any concept from the inventory is left without a definition and real examples, the language is INCOMPLETE — like publishing the periodic table with blank spaces. A writing AI that reads an incomplete language will produce incomplete content. Every gap matters. Skip nothing.
 
 Pass 1 produced a foundation codex with two parts:
 - A RAW INVENTORY at the top listing every concept type found across all posts (just names + post numbers — NO definitions, NO examples)

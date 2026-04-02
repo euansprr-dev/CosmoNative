@@ -805,7 +805,9 @@ RULES:
   7. Any remaining concepts
 - For each concept, STATE THE FREQUENCY first: "Appears in X/105 posts" — this helps the writing model know how universal vs niche it is
 
-You have 128,000 tokens. Fill them. Do NOT stop early. Every concept from the inventory deserves the same depth that Pass 1 gave to Confession, Curiosity+, and Specificity-as-Proof.`;
+You have 128,000 tokens of output budget and ALL the raw data you need is in this prompt. Do NOT ask for clarification, chunks, options, or subsets. Do NOT say the data is incomplete or truncated — it is ALL here. Do NOT negotiate scope. Do NOT write meta-commentary about what you "would need" or "could do." Just produce the entries. Start with the first unfinished concept and keep going until you run out of concepts or tokens.
+
+Every concept from the inventory deserves the same depth that Pass 1 gave to Confession, Curiosity+, and Specificity-as-Proof. If Pass 1 covered it deeply, skip it. If not, write it now.`;
 
   const userPrompt = `═══ PASS 1 CODEX (already written — do NOT repeat these entries) ═══
 

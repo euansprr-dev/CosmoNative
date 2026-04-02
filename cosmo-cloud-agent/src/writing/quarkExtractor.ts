@@ -14,6 +14,21 @@ function buildExtractionPrompt(atom: Atom): string {
   const analysis = atom.structured?.swipeAnalysis || {};
   const meta = atom.metadata || {};
 
+  // Build clean slide-separated body from transcriptSlides (most accurate slide boundaries)
+  // Falls back to raw atom.body if transcriptSlides aren't available
+  const transcriptSlides = analysis.transcriptSlides as Array<{ text: string; slideNumber: number }> | undefined;
+  let bodyText: string;
+  if (transcriptSlides && transcriptSlides.length > 1) {
+    bodyText = transcriptSlides
+      .sort((a, b) => (a.slideNumber || 0) - (b.slideNumber || 0))
+      .map(s => `=== SLIDE ${s.slideNumber} ===\n${s.text}`)
+      .join('\n\n');
+    console.log(`  🔬 Extraction body: ${transcriptSlides.length} slides from transcriptSlides (clean boundaries)`);
+  } else {
+    bodyText = atom.body || '[no body]';
+    console.log(`  🔬 Extraction body: raw atom.body (${(atom.body || '').length} chars, no transcriptSlides available)`);
+  }
+
   const sections = analysis.sections as Array<{ label: string; purpose: string; emotion: string; sizePercent: number }> | undefined;
   const persuasion = analysis.persuasionTechniques as Array<{ type: string; intensity: number; example: string }> | undefined;
   const emotionalArc = analysis.emotionalArc as Array<{ position: number; intensity: number; emotion: string }> | undefined;
@@ -23,7 +38,7 @@ function buildExtractionPrompt(atom: Atom): string {
 You have the post's full text and existing surface analysis. Go DEEPER than the surface. Find what no one has articulated before.
 
 === POST BODY (complete text — every slide, every word) ===
-${atom.body || '[no body]'}
+${bodyText}
 
 === COMPLETE EXISTING ANALYSIS ===
 Title: ${atom.title}

@@ -159,6 +159,50 @@ export function formatQuarkProfileForPrompt(profile: QuarkProfile): string {
     lines.push('');
   }
 
+  // Reader simulation (Pass 9 — what the reader thinks/feels at each slide boundary)
+  if (profile.readerSimulation?.length) {
+    lines.push('READER JOURNEY (per-slide):');
+    for (const rs of profile.readerSimulation) {
+      let line = `After slide ${rs.afterSlide}: [${rs.dominantEmotion || '?'}] invest=${rs.investmentLevel || '?'}`;
+      lines.push(`  ${line}`);
+      if (rs.activeQuestions?.length) lines.push(`    Questions: ${rs.activeQuestions.join('; ')}`);
+      if (rs.builtAssumptions?.length) lines.push(`    Assumptions: ${rs.builtAssumptions.join('; ')}`);
+      if (rs.prediction) lines.push(`    Predicts: ${rs.prediction}`);
+    }
+    lines.push('');
+  }
+
+  // Deliberate absences, callback chains, interference effects (from long-range interactions)
+  if (profile.longRangeInteractions) {
+    const lri = profile.longRangeInteractions;
+    if (lri.deliberateAbsences?.length) {
+      lines.push('DELIBERATE ABSENCES:');
+      for (const a of lri.deliberateAbsences) {
+        lines.push(`  ⊘ ${a.what}${a.effect ? ` → ${a.effect}` : ''}`);
+      }
+      lines.push('');
+    }
+    if (lri.callbackChains?.length) {
+      lines.push('CALLBACK CHAINS:');
+      for (const c of lri.callbackChains) {
+        lines.push(`  "${c.element}" — ${c.transformationArc || ''}`);
+        if (c.appearances?.length) {
+          for (const app of c.appearances) {
+            lines.push(`    @slide ${app.slide}: ${app.meaning || ''}`);
+          }
+        }
+      }
+      lines.push('');
+    }
+    if (lri.interferences?.length) {
+      lines.push('INTERFERENCE EFFECTS:');
+      for (const i of lri.interferences) {
+        lines.push(`  @slides ${i.slides?.join(',') || '?'}: ${i.forces?.join(' + ') || '?'} → ${i.emergentEffect || ''}`);
+      }
+      lines.push('');
+    }
+  }
+
   // Novel discoveries (compact)
   if (profile.novelDiscoveries?.length) {
     lines.push(`NOVEL DISCOVERIES: ${profile.novelDiscoveries.join('; ')}`);
@@ -168,8 +212,7 @@ export function formatQuarkProfileForPrompt(profile: QuarkProfile): string {
   // Deep fabric excerpt
   if (profile.deepFabric) {
     lines.push('DEEP FABRIC (synthesis):');
-    lines.push(profile.deepFabric.substring(0, 800));
-    if (profile.deepFabric.length > 800) lines.push('...');
+    lines.push(profile.deepFabric);
     lines.push('');
   }
 

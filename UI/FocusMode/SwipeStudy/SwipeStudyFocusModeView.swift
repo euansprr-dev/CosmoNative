@@ -6,6 +6,11 @@ import SwiftUI
 import WebKit
 import Combine
 import AVKit
+import UserNotifications
+
+extension Notification.Name {
+    static let contentPhysicsExtractionComplete = Notification.Name("contentPhysicsExtractionComplete")
+}
 
 // MARK: - Swipe Study Focus Mode View
 
@@ -181,6 +186,16 @@ struct SwipeStudyFocusModeView: View {
         }
         .onDisappear {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contentPhysicsExtractionComplete)) { notification in
+            guard let uuid = notification.userInfo?["uuid"] as? String,
+                  uuid == atom.uuid else { return }
+            Task {
+                if let refreshed = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                    currentAtom = refreshed
+                    isGeneratingProfile = false
+                }
+            }
         }
         .onChange(of: isPaneActive) { _, isActive in
             if isActive {
@@ -2938,8 +2953,12 @@ struct SwipeStudyFocusModeView: View {
         isGeneratingProfile = true
         profileGenerationError = nil
 
+        let atomUUID = atom.uuid
+        let atomTitle = atom.title ?? "Swipe"
+        let oldExtractedAt = atom.contentPhysicsProfile?.extractedAt
+
+        // Fire the API call
         do {
-            // Unwrap Optional before interpolation — String? in interpolation produces "Optional(...)"
             let apiKey: String = APIKeys.supabaseServiceRoleKey ?? ""
             let baseURL = "https://cosmonative-production.up.railway.app"
             let url = URL(string: "\(baseURL)/api/writing/codex/extract-single")!
@@ -2947,42 +2966,67 @@ struct SwipeStudyFocusModeView: View {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["swipeUUID": atom.uuid])
-            request.timeoutInterval = 600 // 10 min for Opus deep analysis
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["swipeUUID": atomUUID])
+            request.timeoutInterval = 600
 
             let (data, response) = try await URLSession.shared.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
-            if statusCode == 200 {
-                // Poll for the synced data — compare extractedAt to detect NEW profile
-                let oldExtractedAt = currentAtom?.contentPhysicsProfile?.extractedAt
-                for attempt in 1...15 {
-                    try await Task.sleep(for: .seconds(2))
-                    if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid),
-                       let profile = refreshed.contentPhysicsProfile,
-                       profile.extractedAt != oldExtractedAt || oldExtractedAt == nil {
-                        currentAtom = refreshed
-                        print("🔬 Physics profile updated after \(attempt * 2)s (extractedAt: \(profile.extractedAt ?? "?"))")
-                        break
-                    }
-                    print("🔬 Waiting for updated profile... attempt \(attempt)/15")
-                }
-                // If still not updated after 30s, force reload anyway
-                if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
-                    currentAtom = refreshed
-                    if currentAtom?.contentPhysicsProfile?.extractedAt == oldExtractedAt {
-                        profileGenerationError = "Extraction completed but new profile hasn't synced yet. Close and reopen this swipe."
-                    }
-                }
-            } else {
+            if statusCode != 200 {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 profileGenerationError = "Error (\(statusCode)): \(String(body.prefix(150)))"
+                isGeneratingProfile = false
+                return
             }
         } catch {
             profileGenerationError = error.localizedDescription
+            isGeneratingProfile = false
+            return
         }
 
+        // Background poll — detached Task survives view navigation
+        // User can leave the page, extraction continues, notification fires when done
+        Task.detached { [atomUUID, atomTitle, oldExtractedAt] in
+            for attempt in 1...180 { // Poll up to 6 min (2s × 180)
+                try? await Task.sleep(for: .seconds(2))
+                if let refreshed = try? await AtomRepository.shared.fetch(uuid: atomUUID),
+                   let profile = refreshed.contentPhysicsProfile,
+                   profile.extractedAt != oldExtractedAt || oldExtractedAt == nil {
+                    // Extraction complete — notify the app
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: .contentPhysicsExtractionComplete,
+                            object: nil,
+                            userInfo: ["uuid": atomUUID, "title": atomTitle]
+                        )
+                        // macOS notification
+                        Self.showExtractionNotification(title: atomTitle)
+                    }
+                    print("🔬 Extraction complete for \"\(atomTitle)\" after \(attempt * 2)s")
+                    return
+                }
+                if attempt % 15 == 0 {
+                    print("🔬 Still waiting for extraction... \(attempt * 2)s elapsed")
+                }
+            }
+            print("🔬 Extraction poll timed out for \"\(atomTitle)\" after 6 min")
+        }
+
+        // User can navigate away — polling continues in background
         isGeneratingProfile = false
+    }
+
+    private static func showExtractionNotification(title: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Content Physics Extraction Complete"
+        content.body = "Profile updated for \"\(title)\""
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "extraction-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: - Copy Swipe + Profile

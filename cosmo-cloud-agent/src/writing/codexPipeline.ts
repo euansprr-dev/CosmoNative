@@ -787,14 +787,53 @@ Pass 1 produced a foundation codex with two parts:
 - A RAW INVENTORY at the top listing every concept type found across all posts (just names + post numbers — NO definitions, NO examples)
 - DETAILED ENTRIES for a few concepts (with definitions, 10-15 real examples, patterns, anti-patterns)
 
-The raw inventory is a TODO LIST. Every single item listed there that doesn't have a detailed entry is UNFINISHED WORK. Your job: convert every unfinished inventory item into a proper entry with definition + 15-20 real examples + patterns + anti-patterns.
+The Codex now has a Periodic Table (unified language with definitions) and detailed entries for ~37 concepts. But many concepts in the Periodic Table STILL lack detailed entries with real examples. Without examples, the writing model cannot execute these concepts — it knows the name but not what it looks like in real content.
 
-The writing model that reads this Codex will NEVER see the raw inventory — it's useless without definitions and examples. So you must transform every inventory item into something a writer can actually learn from and replicate.
+Your job: write detailed entries for SPECIFIC concepts that are still missing deep examples. The existing Codex entries are EXCELLENT — do NOT touch, summarize, or rewrite them. ONLY ADD new entries.
 
 You have three inputs:
-1. THE RAW DATA: Every viral post with full text + quark profiles
-2. THE PASS 1 CODEX: Inventory (your work queue) + some detailed entries (already done — skip these)
-3. YOUR TASK: Write a detailed entry for EVERY inventory item that Pass 1 left as just a name + post numbers
+1. THE RAW DATA: Every viral post with full text + quark profiles — use these to find REAL examples
+2. THE EXISTING CODEX: Periodic Table + detailed entries already written — check what's already covered, skip those
+3. YOUR TASK: Write detailed entries for these SPECIFIC categories that still lack deep examples:
+
+PRIORITY 1 — SPEECH ACTS (these missing ones are used on every single slide):
+□ HOOK — with 10-15 real hook examples from different posts, why each works, how to apply
+□ CLAIM — with 10-15 real examples
+□ OBSERVATION — with 10-15 real examples
+□ INSTRUCTION — with 10-15 real examples
+□ REVEAL — with 10-15 real examples
+□ PROOF (as speech act, distinct from proof types) — with 10-15 real examples
+□ PERMISSION — with 10-15 real examples
+□ WARNING — with 10-15 real examples
+□ INVITATION — with 10-15 real examples
+□ GRATITUDE / DEDICATION — with examples
+□ THESIS / LESSON — with 10-15 real examples
+
+PRIORITY 2 — READER DELTAS (these are what each slide must produce):
+□ IDENTIFICATION+ — with 10-15 real examples
+□ TENSION+ — with 10-15 real examples
+□ TRUST+ — with 10-15 real examples
+□ SURPRISE — with 10-15 real examples
+□ EMPATHY+ — with 10-15 real examples
+□ ASPIRATION+ — with 10-15 real examples
+□ AWE — with examples
+□ GUILT / SELF-AUDIT — with examples
+□ WARMTH — with examples
+□ CATHARSIS — with examples
+
+PRIORITY 3 — TRANSITIONS (these connect every slide pair):
+□ ANSWER — with 10-15 real slide-pair examples
+□ ACCUMULATION — with examples
+□ PARTIAL RESOLUTION — with examples
+□ CAUSE-TO-CONSEQUENCE — with examples
+
+PRIORITY 4 — TECHNIQUES (if you have tokens left):
+□ ELLIPSIS MOMENTUM — with 10+ real examples
+□ SUBJECT DROP — with 10+ real examples
+□ DIRECT ADDRESS — with 10+ real examples
+□ COLON-AS-PROMISE — with examples
+□ DIRECT DIALOGUE — with examples
+□ REPETITION DEVICE — with examples
 
 RULES:
 - Read the Pass 1 inventory carefully. For each concept type listed there, check: does it have a detailed entry with 15-20 real examples, patterns, and anti-patterns? If NOT, write that entry now.

@@ -627,8 +627,8 @@ FINAL CHECK BEFORE STOPPING:
 This is the foundational text of Content Physics. It should read like a textbook written by someone who has spent years studying these ${N} posts. USE YOUR FULL OUTPUT BUDGET.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
-  const synthesisModel = 'google/gemini-3.1-pro-preview';
-  console.log(`  🔬 Calling ${synthesisModel} for Exemplar synthesis (~${estimatedInput} est. input tokens, OpenRouter streaming, 65K max output)...`);
+  const synthesisModel = 'openai/gpt-5.4';
+  console.log(`  🔬 Calling ${synthesisModel} for Exemplar synthesis (~${estimatedInput} est. input tokens, OpenRouter streaming, 128K max output)...`);
 
   const synthesisApiKey = config.openRouterApiKey || apiKey;
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -643,7 +643,7 @@ This is the foundational text of Content Physics. It should read like a textbook
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 65536,
+      max_tokens: 128000,
       temperature: 0.3,
       stream: true,
     }),

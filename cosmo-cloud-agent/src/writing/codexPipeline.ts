@@ -113,43 +113,57 @@ async function runExtractionPhase(reExtractAll: boolean): Promise<void> {
     return;
   }
 
-  console.log(`  🚀 Firing ${needsExtraction.length} parallel extraction calls...`);
+  const BATCH_SIZE = 30; // Process in batches of 30 to avoid TPM rate limits
+  const totalBatches = Math.ceil(needsExtraction.length / BATCH_SIZE);
+  console.log(`  🚀 Extracting ${needsExtraction.length} swipes in ${totalBatches} batches of ${BATCH_SIZE}...`);
 
-  // Fire ALL at once — Anthropic Tier 2 supports 1,000 RPM
-  const results = await Promise.allSettled(
-    needsExtraction.map(async (atom, i) => {
-      try {
-        const profile = await extractQuarkProfile(atom);
-        if (profile) {
-          const existing = atom.structured || {};
-          await updateAtom(atom.uuid, { structured: { ...existing, contentPhysics: profile } });
-          updateProgress({
-            current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
-            extracted: currentProgress.extracted + 1,
-            phase: `[${currentProgress.extracted + currentProgress.failed + 1}/${needsExtraction.length}] ✅ ${atom.title?.substring(0, 40)}`,
-          });
-          return { uuid: atom.uuid, success: true };
-        } else {
+  for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+    const batch = needsExtraction.slice(batchIdx * BATCH_SIZE, (batchIdx + 1) * BATCH_SIZE);
+    console.log(`  📦 Batch ${batchIdx + 1}/${totalBatches}: ${batch.length} swipes`);
+
+    const results = await Promise.allSettled(
+      batch.map(async (atom) => {
+        try {
+          const profile = await extractQuarkProfile(atom);
+          if (profile) {
+            const existing = atom.structured || {};
+            await updateAtom(atom.uuid, { structured: { ...existing, contentPhysics: profile } });
+            updateProgress({
+              current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+              extracted: currentProgress.extracted + 1,
+              phase: `[${currentProgress.extracted + currentProgress.failed + 1}/${needsExtraction.length}] ✅ ${atom.title?.substring(0, 40)}`,
+            });
+            return { uuid: atom.uuid, success: true };
+          } else {
+            updateProgress({
+              current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+              failed: currentProgress.failed + 1,
+            });
+            return { uuid: atom.uuid, success: false, error: 'No profile returned' };
+          }
+        } catch (err: any) {
           updateProgress({
             current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
             failed: currentProgress.failed + 1,
           });
-          return { uuid: atom.uuid, success: false, error: 'No profile returned' };
+          console.log(`  ❌ Extraction failed for "${atom.title?.substring(0, 40)}": ${err.message}`);
+          return { uuid: atom.uuid, success: false, error: err.message };
         }
-      } catch (err: any) {
-        updateProgress({
-          current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
-          failed: currentProgress.failed + 1,
-        });
-        console.log(`  ❌ Extraction failed for "${atom.title?.substring(0, 40)}": ${err.message}`);
-        return { uuid: atom.uuid, success: false, error: err.message };
-      }
-    })
-  );
+      })
+    );
 
-  const succeeded = results.filter(r => r.status === 'fulfilled' && (r as any).value?.success).length;
-  const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r as any).value?.success)).length;
-  console.log(`  📊 Extraction complete: ${succeeded} succeeded, ${failed} failed, ${alreadyDone} were already done`);
+    const batchSucceeded = results.filter(r => r.status === 'fulfilled' && (r as any).value?.success).length;
+    const batchFailed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r as any).value?.success)).length;
+    console.log(`  📦 Batch ${batchIdx + 1} done: ${batchSucceeded} succeeded, ${batchFailed} failed`);
+
+    // Wait 30s between batches to let TPM rate limit reset
+    if (batchIdx < totalBatches - 1) {
+      console.log(`  ⏳ Waiting 30s before next batch (TPM cooldown)...`);
+      await new Promise(r => setTimeout(r, 30_000));
+    }
+  }
+
+  console.log(`  📊 Extraction complete: ${currentProgress.extracted} succeeded, ${currentProgress.failed} failed, ${alreadyDone} were already done`);
 }
 
 // ============================================================

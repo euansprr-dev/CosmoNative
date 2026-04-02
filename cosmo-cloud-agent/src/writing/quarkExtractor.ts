@@ -213,7 +213,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
     model,
     system: [{ type: 'text', text: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' }],
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 20000,
+    max_tokens: 28000,
     temperature: 0.2,
   } : {
     model,
@@ -221,7 +221,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       { role: 'system', content: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' },
       { role: 'user', content: prompt },
     ],
-    max_tokens: 20000,
+    max_tokens: 28000,
     temperature: 0.2,
   };
 

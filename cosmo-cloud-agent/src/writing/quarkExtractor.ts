@@ -350,65 +350,50 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
         jsonText = jsonText.substring(firstBrace);
       }
 
-      // Attempt JSON parse with progressive repair for common LLM output issues
+      // Attempt JSON parse — if it fails, use state-machine repair for unescaped quotes
       let profile: QuarkProfile;
       try {
         profile = JSON.parse(jsonText);
       } catch (parseErr: any) {
         const errPos = parseErr.message.match(/position (\d+)/)?.[1] || '?';
-        console.log(`  ⚠️ JSON parse failed at position ${errPos}, attempting repair (${jsonText.length} chars)...`);
+        console.log(`  ⚠️ JSON parse failed at position ${errPos}, attempting state-machine repair (${jsonText.length} chars)...`);
 
-        // Repair strategy 1: Fix common LLM JSON errors
-        let repaired = jsonText
-          // Fix unescaped newlines inside strings
-          .replace(/(?<=":[ ]*"[^"]*)\n(?=[^"]*")/g, '\\n')
-          // Fix trailing commas before } or ]
-          .replace(/,\s*([}\]])/g, '$1')
-          // Fix unescaped control chars
-          .replace(/[\x00-\x1f]/g, (c) => c === '\n' || c === '\r' || c === '\t' ? c : '');
+        // State-machine repair: walk through the string character by character,
+        // track whether we're inside a JSON string, and escape any unescaped
+        // control characters or problematic quotes inside strings.
+        const repaired = repairJsonString(jsonText);
 
         try {
           profile = JSON.parse(repaired);
-          console.log(`  ✅ JSON repaired via cleanup (${repaired.length} chars)`);
-        } catch {
-          // Repair strategy 2: Truncate at last balanced brace
+          console.log(`  ✅ JSON repaired via state-machine (${repaired.length} chars)`);
+        } catch (repairErr: any) {
+          const repairPos = repairErr.message.match(/position (\d+)/)?.[1];
+          console.log(`  ⚠️ State-machine repair still failed at position ${repairPos || '?'}, trying truncation...`);
+
+          // Truncate at last balanced top-level brace
           let depth = 0;
           let cutPoint = -1;
+          let inStr = false;
+          let escape = false;
           for (let i = 0; i < repaired.length; i++) {
-            if (repaired[i] === '{') depth++;
-            if (repaired[i] === '}') { depth--; if (depth === 0) { cutPoint = i; } }
+            const c = repaired[i];
+            if (escape) { escape = false; continue; }
+            if (c === '\\') { escape = true; continue; }
+            if (c === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (c === '{') depth++;
+            if (c === '}') { depth--; if (depth === 0) cutPoint = i; }
           }
           if (cutPoint > 0) {
-            const truncated = repaired.substring(0, cutPoint + 1);
             try {
-              profile = JSON.parse(truncated);
-              console.log(`  ✅ JSON repaired by balanced truncation (${truncated.length} of ${repaired.length} chars)`);
+              profile = JSON.parse(repaired.substring(0, cutPoint + 1));
+              console.log(`  ✅ JSON repaired by balanced truncation (${cutPoint + 1} of ${repaired.length} chars)`);
             } catch {
-              // Repair strategy 3: Try extracting just the top-level object up to the error
-              // and close all open braces/brackets
-              try {
-                let fixText = repaired.substring(0, parseInt(errPos as string) || repaired.length);
-                // Count unclosed braces/brackets and close them
-                let opens = 0, openBrackets = 0;
-                for (const c of fixText) {
-                  if (c === '{') opens++;
-                  if (c === '}') opens--;
-                  if (c === '[') openBrackets++;
-                  if (c === ']') openBrackets--;
-                }
-                // Remove any trailing partial value (back to last comma or colon)
-                fixText = fixText.replace(/,?\s*"[^"]*$/, '');
-                fixText = fixText.replace(/,?\s*$/, '');
-                fixText += ']'.repeat(Math.max(0, openBrackets)) + '}'.repeat(Math.max(0, opens));
-                profile = JSON.parse(fixText);
-                console.log(`  ✅ JSON repaired by force-closing at error position (${fixText.length} chars)`);
-              } catch {
-                console.log(`  ❌ All JSON repairs failed. Raw length: ${jsonText.length}, error at: ${errPos}, last 100 chars: ${jsonText.slice(-100)}`);
-                return null;
-              }
+              console.log(`  ❌ All JSON repairs failed. Raw length: ${jsonText.length}, error at: ${errPos}`);
+              return null;
             }
           } else {
-            console.log(`  ❌ No balanced brace found. Raw length: ${jsonText.length}`);
+            console.log(`  ❌ No balanced brace found after repair. Raw length: ${jsonText.length}`);
             return null;
           }
         }
@@ -519,4 +504,83 @@ export async function batchExtractAll(options: { reExtractAll?: boolean } = {}):
   console.log(`  🔬 Extracted: ${results.extracted}, Skipped: ${results.skipped}, Failed: ${results.failed.length}`);
 
   return results;
+}
+
+/**
+ * State-machine JSON repair. Walks character-by-character tracking whether we're
+ * inside a JSON string value. Escapes unescaped newlines, tabs, and problematic
+ * characters found inside strings. Also fixes trailing commas.
+ */
+function repairJsonString(input: string): string {
+  const out: string[] = [];
+  let inString = false;
+  let i = 0;
+
+  while (i < input.length) {
+    const c = input[i];
+
+    if (!inString) {
+      // Outside string — pass through structural chars
+      if (c === '"') {
+        inString = true;
+        out.push(c);
+      } else if (c === ',') {
+        // Look ahead: skip trailing commas before } or ]
+        let j = i + 1;
+        while (j < input.length && (input[j] === ' ' || input[j] === '\n' || input[j] === '\r' || input[j] === '\t')) j++;
+        if (j < input.length && (input[j] === '}' || input[j] === ']')) {
+          // Skip this trailing comma
+        } else {
+          out.push(c);
+        }
+      } else {
+        out.push(c);
+      }
+      i++;
+    } else {
+      // Inside a string value
+      if (c === '\\') {
+        // Escape sequence — pass through both chars
+        out.push(c);
+        if (i + 1 < input.length) {
+          out.push(input[i + 1]);
+          i += 2;
+        } else {
+          i++;
+        }
+      } else if (c === '"') {
+        // Could be end of string OR unescaped quote inside string
+        // Look ahead: if next non-whitespace is : , } ] or another key pattern, it's a real close
+        let j = i + 1;
+        while (j < input.length && (input[j] === ' ' || input[j] === '\t')) j++;
+        const next = input[j];
+        if (next === ':' || next === ',' || next === '}' || next === ']' || next === '\n' || next === '\r' || j >= input.length) {
+          // Real end of string
+          inString = false;
+          out.push(c);
+        } else {
+          // Unescaped quote inside string — escape it
+          out.push('\\', '"');
+        }
+        i++;
+      } else if (c === '\n') {
+        out.push('\\', 'n');
+        i++;
+      } else if (c === '\r') {
+        out.push('\\', 'r');
+        i++;
+      } else if (c === '\t') {
+        out.push('\\', 't');
+        i++;
+      } else if (c.charCodeAt(0) < 0x20) {
+        // Other control chars — skip
+        i++;
+      } else {
+        out.push(c);
+        i++;
+      }
+    }
+  }
+
+  return out.join('');
 }

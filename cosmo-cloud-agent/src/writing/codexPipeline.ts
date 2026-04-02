@@ -486,24 +486,26 @@ For each: CONFIRMED / MODIFIED / DENIED with evidence from specific posts.
 
 This is the foundational text of Content Physics. Cite everything. Use only real text from the data. Discover what's real.`;
 
-  console.log(`  🔬 Calling Opus for Exemplar synthesis (~${Math.round((preparedData.length + computedStats.length + userPrompt.length) / 4)} input tokens)...`);
+  const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
+  console.log(`  🔬 Calling Opus for Exemplar synthesis (~${estimatedInput} input tokens, direct Anthropic streaming, 128K max output)...`);
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const synthesisApiKey = config.anthropicApiKey || apiKey;
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'x-api-key': synthesisApiKey,
+      'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'anthropic/claude-opus-4-6',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 65536,
+      model: 'claude-opus-4-6',
+      system: [{ type: 'text', text: systemPrompt }],
+      messages: [{ role: 'user', content: userPrompt }],
+      max_tokens: 128000,
       temperature: 0.3,
+      stream: true,
     }),
-    signal: AbortSignal.timeout(3600_000), // 1 hour timeout
+    signal: AbortSignal.timeout(7200_000), // 2 hour timeout for safety
   });
 
   if (!response.ok) {
@@ -511,22 +513,55 @@ This is the foundational text of Content Physics. Cite everything. Use only real
     throw new Error(`Exemplar synthesis failed (${response.status}): ${errText.substring(0, 300)}`);
   }
 
-  const data = await response.json() as any;
-  const synthesisText = data.choices?.[0]?.message?.content || '';
+  // Stream the response — keeps connection alive, shows progress
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body reader for Opus synthesis');
+
+  const decoder = new TextDecoder();
+  let synthesisText = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let lastLog = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const eventData = line.slice(6);
+      if (eventData === '[DONE]') continue;
+      try {
+        const event = JSON.parse(eventData);
+        if (event.type === 'content_block_delta' && event.delta?.text) {
+          synthesisText += event.delta.text;
+        }
+        if (event.type === 'message_delta' && event.usage) {
+          outputTokens = event.usage.output_tokens || 0;
+        }
+        if (event.type === 'message_start' && event.message?.usage) {
+          inputTokens = event.message.usage.input_tokens || 0;
+        }
+      } catch {}
+    }
+
+    // Progress log every 30s
+    if (Date.now() - lastLog > 30_000) {
+      const tokens = Math.round(synthesisText.length / 4);
+      console.log(`  🔬 Opus streaming: ${synthesisText.length} chars (~${tokens} tokens)...`);
+      updateProgress({ phase: `Opus synthesis: ~${tokens} output tokens so far...` });
+      lastLog = Date.now();
+    }
+  }
+
+  console.log(`  🔬 Exemplar synthesis complete: ${inputTokens} input, ${outputTokens} output tokens`);
+  console.log(`  🔬 Exemplar Codex output: ${synthesisText.length} chars (~${Math.round(synthesisText.length / 4)} tokens)`);
+  updateProgress({ synthesisTokens: { input: inputTokens, output: outputTokens } });
 
   if (!synthesisText || synthesisText.length < 2000) {
     throw new Error(`Exemplar synthesis produced insufficient output (${synthesisText.length} chars)`);
   }
-
-  const usage = data.usage;
-  if (usage) {
-    const inputTokens = usage.prompt_tokens || 0;
-    const outputTokens = usage.completion_tokens || 0;
-    updateProgress({ synthesisTokens: { input: inputTokens, output: outputTokens } });
-    console.log(`  🔬 Exemplar synthesis complete: ${inputTokens} input, ${outputTokens} output tokens`);
-  }
-
-  console.log(`  🔬 Exemplar Codex output: ${synthesisText.length} chars`);
 
   // Save as the codex synthesis atom (overwrites previous synthesis)
   const allAtomsForSave = await fetchAllByType('research', { limit: 500 });

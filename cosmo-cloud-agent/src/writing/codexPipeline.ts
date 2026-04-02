@@ -6,6 +6,7 @@ import { config } from '../config';
 import { Atom, fetchAllByType, updateAtom, createAtom } from '../db/queries';
 import { extractQuarkProfile } from './quarkExtractor';
 import { computeCodex, saveCodexAtom, invalidateCodexCache } from './codex';
+import { prepareExemplarData } from './exemplarCodex';
 import { QuarkProfile } from './types';
 
 // ============================================================
@@ -61,16 +62,21 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean } = {
     // STEP 1: Extract all swipes
     await runExtractionPhase(options.reExtractAll || false);
 
-    // STEP 2: Compute stats codex
+    // STEP 2: Compute stats codex (legacy, kept for backward compat)
     updateProgress({ status: 'computing_stats', phase: 'Computing aggregate statistics...' });
     const { codexText: statsText, stats } = await computeCodex();
     await saveCodexAtom(statsText);
     invalidateCodexCache();
     console.log(`  📊 Stats codex computed: ${stats.totalProfiles} profiles`);
 
-    // STEP 3: Opus synthesis (the big one)
-    updateProgress({ status: 'synthesizing', phase: 'Running Opus synthesis across all profiles...' });
-    await runOpusSynthesis(statsText);
+    // STEP 2b: Prepare exemplar data (full slide text + grouped by concept type)
+    updateProgress({ status: 'computing_stats', phase: 'Preparing exemplar data with full slide text...' });
+    const { codexText: prepText } = await prepareExemplarData();
+    console.log(`  📊 Exemplar prep data: ${prepText.length} chars (~${Math.round(prepText.length / 4)} tokens)`);
+
+    // STEP 3: Opus Exemplar Synthesis (the big one — unified language + real examples)
+    updateProgress({ status: 'synthesizing', phase: 'Running Opus Exemplar Synthesis across all profiles...' });
+    await runExemplarSynthesis(prepText, statsText);
 
     updateProgress({ status: 'complete', phase: 'Done', completedAt: new Date().toISOString() });
   } catch (err: any) {
@@ -80,7 +86,7 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean } = {
 }
 
 // ============================================================
-// Phase 1: Batch Extraction (sequential with progress)
+// Phase 1: Parallel Extraction (all non-extracted at once)
 // ============================================================
 
 async function runExtractionPhase(reExtractAll: boolean): Promise<void> {
@@ -92,33 +98,58 @@ async function runExtractionPhase(reExtractAll: boolean): Promise<void> {
     (a.structured?.swipeAnalysis?.hookType || a.structured?.swipeAnalysis?.beatFingerprint)
   );
 
-  updateProgress({ total: swipes.length, phase: `Extracting ${swipes.length} swipes...` });
+  // Split into already-extracted and needs-extraction
+  const needsExtraction = swipes.filter(a => reExtractAll || !a.structured?.contentPhysics?.version);
+  const alreadyDone = swipes.length - needsExtraction.length;
 
-  for (let i = 0; i < swipes.length; i++) {
-    const atom = swipes[i];
-    const hasProfile = !!atom.structured?.contentPhysics?.version;
+  updateProgress({
+    total: swipes.length,
+    skipped: alreadyDone,
+    phase: `${needsExtraction.length} swipes need extraction (${alreadyDone} already done)...`,
+  });
 
-    if (hasProfile && !reExtractAll) {
-      updateProgress({ current: i + 1, skipped: currentProgress.skipped + 1 });
-      continue;
-    }
-
-    updateProgress({ current: i + 1, phase: `[${i + 1}/${swipes.length}] ${atom.title?.substring(0, 40)}...` });
-
-    const profile = await extractQuarkProfile(atom);
-    if (profile) {
-      const existing = atom.structured || {};
-      await updateAtom(atom.uuid, { structured: { ...existing, contentPhysics: profile } });
-      updateProgress({ extracted: currentProgress.extracted + 1 });
-    } else {
-      updateProgress({ failed: currentProgress.failed + 1 });
-    }
-
-    // Rate limit — 5s between calls for sustained batch
-    if (i < swipes.length - 1) {
-      await new Promise(r => setTimeout(r, 5000));
-    }
+  if (needsExtraction.length === 0) {
+    console.log(`  ✅ All ${swipes.length} swipes already extracted`);
+    return;
   }
+
+  console.log(`  🚀 Firing ${needsExtraction.length} parallel extraction calls...`);
+
+  // Fire ALL at once — Anthropic Tier 2 supports 1,000 RPM
+  const results = await Promise.allSettled(
+    needsExtraction.map(async (atom, i) => {
+      try {
+        const profile = await extractQuarkProfile(atom);
+        if (profile) {
+          const existing = atom.structured || {};
+          await updateAtom(atom.uuid, { structured: { ...existing, contentPhysics: profile } });
+          updateProgress({
+            current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+            extracted: currentProgress.extracted + 1,
+            phase: `[${currentProgress.extracted + currentProgress.failed + 1}/${needsExtraction.length}] ✅ ${atom.title?.substring(0, 40)}`,
+          });
+          return { uuid: atom.uuid, success: true };
+        } else {
+          updateProgress({
+            current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+            failed: currentProgress.failed + 1,
+          });
+          return { uuid: atom.uuid, success: false, error: 'No profile returned' };
+        }
+      } catch (err: any) {
+        updateProgress({
+          current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+          failed: currentProgress.failed + 1,
+        });
+        console.log(`  ❌ Extraction failed for "${atom.title?.substring(0, 40)}": ${err.message}`);
+        return { uuid: atom.uuid, success: false, error: err.message };
+      }
+    })
+  );
+
+  const succeeded = results.filter(r => r.status === 'fulfilled' && (r as any).value?.success).length;
+  const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r as any).value?.success)).length;
+  console.log(`  📊 Extraction complete: ${succeeded} succeeded, ${failed} failed, ${alreadyDone} were already done`);
 }
 
 // ============================================================
@@ -308,5 +339,210 @@ This is the foundational text of a new field. Cite everything. Discover what's r
       structured: {},
     });
     console.log(`  📊 Created new synthesis atom`);
+  }
+}
+
+// ============================================================
+// Phase 3b: Exemplar Synthesis (pre-processed data → unified Codex)
+// ============================================================
+
+async function runExemplarSynthesis(preparedData: string, computedStats: string): Promise<void> {
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  if (!apiKey) {
+    throw new Error('No API key for Exemplar synthesis');
+  }
+
+  // Count approximate profile count from prep data header
+  const profileCountMatch = preparedData.match(/(\d+) analyzed viral posts/);
+  const N = profileCountMatch ? parseInt(profileCountMatch[1]) : 0;
+
+  console.log(`  🔬 Exemplar synthesis: sending ${preparedData.length} chars of prep data (~${Math.round(preparedData.length / 4)} tokens)`);
+
+  const systemPrompt = `You are creating THE EXEMPLAR CODEX — the complete, unified language of Content Physics derived from ${N} viral posts. This is the definitive document a writing AI will use to understand and replicate every dimension of viral content.
+
+You have two inputs:
+1. PRE-PROCESSED DATA: Every physics concept grouped by approximate extraction label, with FULL SLIDE TEXT examples. NOTE: Different extractions (run independently on different posts) may use different names for the same concept. "confession" and "vulnerable-admission" might be identical. "deflation" and "success-interrupted" might be the same transition. YOUR JOB is to unify these into one consistent taxonomy.
+
+2. COMPUTED STATISTICS: Frequency distributions and format-specific patterns.
+
+CRITICAL RULES:
+- Every example MUST use the ACTUAL slide text from the pre-processed data. Do NOT rewrite, paraphrase, or invent examples. Copy them verbatim.
+- When two groups appear to be the same concept, MERGE them under one unified name.
+- When a concept has sub-types, organize hierarchically.
+- If the data reveals concepts NOT in our framework, NAME THEM and add them.
+- All swipes are curated high-quality viral content — do not rank by score, present for variety.
+- The output is the COMPLETE LANGUAGE. A writer reading ONLY this codex must understand every dimension of viral content with real examples they can replicate.
+
+FORMAT-SPECIFIC PHYSICS:
+The data contains both REELS (≤2 sentences/slide, shorter text per slide, more slides) and CAROUSELS (≥3 sentences/slide, denser text per slide, fewer slides). Both are text-based — reels are text overlays on images/video, not voiceover. Each example is tagged [REEL] or [CAROUSEL]. Format is classified by content density, NOT metadata (metadata is often wrong).
+
+For EVERY concept, structure examples in THREE layers:
+1. UNIVERSAL: The principle that holds across BOTH formats.
+2. REEL EXAMPLES: How this concept manifests in reels (1-2 sentences per slide, punchier, more compressed).
+3. CAROUSEL EXAMPLES: How this concept manifests in carousels (3-5 sentences per slide, more detail, fuller explanations).
+
+Key format differences to identify:
+- Reel slides: 1-2 sentences, ~10-25 words. Carousel slides: 3-5 sentences, ~30-60 words.
+- Reel transitions must work with less text — connectors are tighter, sometimes just one word.
+- Carousel transitions can use fuller bridge phrases and forward pulls.
+- Reel hooks are ultra-compressed (one punchy sentence). Carousel hooks can be 2-3 sentences.
+- The underlying forces (State Change, Causality, Earned-ness) and RSV are UNIVERSAL across both.
+- Identify which physics concepts are truly universal and which are format-specific.`;
+
+  const userPrompt = `═══════════════════════════════════════════════════════════════
+PRE-PROCESSED EXEMPLAR DATA (grouped by concept with full slide text)
+═══════════════════════════════════════════════════════════════
+
+${preparedData}
+
+═══════════════════════════════════════════════════════════════
+COMPUTED STATISTICS
+═══════════════════════════════════════════════════════════════
+
+${computedStats}
+
+═══════════════════════════════════════════════════════════════
+YOUR TASK: CREATE THE EXEMPLAR CODEX
+═══════════════════════════════════════════════════════════════
+
+For EVERY physics concept you identify across ALL categories (speech acts, transitions, reader deltas, proof types, motivations, compressions, per-slide frames, experiential distances, techniques, dominant frames, arc shapes, physics events, long-range interactions, rhythm patterns, antimatter, resonance frequencies, and any NEW concepts the data reveals):
+
+═══ {UNIFIED CONCEPT NAME} ({Category: e.g., Speech Act / Transition / Reader Delta}) ═══
+
+DEFINITION: One precise paragraph defining what this IS mechanically — not abstractly, but in terms of what happens in the text and what it produces in the reader.
+
+FREQUENCY: How many posts it appears in, at what positions in the post.
+
+EXAMPLES (select 10-15 from the pre-processed data, chosen for VARIETY of approaches):
+
+1. "{VERBATIM full slide text from prep data}"
+   — [{post title}] Slide {N}
+   Mechanism: {why THIS specific text creates this effect — sentence structure, word choice, distance}
+   Produces: {reader deltas this creates}
+   Techniques: {craft moves used}
+
+2. ...
+
+PATTERNS (what the examples share — be specific about sentence structure, word count, connector words, distance level):
+- {pattern with specificity}
+
+ANTI-PATTERNS (what would fail — with specific wording examples):
+- {anti-pattern}
+
+For TRANSITIONS: each example MUST include BOTH slides (from → to) with the actual connector text between them.
+For LONG-RANGE INTERACTIONS: include both the setup and payoff slide text with the distance between them.
+For ARC SHAPES: include a full post summary of the best example showing every slide's role.
+For TECHNIQUES: show the actual text that demonstrates the technique, and explain what quark it produces.
+
+AFTER all concept entries, add these sections:
+
+═══ LAWS OF CONTENT PHYSICS ═══
+Formal law statements. For each:
+- Precise statement
+- What happens when violated (with specific post examples)
+- Which posts demonstrate it best
+
+═══ INTERACTIONS ═══
+Which concepts amplify each other, compensate, conflict, or are prerequisites. Cite specific posts.
+
+═══ DEEP STRUCTURE ═══
+The minimal set of principles from which everything derives. The E=mc² of content.
+
+═══ HYPOTHESIS TEST RESULTS ═══
+Test these 17 hypotheses against ALL the data:
+1. Proxy Character: viral content needs objection-processing mechanism
+2. Trojan Horse: 2+ functional layers with different surface vs actual purpose
+3. Format Is Narrative: powerful moments change the FORMAT itself
+4. Compression Acceleration: meaning-per-word increases through the post
+5. Specificity-Credibility Proportionality: trust proportional to verifiable detail
+6. Omission Principle: imagined content > explicit content
+7. CTA-Proof Inverse: CTA weight inversely proportional to proof weight
+8. Double Helix Required: every transition needs narrative + psychological causality
+9. Credibility Bank: trust deposits/withdrawals per slide
+10. Sacrifice Concreteness: visualizable sacrifice >> abstract sacrifice
+11. Descending Aspiration: closing aspiration matches reader's achievable identity
+12. Participatory Validation: reader-verified claims > all other proof
+13. Meaning Sandwich: FEELING → SUBSTANCE → FEELING
+14. V=A/D: Virality = Agency / Detectability
+15. Experiential Distance: viral content is predominantly zero or near distance
+16. Technique Transfer: correct quarks with wrong techniques produce flat content
+17. Dominant Frame Consistency: every slide conforms to the post's dominant frame
+
+For each: CONFIRMED / MODIFIED / DENIED with evidence from specific posts.
+
+This is the foundational text of Content Physics. Cite everything. Use only real text from the data. Discover what's real.`;
+
+  console.log(`  🔬 Calling Opus for Exemplar synthesis (~${Math.round((preparedData.length + computedStats.length + userPrompt.length) / 4)} input tokens)...`);
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'anthropic/claude-opus-4-6',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 65536,
+      temperature: 0.3,
+    }),
+    signal: AbortSignal.timeout(3600_000), // 1 hour timeout
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Exemplar synthesis failed (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
+  const data = await response.json() as any;
+  const synthesisText = data.choices?.[0]?.message?.content || '';
+
+  if (!synthesisText || synthesisText.length < 2000) {
+    throw new Error(`Exemplar synthesis produced insufficient output (${synthesisText.length} chars)`);
+  }
+
+  const usage = data.usage;
+  if (usage) {
+    const inputTokens = usage.prompt_tokens || 0;
+    const outputTokens = usage.completion_tokens || 0;
+    updateProgress({ synthesisTokens: { input: inputTokens, output: outputTokens } });
+    console.log(`  🔬 Exemplar synthesis complete: ${inputTokens} input, ${outputTokens} output tokens`);
+  }
+
+  console.log(`  🔬 Exemplar Codex output: ${synthesisText.length} chars`);
+
+  // Save as the codex synthesis atom (overwrites previous synthesis)
+  const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
+  const existingSynthesis = allAtomsForSave.find(a => a.metadata?.isCodexSynthesis);
+
+  if (existingSynthesis) {
+    await updateAtom(existingSynthesis.uuid, {
+      body: synthesisText,
+      metadata: {
+        ...existingSynthesis.metadata,
+        updatedAt: new Date().toISOString(),
+        profileCount: N,
+        isExemplarCodex: true,
+      },
+    });
+    console.log(`  📊 Updated Exemplar Codex atom: ${existingSynthesis.uuid}`);
+  } else {
+    await createAtom({
+      type: 'research',
+      title: 'Content Physics Exemplar Codex',
+      body: synthesisText,
+      metadata: {
+        isCodexSynthesis: true,
+        isExemplarCodex: true,
+        isSwipeFile: false,
+        profileCount: N,
+        createdAt: new Date().toISOString(),
+      },
+      structured: {},
+    });
+    console.log(`  📊 Created new Exemplar Codex atom`);
   }
 }

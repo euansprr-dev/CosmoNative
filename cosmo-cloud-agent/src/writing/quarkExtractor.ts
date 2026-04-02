@@ -153,13 +153,15 @@ For EVERY slide boundary (one entry per slide, not just 5), trace:
 5. INVESTMENT LEVEL: How much the reader cares (low/medium/high/locked-in) and what built it.
 
 PASS 10 — THE FABRIC:
-You now have the complete physics from Passes 1-9. Synthesize EVERYTHING. Find what no single pass could reveal — emergent patterns visible only when you see ALL the physics together. How quarks interact across passes, how rhythm reinforces or fights quark physics, how long-range bonds create conditions for physics events, how the reader simulation reveals compound effects.
-Write 500-1000 words of free-form synthesis. Cite specific slides, quarks, reader states from your findings. Every claim grounded in your data — but what you FIND is entirely up to you. Discover.
+You now have the complete physics from Passes 1-9. Synthesize the emergent patterns visible only when ALL physics are seen together. What makes this post's physics unique? What would break if any single element were removed?
+Write 100-200 words of focused synthesis. Cite specific slides. Focus on the 2-3 most important discoveries.
+
+IMPORTANT: Keep ALL mechanism descriptions to ≤15 words. Be precise, not verbose.
 
 Output ONLY valid JSON matching this exact schema (no markdown, no explanation outside JSON):
 {
   "version": 1,
-  "slideQuarks": [{"slideNumber": 1, "text": "first 100 chars...", "speechAct": {"type": "...", "mechanism": "..."}, "readerDeltas": [{"type": "...", "mechanism": "..."}], "proofType": {"type": "...", "mechanism": "..."}, "motivation": {"type": "...", "mechanism": "..."}, "compression": {"type": "...", "size": "...", "mechanism": "..."}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}, "frame": {"type": "loss", "mechanism": "..."}, "experientialDistance": {"level": "zero", "mechanism": "4 words, no explanation — reader simulates directly"}, "techniques": [{"technique": "subject-drop", "usage": "implied 'I' — starts with verb"}, {"technique": "maximum-compression", "usage": "2 words, no context"}]}],
+  "slideQuarks": [{"slideNumber": 1, "speechAct": {"type": "...", "mechanism": "≤15 words"}, "readerDeltas": [{"type": "...", "mechanism": "≤15 words"}], "proofType": {"type": "...", "mechanism": "≤15 words"}, "motivation": {"type": "...", "mechanism": "≤15 words"}, "compression": {"type": "...", "size": "...", "mechanism": "≤15 words"}, "resonanceFrequency": {"detail": "...", "unspokenExperience": "...", "estimatedReach": "..."}, "frame": {"type": "loss", "mechanism": "≤15 words"}, "experientialDistance": {"level": "zero", "mechanism": "≤15 words"}, "techniques": [{"technique": "subject-drop", "usage": "≤10 words"}]}],
   "transitions": [{"from": 1, "to": 2, "type": "...", "mechanism": "...", "swapTestPasses": false, "doubleHelix": true, "doubleHelixDetail": "..."}],
   "arcQuarks": {"shape": "...", "winLossReversals": 0, "tensionPeaks": [], "sparseDensePattern": "...", "internalExternalTension": {"present": true, "peakSlide": 0, "description": "..."}, "dominantFrame": {"type": "museum_of_failures", "mechanism": "Hook establishes 'L's' framing — every slide IS a loss"}},
   "rsv": {"trajectoryPoints": [{"afterSlide": 1, "openLoops": {"count": 1, "loops": ["..."]}, "trust": "low", "tension": {"level": "medium", "type": "external"}, "patternExpectation": "...", "frame": "...", "energyBalance": "charging", "superpositionCount": 2, "superpositions": ["success story", "love letter"]}]},
@@ -183,7 +185,7 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
   },
   "readerSimulation": [{"afterSlide": 1, "activeQuestions": ["..."], "builtAssumptions": ["..."], "prediction": "...", "dominantEmotion": "...", "investmentLevel": "low"}],
   "antimatter": ["specific phrase/structure/move that would destroy this post's physics..."],
-  "deepFabric": "500-1000 words of emergent synthesis citing specific slides, quarks, and reader states from all passes..."
+  "deepFabric": "100-200 words of focused synthesis — the 2-3 most important emergent discoveries citing specific slides"
 }`;
 }
 
@@ -192,9 +194,9 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation o
 // ============================================================
 
 export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | null> {
-  // Always use OpenRouter for extraction — direct Anthropic fetch fails on Railway
-  const useDirectAnthropic = false;
-  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  // Prefer direct Anthropic for extraction — better rate limits, lower latency
+  const useDirectAnthropic = !!config.anthropicApiKey;
+  const apiKey = useDirectAnthropic ? config.anthropicApiKey : config.openRouterApiKey;
   if (!apiKey) {
     console.log(`  ❌ Quark extraction: no API key configured (neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY)`);
     return null;
@@ -211,7 +213,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
     model,
     system: [{ type: 'text', text: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' }],
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 32768,
+    max_tokens: 20000,
     temperature: 0.2,
   } : {
     model,
@@ -219,7 +221,7 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       { role: 'system', content: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' },
       { role: 'user', content: prompt },
     ],
-    max_tokens: 32768,
+    max_tokens: 20000,
     temperature: 0.2,
   };
 

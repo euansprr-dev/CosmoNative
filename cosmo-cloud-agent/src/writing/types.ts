@@ -384,6 +384,101 @@ export interface ScorecardResult {
 }
 
 // ============================================================
+// Content Physics: Per-Slide Physics Targets
+// ============================================================
+
+export interface PhysicsTarget {
+  speechAct: string;
+  readerDeltas: string[];
+  frame: string;
+  experientialDistance: 'zero' | 'near' | 'far';
+  proofType?: string;
+  motivation?: string;
+  compression?: string;
+  transitionToNext: string;
+  rsvAfter: {
+    openLoops: number;
+    trust: 'low' | 'building' | 'high' | 'maxed';
+    tension: 'low' | 'medium' | 'high' | 'peak';
+    frame: string;
+    energyBalance: 'charging' | 'peak' | 'discharging' | 'resolved';
+  };
+}
+
+// ============================================================
+// Content Physics: Draft Physics Extraction Result
+// ============================================================
+
+export interface DraftPhysicsExtraction {
+  slides: Array<{
+    slideNumber: number;
+    speechAct: string;
+    frame: string;
+    experientialDistance: 'zero' | 'near' | 'far';
+    readerDeltas: string[];
+  }>;
+  transitions: Array<{
+    from: number;
+    to: number;
+    type: string;
+    swapTestPasses: boolean;
+  }>;
+  openLoops: {
+    opened: string[];
+    closed: Array<{ loop: string; closedAtSlide: number }>;
+    unclosed: string[];
+  };
+  symmetryBreak: {
+    detected: boolean;
+    slideNumber: number | null;
+    description: string;
+  };
+  phaseTransition: {
+    detected: boolean;
+    slideNumber: number | null;
+    frameBefore: string;
+    frameAfter: string;
+  };
+  peakGravitySlide: number | null;
+  arcShape: string;
+}
+
+// ============================================================
+// Content Physics: Validation Result
+// ============================================================
+
+export interface PhysicsValidationResult {
+  overallScore: number;
+  perSlideViolations: Array<{
+    slideNumber: number;
+    field: string;
+    target: string;
+    actual: string;
+    severity: 'blocking' | 'advisory';
+    message: string;
+  }>;
+  transitionViolations: Array<{
+    from: number;
+    to: number;
+    target: string;
+    actual: string;
+    message: string;
+  }>;
+  conservationViolations: Array<{
+    type: 'unclosed_loops' | 'energy_imbalance' | 'tension_mismatch';
+    severity: 'blocking' | 'advisory';
+    message: string;
+    details: string[];
+  }>;
+  eventViolations: Array<{
+    type: 'symmetry_break' | 'phase_transition' | 'peak_gravity';
+    severity: 'blocking' | 'advisory';
+    message: string;
+  }>;
+  formattedViolations: string;
+}
+
+// ============================================================
 // Draft Validation
 // ============================================================
 

@@ -968,6 +968,34 @@ Time compression: Never jump gaps in one slide. BAD: "entry-level job" → "$120
 
 Never separate cause from effect across unrelated slides. "We made a dumb decision... we liquidated our retirement" = same slide or immediate sequence.
 
+## Within-Slide Sentence Flow
+
+Rule: Every sentence within a slide must CAUSE the next sentence. If you can delete one sentence without the others feeling disconnected, the flow is broken. Sentences stacked as independent facts is the #1 quality killer — it makes content feel AI-generated and kills reading momentum.
+
+BEFORE writing any slide: Find the equivalent slide in your PRIMARY BLUEPRINT. Read its sentences. Notice how each sentence flows into the next — the connectors, the rhythm, the way one thought leads to the next. Your draft must chain sentences the same way.
+
+What stacking looks like (AI default — separate facts listed in order):
+"So inflation just hit 3.4% in March. The Fed's target is 2%, and 3.4% is just the headline. Essentials like food and energy are running even hotter than that."
+Each sentence is a standalone fact. Delete any one and the others still work. No sentence CAUSES the next.
+
+What chaining looks like: READ YOUR BLUEPRINT. Study how consecutive sentences within a single slide connect. The blueprint's slides are your gold standard for within-slide flow. Match their connector patterns, their rhythm, their cause-and-effect structure. Do NOT invent your own "good" version — absorb the blueprint's actual sentence flow.
+
+Connectors that chain sentences: "So", "Because", "Which means", "And that's", "But", "This is why", "Here's the thing", "That's when", "And here's", "It's", "What that means is". At least ONE sentence after the first in each slide must start with a connector.
+
+CRITICAL: Do NOT write clever punchlines or mirror/invert sentence pairs like "X didn't move. Y did." — nobody talks like that. Say the same thing the way the client would actually say it at dinner. Study the client's top-performing posts for how they end slides.
+
+## Between-Slide Bridges
+
+Rule: Every slide must either END with a forward pull or the NEXT slide must START with a backward link. Never let two slides sit next to each other with no bridge. Two unlinked slides feel like starting a new post — the reader drops.
+
+BEFORE writing transitions: Map every slide-to-slide bridge in your PRIMARY BLUEPRINT. Note exactly how it connects each pair — does it end with a pull? Start with a link? Use the SAME bridging mechanism for the corresponding slide pair in your draft.
+
+Common bridge patterns from viral posts:
+- Forward pulls (end of slide): "here's how:", "here's what:", "and that's when:", "which means:", "so:", "this is where you come in:"
+- Backward links (start of slide): "So", "And", "But", "Because", "Which", "That's why", "That's when", "This is where", "When", "Now", "Then"
+
+The blueprint's bridges are your template. Copy the BRIDGE MECHANISM from each slide pair, not the words. If the blueprint connects slides 4→5 with "But as sad as this sounds... It creates the perfect opportunity" — your slides 4→5 need a pivot bridge with the same energy, using the client's content.
+
 ## Hook Craft
 
 Process: Write 3 variants. Never use first instinct. Read each aloud in < 3 seconds — if you can't, cut words.

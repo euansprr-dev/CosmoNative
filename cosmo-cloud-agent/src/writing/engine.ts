@@ -13,7 +13,9 @@ import { assembleBlock1, assembleBlock2, assembleBlock3Stable, assembleBlock3Dyn
 import {
   WritingPhase, WritingMessage, CompressedSwipe, OutlineItem, HookVariant,
   ContentFormat, detectContentFormat, renderDraftForDisplay, validateDraft,
+  PhysicsTarget, PhysicsValidationResult,
 } from './types';
+import { mapBlueprintPhysicsToTargets, extractDraftPhysics, validatePhysics } from './physicsValidator';
 
 const MAX_INNER_ITERATIONS = 5;  // Revisions: think + write + follow-up + safety
 const MAX_PHASE_ITERATIONS = 3;  // Pipeline phases: think + tool + text response (or tool + text + safety)
@@ -35,6 +37,7 @@ interface StructuredSlideContract {
   allowedAdaptation?: string;
   requiredAddressPrefix?: string | null;
   requiresYearMarker?: boolean;
+  physicsTarget?: PhysicsTarget;
 }
 
 interface StructuredSlidePlan {
@@ -1588,6 +1591,39 @@ Only after thorough analysis can you call write_draft.`;
           console.log('    ✅ Blueprint fidelity + conversational slide checks passed');
         }
 
+        // Content Physics validation (runs after structural/voice/narrative checks)
+        let physicsBlockingCount = 0;
+        if (this.structuredSlidePlan?.slides.some(s => s.physicsTarget)) {
+          try {
+            const physicsTargets = this.structuredSlidePlan!.slides
+              .map(s => s.physicsTarget).filter(Boolean) as PhysicsTarget[];
+            console.log(`    🔬 Running physics extraction on draft (${physicsTargets.length} targets)...`);
+            const extraction = await extractDraftPhysics(content, physicsTargets);
+            const physicsResult = validatePhysics(
+              extraction,
+              physicsTargets,
+              (this.blueprintAnchor as any)?.fullQuarkProfile || null,
+            );
+            (this as any).lastPhysicsValidation = physicsResult;
+
+            const blockingPhysics = [
+              ...physicsResult.perSlideViolations.filter(v => v.severity === 'blocking'),
+              ...physicsResult.conservationViolations.filter(v => v.severity === 'blocking'),
+              ...physicsResult.eventViolations.filter(v => v.severity === 'blocking'),
+            ];
+            physicsBlockingCount = blockingPhysics.length;
+
+            if (physicsResult.formattedViolations) {
+              console.log(`    🔬 Physics: score=${physicsResult.overallScore}/100, blocking=${blockingPhysics.length}, advisory=${physicsResult.perSlideViolations.length + physicsResult.transitionViolations.length + physicsResult.conservationViolations.length + physicsResult.eventViolations.length - blockingPhysics.length}`);
+              result += `\n\n${physicsResult.formattedViolations}`;
+            } else {
+              console.log(`    ✅ Physics validation passed (score: ${physicsResult.overallScore}/100)`);
+            }
+          } catch (err) {
+            console.error(`    ⚠️ Physics validation error (non-blocking):`, err);
+          }
+        }
+
         // Self-evaluation
         const selfEval = args.selfEvaluation;
         if (selfEval) {
@@ -1598,7 +1634,7 @@ Only after thorough analysis can you call write_draft.`;
         }
 
         // Auto-refine prompt if violations found
-        if (deterministicViolations.length > 0 || voiceViolations.length > 0 || narrativeViolations.length > 0) {
+        if (deterministicViolations.length > 0 || voiceViolations.length > 0 || narrativeViolations.length > 0 || physicsBlockingCount > 0) {
           this.refinementCount = (this.refinementCount || 0) + 1;
           if (this.refinementCount <= 2) {
             result += `\n\nAUTO-REFINEMENT PASS ${this.refinementCount}/2: Fix the violations above, then call write_draft again with the corrected content.`;
@@ -1644,6 +1680,19 @@ If ALL checks pass, present the draft.
         this.writingPlan = plan;
         this.writingContext.writingPlan = plan;
         const structuredPlan = buildStructuredSlidePlan(plan, this.blueprintAnchor?.fullBody || '', args.structuredPlan);
+
+        // Map blueprint Content Physics to per-slide targets (deterministic, no LLM call)
+        if (this.blueprintAnchor?.fullQuarkProfile) {
+          const physicsTargets = mapBlueprintPhysicsToTargets(
+            this.blueprintAnchor.fullQuarkProfile as any,
+            structuredPlan.slides.length,
+          );
+          for (let i = 0; i < structuredPlan.slides.length && i < physicsTargets.length; i++) {
+            structuredPlan.slides[i].physicsTarget = physicsTargets[i];
+          }
+          console.log(`    📋 Physics targets mapped: ${physicsTargets.length} slides from blueprint quark profile`);
+        }
+
         this.structuredSlidePlan = structuredPlan;
         (this.writingContext as any).structuredSlidePlan = structuredPlan;
 
@@ -2531,7 +2580,7 @@ If ALL checks pass, present the draft.
 // ============================================================
 
 interface ValidationViolation {
-  type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned' | 'em_dash';
+  type: 'banned_phrase' | 'negation_pattern' | 'cadence' | 'static_banned' | 'em_dash' | 'sentence_stacking' | 'formal_voice' | 'copywriter_punchline';
   message: string;
 }
 
@@ -2723,7 +2772,116 @@ function runDeterministicValidators(
     }
   }
 
+  // 7. Within-slide sentence stacking — slides with 3+ sentences but no causal connectors
+  // BAD: "So inflation just hit 3.4%. The Fed's target is 2%. Essentials are running hotter."
+  // GOOD: "So inflation just hit 3.4%... and that's just the headline. The stuff you actually buy? Way worse."
+  const slideTexts = extractSlideTextsForValidation(draft);
+  const connectorPattern = /^(so\b|because\b|which\b|that'?s why|that'?s when|and the\b|and here|and that|but\b|this is\b|here'?s\b|meaning\b|what that means|that means)/i;
+  let stackingFlagged = false;
+  for (const { slideNumber, text } of slideTexts) {
+    if (stackingFlagged) break;
+    // Split on sentence boundaries (. ! ? followed by space+capital or newline)
+    const sentences = text.split(/[.!?]\s+/).filter(s => s.trim().length > 5);
+    if (sentences.length < 3) continue;
+    // Check if ANY sentence after the first starts with a causal connector
+    const hasConnector = sentences.slice(1).some(s => connectorPattern.test(s.trim()));
+    if (!hasConnector) {
+      violations.push({
+        type: 'sentence_stacking',
+        message: `Slide ${slideNumber}: ${sentences.length} sentences stacked as separate facts with no causal flow. Read the blueprint's equivalent slide — study how IT chains sentences. At least one sentence after the first must start with a connector (So, Because, Which, And, But, That's why, Here's, This is, etc).`,
+      });
+      stackingFlagged = true; // One warning triggers auto-refinement
+    }
+  }
+
+  // 8. Formal vocabulary detector — news-anchor/report voice phrases
+  // These are phrases a news anchor or textbook would use, not a friend at dinner.
+  // Don't suggest AI rewrites — tell the model to study how the blueprint/client says the same thing.
+  const formalPhrases: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /your purchasing power/i, label: '"your purchasing power"' },
+    { pattern: /the official inflation/i, label: '"the official inflation number"' },
+    { pattern: /quietly (shrinking|growing|eroding|declining)/i, label: '"quietly shrinking/growing"' },
+    { pattern: /essentials like .{5,40} are running .{0,10}hotter/i, label: '"essentials are running hotter"' },
+    { pattern: /purchasing power is/i, label: '"purchasing power is..."' },
+    { pattern: /the (average|median) (american|household|worker)/i, label: 'formal demographic label' },
+    { pattern: /structural(ly)? (un)?sustain/i, label: '"structurally unsustainable"' },
+    { pattern: /disproportionately (affect|impact)/i, label: '"disproportionately affects"' },
+  ];
+  for (const { pattern, label } of formalPhrases) {
+    if (pattern.test(textToCheck)) {
+      violations.push({
+        type: 'formal_voice',
+        message: `News-anchor voice detected: ${label}. Nobody talks like this at dinner. Read the blueprint's slides — study how IT says similar things, then rewrite using that voice.`,
+      });
+    }
+  }
+
+  // 9. Copywriter punchline detector — mirror/invert sentence pairs that feel written, not spoken
+  // BAD: "Your paycheck didn't move. That list did."
+  // GOOD: "Your paycheck stayed the same. Everything else went up."
+  for (const { slideNumber, text } of slideTexts) {
+    const sentences = text.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
+    for (let j = 0; j < sentences.length - 1; j++) {
+      const a = sentences[j].trim();
+      const b = sentences[j + 1].trim();
+      const aWords = a.split(/\s+/).length;
+      const bWords = b.split(/\s+/).length;
+      // Both short (<=7 words) and second inverts/mirrors the first
+      if (aWords <= 7 && bWords <= 7) {
+        // Check for subject inversion pattern: same structure, contrasting meaning
+        const aSubject = a.split(/\s+/)[0]?.toLowerCase();
+        const bSubject = b.split(/\s+/)[0]?.toLowerCase();
+        // "Your X didn't Y. That Z did." or "X stayed the same. Y didn't."
+        if (aSubject && bSubject && aSubject !== bSubject &&
+            ((a.includes("didn't") && b.includes('did')) ||
+             (a.includes('did') && b.includes("didn't")) ||
+             (a.includes('same') || b.includes('same')) ||
+             (a.includes('not') || b.includes('not')))) {
+          violations.push({
+            type: 'copywriter_punchline',
+            message: `Slide ${slideNumber}: "${a}. ${b}." — this is a copywriter's mirror/invert punchline. Nobody talks like this. Study how the blueprint or client's top posts end similar slides, and say the same idea the way they would at dinner.`,
+          });
+          break;
+        }
+      }
+    }
+  }
+
   return violations;
+}
+
+/**
+ * Extract slide texts from a draft (JSON carousel, thread, or plaintext) for per-slide validation.
+ * Returns array of { slideNumber, text } where text is the raw content of each slide.
+ */
+function extractSlideTextsForValidation(draft: string): Array<{ slideNumber: number; text: string }> {
+  try {
+    const parsed = JSON.parse(draft);
+    if (parsed.slides && Array.isArray(parsed.slides)) {
+      return parsed.slides.map((s: any, i: number) => ({
+        slideNumber: i + 1,
+        text: String(typeof s === 'string' ? s : s.text || ''),
+      }));
+    }
+    if (parsed.tweets && Array.isArray(parsed.tweets)) {
+      return parsed.tweets.map((t: any, i: number) => ({
+        slideNumber: i + 1,
+        text: String(typeof t === 'string' ? t : t.text || t.content || ''),
+      }));
+    }
+  } catch {}
+
+  // Slide N markers
+  if (/^Slide \d+/im.test(draft)) {
+    const matches = [...draft.matchAll(/^Slide \d+[^\n]*\n([\s\S]*?)(?=^Slide \d+[^\n]*\n|$)/gim)];
+    if (matches.length > 0) {
+      return matches.map((m, i) => ({ slideNumber: i + 1, text: (m[1] || '').trim() }));
+    }
+  }
+
+  // Paragraph split fallback
+  const paragraphs = draft.split(/\n{2,}/).filter(p => p.trim().length > 10);
+  return paragraphs.map((p, i) => ({ slideNumber: i + 1, text: p.trim() }));
 }
 
 /**
@@ -3057,9 +3215,61 @@ function validateConversationality(
         evidence: trimEvidence(draft.text),
       });
     }
+
+    // Within-slide chaining check for ALL slides with 3+ sentences (not just sparse)
+    if (draft.sentences >= 3) {
+      const hasConnector = checkWithinSlideConnectors(draft.text);
+      if (!hasConnector) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [draft.slideNumber],
+          message: 'Sentences are stacked as separate facts with no causal flow between them. Chain them: "So...", "Which means...", "And that\'s why...", "Here\'s the thing..."',
+          evidence: trimEvidence(draft.text),
+        });
+      }
+    }
+
+    // Between-slide bridge check for consecutive non-hook, non-CTA slides
+    if (i > 0 && i < maxSlides - 1) {
+      // Not first slide (hook) and not last slide (CTA)
+      const prevDraft = draftSlides[i - 1];
+      const hasBridge = checkBetweenSlideBridge(prevDraft.text, draft.text);
+      if (!hasBridge) {
+        violations.push({
+          kind: 'conversationality',
+          slideNumbers: [prevDraft.slideNumber, draft.slideNumber],
+          message: `Slides ${prevDraft.slideNumber}→${draft.slideNumber}: No bridge between slides. End previous slide with a forward pull ("here's how:", "this is why:") or start this slide with a backward link ("So", "And", "But", "Because", "That's why").`,
+          evidence: trimEvidence(prevDraft.text).slice(-60) + ' → ' + trimEvidence(draft.text).slice(0, 60),
+        });
+      }
+    }
   }
 
   return dedupeNarrativeViolations(violations);
+}
+
+/**
+ * Check if a slide with 3+ sentences has at least one causal connector after the first sentence.
+ * Returns true if flow exists, false if sentences are stacked facts.
+ */
+function checkWithinSlideConnectors(text: string): boolean {
+  const connectorStarts = /^(so\b|because\b|which\b|that'?s why|that'?s when|and the\b|and here|and that\b|but\b|this is\b|here'?s\b|meaning\b|what that means|that means|it'?s\b|when\b)/i;
+  // Split on sentence endings followed by space
+  const sentences = text.split(/[.!?]\s+/).filter(s => s.trim().length > 5);
+  if (sentences.length < 3) return true;
+  return sentences.slice(1).some(s => connectorStarts.test(s.trim()));
+}
+
+/**
+ * Check if there's a bridge between two consecutive slides.
+ * Returns true if slide N ends with a forward pull OR slide N+1 starts with a backward link.
+ */
+function checkBetweenSlideBridge(slideText: string, nextSlideText: string): boolean {
+  // Forward pulls: phrases at the END of a slide that pull the reader forward
+  const forwardPulls = /(here'?s (how|what|why|where|the)|this is (why|where|how|what)|that'?s (when|why|where)|which means|and here'?s|so:|here'?s why|here'?s what)\s*[:.]?\s*$/im;
+  // Backward links: words at the START of a slide that link back to the previous
+  const backwardLinks = /^\s*(so\b|and\b|but\b|because\b|which\b|that'?s|this is|when\b|it'?s\b|here'?s\b|now\b|then\b|meanwhile)/im;
+  return forwardPulls.test(slideText.trim()) || backwardLinks.test(nextSlideText.trim());
 }
 
 function extractContentSlides(content: string): SlideSnapshot[] {

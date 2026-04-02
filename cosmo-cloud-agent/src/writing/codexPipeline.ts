@@ -968,12 +968,14 @@ Example:
 CONFESSION → includes: confession-hook, failure-confession, confession-cliffhanger, vulnerability-open, sacrifice-confession, breaking-point-declaration, honest-limitation
 
 RULES:
-- Every example MUST be real slide text from the raw data. Never fabricate.
-- The periodic table must be EXHAUSTIVE — no concept left unnamed.
-- Collapse aggressively. 10-15 unified speech acts is better than 50 micro-variants. If two concepts are genuinely distinct (different mechanism, different reader effect), keep them separate. If they're the same concept in a different position or context, collapse them.
-- This is empirical science. Every concept exists because we observed it. The table is not theoretical — it's a catalog of what IS.
-- You have ALL the data and ALL the existing Codex. Do NOT ask for more. Do NOT negotiate scope. Produce the output.
-- You have 128,000 tokens. Use them.`;
+- You are ONLY ADDING new content. The existing Codex (Pass 1 + Pass 2) is ALREADY GREAT — do NOT summarize, rewrite, or replace any of it. Your output gets prepended to the top. The existing entries remain as the detailed reference below.
+- Every example MUST be real slide text from the raw data. Never fabricate. Include the FULL QUOTED SLIDE TEXT — the writing model won't have access to the original posts, only this Codex.
+- The periodic table must be EXHAUSTIVE — no concept left unnamed. Every concept that appears in the data must be in the table. If you're unsure whether something is a distinct concept or a variant, check: does it produce a different reader effect through a different mechanism? If yes, it's distinct. If no, it's a variant.
+- Collapse aggressively but correctly. 10-15 unified speech acts is better than 50 micro-variants. If two concepts are genuinely distinct (different mechanism, different reader effect), keep them separate. If they're the same concept in a different position or context, collapse them.
+- For TASK 2 gap-filling: write entries with 10-15 REAL examples each. Every entry must have the same depth as the Pass 1 entries (Confession, Curiosity+, Specificity-as-Credibility). Do NOT write shallow 2-3 example entries. If a concept appears in 30+ posts, it deserves 15 examples. If it appears in 5 posts, 5 examples is fine.
+- This is empirical science. Every concept exists because we observed it in real viral content. No theory without evidence. No concept without examples.
+- You have ALL the data and ALL the existing Codex. Do NOT ask for more. Do NOT negotiate scope. Do NOT say "this would require multiple passes." Produce the output NOW.
+- You have 128,000 tokens. USE THEM. If you finish the periodic table + gap entries + variant mapping and have tokens left, go deeper on the most important remaining concepts. Do NOT stop early.`;
 
   const userPrompt = `═══ EXISTING CODEX (Pass 1 + Pass 2) ═══
 

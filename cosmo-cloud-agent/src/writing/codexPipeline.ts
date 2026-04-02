@@ -46,7 +46,7 @@ function updateProgress(updates: Partial<CodexProgress>): void {
 // Main Pipeline (runs in background)
 // ============================================================
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean } = {}): Promise<void> {
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
@@ -78,13 +78,25 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
     const { codexText: prepText } = await prepareExemplarData();
     console.log(`  📊 Exemplar prep data: ${prepText.length} chars (~${Math.round(prepText.length / 4)} tokens)`);
 
-    // STEP 3: Pass 1 — Foundation (inventory + first batch of deep concept entries)
-    updateProgress({ status: 'synthesizing', phase: 'Pass 1: Building Codex foundation...' });
-    const pass1Text = await runExemplarSynthesis(prepText, statsText);
+    if (options.pass2Only) {
+      // Skip Pass 1 — load existing Codex and go straight to deepening
+      const allAtomsForPass2 = await fetchAllByType('research', { limit: 500 });
+      const existingCodex = allAtomsForPass2.find(a => a.metadata?.isCodexSynthesis);
+      if (!existingCodex?.body || existingCodex.body.length < 1000) {
+        throw new Error('No existing Codex found for Pass 2. Run full pipeline first.');
+      }
+      console.log(`  ⏭️ Skipping Pass 1 — using existing Codex (${existingCodex.body.length} chars)`);
+      updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening existing Codex with real examples...' });
+      await runCodexDeepening(prepText, existingCodex.body);
+    } else {
+      // STEP 3: Pass 1 — Foundation (inventory + first batch of deep concept entries)
+      updateProgress({ status: 'synthesizing', phase: 'Pass 1: Building Codex foundation...' });
+      const pass1Text = await runExemplarSynthesis(prepText, statsText);
 
-    // STEP 4: Pass 2 — Deepening (fill in every concept the first pass missed)
-    updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening — filling gaps with real examples...' });
-    await runCodexDeepening(prepText, pass1Text);
+      // STEP 4: Pass 2 — Deepening (fill in every concept the first pass missed)
+      updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening — filling gaps with real examples...' });
+      await runCodexDeepening(prepText, pass1Text);
+    }
 
     updateProgress({ status: 'complete', phase: 'Done', completedAt: new Date().toISOString() });
   } catch (err: any) {
@@ -768,14 +780,16 @@ RULES:
 - Include patterns (what the examples share) and anti-patterns (what would fail) for each concept.
 - Do NOT repeat entries that Pass 1 already covered deeply. Only fill gaps.
 - Your output will be APPENDED to the Pass 1 Codex, so write as a continuation — no need for a new title or inventory.
+- PRIORITIZE BY FREQUENCY: Start with patterns that appear in 50+ posts (these are the universal physics), then 20-50 posts (strong patterns), then 5-20 posts (niche patterns). The writing model needs the widespread patterns MOST — a concept appearing in 80/105 posts is a LAW, while one in 5/105 is a niche technique.
 - Cover the concepts in this priority order:
-  1. Transition types (the most critical for chaining/flow — cover EVERY type from the inventory)
-  2. Reader Delta types (every emotional shift type with real examples)
-  3. Proof types not yet covered
-  4. Motivations, Compressions, Frames, Distances — each with real examples
-  5. Technique types — each with real examples showing what quark it produces
+  1. Transition types (the most critical for chaining/flow — cover EVERY type, starting with most frequent)
+  2. Reader Delta types (every emotional shift type — start with the ones in 80+ posts)
+  3. Proof types not yet covered (start with most common)
+  4. Technique types — each with real examples showing what quark it produces (start with most common)
+  5. Motivations, Compressions, Frames, Distances — each with real examples
   6. Arc shapes — each with a full post summary
-  7. Any remaining concepts from the inventory
+  7. Any remaining concepts
+- For each concept, STATE THE FREQUENCY first: "Appears in X/105 posts" — this helps the writing model know how universal vs niche it is
 
 You have 128,000 tokens. Fill them. Do NOT stop early. Every concept from the inventory deserves the same depth that Pass 1 gave to Confession, Curiosity+, and Specificity-as-Proof.`;
 

@@ -139,9 +139,9 @@ final class CodexViewModel {
 
     private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
 
-    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false) async {
+    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false) async {
         isGenerating = true
-        progress = skipExtraction ? "Preparing Opus synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
+        progress = pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
         error = nil
 
         do {
@@ -149,7 +149,7 @@ final class CodexViewModel {
             var startRequest = URLRequest(url: startURL)
             startRequest.httpMethod = "POST"
             startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction])
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only])
             startRequest.timeoutInterval = 30
 
             let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
@@ -309,6 +309,12 @@ struct CodexSettingsTab: View {
                 Task { await viewModel.generateCodex(skipExtraction: true) }
             } label: {
                 Label("Synthesize Only (skip extraction)", systemImage: "atom")
+            }
+
+            Button {
+                Task { await viewModel.generateCodex(skipExtraction: true, pass2Only: true) }
+            } label: {
+                Label("Deepen Existing Codex (Pass 2)", systemImage: "arrow.down.to.line")
             }
 
             Divider()

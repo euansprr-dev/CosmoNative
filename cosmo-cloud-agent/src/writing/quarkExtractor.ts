@@ -339,44 +339,78 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
         return null;
       }
 
-      // Parse JSON from response (strip any markdown fences if model wraps them)
+      // Parse JSON from response (strip any markdown fences or preamble)
       let jsonText = rawText.trim();
       if (jsonText.startsWith('```')) {
         jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
       }
+      // Extract JSON object if there's preamble text before it
+      const firstBrace = jsonText.indexOf('{');
+      if (firstBrace > 0) {
+        jsonText = jsonText.substring(firstBrace);
+      }
 
-      // Attempt JSON parse with repair for common LLM output issues
+      // Attempt JSON parse with progressive repair for common LLM output issues
       let profile: QuarkProfile;
       try {
         profile = JSON.parse(jsonText);
       } catch (parseErr: any) {
-        console.log(`  ⚠️ JSON parse failed at position ${parseErr.message.match(/position (\d+)/)?.[1] || '?'}, attempting repair...`);
-        // Try to salvage: truncate at the last valid closing brace
-        const lastBrace = jsonText.lastIndexOf('}');
-        if (lastBrace > 0) {
-          // Count open vs close braces to find a balanced cut point
+        const errPos = parseErr.message.match(/position (\d+)/)?.[1] || '?';
+        console.log(`  ⚠️ JSON parse failed at position ${errPos}, attempting repair (${jsonText.length} chars)...`);
+
+        // Repair strategy 1: Fix common LLM JSON errors
+        let repaired = jsonText
+          // Fix unescaped newlines inside strings
+          .replace(/(?<=":[ ]*"[^"]*)\n(?=[^"]*")/g, '\\n')
+          // Fix trailing commas before } or ]
+          .replace(/,\s*([}\]])/g, '$1')
+          // Fix unescaped control chars
+          .replace(/[\x00-\x1f]/g, (c) => c === '\n' || c === '\r' || c === '\t' ? c : '');
+
+        try {
+          profile = JSON.parse(repaired);
+          console.log(`  ✅ JSON repaired via cleanup (${repaired.length} chars)`);
+        } catch {
+          // Repair strategy 2: Truncate at last balanced brace
           let depth = 0;
           let cutPoint = -1;
-          for (let i = 0; i < jsonText.length; i++) {
-            if (jsonText[i] === '{') depth++;
-            if (jsonText[i] === '}') { depth--; if (depth === 0) { cutPoint = i; } }
+          for (let i = 0; i < repaired.length; i++) {
+            if (repaired[i] === '{') depth++;
+            if (repaired[i] === '}') { depth--; if (depth === 0) { cutPoint = i; } }
           }
           if (cutPoint > 0) {
-            const repaired = jsonText.substring(0, cutPoint + 1);
+            const truncated = repaired.substring(0, cutPoint + 1);
             try {
-              profile = JSON.parse(repaired);
-              console.log(`  ✅ JSON repaired by truncating at balanced brace (${repaired.length} chars of ${jsonText.length})`);
+              profile = JSON.parse(truncated);
+              console.log(`  ✅ JSON repaired by balanced truncation (${truncated.length} of ${repaired.length} chars)`);
             } catch {
-              console.log(`  ❌ JSON repair failed. Raw length: ${jsonText.length}, last 100 chars: ${jsonText.slice(-100)}`);
-              return null;
+              // Repair strategy 3: Try extracting just the top-level object up to the error
+              // and close all open braces/brackets
+              try {
+                let fixText = repaired.substring(0, parseInt(errPos as string) || repaired.length);
+                // Count unclosed braces/brackets and close them
+                let opens = 0, openBrackets = 0;
+                for (const c of fixText) {
+                  if (c === '{') opens++;
+                  if (c === '}') opens--;
+                  if (c === '[') openBrackets++;
+                  if (c === ']') openBrackets--;
+                }
+                // Remove any trailing partial value (back to last comma or colon)
+                fixText = fixText.replace(/,?\s*"[^"]*$/, '');
+                fixText = fixText.replace(/,?\s*$/, '');
+                fixText += ']'.repeat(Math.max(0, openBrackets)) + '}'.repeat(Math.max(0, opens));
+                profile = JSON.parse(fixText);
+                console.log(`  ✅ JSON repaired by force-closing at error position (${fixText.length} chars)`);
+              } catch {
+                console.log(`  ❌ All JSON repairs failed. Raw length: ${jsonText.length}, error at: ${errPos}, last 100 chars: ${jsonText.slice(-100)}`);
+                return null;
+              }
             }
           } else {
             console.log(`  ❌ No balanced brace found. Raw length: ${jsonText.length}`);
             return null;
           }
-        } else {
-          console.log(`  ❌ No closing brace in response. Raw length: ${jsonText.length}`);
-          return null;
         }
       }
 

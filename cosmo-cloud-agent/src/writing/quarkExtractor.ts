@@ -390,11 +390,11 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
               console.log(`  ✅ JSON repaired by balanced truncation (${cutPoint + 1} of ${repaired.length} chars)`);
             } catch {
               console.log(`  ❌ All JSON repairs failed. Raw length: ${jsonText.length}, error at: ${errPos}`);
-              return null;
+              throw new Error(`JSON_PARSE_FAILED: All repairs failed for ${jsonText.length} char response`);
             }
           } else {
             console.log(`  ❌ No balanced brace found after repair. Raw length: ${jsonText.length}`);
-            return null;
+            throw new Error(`JSON_PARSE_FAILED: No balanced brace in ${jsonText.length} char response`);
           }
         }
       }
@@ -405,6 +405,11 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
 
       return profile;
     } catch (err: any) {
+      // JSON parse failures are NOT retryable — the same post will produce similar output
+      if (err.message?.includes('JSON_PARSE_FAILED')) {
+        console.log(`  ❌ JSON parse failure (non-retryable): ${err.message}`);
+        return null;
+      }
       console.log(`  ❌ Extraction error (attempt ${attempt + 1}): ${err.message}`);
       if (attempt < MAX_RETRIES - 1) {
         await new Promise(r => setTimeout(r, (attempt + 1) * 5000));

@@ -459,7 +459,7 @@ AFTER all concept entries, add these sections:
 ═══ LAWS OF CONTENT PHYSICS ═══
 Formal law statements derived from the data. For each law:
 - Precise statement of the law
-- Real evidence: quote 3-5 specific slides from specific posts that PROVE this law
+- Real evidence: quote 10-15 specific slides from specific posts that PROVE this law
 - Violation evidence: if any post breaks this law, quote the specific slide and explain what happens
 - Application: how a writer applies this law when creating new content
 

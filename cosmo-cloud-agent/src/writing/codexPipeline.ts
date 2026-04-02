@@ -376,17 +376,18 @@ async function runExemplarSynthesis(preparedData: string, computedStats: string)
 
   console.log(`  🔬 Exemplar synthesis: sending ${preparedData.length} chars of prep data (~${Math.round(preparedData.length / 4)} tokens)`);
 
-  const systemPrompt = `You are defining a new field of study.
+  const systemPrompt = `You are a structured data extraction system producing THE EXEMPLAR CODEX — a comprehensive knowledge base that will be PROGRAMMATICALLY PARSED. Your output feeds directly into a content generation engine. If ANY concept category from the mandatory checklist is missing, the parser rejects the entire output and the computation is wasted.
 
-Newton looked at falling objects and discovered the laws of motion. Einstein looked at light and discovered relativity. You are looking at ${N} viral posts and discovering the laws of Content Physics — the fundamental forces that govern how sequential media captures and holds human attention.
+CRITICAL BEHAVIORAL INSTRUCTIONS:
+- Your output budget is 128,000 tokens. Previous runs produced only 12,000 tokens (10% of budget) covering 3 concepts. This was a FAILURE — the parser rejected it. You MUST use at least 80,000 tokens and cover ALL concepts.
+- Do NOT write literary prose. Do NOT write introductions, conclusions, transitions between sections, or meta-commentary like "due to length constraints" or "I will prioritize." There are NO length constraints.
+- Do NOT self-edit for conciseness. LONGER IS BETTER. More examples per concept = higher quality downstream.
+- After Step 1 (inventory), enter a MECHANICAL LOOP: pick next uncovered concept → write its full entry with 15-20 examples → pick next concept → repeat. Do NOT pause to reflect between concepts. Do NOT stop until the checklist is complete.
+- When you feel "done," CHECK: have you covered every checkbox? If ANY checkbox is uncovered, you are NOT done. Continue.
 
-This is not a content marketing guide. This is not a "top 10 hook types" listicle. This is the FIRST COMPLETE FORMALIZATION of a field that has never been formally defined. Every viral post in history has obeyed these laws without anyone writing them down. You are writing them down — with the same precision, the same rigor, and the same ambition that Newton brought to the Principia.
+THE EXEMPLAR CODEX defines Content Physics — the fundamental forces governing human attention in sequential media. This is the first complete formalization of a field that has never been formally defined. Every viral post obeys these laws. You are documenting them with the precision of Newton's Principia, grounded entirely in real examples from ${N} viral posts.
 
-THE EXEMPLAR CODEX is the result. After reading it, a writing AI must be able to take ANY idea and turn it into viral Instagram content — not through tricks or templates, but through deep understanding of the physics that governs human attention in sequential media. Every concept grounded in real sentences from real viral posts. Every law proven by real evidence. Every pattern demonstrated through enough examples (15-20) that the reader doesn't just understand the concept — they can EXECUTE it in 15 different ways with their own content.
-
-You have 128,000 tokens of output. USE THEM ALL. This should read like a foundational text — thorough, exhaustive, precise. If Newton had stopped the Principia after describing gravity but not orbital mechanics, it would have been incomplete. Do not stop until every force, every quark, every interaction, every law is documented with real examples from the data.
-
-A concept with 5 examples teaches recognition. A concept with 15-20 examples teaches REPLICATION. ALWAYS aim for replication. NEVER stop at 5 when more exist.
+A concept with 5 examples teaches recognition. A concept with 15-20 examples teaches REPLICATION — the writer sees enough variety to abstract the pattern and execute it with any content. ALWAYS 15-20 examples. NEVER stop at 5.
 
 You have two inputs:
 1. PRE-PROCESSED DATA: Every viral post individually — full slide-by-slide text + complete Content Physics quark profile (10-pass analysis including per-slide quarks, transitions, arc, RSV trajectory, physics events, long-range interactions, rhythm, reader simulation, antimatter, and deep fabric). PLUS aggregated voice DNA metrics and all slide-to-slide bridge text across all posts. NOTE: Each post was analyzed independently by a different Sonnet call, so naming may be inconsistent across posts (e.g., "confession" in one post vs "vulnerable-admission" in another for the same concept). YOUR JOB is to read ALL posts, unify the taxonomy into one consistent language, and discover the patterns.

@@ -146,15 +146,8 @@ export async function prepareExemplarData(): Promise<{ codexText: string; stats:
   const voiceDNA = extractVoiceDNA(entries);
   lines.push(voiceDNA);
 
-  // ═══════════════════════════════════════════════════
-  // SLIDE BRIDGES — Raw connector data between consecutive slides
-  // ═══════════════════════════════════════════════════
-  lines.push(`\n${'═'.repeat(60)}`);
-  lines.push(`SLIDE BRIDGES — Actual text connecting consecutive slides (${N} posts)`);
-  lines.push(`${'═'.repeat(60)}\n`);
-
-  const bridgeData = extractSlideBridges(entries);
-  lines.push(bridgeData);
+  // Bridges removed — Opus already has all slide text per post in Part 1.
+  // Voice DNA above captures the aggregate opening-word patterns.
 
   // ═══════════════════════════════════════════════════
   // STATS SUMMARY
@@ -406,7 +399,7 @@ function formatProfileAsText(profile: QuarkProfile): string {
 
   if (profile.antimatter?.length) lines.push(`  Antimatter: ${profile.antimatter.join(' | ')}`);
   if (profile.novelDiscoveries?.length) lines.push(`  Novel: ${(profile.novelDiscoveries as any[]).map((d: any) => typeof d === 'string' ? d : JSON.stringify(d)).join(' | ')}`);
-  if (profile.deepFabric) lines.push(`  Fabric: ${profile.deepFabric}`);
+  if (profile.deepFabric) lines.push(`  Fabric: ${truncate(profile.deepFabric, 300)}`);
 
   return lines.join('\n');
 }

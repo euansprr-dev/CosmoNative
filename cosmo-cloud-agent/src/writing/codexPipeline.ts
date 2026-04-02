@@ -1322,8 +1322,9 @@ The existing walkthroughs are thin summaries: they mention concept names but don
 Your job: rewrite all 10 walkthroughs so they are the definitive teaching tool for how Content Physics concepts compose into complete posts. A writer reading one walkthrough should understand exactly how every slide works, what physics are active, and why the slides must be in that order.
 
 RULES:
-- Every example MUST use real slide text copied EXACTLY from the raw post data. Never fabricate or paraphrase.
-- Use the exact concept names from the Codex's Periodic Table and deep entries. Not vague descriptions — the formal language.
+- For EVERY slide, you MUST include the COMPLETE TEXT of what that slide says — the actual words a reader sees on screen, copied character-for-character from the raw post data. NOT a reference like "Slide 3" or a summary like "the speaker confesses." The FULL TEXT. A writer reading this walkthrough will NOT have access to the original posts — the walkthrough must be self-contained.
+- Use the exact concept names from the Codex's Periodic Table and deep entries. Not vague descriptions — the formal language (HOOK, CONFESSION, ESCALATION, IDENTIFICATION+, etc.).
+- Analyze EVERY slide individually. Do NOT group slides into ranges like "Slides 4-10: problem stack." Each slide gets its own entry with its own quoted text and its own physics labels.
 
 OUTPUT FORMAT for each walkthrough:
 
@@ -1335,35 +1336,37 @@ Arc shape: {from Periodic Table}
 
 SLIDE-BY-SLIDE ANALYSIS:
 
-Slide 1: "{EXACT SLIDE TEXT from raw data}"
+Slide 1: "{THE COMPLETE TEXT OF THIS SLIDE — every word the reader sees, copied from the raw data}"
   Speech act: {name from Codex}
   Reader deltas: {list — e.g., curiosity+, identification+, tension+}
   Frame: {name from Codex}
   Distance: {zero / near / far}
   Techniques active: {list — e.g., ellipsis momentum, direct dialogue, subject drop}
-  Why this slide works: {1-2 sentences}
+  Why this slide works: {1-2 sentences — what makes THIS specific text effective}
 
 Slide 1 → Slide 2 TRANSITION: {name from Codex — e.g., ANSWER, ESCALATION, PIVOT}
-  Why this order: {why slide 2 MUST follow slide 1}
+  Why this order: {why slide 2 MUST follow slide 1 — what would break if you swapped them}
 
-Slide 2: "{EXACT SLIDE TEXT}"
+Slide 2: "{THE COMPLETE TEXT OF THIS SLIDE}"
   Speech act: ...
   Reader deltas: ...
-  (continue for every slide)
+  (continue for EVERY slide in the post — no skipping, no grouping)
+
+After all slides:
 
 RSV TRAJECTORY:
-  - Slides 1-{N}: {describe open loops, trust, tension, energy using formal terms}
-  - Slide {X}: {PEAK GRAVITY — name the moment}
-  - Slide {Y}: {ENERGY RESOLUTION}
-  - Slide {Z}: {final state}
+  - Slides 1-{N}: {describe open loops count, trust level, tension level, energy balance using formal terms}
+  - Slide {X}: {PEAK GRAVITY — name the moment and what's simultaneously active}
+  - Slide {Y}: {ENERGY RESOLUTION — what discharges and how}
+  - Slide {Z}: {final reader state}
 
 PHYSICS EVENTS:
-  - SYMMETRY BREAK at slide {N}: "{quoted text}" — {why}
-  - PHASE TRANSITION at slide {N}: "{quoted text}" — {what the post becomes}
-  - PEAK GRAVITY at slide {N}: {what's simultaneously active}
-  - ENERGY RESOLUTION at slide {N}: "{quoted text}" — {what discharges}
+  - SYMMETRY BREAK at slide {N}: "{quoted text from that slide}" — {why the pattern breaks here}
+  - PHASE TRANSITION at slide {N}: "{quoted text}" — {what the post becomes after this moment}
+  - PEAK GRAVITY at slide {N}: {which open loops, trust deposits, and tension sources are simultaneously active}
+  - ENERGY RESOLUTION at slide {N}: "{quoted text}" — {what stored energy discharges and into what}
 
-COMPOSITION LESSON: {2-3 sentences — what a writer learns from this post's structure that they can use in any niche}`;
+COMPOSITION LESSON: {2-3 sentences — what a writer learns from this post's structure that they can replicate in any niche}`;
 
   const userPrompt = `<raw_data>
 ${preparedData}
@@ -1374,11 +1377,18 @@ ${existingCodex}
 </existing_codex>
 
 <task>
-Rewrite all 10 walkthroughs using the format above. For each post, find EVERY slide in the raw data and quote it exactly. Label every slide with the unified Codex language. Label every transition between slides.
+Rewrite all 10 walkthroughs. For each post:
+1. Find the post in the raw data above.
+2. For EVERY slide, copy the COMPLETE slide text into the walkthrough — every word the reader sees on screen.
+3. Label each slide with the Codex language: speech act, reader deltas, frame, distance, techniques.
+4. Label the transition between every pair of adjacent slides.
+5. After all slides: RSV trajectory, physics events (with quoted text), composition lesson.
+
+Do NOT summarize slides. Do NOT group slides. Do NOT skip slides. The full text of every slide must appear in the walkthrough.
 
 ${numberedPosts}
 
-Write walkthrough 1 now, then 2, then 3, continuing through 10. These will REPLACE the existing thin walkthroughs in the Codex.
+Write walkthrough 1 now, then 2, then 3, continuing through 10. These replace the existing thin walkthroughs.
 </task>`;
 
   // Continuation loop — same as Pass 2

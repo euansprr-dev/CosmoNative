@@ -627,7 +627,7 @@ FINAL CHECK BEFORE STOPPING:
 This is the foundational text of Content Physics. It should read like a textbook written by someone who has spent years studying these ${N} posts. USE YOUR FULL OUTPUT BUDGET.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
-  const synthesisModel = 'google/gemini-2.5-pro-preview';
+  const synthesisModel = 'google/gemini-3.1-pro-preview';
   console.log(`  🔬 Calling ${synthesisModel} for Exemplar synthesis (~${estimatedInput} est. input tokens, OpenRouter streaming, 65K max output)...`);
 
   const synthesisApiKey = config.openRouterApiKey || apiKey;

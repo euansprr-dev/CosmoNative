@@ -2954,20 +2954,25 @@ struct SwipeStudyFocusModeView: View {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
             if statusCode == 200 {
-                // Poll for the synced data — Supabase Realtime needs time to push to GRDB
-                for attempt in 1...10 {
-                    try await Task.sleep(for: .seconds(3))
+                // Poll for the synced data — compare extractedAt to detect NEW profile
+                let oldExtractedAt = currentAtom?.contentPhysicsProfile?.extractedAt
+                for attempt in 1...15 {
+                    try await Task.sleep(for: .seconds(2))
                     if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid),
-                       refreshed.contentPhysicsProfile != nil {
+                       let profile = refreshed.contentPhysicsProfile,
+                       profile.extractedAt != oldExtractedAt || oldExtractedAt == nil {
                         currentAtom = refreshed
-                        print("🔬 Physics profile loaded after \(attempt * 3)s")
+                        print("🔬 Physics profile updated after \(attempt * 2)s (extractedAt: \(profile.extractedAt ?? "?"))")
                         break
                     }
-                    print("🔬 Waiting for sync... attempt \(attempt)/10")
+                    print("🔬 Waiting for updated profile... attempt \(attempt)/15")
                 }
-                // If still not synced after 30s, show message
-                if currentAtom?.contentPhysicsProfile == nil {
-                    profileGenerationError = "Extraction completed but data hasn't synced yet. Close and reopen this swipe to see the profile."
+                // If still not updated after 30s, force reload anyway
+                if let refreshed = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
+                    currentAtom = refreshed
+                    if currentAtom?.contentPhysicsProfile?.extractedAt == oldExtractedAt {
+                        profileGenerationError = "Extraction completed but new profile hasn't synced yet. Close and reopen this swipe."
+                    }
                 }
             } else {
                 let body = String(data: data, encoding: .utf8) ?? ""

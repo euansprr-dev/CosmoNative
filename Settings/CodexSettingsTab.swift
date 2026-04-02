@@ -139,9 +139,9 @@ final class CodexViewModel {
 
     private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
 
-    func generateCodex(reExtractAll: Bool = false) async {
+    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false) async {
         isGenerating = true
-        progress = reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
+        progress = skipExtraction ? "Preparing Opus synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
         error = nil
 
         do {
@@ -149,7 +149,7 @@ final class CodexViewModel {
             var startRequest = URLRequest(url: startURL)
             startRequest.httpMethod = "POST"
             startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll])
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction])
             startRequest.timeoutInterval = 30
 
             let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
@@ -302,8 +302,16 @@ struct CodexSettingsTab: View {
             Button {
                 Task { await viewModel.generateCodex() }
             } label: {
-                Label("Generate Codex", systemImage: "sparkles")
+                Label("Extract + Synthesize", systemImage: "sparkles")
             }
+
+            Button {
+                Task { await viewModel.generateCodex(skipExtraction: true) }
+            } label: {
+                Label("Synthesize Only (skip extraction)", systemImage: "atom")
+            }
+
+            Divider()
 
             Button {
                 showReExtractConfirmation = true

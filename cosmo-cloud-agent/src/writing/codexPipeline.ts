@@ -46,21 +46,25 @@ function updateProgress(updates: Partial<CodexProgress>): void {
 // Main Pipeline (runs in background)
 // ============================================================
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean } = {}): Promise<void> {
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
   }
 
   updateProgress({
-    status: 'extracting', phase: 'Starting extraction...', current: 0, total: 0,
+    status: 'extracting', phase: 'Starting...', current: 0, total: 0,
     extracted: 0, skipped: 0, failed: 0,
     startedAt: new Date().toISOString(), completedAt: null, error: null, synthesisTokens: null,
   });
 
   try {
-    // STEP 1: Extract all swipes
-    await runExtractionPhase(options.reExtractAll || false);
+    // STEP 1: Extract all swipes (skip if requested — use existing profiles)
+    if (options.skipExtraction) {
+      console.log(`  ⏭️ Skipping extraction — using existing profiles`);
+    } else {
+      await runExtractionPhase(options.reExtractAll || false);
+    }
 
     // STEP 2: Compute stats codex (legacy, kept for backward compat)
     updateProgress({ status: 'computing_stats', phase: 'Computing aggregate statistics...' });
@@ -375,7 +379,7 @@ async function runExemplarSynthesis(preparedData: string, computedStats: string)
   const systemPrompt = `You are creating THE EXEMPLAR CODEX — the complete, unified language of Content Physics derived from ${N} viral posts. This is the definitive document a writing AI will use to understand and replicate every dimension of viral content.
 
 You have two inputs:
-1. PRE-PROCESSED DATA: Every physics concept grouped by approximate extraction label, with FULL SLIDE TEXT examples. NOTE: Different extractions (run independently on different posts) may use different names for the same concept. "confession" and "vulnerable-admission" might be identical. "deflation" and "success-interrupted" might be the same transition. YOUR JOB is to unify these into one consistent taxonomy.
+1. PRE-PROCESSED DATA: Every viral post individually — full slide-by-slide text + complete Content Physics quark profile (10-pass analysis including per-slide quarks, transitions, arc, RSV trajectory, physics events, long-range interactions, rhythm, reader simulation, antimatter, and deep fabric). PLUS aggregated voice DNA metrics and all slide-to-slide bridge text across all posts. NOTE: Each post was analyzed independently by a different Sonnet call, so naming may be inconsistent across posts (e.g., "confession" in one post vs "vulnerable-admission" in another for the same concept). YOUR JOB is to read ALL posts, unify the taxonomy into one consistent language, and discover the patterns.
 
 2. COMPUTED STATISTICS: Frequency distributions and format-specific patterns.
 
@@ -404,7 +408,7 @@ Key format differences to identify:
 - Identify which physics concepts are truly universal and which are format-specific.`;
 
   const userPrompt = `═══════════════════════════════════════════════════════════════
-PRE-PROCESSED EXEMPLAR DATA (grouped by concept with full slide text)
+PRE-PROCESSED EXEMPLAR DATA (every post individually + aggregated voice/bridge data)
 ═══════════════════════════════════════════════════════════════
 
 ${preparedData}

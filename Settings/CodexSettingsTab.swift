@@ -139,9 +139,9 @@ final class CodexViewModel {
 
     private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
 
-    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false, cleanupOnly: Bool = false) async {
+    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false, cleanupOnly: Bool = false, rewriteWalkthroughs: Bool = false) async {
         isGenerating = true
-        progress = cleanupOnly ? "Cleaning up Codex structure..." : pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
+        progress = rewriteWalkthroughs ? "Rewriting walkthroughs with unified language..." : cleanupOnly ? "Cleaning up Codex structure..." : pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
         error = nil
 
         do {
@@ -149,7 +149,7 @@ final class CodexViewModel {
             var startRequest = URLRequest(url: startURL)
             startRequest.httpMethod = "POST"
             startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only, "cleanupOnly": cleanupOnly])
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only, "cleanupOnly": cleanupOnly, "rewriteWalkthroughs": rewriteWalkthroughs])
             startRequest.timeoutInterval = 30
 
             let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
@@ -321,6 +321,12 @@ struct CodexSettingsTab: View {
                 Task { await viewModel.generateCodex(skipExtraction: true, pass2Only: true) }
             } label: {
                 Label("Deepen Existing Codex (Pass 2)", systemImage: "arrow.down.to.line")
+            }
+
+            Button {
+                Task { await viewModel.generateCodex(rewriteWalkthroughs: true) }
+            } label: {
+                Label("Rewrite Walkthroughs (full slides + language)", systemImage: "text.book.closed")
             }
 
             Button {

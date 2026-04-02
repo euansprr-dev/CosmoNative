@@ -184,7 +184,7 @@ export function cleanupCodexText(raw: string): string {
   return text;
 }
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean; cleanupOnly?: boolean } = {}): Promise<void> {
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean; cleanupOnly?: boolean; rewriteWalkthroughs?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
@@ -217,6 +217,22 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
 
       console.log(`  🧹 Codex cleaned: ${before} → ${after} chars (removed ${before - after} chars of thinking/meta)`);
       updateProgress({ status: 'complete', phase: `Cleanup done: ${before} → ${after} chars`, completedAt: new Date().toISOString() });
+      return;
+    }
+
+    // REWRITE WALKTHROUGHS mode: replace thin walkthroughs with full slide-text + unified language
+    if (options.rewriteWalkthroughs) {
+      updateProgress({ status: 'computing_stats', phase: 'Preparing data for walkthrough rewrite...' });
+      const { codexText: prepText } = await prepareExemplarData();
+      const allAtomsForWT = await fetchAllByType('research', { limit: 500 });
+      const existingCodex = allAtomsForWT.find(a => a.metadata?.isCodexSynthesis);
+      if (!existingCodex?.body || existingCodex.body.length < 1000) {
+        throw new Error('No existing Codex found for walkthrough rewrite.');
+      }
+      console.log(`  📊 Rewriting walkthroughs with ${existingCodex.body.length} char Codex + raw data`);
+      updateProgress({ status: 'synthesizing', phase: 'Rewriting walkthroughs with unified language + full slide text...' });
+      await runWalkthroughRewrite(prepText, existingCodex.body);
+      updateProgress({ status: 'complete', phase: 'Walkthroughs rewritten', completedAt: new Date().toISOString() });
       return;
     }
 
@@ -1271,6 +1287,237 @@ Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. 
       },
     });
     console.log(`  📊 Updated Codex with Pass 2 content: ${combinedCodex.length} total chars`);
+  }
+}
+
+// ============================================================
+// Walkthrough Rewrite — replace thin summaries with full slide text + unified language
+// ============================================================
+
+const WALKTHROUGH_POSTS = [
+  'POST 1 — "2020: \'Babe, I\'m worried about our future…\'"',
+  'POST 7 — "$100k is officially lower middle class..."',
+  'POST 10 — "In 2018 my wife told me it wasn\'t working anymore..."',
+  'POST 12 — "Mommy, why is our family rich?"',
+  'POST 13 — "I\'m 23 yrs old and here\'s all the L\'s I taken..."',
+  'POST 14 — "As a millionaire, I don\'t invest in the S&P500 because..."',
+  'POST 22 — "As millionaires, we\'ll never post our son on social media because..."',
+  'POST 24 — "EX BANKER EXPLAINS: PLUMBERS & HVAC OWNERS..."',
+  'POST 30 — "- The government shut down (again)..."',
+  'POST 103 — "2011: Dad, I got kicked out of school..."',
+];
+
+async function runWalkthroughRewrite(preparedData: string, existingCodex: string): Promise<void> {
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  if (!apiKey) throw new Error('No API key for walkthrough rewrite');
+
+  console.log(`  🔬 Walkthrough rewrite: ${WALKTHROUGH_POSTS.length} posts...`);
+
+  const numberedPosts = WALKTHROUGH_POSTS.map((p, i) => `${i + 1}. ${p}`).join('\n');
+
+  const systemPrompt = `You are rewriting the 10 Full Post Walkthroughs for the Exemplar Codex of Content Physics — the first formal language of how human attention works in sequential media.
+
+The existing walkthroughs are thin summaries: they mention concept names but don't quote actual slide text, don't use the unified language consistently, and group slides into ranges like "Slides 4-10" instead of analyzing each one.
+
+Your job: rewrite all 10 walkthroughs so they are the definitive teaching tool for how Content Physics concepts compose into complete posts. A writer reading one walkthrough should understand exactly how every slide works, what physics are active, and why the slides must be in that order.
+
+RULES:
+- Every example MUST use real slide text copied EXACTLY from the raw post data. Never fabricate or paraphrase.
+- Use the exact concept names from the Codex's Periodic Table and deep entries. Not vague descriptions — the formal language.
+
+OUTPUT FORMAT for each walkthrough:
+
+═══ WALKTHROUGH {N}: {POST TITLE} ═══
+
+Why selected: {one sentence — what makes this post structurally instructive}
+Dominant frame: {from Periodic Table}
+Arc shape: {from Periodic Table}
+
+SLIDE-BY-SLIDE ANALYSIS:
+
+Slide 1: "{EXACT SLIDE TEXT from raw data}"
+  Speech act: {name from Codex}
+  Reader deltas: {list — e.g., curiosity+, identification+, tension+}
+  Frame: {name from Codex}
+  Distance: {zero / near / far}
+  Techniques active: {list — e.g., ellipsis momentum, direct dialogue, subject drop}
+  Why this slide works: {1-2 sentences}
+
+Slide 1 → Slide 2 TRANSITION: {name from Codex — e.g., ANSWER, ESCALATION, PIVOT}
+  Why this order: {why slide 2 MUST follow slide 1}
+
+Slide 2: "{EXACT SLIDE TEXT}"
+  Speech act: ...
+  Reader deltas: ...
+  (continue for every slide)
+
+RSV TRAJECTORY:
+  - Slides 1-{N}: {describe open loops, trust, tension, energy using formal terms}
+  - Slide {X}: {PEAK GRAVITY — name the moment}
+  - Slide {Y}: {ENERGY RESOLUTION}
+  - Slide {Z}: {final state}
+
+PHYSICS EVENTS:
+  - SYMMETRY BREAK at slide {N}: "{quoted text}" — {why}
+  - PHASE TRANSITION at slide {N}: "{quoted text}" — {what the post becomes}
+  - PEAK GRAVITY at slide {N}: {what's simultaneously active}
+  - ENERGY RESOLUTION at slide {N}: "{quoted text}" — {what discharges}
+
+COMPOSITION LESSON: {2-3 sentences — what a writer learns from this post's structure that they can use in any niche}`;
+
+  const userPrompt = `<raw_data>
+${preparedData}
+</raw_data>
+
+<existing_codex>
+${existingCodex}
+</existing_codex>
+
+<task>
+Rewrite all 10 walkthroughs using the format above. For each post, find EVERY slide in the raw data and quote it exactly. Label every slide with the unified Codex language. Label every transition between slides.
+
+${numberedPosts}
+
+Write walkthrough 1 now, then 2, then 3, continuing through 10. These will REPLACE the existing thin walkthroughs in the Codex.
+</task>`;
+
+  // Continuation loop — same as Pass 2
+  const MAX_CONTINUATIONS = 5;
+  let allText = '';
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  for (let attempt = 0; attempt <= MAX_CONTINUATIONS; attempt++) {
+    const isFirstCall = attempt === 0;
+
+    if (!isFirstCall) {
+      // Count completed walkthroughs
+      const completedCount = (allText.match(/═══ WALKTHROUGH/g) || []).length;
+      const remaining = WALKTHROUGH_POSTS.length - completedCount;
+      if (remaining <= 0) {
+        console.log(`  ✅ All ${WALKTHROUGH_POSTS.length} walkthroughs complete after ${attempt} calls`);
+        break;
+      }
+      console.log(`  🔄 Continuation ${attempt}/${MAX_CONTINUATIONS}: ${completedCount}/${WALKTHROUGH_POSTS.length} walkthroughs done, ${remaining} remaining`);
+    }
+
+    const messages: Array<{ role: string; content: string }> = [];
+
+    if (isFirstCall) {
+      messages.push({ role: 'system', content: systemPrompt });
+      messages.push({ role: 'user', content: userPrompt });
+    } else {
+      messages.push({ role: 'system', content: systemPrompt });
+      messages.push({ role: 'user', content: userPrompt });
+      messages.push({ role: 'assistant', content: allText });
+
+      const completedCount = (allText.match(/═══ WALKTHROUGH/g) || []).length;
+      const remainingPosts = WALKTHROUGH_POSTS
+        .slice(completedCount)
+        .map((p, i) => `${i + 1}. ${p}`)
+        .join('\n');
+
+      messages.push({
+        role: 'user',
+        content: `You wrote ${completedCount} walkthroughs. Continue with the remaining:\n\n${remainingPosts}\n\nSame format. Next walkthrough now.`,
+      });
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-5.4',
+        messages,
+        max_tokens: 128000,
+        temperature: 0.5,
+        stream: true,
+      }),
+      signal: AbortSignal.timeout(7200_000),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Walkthrough rewrite failed (${response.status}): ${errText.substring(0, 300)}`);
+    }
+
+    const label = isFirstCall ? 'Walkthrough rewrite' : `Walkthrough continuation ${attempt}`;
+    const { text, inputTokens, outputTokens } = await streamOpenRouterResponse(response, label);
+
+    totalInputTokens += inputTokens;
+    totalOutputTokens += outputTokens;
+    console.log(`  🔬 ${label} complete: ${text.length} chars (~${Math.round(text.length / 4)} tokens)`);
+
+    if (!text || text.length < 500) {
+      console.log(`  ⚠️ ${label} produced minimal output — stopping`);
+      break;
+    }
+
+    allText = isFirstCall ? text : allText + '\n\n' + text;
+
+    const completedCount = (allText.match(/═══ WALKTHROUGH/g) || []).length;
+    console.log(`  📊 After ${label}: ${completedCount}/${WALKTHROUGH_POSTS.length} walkthroughs done`);
+
+    if (completedCount >= WALKTHROUGH_POSTS.length || allText.length > 500000) {
+      console.log(`  ✅ Walkthrough rewrite complete`);
+      break;
+    }
+  }
+
+  console.log(`  🔬 Walkthrough rewrite total: ${allText.length} chars, ${totalInputTokens} in / ${totalOutputTokens} out`);
+  updateProgress({ synthesisTokens: { input: totalInputTokens, output: totalOutputTokens } });
+
+  if (!allText || allText.length < 2000) {
+    console.log('  ⚠️ Walkthrough rewrite produced minimal output — skipping');
+    return;
+  }
+
+  // Replace old walkthroughs in the Codex
+  const codexAtoms = await fetchAllByType('research', { limit: 500 });
+  const existingAtom = codexAtoms.find(a => a.metadata?.isCodexSynthesis);
+
+  if (existingAtom) {
+    let codex = existingAtom.body || '';
+
+    // Find and remove old walkthroughs section
+    const oldWalkthroughStart = codex.indexOf('═══ 10 FULL POST WALKTHROUGHS ═══');
+    if (oldWalkthroughStart > -1) {
+      // Old walkthroughs go to the end of the pre-Pass-2 content (before ═══ PASS 2)
+      const pass2Start = codex.indexOf('═══ PASS 2:', oldWalkthroughStart);
+      if (pass2Start > -1) {
+        // Replace old walkthroughs but keep Pass 2 content
+        codex = codex.substring(0, oldWalkthroughStart) + allText + '\n\n' + codex.substring(pass2Start);
+      } else {
+        // No Pass 2 marker — old walkthroughs are at the end of base content
+        codex = codex.substring(0, oldWalkthroughStart) + allText;
+        // Re-append Pass 2 if it exists after walkthroughs
+        const pass2Marker = existingAtom.body?.indexOf('═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══');
+        if (pass2Marker && pass2Marker > oldWalkthroughStart) {
+          codex += '\n\n' + existingAtom.body!.substring(pass2Marker);
+        }
+      }
+    } else {
+      // No old walkthroughs found — just append before Pass 2
+      const pass2Start = codex.indexOf('═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══');
+      if (pass2Start > -1) {
+        codex = codex.substring(0, pass2Start) + '\n\n' + allText + '\n\n' + codex.substring(pass2Start);
+      } else {
+        codex += '\n\n' + allText;
+      }
+    }
+
+    await updateAtom(existingAtom.uuid, {
+      body: codex,
+      metadata: {
+        ...existingAtom.metadata,
+        updatedAt: new Date().toISOString(),
+        walkthroughsRewritten: true,
+      },
+    });
+    console.log(`  📊 Updated Codex with rewritten walkthroughs: ${codex.length} total chars`);
   }
 }
 

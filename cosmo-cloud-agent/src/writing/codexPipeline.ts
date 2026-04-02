@@ -384,12 +384,14 @@ You have two inputs:
 2. COMPUTED STATISTICS: Frequency distributions and format-specific patterns.
 
 CRITICAL RULES:
-- Every example MUST use the ACTUAL slide text from the pre-processed data. Do NOT rewrite, paraphrase, or invent examples. Copy them verbatim.
-- When two groups appear to be the same concept, MERGE them under one unified name.
-- When a concept has sub-types, organize hierarchically.
-- If the data reveals concepts NOT in our framework, NAME THEM and add them.
-- All swipes are curated high-quality viral content — do not rank by score, present for variety.
-- The output is the COMPLETE LANGUAGE. A writer reading ONLY this codex must understand every dimension of viral content with real examples they can replicate.
+- Every example MUST be a REAL slide or sentence copied EXACTLY from one of the posts in the data. Quote the actual text as it appears. Do NOT rewrite, paraphrase, summarize, or invent examples. If you can't find a real example, say so — never fabricate one.
+- Include 15-20 real examples per concept when available. Fall back to 10 if there aren't enough distinct examples. More examples = the writing model learns better.
+- Every claim, pattern, law, or principle MUST be backed by multiple real examples from specific posts (cite post title + slide number). Never state a pattern without showing the actual text that proves it.
+- When two independent extractions use different names for the same concept (e.g., "confession" vs "vulnerable-admission"), MERGE them under one unified name and combine their examples.
+- When a concept has sub-types, organize them hierarchically under the parent.
+- If the data reveals concepts NOT in our framework, NAME THEM and add them with examples.
+- All swipes are curated high-quality viral content — present for variety, not ranked by score.
+- The output is the COMPLETE LANGUAGE. A writing AI reading ONLY this codex must understand every dimension of viral content and be able to replicate it using real sentence structures from these examples.
 
 FORMAT-SPECIFIC PHYSICS:
 The data contains both REELS (≤2 sentences/slide, shorter text per slide, more slides) and CAROUSELS (≥3 sentences/slide, denser text per slide, fewer slides). Both are text-based — reels are text overlays on images/video, not voiceover. Each example is tagged [REEL] or [CAROUSEL]. Format is classified by content density, NOT metadata (metadata is often wrong).
@@ -427,25 +429,25 @@ For EVERY physics concept you identify across ALL categories (speech acts, trans
 
 ═══ {UNIFIED CONCEPT NAME} ({Category: e.g., Speech Act / Transition / Reader Delta}) ═══
 
-DEFINITION: One precise paragraph defining what this IS mechanically — not abstractly, but in terms of what happens in the text and what it produces in the reader.
+DEFINITION: One precise paragraph defining what this IS mechanically — what happens in the actual text, what it produces in the reader, and WHY it works psychologically.
 
-FREQUENCY: How many posts it appears in, at what positions in the post.
+FREQUENCY: How many of the {N} posts use this concept, at what positions in the post.
 
-EXAMPLES (select 10-15 from the pre-processed data, chosen for VARIETY of approaches):
+REAL EXAMPLES (15-20 from the posts, chosen for VARIETY — different creators, different niches, different approaches to the same concept. Fall back to 10 if fewer exist):
 
-1. "{VERBATIM full slide text from prep data}"
+1. "{exact slide text copied from the post data — do NOT rewrite}"
    — [{post title}] Slide {N}
-   Mechanism: {why THIS specific text creates this effect — sentence structure, word choice, distance}
-   Produces: {reader deltas this creates}
-   Techniques: {craft moves used}
+   Why it works: {what specific sentence structure, word choices, and rhythm make this effective}
+   Reader effect: {what changes in the reader's mind and why}
+   How to apply: {how a writer would use this same structure with different content}
 
 2. ...
 
-PATTERNS (what the examples share — be specific about sentence structure, word count, connector words, distance level):
-- {pattern with specificity}
+PATTERNS (what the examples share — cite specific examples by number to prove each pattern):
+- {pattern}: seen in examples #X, #Y, #Z. Specifically: {exact textual evidence}.
 
-ANTI-PATTERNS (what would fail — with specific wording examples):
-- {anti-pattern}
+ANTI-PATTERNS (what would destroy this concept — with specific BAD wording so the writer knows what to avoid):
+- {anti-pattern}: "{example of bad wording}" — fails because {reason}.
 
 For TRANSITIONS: each example MUST include BOTH slides (from → to) with the actual connector text between them.
 For LONG-RANGE INTERACTIONS: include both the setup and payoff slide text with the distance between them.
@@ -455,16 +457,20 @@ For TECHNIQUES: show the actual text that demonstrates the technique, and explai
 AFTER all concept entries, add these sections:
 
 ═══ LAWS OF CONTENT PHYSICS ═══
-Formal law statements. For each:
-- Precise statement
-- What happens when violated (with specific post examples)
-- Which posts demonstrate it best
+Formal law statements derived from the data. For each law:
+- Precise statement of the law
+- Real evidence: quote 3-5 specific slides from specific posts that PROVE this law
+- Violation evidence: if any post breaks this law, quote the specific slide and explain what happens
+- Application: how a writer applies this law when creating new content
 
 ═══ INTERACTIONS ═══
-Which concepts amplify each other, compensate, conflict, or are prerequisites. Cite specific posts.
+Which concepts amplify each other, compensate, conflict, or are prerequisites.
+For each interaction: cite 2-3 specific posts where you can SEE the interaction happening.
+Quote the actual slide text that demonstrates the interaction.
 
 ═══ DEEP STRUCTURE ═══
 The minimal set of principles from which everything derives. The E=mc² of content.
+Back every principle with real examples from multiple posts.
 
 ═══ HYPOTHESIS TEST RESULTS ═══
 Test these 17 hypotheses against ALL the data:
@@ -486,9 +492,20 @@ Test these 17 hypotheses against ALL the data:
 16. Technique Transfer: correct quarks with wrong techniques produce flat content
 17. Dominant Frame Consistency: every slide conforms to the post's dominant frame
 
-For each: CONFIRMED / MODIFIED / DENIED with evidence from specific posts.
+For each: CONFIRMED / MODIFIED / DENIED.
+Back every verdict with 3+ real slide quotes from specific posts. Never just claim — always show the text that proves it.
 
-This is the foundational text of Content Physics. Cite everything. Use only real text from the data. Discover what's real.`;
+═══ CONVERSATIONAL DNA ═══
+Based on the voice DNA metrics and the actual posts:
+- What sentence structures make viral content sound like SPEECH, not writing?
+- What connector patterns chain sentences within slides? Quote real examples.
+- What bridge patterns chain slides together? Quote real bridge text.
+- What makes content sound conversational vs formal? Cite specific posts that do it best and explain exactly what they do differently at the sentence level.
+- What rhythm patterns (sentence length variation, word count per slide) correlate with viral posts?
+
+This section should give a writer everything they need to NEVER sound like AI — backed entirely by real examples.
+
+This is the foundational text of Content Physics. Every claim backed by real text. Every pattern proven with examples. Discover what's real.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
   console.log(`  🔬 Calling Opus for Exemplar synthesis (~${estimatedInput} input tokens, direct Anthropic streaming, 128K max output)...`);

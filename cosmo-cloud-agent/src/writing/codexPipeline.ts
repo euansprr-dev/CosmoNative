@@ -836,13 +836,21 @@ PRIORITY 4 — TECHNIQUES (if you have tokens left):
 □ REPETITION DEVICE — with examples
 
 RULES:
-- Read the Pass 1 inventory carefully. For each concept type listed there, check: does it have a detailed entry with 15-20 real examples, patterns, and anti-patterns? If NOT, write that entry now.
-- Every example MUST be a REAL slide/sentence copied exactly from the posts in the raw data. Never fabricate.
-- 15-20 examples per concept. Each with: the exact text, post title, slide number, why it works, how to apply it.
-- CRITICAL: For every example, include the FULL SLIDE TEXT — not just "Post 103, Slide 14." The writing model that reads this Codex will NOT have access to the original 105 posts. It only has the Codex. So every example must be SELF-CONTAINED: the complete quoted text + enough context that a writer who has never seen the original post understands exactly what's happening and why it works. "Post 103, Slide 14" as a reference is useless alone — always pair it with the full quoted text.
-- Include patterns (what the examples share) and anti-patterns (what would fail) for each concept.
-- Do NOT repeat entries that Pass 1 already covered deeply. Only fill gaps.
-- Your output will be APPENDED to the Pass 1 Codex, so write as a continuation — no need for a new title or inventory.
+- You are ONLY ADDING new entries. The existing Codex is already great. Do NOT rewrite, summarize, or touch it.
+- Every example MUST come from a REAL slide in the raw post data below. Find the actual slide text, copy it EXACTLY as written. Never fabricate or paraphrase.
+- 10-15 examples per concept minimum. Each example must follow this EXACT format:
+
+  1. **"{FULL SLIDE TEXT copied exactly from the post}"**
+     — [{Post title}] Slide {N}
+     Where the concept is active: {Point to the SPECIFIC words, phrase, or structure within the slide that makes this concept happen. E.g., "The word 'cheated' without an object is what creates the curiosity gap" or "The shift from past tense to present tense at 'I find businesses...' is where the distance drops to zero"}
+     Why it works: {What mechanism makes this effective — sentence structure, word choice, rhythm, position}
+     Reader effect: {What changes in the reader's mind}
+     How to apply: {Operational instruction — how a writer uses this same structure with different content}
+
+- The "Where the concept is active" line is CRITICAL. It teaches the writing model to SEE the concept inside real text, not just recognize the label. Without it, the model knows the name but can't locate the physics in actual sentences.
+- Include PATTERNS (what the examples share — cite specific example numbers as evidence) and ANTI-PATTERNS (what would destroy this concept — with specific BAD wording examples).
+- Do NOT repeat entries already deeply covered in the Codex. Only add new ones.
+- Your output will be APPENDED to the existing Codex.
 - PRIORITIZE BY FREQUENCY: Start with patterns that appear in 50+ posts (these are the universal physics), then 20-50 posts (strong patterns), then 5-20 posts (niche patterns). The writing model needs the widespread patterns MOST — a concept appearing in 80/105 posts is a LAW, while one in 5/105 is a niche technique.
 - Cover the concepts in this priority order:
   1. Transition types (the most critical for chaining/flow — cover EVERY type, starting with most frequent)

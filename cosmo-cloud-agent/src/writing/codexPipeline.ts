@@ -505,7 +505,72 @@ Based on the voice DNA metrics and the actual posts:
 
 This section should give a writer everything they need to NEVER sound like AI — backed entirely by real examples.
 
-This is the foundational text of Content Physics. Every claim backed by real text. Every pattern proven with examples. Discover what's real.`;
+═══ MANDATORY COMPLETION CHECKLIST ═══
+
+DO NOT STOP until you have covered EVERY category below. This is not optional.
+Check off each one as you complete it. Your output should be 80,000-128,000 tokens.
+If you find yourself concluding early, you are not done.
+
+MICRO-SCALE QUARKS (cover EVERY type found in the data):
+□ ALL Speech Act types (confession, update, vow, doubt, reveal, gratitude, boast, defiance, lament, AND any others found)
+□ ALL Reader Delta types (curiosity+, curiosity-, tension+, tension-, trust+, identification+, surprise, empathy+, fear+, desire+, AND any others)
+□ ALL Proof types (metric, sacrifice, timeline, sensory, named-entity, contradiction, emotional)
+□ ALL Motivation types (escape, identity, money/freedom, love/legacy, defiance)
+□ ALL Compression types (earned-skip, intriguing-skip, confusing-skip, time-jump, summary)
+□ ALL Per-slide Frame types (loss, decision, consequence, success, observation, setup, absurd, compression-punch, transformation)
+□ ALL Experiential Distance levels (zero, near, far) — with 15+ examples EACH
+□ ALL Technique types (ALL CAPS, ellipsis, subject-drop, casual spelling, present-tense shift, POV framing, direct address, number formatting, maximum compression, parenthetical aside, repetition device, contrast structure, AND any others)
+□ ALL Resonance Frequency patterns found
+
+MESO-SCALE:
+□ ALL Transition types (reason→action, action→result, result→discomfort, discomfort→decision, decision→risk, risk→loss, loss→adaptation, adaptation→payoff, doubt→reaffirmation, deflation, escalation, gratitude→closure, contrast, personal→universal, AND any others)
+□ ALL Relational quark types (foregrounded, implied, payoff-only, relational-proof, listener-as-witness)
+
+MACRO-SCALE:
+□ ALL Arc Shape patterns found in the data (with full post summaries for each)
+□ ALL Dominant Frame types (museum_of_failures, chronological_journey, dialogue, tutorial, letter_to_someone, testimony, listicle, AND any others)
+
+PHYSICS EVENTS:
+□ Symmetry Break — with 15+ real examples
+□ Phase Transition — with 15+ real examples
+□ Peak Gravity — with examples
+□ Energy Resolution — proportional vs disproportional with examples
+
+RSV DIMENSIONS:
+□ Open Loops — patterns, optimal counts, examples
+□ Trust Level — trajectory patterns, examples
+□ Tension — types (external/internal), escalation patterns, examples
+□ Pattern Expectation — how it's set and broken, examples
+□ Frame — how reader's frame evolves, examples
+□ Energy Balance — charging/discharging patterns, examples
+□ Superposition — when readers hold multiple interpretations, examples
+
+LONG-RANGE INTERACTIONS:
+□ Setup-Payoff Bonds — with 15+ real examples showing both slides
+□ Echo Patterns — with examples
+□ Interference Effects — with examples
+□ Deliberate Absences — with examples
+□ Callback Chains — with examples
+□ Entanglement Pairs — with examples
+
+RHYTHM & PACING:
+□ Density Waveform patterns
+□ Energy Curve patterns
+□ Information Rate patterns
+□ Silence/Breathing patterns
+□ Momentum types
+
+ANTIMATTER:
+□ Complete catalog of destructive phrases/patterns from the data
+
+THEN the sections already listed:
+□ Laws (with 10-15 quoted slides each)
+□ Interactions
+□ Deep Structure
+□ Hypothesis Tests (all 17)
+□ Conversational DNA
+
+This is the foundational text of Content Physics. Every claim backed by real text. Every pattern proven with examples. Do NOT stop early. Cover EVERYTHING above.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
   console.log(`  🔬 Calling Opus for Exemplar synthesis (~${estimatedInput} input tokens, direct Anthropic streaming, 128K max output)...`);

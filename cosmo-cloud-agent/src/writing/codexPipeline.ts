@@ -936,23 +936,48 @@ This is the foundational text of Content Physics. It should read like a textbook
 
 // Concept list for Pass 2 — each becomes a numbered entry the model must produce
 const PASS2_CONCEPTS = [
-  // Speech Acts
-  'HOOK (Speech Act)', 'CLAIM (Speech Act)', 'OBSERVATION (Speech Act)',
-  'INSTRUCTION (Speech Act)', 'REVEAL (Speech Act)', 'PROOF (Speech Act)',
-  'PERMISSION (Speech Act)', 'WARNING (Speech Act)', 'INVITATION (Speech Act)',
-  'GRATITUDE (Speech Act)', 'THESIS (Speech Act)',
+  // Speech Acts (highest frequency first)
+  'HOOK (Speech Act)',           // 105/105
+  'REVEAL (Speech Act)',         // 83/105
+  'CLAIM (Speech Act)',          // 82/105
+  'PROOF (Speech Act)',          // 79/105
+  'REFRAME (Speech Act)',        // 73/105
+  'OBSERVATION (Speech Act)',    // 71/105
+  'INSTRUCTION (Speech Act)',    // 54/105
+  'DECISION (Speech Act)',       // 48/105
+  'THESIS (Speech Act)',         // 47/105
+  'PERMISSION (Speech Act)',     // 34/105
+  'WARNING (Speech Act)',        // 31/105
+  'INVITATION (Speech Act)',     // 58/105
+  'GRATITUDE (Speech Act)',      // 12/105
   // Reader Deltas
-  'IDENTIFICATION+ (Reader Delta)', 'TENSION+ (Reader Delta)', 'TRUST+ (Reader Delta)',
-  'SURPRISE (Reader Delta)', 'EMPATHY+ (Reader Delta)', 'ASPIRATION+ (Reader Delta)',
-  'AWE (Reader Delta)', 'GUILT (Reader Delta)', 'WARMTH (Reader Delta)',
-  'CATHARSIS (Reader Delta)',
+  'IDENTIFICATION+ (Reader Delta)',  // 97/105
+  'TENSION+ (Reader Delta)',         // 98/105
+  'TRUST+ (Reader Delta)',           // 91/105
+  'ASPIRATION+ (Reader Delta)',      // 95/105
+  'SURPRISE (Reader Delta)',         // 88/105
+  'EMPATHY+ (Reader Delta)',         // 54/105
+  'RELIEF / TENSION- (Reader Delta)', // 52/105
+  'FEAR+ (Reader Delta)',            // 41/105
+  'AWE (Reader Delta)',              // 49/105
+  'GUILT (Reader Delta)',            // 32/105
+  'WARMTH (Reader Delta)',           // 29/105
+  'CATHARSIS (Reader Delta)',        // 18/105
   // Transitions
-  'ANSWER (Transition)', 'ACCUMULATION (Transition)',
-  'PARTIAL RESOLUTION (Transition)', 'CAUSE-TO-CONSEQUENCE (Transition)',
+  'ESCALATION (Transition)',         // 86/105
+  'ANSWER (Transition)',             // 62/105
+  'ACCUMULATION (Transition)',       // 58/105
+  'OBJECTION-TO-RESOLUTION (Transition)', // 52/105
+  'CAUSE-TO-CONSEQUENCE (Transition)', // 57/105
+  'PIVOT (Transition)',              // 73/105
+  'PARTIAL RESOLUTION (Transition)', // 49/105
   // Techniques
-  'ELLIPSIS MOMENTUM (Technique)', 'SUBJECT DROP (Technique)',
-  'DIRECT ADDRESS (Technique)', 'COLON-AS-PROMISE (Technique)',
-  'DIRECT DIALOGUE (Technique)', 'REPETITION DEVICE (Technique)',
+  'ELLIPSIS MOMENTUM (Technique)',   // 79/105
+  'SUBJECT DROP (Technique)',        // 84/105
+  'DIRECT ADDRESS (Technique)',      // 56/105
+  'COLON-AS-PROMISE (Technique)',    // 51/105
+  'DIRECT DIALOGUE (Technique)',     // 32/105
+  'REPETITION DEVICE (Technique)',   // 36/105
 ];
 
 /** Stream an OpenRouter SSE response and collect text content */
@@ -1095,7 +1120,12 @@ ${pass1Codex}
 </existing_codex>
 
 <task>
-The existing Codex has a Periodic Table and ~37 detailed entries. The following ${PASS2_CONCEPTS.length} concepts still lack detailed entries with real examples. Write all ${PASS2_CONCEPTS.length} entries sequentially:
+The existing Codex has a Periodic Table (definitions + frequencies for every concept) and detailed entries (with 10-15 real examples each) for these 13 concepts ONLY:
+- CONFESSION, FALSE FLOOR, DIALOGUE-BASED OBJECTION VENTRILOQUISM, SPECIFICITY AS CREDIBILITY PROXY, OMITTED MECHANISM, STATE CHANGE THROUGH CONTRAST (from Pass 1)
+- CONTRAST, VALIDATION, PARTICIPATORY VALIDATION, PHASE TRANSITION, ANTI-GLAMOUR POSITIONING, EAVESDROPPING PHYSICS (from Pass 3 gap-fill)
+- Plus Laws 1-6, Interactions, Deep Structure, Hypothesis Tests, Conversational DNA, 10 Walkthroughs
+
+The following ${PASS2_CONCEPTS.length} concepts appear in the Periodic Table but have NO detailed entry with real examples yet. Write all ${PASS2_CONCEPTS.length} entries sequentially:
 
 ${numberedList}
 

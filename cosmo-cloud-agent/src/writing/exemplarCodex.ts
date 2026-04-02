@@ -92,7 +92,20 @@ export async function prepareExemplarData(): Promise<{ codexText: string; stats:
   lines.push(`Each example is tagged [REEL] or [CAROUSEL] — Opus should identify UNIVERSAL`);
   lines.push(`principles that hold across both AND format-specific physics.\n`);
   lines.push(`STRUCTURE: Part 1 = Every post individually (full text + quark profile).`);
-  lines.push(`           Part 2 = Aggregated voice DNA + slide bridges.\n`);
+  lines.push(`           Part 2 = Aggregated voice DNA.\n`);
+  lines.push(`PROFILE NOTATION LEGEND (compact format — every field from the 10-pass extraction):`);
+  lines.push(`  SA = Speech Act (type + mechanism). What the speaker is psychologically doing.`);
+  lines.push(`  RD = Reader Deltas (what changes in reader's mind + how). Multiple per slide.`);
+  lines.push(`  F = Frame (how slide positions its content: loss/decision/consequence/success/setup/etc).`);
+  lines.push(`  D = Experiential Distance (zero=inside moment | near=telling friend | far=reporting).`);
+  lines.push(`  P = Proof Type (metric/sacrifice/timeline/sensory/named-entity/contradiction).`);
+  lines.push(`  M = Motivation (escape/identity/money/love/defiance — why subject acts NOW).`);
+  lines.push(`  C = Compression (how skipped time/info is handled: earned/intriguing/confusing).`);
+  lines.push(`  T = Techniques (craft moves: ALL-CAPS, ellipsis, subject-drop, present-tense-shift, etc).`);
+  lines.push(`  RF = Resonance Frequency (detail that hits mass unspoken experience + reach).`);
+  lines.push(`  Transitions: from→to type(mechanism) [DH]=double helix [S]=strong(can't swap)`);
+  lines.push(`  RSV: OL=open loops TR=trust TN=tension PE=pattern expectation FR=frame EB=energy balance SP=superpositions`);
+  lines.push(`  Reader Sim: EM=emotion INV=investment Qs=active questions AS=assumptions PR=prediction\n`);
 
   // ═══════════════════════════════════════════════════
   // PART 1: EVERY POST — Full body + Full quark profile
@@ -289,110 +302,98 @@ function renderQuarkField(
 }
 
 /**
- * Format a single post's quark profile as readable text (not raw JSON).
+ * Format a single post's quark profile in COMPACT notation.
+ * Same data, ~60% smaller. Legend is in the prep data header.
  */
 function formatProfileAsText(profile: QuarkProfile): string {
   const lines: string[] = [];
+  const m = (v: string | undefined) => v ? v.substring(0, 80) : ''; // cap mechanism length
 
+  // Per-slide quarks — one line per slide
   for (const sq of profile.slideQuarks) {
-    lines.push(`  Slide ${sq.slideNumber}:`);
-    lines.push(`    Speech Act: ${sq.speechAct?.type || '?'} — ${sq.speechAct?.mechanism || ''}`);
-    if (sq.readerDeltas?.length) {
-      lines.push(`    Reader Deltas: ${sq.readerDeltas.map(d => `${d.type} (${d.mechanism || ''})`).join(', ')}`);
-    }
-    if (sq.frame) lines.push(`    Frame: ${sq.frame.type || '?'} — ${sq.frame.mechanism || ''}`);
-    if (sq.experientialDistance) lines.push(`    Distance: ${(sq.experientialDistance as any).level || (sq.experientialDistance as any).type || '?'} — ${sq.experientialDistance.mechanism || ''}`);
-    if (sq.proofType) lines.push(`    Proof: ${sq.proofType.type || '?'} — ${sq.proofType.mechanism || ''}`);
-    if (sq.motivation) lines.push(`    Motivation: ${sq.motivation.type || '?'} — ${sq.motivation.mechanism || ''}`);
-    if (sq.compression) lines.push(`    Compression: ${sq.compression.type} (${sq.compression.size || ''}) — ${sq.compression.mechanism || ''}`);
-    if (sq.techniques?.length) lines.push(`    Techniques: ${sq.techniques.map(t => `${t.technique}${t.usage ? ': ' + t.usage : ''}`).join(', ')}`);
-    if (sq.resonanceFrequency?.detail) lines.push(`    Resonance: ${sq.resonanceFrequency.detail} (unspoken: ${sq.resonanceFrequency.unspokenExperience || '?'}, reach: ${sq.resonanceFrequency.estimatedReach || '?'})`);
+    let line = `  S${sq.slideNumber}: SA=${sq.speechAct?.type || '?'}(${m(sq.speechAct?.mechanism)})`;
+    if (sq.readerDeltas?.length) line += ` RD=[${sq.readerDeltas.map(d => `${d.type}(${m(d.mechanism)})`).join(',')}]`;
+    if (sq.frame) line += ` F=${sq.frame.type || '?'}`;
+    if (sq.experientialDistance) line += ` D=${(sq.experientialDistance as any).level || (sq.experientialDistance as any).type || '?'}`;
+    if (sq.proofType) line += ` P=${sq.proofType.type || '?'}(${m(sq.proofType.mechanism)})`;
+    if (sq.motivation) line += ` M=${sq.motivation.type || '?'}`;
+    if (sq.compression) line += ` C=${sq.compression.type}`;
+    if (sq.techniques?.length) line += ` T=[${sq.techniques.map(t => t.technique).join(',')}]`;
+    if (sq.resonanceFrequency?.detail) line += ` RF="${sq.resonanceFrequency.detail}"(reach:${sq.resonanceFrequency.estimatedReach || '?'})`;
+    lines.push(line);
   }
 
+  // Transitions — one line each
   if (profile.transitions?.length) {
-    lines.push(`  Transitions:`);
     for (const t of profile.transitions) {
-      lines.push(`    ${t.from}→${t.to}: ${t.type} — ${t.mechanism || ''} ${t.doubleHelix ? `[DOUBLE HELIX: ${t.doubleHelixDetail || 'narrative+psychological'}]` : ''} ${t.swapTestPasses === false ? '[STRONG: can\'t swap]' : ''}`);
+      lines.push(`  ${t.from}→${t.to}: ${t.type}(${m(t.mechanism)})${t.doubleHelix ? ' [DH]' : ''}${t.swapTestPasses === false ? ' [S]' : ''}`);
     }
   }
 
+  // Arc — one line
   if (profile.arcQuarks) {
     const a = profile.arcQuarks;
-    lines.push(`  Arc: ${a.shape || '?'}, ${a.winLossReversals || 0} reversals`);
-    if (a.tensionPeaks?.length) lines.push(`    Tension peaks at slides: [${a.tensionPeaks.join(', ')}]`);
-    if (a.dominantFrame) lines.push(`    Dominant Frame: ${a.dominantFrame.type} — ${a.dominantFrame.mechanism || ''}`);
-    if (a.internalExternalTension?.present) lines.push(`    Int/Ext Tension (peak @ slide ${a.internalExternalTension.peakSlide || '?'}): ${a.internalExternalTension.description || ''}`);
-    if (a.sparseDensePattern) lines.push(`    Sparse/Dense: ${a.sparseDensePattern}`);
+    let line = `  Arc: ${a.shape || '?'} rev=${a.winLossReversals || 0}`;
+    if (a.tensionPeaks?.length) line += ` peaks=[${a.tensionPeaks.join(',')}]`;
+    if (a.dominantFrame) line += ` frame=${a.dominantFrame.type}`;
+    if (a.internalExternalTension?.present) line += ` int/ext@${a.internalExternalTension.peakSlide || '?'}`;
+    if (a.sparseDensePattern) line += ` density=${a.sparseDensePattern}`;
+    lines.push(line);
   }
 
+  // Physics events — one line each
   if (profile.physicsEvents) {
     const pe = profile.physicsEvents;
-    if (pe.symmetryBreak?.slideNumber) lines.push(`  Symmetry Break @ slide ${pe.symmetryBreak.slideNumber}: pattern="${pe.symmetryBreak.patternEstablished || ''}" breaks="${pe.symmetryBreak.whatBreaks || ''}" why devastating="${pe.symmetryBreak.whyDevastating || ''}"`);
-    if (pe.phaseTransition?.slideNumber) lines.push(`  Phase Transition @ slide ${pe.phaseTransition.slideNumber}: "${pe.phaseTransition.frameBefore}" → "${pe.phaseTransition.frameAfter}" recontextualization="${pe.phaseTransition.recontextualization || ''}"`);
-    if (pe.peakGravity?.slideNumber) lines.push(`  Peak Gravity @ slide ${pe.peakGravity.slideNumber}: ${pe.peakGravity.activeLoops} loops${pe.peakGravity.coincidesWithTransition ? ' [WITH TRANSITION]' : ''}`);
+    if (pe.symmetryBreak?.slideNumber) lines.push(`  SymBreak@${pe.symmetryBreak.slideNumber}: pattern="${m(pe.symmetryBreak.patternEstablished)}" breaks="${m(pe.symmetryBreak.whatBreaks)}"`);
+    if (pe.phaseTransition?.slideNumber) lines.push(`  PhaseT@${pe.phaseTransition.slideNumber}: "${pe.phaseTransition.frameBefore}"→"${pe.phaseTransition.frameAfter}" recon="${m(pe.phaseTransition.recontextualization)}"`);
+    if (pe.peakGravity?.slideNumber) lines.push(`  Gravity@${pe.peakGravity.slideNumber}: ${pe.peakGravity.activeLoops}loops${pe.peakGravity.coincidesWithTransition ? ' [WITH-TRANSITION]' : ''}`);
     if (pe.energyResolution) {
-      lines.push(`  Energy: ${pe.energyResolution.proportional ? 'proportional' : 'DISPROPORTIONAL'} — ${pe.energyResolution.assessment || ''}`);
-      if (pe.energyResolution.loopsClosed?.length) lines.push(`    Loops closed: ${pe.energyResolution.loopsClosed.map(l => `"${l.loop}" @ slide ${l.closedAtSlide}`).join(', ')}`);
-      if (pe.energyResolution.loopsUnclosed?.length) lines.push(`    Loops UNCLOSED: ${pe.energyResolution.loopsUnclosed.join(', ')}`);
+      let eLine = `  Energy: ${pe.energyResolution.proportional ? 'proportional' : 'DISPROPORTIONAL'}`;
+      if (pe.energyResolution.loopsClosed?.length) eLine += ` closed=[${pe.energyResolution.loopsClosed.map(l => `"${l.loop}"@${l.closedAtSlide}`).join(',')}]`;
+      if (pe.energyResolution.loopsUnclosed?.length) eLine += ` UNCLOSED=[${pe.energyResolution.loopsUnclosed.join(',')}]`;
+      lines.push(eLine);
     }
   }
 
+  // RSV — one line per trajectory point
   if (profile.rsv?.trajectoryPoints?.length) {
-    lines.push(`  RSV Trajectory:`);
     for (const pt of profile.rsv.trajectoryPoints) {
-      let rsvLine = `    After slide ${pt.afterSlide}: loops=${pt.openLoops?.count || 0}`;
-      if (pt.openLoops?.loops?.length) rsvLine += ` [${pt.openLoops.loops.join('; ')}]`;
-      rsvLine += ` trust=${pt.trust || '?'} tension=${pt.tension?.level || '?'}(${pt.tension?.type || '?'})`;
-      if (pt.patternExpectation) rsvLine += ` expects="${pt.patternExpectation}"`;
-      rsvLine += ` frame="${pt.frame || '?'}" energy=${pt.energyBalance || '?'}`;
-      if (pt.superpositionCount) rsvLine += ` superpositions=${pt.superpositionCount}[${(pt.superpositions || []).join('; ')}]`;
-      lines.push(rsvLine);
+      let line = `  RSV@${pt.afterSlide}: OL=${pt.openLoops?.count || 0}`;
+      if (pt.openLoops?.loops?.length) line += `[${pt.openLoops.loops.join(';')}]`;
+      line += ` TR=${pt.trust || '?'} TN=${pt.tension?.level || '?'}(${pt.tension?.type || '?'}) FR="${pt.frame || '?'}" EB=${pt.energyBalance || '?'}`;
+      if (pt.patternExpectation) line += ` PE="${m(pt.patternExpectation)}"`;
+      if (pt.superpositionCount) line += ` SP=${pt.superpositionCount}`;
+      lines.push(line);
     }
   }
 
+  // Long-range — compact
   if (profile.longRangeInteractions) {
     const lr = profile.longRangeInteractions;
-    if (lr.setupPayoffBonds?.length) {
-      lines.push(`  Setup-Payoff Bonds:`);
-      for (const b of lr.setupPayoffBonds) lines.push(`    Slide ${b.setupSlide}→${b.payoffSlide} (${b.distance} apart): planted="${b.planted}" harvested="${b.harvested}"`);
-    }
-    if (lr.echoPatterns?.length) {
-      lines.push(`  Echo Patterns:`);
-      for (const e of lr.echoPatterns) lines.push(`    "${e.quarkType}" @ [${e.positions?.join(', ')}]: ${e.transformation}`);
-    }
-    if (lr.deliberateAbsences?.length) {
-      lines.push(`  Deliberate Absences:`);
-      for (const a of lr.deliberateAbsences) lines.push(`    "${a.what}" — effect: ${a.effect}`);
-    }
-    if (lr.entanglementPairs?.length) {
-      lines.push(`  Entanglement:`);
-      for (const ep of lr.entanglementPairs) lines.push(`    ${ep.slideA}↔${ep.slideB}: if A removed="${ep.ifARemoved}", if B removed="${ep.ifBRemoved}"`);
-    }
-    if (lr.callbackChains?.length) {
-      lines.push(`  Callbacks:`);
-      for (const cc of lr.callbackChains) lines.push(`    "${cc.element}" × ${cc.appearances?.length || 0} times, arc: ${cc.transformationArc}`);
-    }
-    if (lr.interferences?.length) {
-      lines.push(`  Interference:`);
-      for (const ie of lr.interferences) lines.push(`    [${ie.slides?.join(', ')}] forces=[${ie.forces?.join(', ')}] → ${ie.emergentEffect}`);
-    }
+    if (lr.setupPayoffBonds?.length) for (const b of lr.setupPayoffBonds) lines.push(`  Bond: S${b.setupSlide}→S${b.payoffSlide}(${b.distance}) planted="${m(b.planted)}" harvested="${m(b.harvested)}"`);
+    if (lr.echoPatterns?.length) for (const e of lr.echoPatterns) lines.push(`  Echo: "${e.quarkType}"@[${e.positions?.join(',')}] ${m(e.transformation)}`);
+    if (lr.deliberateAbsences?.length) for (const a of lr.deliberateAbsences) lines.push(`  Absence: "${m(a.what)}"→${m(a.effect)}`);
+    if (lr.entanglementPairs?.length) for (const ep of lr.entanglementPairs) lines.push(`  Entangle: S${ep.slideA}↔S${ep.slideB}`);
+    if (lr.callbackChains?.length) for (const cc of lr.callbackChains) lines.push(`  Callback: "${cc.element}"×${cc.appearances?.length || 0} arc=${m(cc.transformationArc)}`);
+    if (lr.interferences?.length) for (const ie of lr.interferences) lines.push(`  Interfere: [${ie.slides?.join(',')}]→${m(ie.emergentEffect)}`);
   }
 
+  // Rhythm — one line
   if (profile.rhythm) {
-    lines.push(`  Rhythm: momentum=${profile.rhythm.momentumMechanism || '?'}, pacing=${profile.rhythm.pacingPattern || '?'}`);
-    if (profile.rhythm.energyCurve?.length) lines.push(`    Energy: [${profile.rhythm.energyCurve.join(', ')}]`);
-    if (profile.rhythm.densityWaveform?.length) lines.push(`    Density: [${profile.rhythm.densityWaveform.join(', ')}]`);
-    if (profile.rhythm.informationRate?.length) lines.push(`    Info rate: [${profile.rhythm.informationRate.join(', ')}]`);
-    if (profile.rhythm.silenceSlides?.length) lines.push(`    Silence: [${profile.rhythm.silenceSlides.join(', ')}]`);
+    let line = `  Rhythm: ${profile.rhythm.momentumMechanism || '?'}`;
+    if (profile.rhythm.energyCurve?.length) line += ` E=[${profile.rhythm.energyCurve.join(',')}]`;
+    if (profile.rhythm.densityWaveform?.length) line += ` D=[${profile.rhythm.densityWaveform.join(',')}]`;
+    if (profile.rhythm.silenceSlides?.length) line += ` silence=[${profile.rhythm.silenceSlides.join(',')}]`;
+    lines.push(line);
   }
 
+  // Reader simulation — one line per slide
   if (profile.readerSimulation?.length) {
-    lines.push(`  Reader Simulation:`);
     for (const rs of profile.readerSimulation) {
-      let line = `    After slide ${rs.afterSlide}: ${rs.dominantEmotion || '?'} invest=${rs.investmentLevel || '?'}`;
-      if (rs.activeQuestions?.length) line += ` Qs=[${rs.activeQuestions.join('; ')}]`;
-      if (rs.builtAssumptions?.length) line += ` assumptions=[${rs.builtAssumptions.join('; ')}]`;
-      if (rs.prediction) line += ` predicts="${rs.prediction}"`;
+      let line = `  Sim@${rs.afterSlide}: EM=${rs.dominantEmotion || '?'} INV=${rs.investmentLevel || '?'}`;
+      if (rs.activeQuestions?.length) line += ` Qs=[${rs.activeQuestions.map(q => m(q)).join(';')}]`;
+      if (rs.builtAssumptions?.length) line += ` AS=[${rs.builtAssumptions.map(a => m(a)).join(';')}]`;
+      if (rs.prediction) line += ` PR="${m(rs.prediction)}"`;
       lines.push(line);
     }
   }

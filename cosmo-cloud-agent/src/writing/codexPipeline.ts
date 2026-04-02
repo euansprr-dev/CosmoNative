@@ -376,11 +376,17 @@ async function runExemplarSynthesis(preparedData: string, computedStats: string)
 
   console.log(`  🔬 Exemplar synthesis: sending ${preparedData.length} chars of prep data (~${Math.round(preparedData.length / 4)} tokens)`);
 
-  const systemPrompt = `You are writing THE EXEMPLAR CODEX — a textbook-length document that IS the complete language of Content Physics. After reading this document, a writing AI must be able to replicate every dimension of viral content — not from theory, but from real sentence structures, real connector patterns, real rhythm, and real examples it can copy and adapt.
+  const systemPrompt = `You are defining a new field of study.
 
-THIS IS A TEXTBOOK, NOT A SUMMARY. You have 128,000 tokens of output budget — USE IT ALL. Your output should be the length of a BOOK, not an article. Every concept needs deep analysis with 15-20 real examples. Every claim needs proof. Every pattern needs enough examples that a writer can see the variety and abstract the underlying structure.
+Newton looked at falling objects and discovered the laws of motion. Einstein looked at light and discovered relativity. You are looking at ${N} viral posts and discovering the laws of Content Physics — the fundamental forces that govern how sequential media captures and holds human attention.
 
-A concept with 5 examples teaches recognition. A concept with 15-20 examples teaches REPLICATION — the writer sees enough variety to abstract the underlying pattern and apply it to new content. That's the difference between "I understand confessions" and "I can WRITE confessions in 15 different ways." ALWAYS aim for replication depth. NEVER stop at 5 examples when more exist in the data.
+This is not a content marketing guide. This is not a "top 10 hook types" listicle. This is the FIRST COMPLETE FORMALIZATION of a field that has never been formally defined. Every viral post in history has obeyed these laws without anyone writing them down. You are writing them down — with the same precision, the same rigor, and the same ambition that Newton brought to the Principia.
+
+THE EXEMPLAR CODEX is the result. After reading it, a writing AI must be able to take ANY idea and turn it into viral Instagram content — not through tricks or templates, but through deep understanding of the physics that governs human attention in sequential media. Every concept grounded in real sentences from real viral posts. Every law proven by real evidence. Every pattern demonstrated through enough examples (15-20) that the reader doesn't just understand the concept — they can EXECUTE it in 15 different ways with their own content.
+
+You have 128,000 tokens of output. USE THEM ALL. This should read like a foundational text — thorough, exhaustive, precise. If Newton had stopped the Principia after describing gravity but not orbital mechanics, it would have been incomplete. Do not stop until every force, every quark, every interaction, every law is documented with real examples from the data.
+
+A concept with 5 examples teaches recognition. A concept with 15-20 examples teaches REPLICATION. ALWAYS aim for replication. NEVER stop at 5 when more exist.
 
 You have two inputs:
 1. PRE-PROCESSED DATA: Every viral post individually — full slide-by-slide text + complete Content Physics quark profile (10-pass analysis including per-slide quarks, transitions, arc, RSV trajectory, physics events, long-range interactions, rhythm, reader simulation, antimatter, and deep fabric). PLUS aggregated voice DNA metrics and all slide-to-slide bridge text across all posts. NOTE: Each post was analyzed independently by a different Sonnet call, so naming may be inconsistent across posts (e.g., "confession" in one post vs "vulnerable-admission" in another for the same concept). YOUR JOB is to read ALL posts, unify the taxonomy into one consistent language, and discover the patterns.
@@ -395,7 +401,7 @@ ABSOLUTE RULES:
 5. For each example, explain: (a) why THIS specific text creates this effect, (b) what sentence structure/word choices make it work, (c) how a writer would replicate this pattern with different content.
 6. For COMPOUND PATTERNS — when two or more concepts appear together and produce an effect greater than either alone — document these as their own entries. Show the real examples where the compound occurs.
 7. Do NOT conclude early. Check: have you covered every concept from the mandatory checklist? Have you given 15+ examples for each? If not, keep going. If you've written less than 80,000 tokens, you are not done.
-8. After individual concepts, include FULL POST WALKTHROUGHS — take the 5 best posts and analyze them slide-by-slide showing how ALL concepts compose together into a viral post. This teaches the writer how concepts COMBINE, not just what they are individually.
+8. After individual concepts, include 10 FULL POST WALKTHROUGHS — analyze each slide-by-slide showing how ALL concepts compose. This teaches COMBINATION. Remember: your Step 1 inventory was built by examining EVERY post's profile — the walkthroughs make that analysis visible for the 10 most instructive examples.
 
 FORMAT-SPECIFIC PHYSICS:
 The data contains both REELS (≤2 sentences/slide, shorter text per slide, more slides) and CAROUSELS (≥3 sentences/slide, denser text per slide, fewer slides). Both are text-based — reels are text overlays on images/video, not voiceover. Each example is tagged [REEL] or [CAROUSEL]. Format is classified by content density, NOT metadata (metadata is often wrong).
@@ -596,12 +602,13 @@ COMPOUND PATTERNS:
 □ Document every compound (2+ concepts appearing together for outsized effect)
 □ Show the real posts where each compound occurs with quoted slides
 
-FULL POST WALKTHROUGHS:
-□ Take the 5 most structurally brilliant posts and analyze them SLIDE BY SLIDE
-□ For each slide: annotate every concept present (speech act, delta, frame, distance, techniques)
-□ For each transition: explain how it chains to the next slide
-□ Show how ALL concepts compose together into a single viral post
-□ This section teaches COMBINATION — how concepts work together, not just individually
+FULL POST WALKTHROUGHS (10 posts):
+□ Select 10 posts that showcase different structural approaches (mix of reels + carousels, different arc shapes, different dominant frames)
+□ For EACH of the 10: analyze EVERY SLIDE showing which concepts are active (speech act, deltas, frame, distance, techniques, proof)
+□ For EACH transition between slides: explain the causal bridge and why these slides MUST be in this order
+□ Show the RSV trajectory through the post — how loops, trust, tension, and energy evolve slide by slide
+□ Identify the symmetry break, phase transition, and peak gravity — and explain WHY they're placed where they are
+□ This teaches a writer how to COMPOSE a complete post from physics, not just use individual concepts
 
 THEN:
 □ Laws (with 10-15 quoted slides each)

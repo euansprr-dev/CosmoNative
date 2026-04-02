@@ -113,7 +113,7 @@ async function runExtractionPhase(reExtractAll: boolean): Promise<void> {
     return;
   }
 
-  const BATCH_SIZE = 30; // Process in batches of 30 to avoid TPM rate limits
+  const BATCH_SIZE = 10; // Railway drops connections when too many long-lived requests run concurrently
   const totalBatches = Math.ceil(needsExtraction.length / BATCH_SIZE);
   console.log(`  🚀 Extracting ${needsExtraction.length} swipes in ${totalBatches} batches of ${BATCH_SIZE}...`);
 

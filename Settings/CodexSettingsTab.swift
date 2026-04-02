@@ -98,6 +98,7 @@ final class CodexViewModel {
     var error: String?
     var extractionStats: ExtractionStats?
     var searchQuery: String = ""
+    var showCopied: Bool = false
 
     struct ExtractionStats {
         let total: Int
@@ -259,6 +260,27 @@ struct CodexSettingsTab: View {
             }
 
             if !viewModel.sections.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(viewModel.codexText, forType: .string)
+                    viewModel.showCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        viewModel.showCopied = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: viewModel.showCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 11))
+                        if viewModel.showCopied {
+                            Text("Copied!")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(viewModel.showCopied ? DS.accent : DS.textSecondary)
+                .help("Copy full Codex to clipboard")
+
                 Button {
                     showRawText.toggle()
                 } label: {

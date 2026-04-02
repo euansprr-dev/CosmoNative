@@ -376,22 +376,26 @@ async function runExemplarSynthesis(preparedData: string, computedStats: string)
 
   console.log(`  🔬 Exemplar synthesis: sending ${preparedData.length} chars of prep data (~${Math.round(preparedData.length / 4)} tokens)`);
 
-  const systemPrompt = `You are creating THE EXEMPLAR CODEX — the complete, unified language of Content Physics derived from ${N} viral posts. This is the definitive document a writing AI will use to understand and replicate every dimension of viral content.
+  const systemPrompt = `You are writing THE EXEMPLAR CODEX — a textbook-length document that IS the complete language of Content Physics. After reading this document, a writing AI must be able to replicate every dimension of viral content — not from theory, but from real sentence structures, real connector patterns, real rhythm, and real examples it can copy and adapt.
+
+THIS IS A TEXTBOOK, NOT A SUMMARY. You have 128,000 tokens of output budget — USE IT ALL. Your output should be the length of a BOOK, not an article. Every concept needs deep analysis with 15-20 real examples. Every claim needs proof. Every pattern needs enough examples that a writer can see the variety and abstract the underlying structure.
+
+A concept with 5 examples teaches recognition. A concept with 15-20 examples teaches REPLICATION — the writer sees enough variety to abstract the underlying pattern and apply it to new content. That's the difference between "I understand confessions" and "I can WRITE confessions in 15 different ways." ALWAYS aim for replication depth. NEVER stop at 5 examples when more exist in the data.
 
 You have two inputs:
 1. PRE-PROCESSED DATA: Every viral post individually — full slide-by-slide text + complete Content Physics quark profile (10-pass analysis including per-slide quarks, transitions, arc, RSV trajectory, physics events, long-range interactions, rhythm, reader simulation, antimatter, and deep fabric). PLUS aggregated voice DNA metrics and all slide-to-slide bridge text across all posts. NOTE: Each post was analyzed independently by a different Sonnet call, so naming may be inconsistent across posts (e.g., "confession" in one post vs "vulnerable-admission" in another for the same concept). YOUR JOB is to read ALL posts, unify the taxonomy into one consistent language, and discover the patterns.
 
 2. COMPUTED STATISTICS: Frequency distributions and format-specific patterns.
 
-CRITICAL RULES:
-- Every example MUST be a REAL slide or sentence copied EXACTLY from one of the posts in the data. Quote the actual text as it appears. Do NOT rewrite, paraphrase, summarize, or invent examples. If you can't find a real example, say so — never fabricate one.
-- Include 15-20 real examples per concept when available. Fall back to 10 if there aren't enough distinct examples. More examples = the writing model learns better.
-- Every claim, pattern, law, or principle MUST be backed by multiple real examples from specific posts (cite post title + slide number). Never state a pattern without showing the actual text that proves it.
-- When two independent extractions use different names for the same concept (e.g., "confession" vs "vulnerable-admission"), MERGE them under one unified name and combine their examples.
-- When a concept has sub-types, organize them hierarchically under the parent.
-- If the data reveals concepts NOT in our framework, NAME THEM and add them with examples.
-- All swipes are curated high-quality viral content — present for variety, not ranked by score.
-- The output is the COMPLETE LANGUAGE. A writing AI reading ONLY this codex must understand every dimension of viral content and be able to replicate it using real sentence structures from these examples.
+ABSOLUTE RULES:
+1. Every example is a REAL slide or sentence copied EXACTLY from the data. Never rewrite, paraphrase, or invent. Quote it as-is.
+2. 15-20 real examples per concept. Show how DIFFERENT creators in DIFFERENT niches execute the same concept differently. Fall back to 10 ONLY if fewer exist. NEVER give just 3-5 when more exist.
+3. Every claim, pattern, and law backed by multiple quoted examples with post title + slide number.
+4. Merge concepts that are the same thing with different names across extractions. Add new concepts the data reveals.
+5. For each example, explain: (a) why THIS specific text creates this effect, (b) what sentence structure/word choices make it work, (c) how a writer would replicate this pattern with different content.
+6. For COMPOUND PATTERNS — when two or more concepts appear together and produce an effect greater than either alone — document these as their own entries. Show the real examples where the compound occurs.
+7. Do NOT conclude early. Check: have you covered every concept from the mandatory checklist? Have you given 15+ examples for each? If not, keep going. If you've written less than 80,000 tokens, you are not done.
+8. After individual concepts, include FULL POST WALKTHROUGHS — take the 5 best posts and analyze them slide-by-slide showing how ALL concepts compose together into a viral post. This teaches the writer how concepts COMBINE, not just what they are individually.
 
 FORMAT-SPECIFIC PHYSICS:
 The data contains both REELS (≤2 sentences/slide, shorter text per slide, more slides) and CAROUSELS (≥3 sentences/slide, denser text per slide, fewer slides). Both are text-based — reels are text overlays on images/video, not voiceover. Each example is tagged [REEL] or [CAROUSEL]. Format is classified by content density, NOT metadata (metadata is often wrong).
@@ -449,7 +453,8 @@ NOVEL PATTERNS: [anything not in the standard framework]
 
 STEP 2 — THE EXEMPLAR CODEX (write this AFTER the inventory):
 Now that you have cataloged everything across all ${N} posts, write the full codex.
-For EVERY concept type from your inventory above:
+Go through your inventory SYSTEMATICALLY — do not skip any concept type.
+For EVERY concept type from your inventory above (even if it only appears in 3-5 posts):
 
 ═══ {UNIFIED CONCEPT NAME} ({Category: e.g., Speech Act / Transition / Reader Delta}) ═══
 
@@ -587,14 +592,31 @@ RHYTHM & PACING:
 ANTIMATTER:
 □ Complete catalog of destructive phrases/patterns from the data
 
-THEN the sections already listed:
-□ Laws (with 10-15 quoted slides each)
-□ Interactions
-□ Deep Structure
-□ Hypothesis Tests (all 17)
-□ Conversational DNA
+COMPOUND PATTERNS:
+□ Document every compound (2+ concepts appearing together for outsized effect)
+□ Show the real posts where each compound occurs with quoted slides
 
-This is the foundational text of Content Physics. Every claim backed by real text. Every pattern proven with examples. Do NOT stop early. Cover EVERYTHING above.`;
+FULL POST WALKTHROUGHS:
+□ Take the 5 most structurally brilliant posts and analyze them SLIDE BY SLIDE
+□ For each slide: annotate every concept present (speech act, delta, frame, distance, techniques)
+□ For each transition: explain how it chains to the next slide
+□ Show how ALL concepts compose together into a single viral post
+□ This section teaches COMBINATION — how concepts work together, not just individually
+
+THEN:
+□ Laws (with 10-15 quoted slides each)
+□ Interactions (which concepts amplify/conflict/require each other — with real examples)
+□ Deep Structure (the minimal principles from which everything derives)
+□ Hypothesis Tests (all 17, each backed by 3+ quoted slides)
+□ Conversational DNA (sentence structures, connectors, bridges, rhythm — backed by real text)
+
+FINAL CHECK BEFORE STOPPING:
+- Have you covered EVERY type from your Step 1 inventory? If any are missing, go back.
+- Does each concept have 15+ examples? If any have fewer than 10, add more.
+- Have you included 5 full post walkthroughs? If not, add them.
+- Is your output at least 80,000 tokens? If not, you stopped too early — deepen your analysis.
+
+This is the foundational text of Content Physics. It should read like a textbook written by someone who has spent years studying these ${N} posts. USE YOUR FULL OUTPUT BUDGET.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
   console.log(`  🔬 Calling Opus for Exemplar synthesis (~${estimatedInput} input tokens, direct Anthropic streaming, 128K max output)...`);

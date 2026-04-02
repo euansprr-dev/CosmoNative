@@ -425,7 +425,31 @@ ${computedStats}
 YOUR TASK: CREATE THE EXEMPLAR CODEX
 ═══════════════════════════════════════════════════════════════
 
-For EVERY physics concept you identify across ALL categories (speech acts, transitions, reader deltas, proof types, motivations, compressions, per-slide frames, experiential distances, techniques, dominant frames, arc shapes, physics events, long-range interactions, rhythm patterns, antimatter, resonance frequencies, and any NEW concepts the data reveals):
+CRITICAL: Do NOT begin writing the codex until you have read ALL ${N} posts.
+
+STEP 1 — RAW INVENTORY (output this FIRST, before any prose):
+Read every single post. For each concept category below, build a raw frequency table listing every unique type found across ALL ${N} posts, with the post numbers that contain each type. This forces you to scan the complete dataset before writing.
+
+Output format for Step 1:
+SPEECH ACTS FOUND: confession(posts 1,3,7,14,22,...), update(posts 2,5,8,...), reveal(posts ...), [every type]
+TRANSITIONS FOUND: escalation(posts ...), deflation(posts ...), [every type]
+READER DELTAS FOUND: curiosity+(posts ...), trust+(posts ...), [every type]
+PROOF TYPES FOUND: [every type with post numbers]
+MOTIVATIONS FOUND: [every type with post numbers]
+COMPRESSIONS FOUND: [every type with post numbers]
+FRAMES FOUND: [every type with post numbers]
+DISTANCES FOUND: zero(posts ...), near(posts ...), far(posts ...)
+TECHNIQUES FOUND: [every type with post numbers]
+DOMINANT FRAMES FOUND: [every type with post numbers]
+ARC SHAPES FOUND: [every shape with post numbers]
+TRANSITIONS DOUBLE-HELIX: [which transitions are DH, which aren't]
+LONG-RANGE TYPES FOUND: [bonds, echoes, absences, entanglement — with post numbers]
+ANTIMATTER CATALOG: [every destructive phrase found, with frequency]
+NOVEL PATTERNS: [anything not in the standard framework]
+
+STEP 2 — THE EXEMPLAR CODEX (write this AFTER the inventory):
+Now that you have cataloged everything across all ${N} posts, write the full codex.
+For EVERY concept type from your inventory above:
 
 ═══ {UNIFIED CONCEPT NAME} ({Category: e.g., Speech Act / Transition / Reader Delta}) ═══
 

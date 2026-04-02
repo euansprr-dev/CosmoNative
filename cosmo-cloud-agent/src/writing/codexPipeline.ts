@@ -46,7 +46,7 @@ function updateProgress(updates: Partial<CodexProgress>): void {
 // Main Pipeline (runs in background)
 // ============================================================
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean } = {}): Promise<void> {
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
@@ -78,7 +78,17 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
     const { codexText: prepText } = await prepareExemplarData();
     console.log(`  📊 Exemplar prep data: ${prepText.length} chars (~${Math.round(prepText.length / 4)} tokens)`);
 
-    if (options.pass2Only) {
+    if (options.pass3Only) {
+      // Skip Pass 1+2 — load existing Codex and run unification
+      const allAtomsForPass3 = await fetchAllByType('research', { limit: 500 });
+      const existingCodex = allAtomsForPass3.find(a => a.metadata?.isCodexSynthesis);
+      if (!existingCodex?.body || existingCodex.body.length < 1000) {
+        throw new Error('No existing Codex found for Pass 3. Run full pipeline first.');
+      }
+      console.log(`  ⏭️ Skipping Pass 1+2 — using existing Codex (${existingCodex.body.length} chars)`);
+      updateProgress({ status: 'synthesizing', phase: 'Pass 3: Unifying language + filling gaps...' });
+      await runCodexUnification(prepText, existingCodex.body);
+    } else if (options.pass2Only) {
       // Skip Pass 1 — load existing Codex and go straight to deepening
       const allAtomsForPass2 = await fetchAllByType('research', { limit: 500 });
       const existingCodex = allAtomsForPass2.find(a => a.metadata?.isCodexSynthesis);
@@ -899,5 +909,166 @@ Read the Pass 1 inventory. Identify every concept that has NO detailed entry yet
       },
     });
     console.log(`  📊 Updated Codex with Pass 2 content: ${combinedCodex.length} total chars`);
+  }
+}
+
+// ============================================================
+// Pass 3: Unification — collapse micro-variants, fill gaps, prepend language reference
+// ============================================================
+
+async function runCodexUnification(preparedData: string, existingCodex: string): Promise<void> {
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  if (!apiKey) throw new Error('No API key for Codex unification');
+
+  console.log(`  🔬 Pass 3: Unifying language from ${existingCodex.length} chars of existing Codex...`);
+
+  const systemPrompt = `You are completing the EXEMPLAR CODEX — the first formal language of Content Physics.
+
+Passes 1 and 2 produced brilliant analysis: deep concept entries with real examples, laws, walkthroughs, conversational DNA. But the language is NOT YET UNIFIED. The inventory at the top lists hundreds of micro-variant names that are actually the same concept ("confession-hook," "failure-confession," "confession-cliffhanger" are all CONFESSION in different positions). And some concepts from the inventory still lack detailed entries.
+
+Newton didn't publish hundreds of unnamed observations. He published 3 laws and showed how everything derives from them. That's what you're doing now.
+
+YOUR THREE TASKS:
+
+TASK 1 — THE PERIODIC TABLE OF CONTENT PHYSICS
+Produce a complete reference table listing EVERY distinct concept that exists in viral content. Collapse all micro-variants into their parent concepts. For each concept: one name, one precise 1-2 sentence definition, and which category it belongs to.
+
+Categories:
+- FORCES (the 3 fundamental forces)
+- SPEECH ACTS (what the speaker is doing — collapsed to the minimal distinct set)
+- TRANSITIONS (how slides connect — collapsed to the minimal distinct set)
+- READER DELTAS (what changes in the reader — collapsed to the minimal distinct set)
+- PROOF TYPES (what earns belief — collapsed to the minimal distinct set)
+- MOTIVATIONS (why the subject acts — collapsed to the minimal distinct set)
+- COMPRESSIONS (how time/info is skipped — collapsed to the minimal distinct set)
+- FRAMES (how a slide positions content — collapsed to the minimal distinct set)
+- DISTANCES (zero / near / far)
+- TECHNIQUES (craft moves — collapsed to the minimal distinct set)
+- DOMINANT FRAMES (post-level identity — collapsed to the minimal distinct set)
+- ARC SHAPES (full-post emotional trajectory — collapsed to the minimal distinct set)
+- PHYSICS EVENTS (symmetry break, phase transition, peak gravity, energy resolution)
+- LONG-RANGE INTERACTIONS (bonds, echoes, absences, entanglement, callbacks, interference)
+- RSV DIMENSIONS (open loops, trust, tension, pattern expectation, frame, energy balance, superposition)
+- COMPOUND PATTERNS (concepts that combine for outsized effect)
+- ANTIMATTER (phrases/moves that destroy physics)
+
+For each concept in the table: NAME | CATEGORY | 1-2 sentence definition | frequency (X/105 posts)
+
+This table IS the language. Every concept that exists in viral content must be named here. If it's not in this table, it doesn't exist in the language.
+
+TASK 2 — FILL REMAINING GAPS
+After producing the periodic table, check: does every concept in your table have a detailed entry with real examples somewhere in the existing Codex (Pass 1 or Pass 2)? If NOT, write that entry now with 10-15 real examples from the raw post data. Full quoted slide text, why it works, how to apply. Same format as Pass 1 and Pass 2 entries.
+
+Focus on the concepts that appear in 20+ posts but still lack entries. These are the workhorses of viral content that the writing model MUST understand deeply.
+
+TASK 3 — VARIANT MAPPING
+For each concept in the periodic table, list the micro-variant names from the inventory that collapse into it. This mapping tells the writing model: "when you see 'confession-hook' or 'failure-confession' in a profile, that's CONFESSION."
+
+Example:
+CONFESSION → includes: confession-hook, failure-confession, confession-cliffhanger, vulnerability-open, sacrifice-confession, breaking-point-declaration, honest-limitation
+
+RULES:
+- Every example MUST be real slide text from the raw data. Never fabricate.
+- The periodic table must be EXHAUSTIVE — no concept left unnamed.
+- Collapse aggressively. 10-15 unified speech acts is better than 50 micro-variants. If two concepts are genuinely distinct (different mechanism, different reader effect), keep them separate. If they're the same concept in a different position or context, collapse them.
+- This is empirical science. Every concept exists because we observed it. The table is not theoretical — it's a catalog of what IS.
+- You have ALL the data and ALL the existing Codex. Do NOT ask for more. Do NOT negotiate scope. Produce the output.
+- You have 128,000 tokens. Use them.`;
+
+  const userPrompt = `═══ EXISTING CODEX (Pass 1 + Pass 2) ═══
+
+${existingCodex}
+
+═══ RAW POST DATA (all posts with full text + quark profiles) ═══
+
+${preparedData}
+
+═══ YOUR TASK ═══
+
+1. Produce the PERIODIC TABLE OF CONTENT PHYSICS — every distinct concept, collapsed from micro-variants, with 1-2 sentence definitions.
+2. Fill gaps — write detailed entries for any concept in your table that lacks one in the existing Codex.
+3. Produce the VARIANT MAPPING — for each concept, list all the micro-variant names that collapse into it.
+
+Start with the periodic table. Then the gap-filling entries. Then the variant mapping. GO.`;
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'openai/gpt-5.4',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 128000,
+      temperature: 0.3,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(7200_000),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Codex unification failed (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body reader for unification');
+
+  const decoder = new TextDecoder();
+  let pass3Text = '';
+  let lastLog = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const eventData = line.slice(6);
+      if (eventData === '[DONE]') continue;
+      try {
+        const event = JSON.parse(eventData);
+        const delta = event.choices?.[0]?.delta?.content;
+        if (delta) pass3Text += delta;
+      } catch {}
+    }
+
+    if (Date.now() - lastLog > 30_000) {
+      const tokens = Math.round(pass3Text.length / 4);
+      console.log(`  🔬 Pass 3 streaming: ${pass3Text.length} chars (~${tokens} tokens)...`);
+      updateProgress({ phase: `Pass 3 unification: ~${tokens} output tokens...` });
+      lastLog = Date.now();
+    }
+  }
+
+  console.log(`  🔬 Pass 3 complete: ${pass3Text.length} chars (~${Math.round(pass3Text.length / 4)} tokens)`);
+
+  if (!pass3Text || pass3Text.length < 1000) {
+    console.log('  ⚠️ Pass 3 produced minimal output — skipping');
+    return;
+  }
+
+  // Prepend the periodic table + gap entries to the existing Codex
+  const unifiedCodex = pass3Text + '\n\n═══ DETAILED REFERENCE (Pass 1 + Pass 2 Entries) ═══\n\n' + existingCodex;
+
+  const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
+  const existingAtom = allAtomsForSave.find(a => a.metadata?.isCodexSynthesis);
+
+  if (existingAtom) {
+    await updateAtom(existingAtom.uuid, {
+      body: unifiedCodex,
+      metadata: {
+        ...existingAtom.metadata,
+        updatedAt: new Date().toISOString(),
+        pass3Complete: true,
+        unified: true,
+      },
+    });
+    console.log(`  📊 Updated Codex with unified language: ${unifiedCodex.length} total chars`);
   }
 }

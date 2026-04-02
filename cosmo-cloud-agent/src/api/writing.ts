@@ -185,7 +185,7 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
 
 // Start codex pipeline (background — returns immediately)
 writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
-  const { reExtractAll, skipExtraction, pass2Only, pass3Only } = req.body || {};
+  const { reExtractAll, skipExtraction, pass2Only, pass3Only, cleanupOnly } = req.body || {};
 
   const progress = getCodexProgress();
   if (progress.status === 'extracting' || progress.status === 'computing_stats' || progress.status === 'synthesizing' || progress.status === 'saving') {
@@ -194,7 +194,7 @@ writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
   }
 
   // Start in background — don't await
-  startCodexPipeline({ reExtractAll: !!reExtractAll, skipExtraction: !!skipExtraction, pass2Only: !!pass2Only, pass3Only: !!pass3Only }).catch(err => {
+  startCodexPipeline({ reExtractAll: !!reExtractAll, skipExtraction: !!skipExtraction, pass2Only: !!pass2Only, pass3Only: !!pass3Only, cleanupOnly: !!cleanupOnly }).catch(err => {
     console.log(`  ❌ Background pipeline error: ${err.message}`);
   });
 

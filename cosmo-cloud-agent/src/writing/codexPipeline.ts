@@ -46,7 +46,145 @@ function updateProgress(updates: Partial<CodexProgress>): void {
 // Main Pipeline (runs in background)
 // ============================================================
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean } = {}): Promise<void> {
+// ============================================================
+// Codex Cleanup — strip model thinking, task headers, reorganize
+// ============================================================
+
+export function cleanupCodexText(raw: string): string {
+  let text = raw;
+
+  // 1. Strip opening meta paragraph (everything before the first section header)
+  const firstSectionMatch = text.match(/^[\s\S]*?((?:#+\s*|═══\s*)(?:PERIODIC TABLE|FORCES|SPEECH ACTS|TRANSITIONS|READER DELTAS))/m);
+  if (firstSectionMatch) {
+    const idx = text.indexOf(firstSectionMatch[1]);
+    if (idx > 0 && idx < 2000) {
+      text = text.substring(idx);
+    }
+  }
+
+  // 2. Strip TASK prefixes from headers
+  text = text.replace(/# TASK \d+[A-Za-z]?\s*—\s*/g, '# ');
+  text = text.replace(/TASK \d+[A-Za-z]?\s*—\s*/g, '');
+
+  // 3. Remove "TASK 2A — COMPLETION CHECK" section entirely (model thinking)
+  text = text.replace(/#{1,3}\s*COMPLETION CHECK AGAINST EXISTING CODEX[\s\S]*?(?=(?:#{1,3}\s+|═══\s+)(?!COMPLETION))/gi, '');
+
+  // 4. Remove "COMPLETION NOTE" section
+  text = text.replace(/═══\s*COMPLETION NOTE\s*═══[\s\S]*?(?=═══|$)/gi, '');
+
+  // 5. Remove "MANDATORY COMPLETION CHECKLIST" section
+  text = text.replace(/═══\s*MANDATORY COMPLETION CHECKLIST\s*═══[\s\S]*?(?=═══|$)/gi, '');
+
+  // 6. Remove meta conclusion paragraph
+  text = text.replace(/This prepend gives the writing model[\s\S]*?(?=═══)/gi, '');
+
+  // 7. Remove "DETAILED REFERENCE" header (just the header line, keep content)
+  text = text.replace(/═══\s*DETAILED REFERENCE \(Pass 1 \+ Pass 2 Entries\)\s*═══\s*\n*/gi, '');
+
+  // 8. Remove duplicate/multiple "PASS 2: DEEPENED CONCEPT ENTRIES" headers
+  //    Keep the first occurrence's content, strip duplicate header lines
+  let pass2Count = 0;
+  text = text.replace(/[\\n\n]*═══\s*PASS 2: DEEPENED CONCEPT ENTRIES\s*═══[\\n\n]*/gi, (match) => {
+    pass2Count++;
+    return pass2Count === 1 ? '\n\n' : '\n\n';
+  });
+
+  // 9. Remove raw inventory data (SPEECH ACTS FOUND: ..., TRANSITIONS FOUND: ..., etc.)
+  //    These are massive blocks of post-number lists that are superseded by the Periodic Table
+  const inventoryPatterns = [
+    'SPEECH ACTS FOUND:',
+    'TRANSITIONS FOUND:',
+    'READER DELTAS FOUND:',
+    'PROOF TYPES FOUND:',
+    'MOTIVATIONS FOUND:',
+    'COMPRESSIONS FOUND:',
+    'FRAMES FOUND:',
+    'DISTANCES FOUND:',
+    'TECHNIQUES FOUND:',
+    'DOMINANT FRAMES FOUND:',
+    'ARC SHAPES FOUND:',
+    'TRANSITIONS DOUBLE-HELIX:',
+    'LONG-RANGE TYPES FOUND:',
+    'ANTIMATTER CATALOG:',
+    'NOVEL PATTERNS:',
+  ];
+  for (const pattern of inventoryPatterns) {
+    // Each inventory item is one giant paragraph — remove from pattern start to the next double newline or section header
+    const escPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(escPattern + '[\\s\\S]*?(?=\\n\\n═══|\\n\\n#{1,3}\\s|$)', 'gi'), '');
+  }
+
+  // 10. Remove escaped literal newlines that got into the DB from code bugs
+  text = text.replace(/\\n/g, '\n');
+
+  // 11. Clean up excessive whitespace
+  text = text.replace(/\n{4,}/g, '\n\n\n');
+
+  // 12. Now reorganize: extract sections and reorder
+  //     The goal: Periodic Table → Variant Mapping → Deep Entries → Laws → Interactions → Deep Structure → Hypotheses → DNA → Walkthroughs
+  //     For now, just ensure Variant Mapping follows the Periodic Table
+
+  // Find where variant mapping starts and ends
+  const variantStart = text.search(/#{1,3}\s*VARIANT MAPPING|═══.*VARIANT MAPPING/i);
+  if (variantStart > -1) {
+    // Find where it ends (next major non-mapping section)
+    const afterVariant = text.substring(variantStart);
+    const variantEndMatch = afterVariant.match(/\n(═══\s*(?!.*MAPPING)(?:FALSE FLOOR|DIALOGUE|SPECIFICITY|OMITTED|UNIVERSAL|STATE CHANGE|CONTRAST|VALIDATION|PARTICIPATORY|PHASE TRANSITION|ANTI-GLAMOUR|EAVESDROPPING|HOOK|CLAIM|OBSERVATION|INSTRUCTION|REVEAL|PROOF|PERMISSION|WARNING|INVITATION|GRATITUDE|THESIS|LAW|INTERACTION|DEEP STRUCTURE|HYPOTHESIS|CONVERSATIONAL|WALKTHROUGH|CURATION|FEAR|RELIEF|MOTIVATION|READER DELTA|PROOF TYPE|TECHNIQUE|COMPRESSION|FRAME|DISTANCE|ARC SHAPE|ANSWER|ACCUMULATION|PARTIAL|CAUSE))/i);
+
+    if (variantEndMatch) {
+      const variantEndIdx = variantStart + afterVariant.indexOf(variantEndMatch[0]);
+      const variantBlock = text.substring(variantStart, variantEndIdx);
+
+      // Remove it from current position
+      text = text.substring(0, variantStart) + text.substring(variantEndIdx);
+
+      // Find end of Periodic Table (the ANTIMATTER section is the last table category)
+      const antimatterEnd = text.search(/\n\n(?=═══\s*(?:FALSE FLOOR|DIALOGUE|SPECIFICITY|OMITTED|UNIVERSAL|STATE CHANGE|CONTRAST|VALIDATION|PARTICIPATORY|PHASE TRANSITION|ANTI-GLAMOUR|EAVESDROPPING|HOOK|CLAIM|OBSERVATION|INSTRUCTION))/i);
+
+      if (antimatterEnd > -1) {
+        // Insert variant mapping right after the Periodic Table
+        text = text.substring(0, antimatterEnd) + '\n\n\n# VARIANT MAPPING\n\n' + variantBlock.replace(/^#{1,3}\s*VARIANT MAPPING\s*\n*/i, '') + '\n\n' + text.substring(antimatterEnd);
+      }
+    }
+  }
+
+  // 13. Strip "Fill remaining gaps" meta-commentary paragraphs
+  text = text.replace(/Below are \*\*new full entries\*\* only for concepts[\s\S]*?I'll fill the highest-frequency missing ones first\.\s*---/gi, '');
+  text = text.replace(/The biggest remaining workhorse gaps from the current Codex are:[\s\S]*?---/gi, '');
+
+  // 14. Cut everything after MANDATORY COMPLETION CHECKLIST
+  //     All Pass 2 appends below this point used a bugged SSE parser and are garbled.
+  //     They'll be regenerated cleanly by the new Pass 2 code.
+  const checklistIdx = text.indexOf('MANDATORY COMPLETION CHECKLIST');
+  if (checklistIdx > -1) {
+    // Find the start of that section (the ═══ before it)
+    const beforeChecklist = text.lastIndexOf('═══', checklistIdx);
+    if (beforeChecklist > -1) {
+      const removed = text.length - beforeChecklist;
+      text = text.substring(0, beforeChecklist).trimEnd();
+      console.log(`  🧹 Cut ${removed} chars of garbled Pass 2 content (after MANDATORY COMPLETION CHECKLIST)`);
+    }
+  }
+
+  // Also cut any "PASS 2: DEEPENED CONCEPT ENTRIES" sections that survived
+  const pass2Idx = text.indexOf('PASS 2: DEEPENED CONCEPT ENTRIES');
+  if (pass2Idx > -1) {
+    const beforePass2 = text.lastIndexOf('═══', pass2Idx);
+    if (beforePass2 > -1) {
+      const removed = text.length - beforePass2;
+      text = text.substring(0, beforePass2).trimEnd();
+      console.log(`  🧹 Cut ${removed} chars of remaining Pass 2 content`);
+    }
+  }
+
+  // 15. Final whitespace cleanup
+  text = text.replace(/\n{4,}/g, '\n\n\n');
+  text = text.trim();
+
+  return text;
+}
+
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean; cleanupOnly?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
@@ -59,6 +197,29 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
   });
 
   try {
+    // CLEANUP-ONLY mode: just clean the existing Codex and save
+    if (options.cleanupOnly) {
+      updateProgress({ status: 'computing_stats', phase: 'Cleaning up Codex structure...' });
+      const allAtoms = await fetchAllByType('research', { limit: 500 });
+      const existingCodex = allAtoms.find(a => a.metadata?.isCodexSynthesis);
+      if (!existingCodex?.body || existingCodex.body.length < 1000) {
+        throw new Error('No existing Codex found for cleanup.');
+      }
+
+      const before = existingCodex.body.length;
+      const cleaned = cleanupCodexText(existingCodex.body);
+      const after = cleaned.length;
+
+      await updateAtom(existingCodex.uuid, {
+        body: cleaned,
+        metadata: { ...existingCodex.metadata, updatedAt: new Date().toISOString(), cleanedUp: true },
+      });
+
+      console.log(`  🧹 Codex cleaned: ${before} → ${after} chars (removed ${before - after} chars of thinking/meta)`);
+      updateProgress({ status: 'complete', phase: `Cleanup done: ${before} → ${after} chars`, completedAt: new Date().toISOString() });
+      return;
+    }
+
     // STEP 1: Extract all swipes (skip if requested — use existing profiles)
     if (options.skipExtraction) {
       console.log(`  ⏭️ Skipping extraction — using existing profiles`);
@@ -95,9 +256,12 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
       if (!existingCodex?.body || existingCodex.body.length < 1000) {
         throw new Error('No existing Codex found for Pass 2. Run full pipeline first.');
       }
-      console.log(`  ⏭️ Skipping Pass 1 — using existing Codex (${existingCodex.body.length} chars)`);
+      // Clean up the Codex before sending to GPT — strip task headers, thinking, reorganize
+      const cleanedCodex = cleanupCodexText(existingCodex.body);
+      console.log(`  🧹 Cleaned Codex: ${existingCodex.body.length} → ${cleanedCodex.length} chars`);
+      console.log(`  ⏭️ Skipping Pass 1 — using cleaned Codex (${cleanedCodex.length} chars)`);
       updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening existing Codex with real examples...' });
-      await runCodexDeepening(prepText, existingCodex.body);
+      await runCodexDeepening(prepText, cleanedCodex);
     } else {
       // STEP 3: Pass 1 — Foundation (inventory + first batch of deep concept entries)
       updateProgress({ status: 'synthesizing', phase: 'Pass 1: Building Codex foundation...' });
@@ -767,185 +931,299 @@ This is the foundational text of Content Physics. It should read like a textbook
 
 // ============================================================
 // Pass 2: Codex Deepening — fill in concepts missed by Pass 1
+// Uses continuation loop: if model stops early, auto-continues
 // ============================================================
 
-async function runCodexDeepening(preparedData: string, pass1Codex: string): Promise<void> {
-  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
-  if (!apiKey) throw new Error('No API key for Codex deepening');
+// Concept list for Pass 2 — each becomes a numbered entry the model must produce
+const PASS2_CONCEPTS = [
+  // Speech Acts
+  'HOOK (Speech Act)', 'CLAIM (Speech Act)', 'OBSERVATION (Speech Act)',
+  'INSTRUCTION (Speech Act)', 'REVEAL (Speech Act)', 'PROOF (Speech Act)',
+  'PERMISSION (Speech Act)', 'WARNING (Speech Act)', 'INVITATION (Speech Act)',
+  'GRATITUDE (Speech Act)', 'THESIS (Speech Act)',
+  // Reader Deltas
+  'IDENTIFICATION+ (Reader Delta)', 'TENSION+ (Reader Delta)', 'TRUST+ (Reader Delta)',
+  'SURPRISE (Reader Delta)', 'EMPATHY+ (Reader Delta)', 'ASPIRATION+ (Reader Delta)',
+  'AWE (Reader Delta)', 'GUILT (Reader Delta)', 'WARMTH (Reader Delta)',
+  'CATHARSIS (Reader Delta)',
+  // Transitions
+  'ANSWER (Transition)', 'ACCUMULATION (Transition)',
+  'PARTIAL RESOLUTION (Transition)', 'CAUSE-TO-CONSEQUENCE (Transition)',
+  // Techniques
+  'ELLIPSIS MOMENTUM (Technique)', 'SUBJECT DROP (Technique)',
+  'DIRECT ADDRESS (Technique)', 'COLON-AS-PROMISE (Technique)',
+  'DIRECT DIALOGUE (Technique)', 'REPETITION DEVICE (Technique)',
+];
 
-  console.log(`  🔬 Pass 2: Sending ${pass1Codex.length} chars of Pass 1 Codex + raw data for deepening...`);
-
-  const systemPrompt = `You are completing the EXEMPLAR CODEX — the first formal language of Content Physics.
-
-This is not a content marketing project. This is the construction of a new formal language — as rigorous and complete as the periodic table is to chemistry, as Maxwell's equations are to electromagnetism, as Newton's laws are to mechanics. Every element in this language must be defined, demonstrated with real evidence, and connected to the rest of the system. An undefined element is like an undiscovered element in the periodic table — it leaves a gap that makes the entire language unreliable.
-
-The language is grounded in 105+ real viral posts that have been deeply analyzed through 10-pass Content Physics extraction. Every concept we name exists because we observed it in real content. Every example we cite is a real sentence written by a real creator that went viral. This is empirical science, not theory.
-
-If any concept from the inventory is left without a definition and real examples, the language is INCOMPLETE — like publishing the periodic table with blank spaces. A writing AI that reads an incomplete language will produce incomplete content. Every gap matters. Skip nothing.
-
-Pass 1 produced a foundation codex with two parts:
-- A RAW INVENTORY at the top listing every concept type found across all posts (just names + post numbers — NO definitions, NO examples)
-- DETAILED ENTRIES for a few concepts (with definitions, 10-15 real examples, patterns, anti-patterns)
-
-The Codex now has a Periodic Table (unified language with definitions) and detailed entries for ~37 concepts. But many concepts in the Periodic Table STILL lack detailed entries with real examples. Without examples, the writing model cannot execute these concepts — it knows the name but not what it looks like in real content.
-
-Your job: write detailed entries for SPECIFIC concepts that are still missing deep examples. The existing Codex entries are EXCELLENT — do NOT touch, summarize, or rewrite them. ONLY ADD new entries.
-
-You have three inputs:
-1. THE RAW DATA: Every viral post with full text + quark profiles — use these to find REAL examples
-2. THE EXISTING CODEX: Periodic Table + detailed entries already written — check what's already covered, skip those
-3. YOUR TASK: Write detailed entries for these SPECIFIC categories that still lack deep examples:
-
-PRIORITY 1 — SPEECH ACTS (these missing ones are used on every single slide):
-□ HOOK — with 10-15 real hook examples from different posts, why each works, how to apply
-□ CLAIM — with 10-15 real examples
-□ OBSERVATION — with 10-15 real examples
-□ INSTRUCTION — with 10-15 real examples
-□ REVEAL — with 10-15 real examples
-□ PROOF (as speech act, distinct from proof types) — with 10-15 real examples
-□ PERMISSION — with 10-15 real examples
-□ WARNING — with 10-15 real examples
-□ INVITATION — with 10-15 real examples
-□ GRATITUDE / DEDICATION — with examples
-□ THESIS / LESSON — with 10-15 real examples
-
-PRIORITY 2 — READER DELTAS (these are what each slide must produce):
-□ IDENTIFICATION+ — with 10-15 real examples
-□ TENSION+ — with 10-15 real examples
-□ TRUST+ — with 10-15 real examples
-□ SURPRISE — with 10-15 real examples
-□ EMPATHY+ — with 10-15 real examples
-□ ASPIRATION+ — with 10-15 real examples
-□ AWE — with examples
-□ GUILT / SELF-AUDIT — with examples
-□ WARMTH — with examples
-□ CATHARSIS — with examples
-
-PRIORITY 3 — TRANSITIONS (these connect every slide pair):
-□ ANSWER — with 10-15 real slide-pair examples
-□ ACCUMULATION — with examples
-□ PARTIAL RESOLUTION — with examples
-□ CAUSE-TO-CONSEQUENCE — with examples
-
-PRIORITY 4 — TECHNIQUES (if you have tokens left):
-□ ELLIPSIS MOMENTUM — with 10+ real examples
-□ SUBJECT DROP — with 10+ real examples
-□ DIRECT ADDRESS — with 10+ real examples
-□ COLON-AS-PROMISE — with examples
-□ DIRECT DIALOGUE — with examples
-□ REPETITION DEVICE — with examples
-
-RULES:
-- You are ONLY ADDING new entries. The existing Codex is already great. Do NOT rewrite, summarize, or touch it.
-- Every example MUST come from a REAL slide in the raw post data below. Find the actual slide text, copy it EXACTLY as written. Never fabricate or paraphrase.
-- 10-15 examples per concept minimum. Each example must follow this EXACT format:
-
-  1. **"{FULL SLIDE TEXT copied exactly from the post}"**
-     — [{Post title}] Slide {N}
-     Where the concept is active: {Point to the SPECIFIC words, phrase, or structure within the slide that makes this concept happen. E.g., "The word 'cheated' without an object is what creates the curiosity gap" or "The shift from past tense to present tense at 'I find businesses...' is where the distance drops to zero"}
-     Why it works: {What mechanism makes this effective — sentence structure, word choice, rhythm, position}
-     Reader effect: {What changes in the reader's mind}
-     How to apply: {Operational instruction — how a writer uses this same structure with different content}
-
-- The "Where the concept is active" line is CRITICAL. It teaches the writing model to SEE the concept inside real text, not just recognize the label. Without it, the model knows the name but can't locate the physics in actual sentences.
-- Include PATTERNS (what the examples share — cite specific example numbers as evidence) and ANTI-PATTERNS (what would destroy this concept — with specific BAD wording examples).
-- Do NOT repeat entries already deeply covered in the Codex. Only add new ones.
-- Your output will be APPENDED to the existing Codex.
-- PRIORITIZE BY FREQUENCY: Start with patterns that appear in 50+ posts (these are the universal physics), then 20-50 posts (strong patterns), then 5-20 posts (niche patterns). The writing model needs the widespread patterns MOST — a concept appearing in 80/105 posts is a LAW, while one in 5/105 is a niche technique.
-- Cover the concepts in this priority order:
-  1. Transition types (the most critical for chaining/flow — cover EVERY type, starting with most frequent)
-  2. Reader Delta types (every emotional shift type — start with the ones in 80+ posts)
-  3. Proof types not yet covered (start with most common)
-  4. Technique types — each with real examples showing what quark it produces (start with most common)
-  5. Motivations, Compressions, Frames, Distances — each with real examples
-  6. Arc shapes — each with a full post summary
-  7. Any remaining concepts
-- For each concept, STATE THE FREQUENCY first: "Appears in X/105 posts" — this helps the writing model know how universal vs niche it is
-
-You have 128,000 tokens of output budget and ALL the raw data you need is in this prompt. Do NOT ask for clarification, chunks, options, or subsets. Do NOT say the data is incomplete or truncated — it is ALL here. Do NOT negotiate scope. Do NOT write meta-commentary about what you "would need" or "could do."
-
-CRITICAL: Do NOT ask "if you want, I can continue" or "shall I proceed" or anything similar. There is NO user reading this. This is an automated pipeline. Your output goes directly into a database. Produce EVERY entry in the priority checklist above SEQUENTIALLY. After finishing one concept entry, IMMEDIATELY start the next one with no pause, no question, no commentary. Just the next entry header and its examples. Keep going until you have covered every checkbox or exhausted your 128,000 token budget.
-
-Previous runs stopped after 1 concept and asked permission. This was a FAILURE — the output was rejected. You must produce entries for ALL concepts in the checklist.
-
-Start with the first unfinished concept and keep going.`;
-
-  const userPrompt = `═══ PASS 1 CODEX (already written — do NOT repeat these entries) ═══
-
-${pass1Codex}
-
-═══ RAW DATA (all posts with full text + quark profiles) ═══
-
-${preparedData}
-
-═══ YOUR TASK ═══
-
-Read the Pass 1 inventory. Identify every concept that has NO detailed entry yet (no 15-20 examples, no patterns, no anti-patterns). Write those entries now. Same format as Pass 1's detailed entries. Start with transitions, then reader deltas, then proof types, then everything else. GO.`;
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'openai/gpt-5.4',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 128000,
-      temperature: 0.3,
-      stream: true,
-    }),
-    signal: AbortSignal.timeout(7200_000),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Codex deepening failed (${response.status}): ${errText.substring(0, 300)}`);
-  }
-
+/** Stream an OpenRouter SSE response and collect text content */
+async function streamOpenRouterResponse(
+  response: Response,
+  label: string,
+): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body reader for deepening');
+  if (!reader) throw new Error(`No response body reader for ${label}`);
 
   const decoder = new TextDecoder();
-  let pass2Text = '';
+  let text = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
   let lastLog = 0;
+  let lineBuffer = ''; // Buffer for partial lines that span chunk boundaries
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
     const chunk = decoder.decode(value, { stream: true });
-    for (const line of chunk.split('\\n')) {
+    // Prepend any leftover partial line from previous chunk
+    const combined = lineBuffer + chunk;
+    const lines = combined.split('\n');
+    // Last element might be incomplete — save it for next chunk
+    lineBuffer = lines.pop() || '';
+
+    for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
-      const eventData = line.slice(6);
+      const eventData = line.slice(6).trim();
       if (eventData === '[DONE]') continue;
       try {
         const event = JSON.parse(eventData);
         const delta = event.choices?.[0]?.delta?.content;
-        if (delta) pass2Text += delta;
+        if (delta) text += delta;
+        if (event.usage) {
+          inputTokens = event.usage.prompt_tokens || inputTokens;
+          outputTokens = event.usage.completion_tokens || outputTokens;
+        }
       } catch {}
     }
 
     if (Date.now() - lastLog > 30_000) {
-      const tokens = Math.round(pass2Text.length / 4);
-      console.log(`  🔬 Pass 2 streaming: ${pass2Text.length} chars (~${tokens} tokens)...`);
-      updateProgress({ phase: `Pass 2 deepening: ~${tokens} output tokens...` });
+      const tokens = Math.round(text.length / 4);
+      console.log(`  🔬 ${label}: ${text.length} chars (~${tokens} tokens)...`);
+      updateProgress({ phase: `${label}: ~${tokens} output tokens...` });
       lastLog = Date.now();
     }
   }
 
-  console.log(`  🔬 Pass 2 complete: ${pass2Text.length} chars (~${Math.round(pass2Text.length / 4)} tokens)`);
+  // Process any remaining buffered line
+  if (lineBuffer.startsWith('data: ')) {
+    const eventData = lineBuffer.slice(6).trim();
+    if (eventData !== '[DONE]') {
+      try {
+        const event = JSON.parse(eventData);
+        const delta = event.choices?.[0]?.delta?.content;
+        if (delta) text += delta;
+        if (event.usage) {
+          inputTokens = event.usage.prompt_tokens || inputTokens;
+          outputTokens = event.usage.completion_tokens || outputTokens;
+        }
+      } catch {}
+    }
+  }
 
-  if (!pass2Text || pass2Text.length < 1000) {
+  return { text, inputTokens, outputTokens };
+}
+
+/** Detect which concepts were already covered in the output text */
+function detectCoveredConcepts(outputText: string): Set<number> {
+  const covered = new Set<number>();
+  for (let i = 0; i < PASS2_CONCEPTS.length; i++) {
+    // Extract the concept name (before the category in parentheses)
+    const name = PASS2_CONCEPTS[i].split(' (')[0];
+    // Check if the entry header appears in the output (flexible matching)
+    const patterns = [
+      `═══ ${name}`,                          // exact header
+      `## ${name}`,                            // markdown header
+      `**${name}**`,                           // bold
+      `### ${name}`,                           // h3
+      `ENTRY ${i + 1}:`,                       // numbered entry
+      `${i + 1}. ${name}`,                     // numbered list
+    ];
+    if (patterns.some(p => outputText.includes(p))) {
+      covered.add(i);
+    }
+  }
+  return covered;
+}
+
+async function runCodexDeepening(preparedData: string, pass1Codex: string): Promise<void> {
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  if (!apiKey) throw new Error('No API key for Codex deepening');
+
+  console.log(`  🔬 Pass 2: Deepening ${PASS2_CONCEPTS.length} concepts...`);
+
+  // Build the numbered concept list for the prompt
+  const numberedList = PASS2_CONCEPTS.map((c, i) => `${i + 1}. ${c}`).join('\n');
+
+  // System prompt — context + rigor + format. No behavioral nagging.
+  const systemPrompt = `You are writing the Exemplar Codex of Content Physics — the first formal language that defines how human attention works in sequential media. This is a new field. No one has ever formalized this before. The Codex is grounded in 105+ real viral posts, each analyzed through 10-pass extraction (speech acts, transitions, reader state, physics events, rhythm, long-range interactions, antimatter, deep fabric). Every concept in this language exists because we observed it in real content that went viral.
+
+This is empirical science with the rigor of physics — every claim must be backed by real evidence from real posts. Every example you cite MUST be a real slide copied EXACTLY from the post data provided. Never fabricate, paraphrase, or invent examples. If you can't find a real example for a concept in the data, say so — do not make one up. The writing model that reads this Codex will use these examples as ground truth for generating content. A hallucinated example teaches the wrong pattern and produces bad content.
+
+The "Where active" line in each example is critical — it teaches the writing model to SEE the concept operating inside real text, not just recognize the label. Point to the specific words, phrase, or sentence structure that make the concept happen.
+
+OUTPUT FORMAT — use this exact structure for every entry, then immediately start the next:
+
+═══ {CONCEPT NAME} ({Category}) ═══
+
+DEFINITION: What this concept IS — mechanically, what happens in the text and what it produces in the reader. Why it works psychologically.
+FREQUENCY: Appears in X/105 posts.
+
+EXAMPLES:
+
+1. "{FULL SLIDE TEXT copied exactly from the post data}"
+   — [{Post title}] Slide {N}
+   Where active: {the SPECIFIC words/phrase/structure that make this concept happen — e.g., "The word 'cheated' without an object creates the curiosity gap" or "The shift from past to present tense at 'I find businesses...' is where distance drops to zero"}
+   Why it works: {mechanism — sentence structure, word choice, rhythm, position}
+   Reader effect: {what changes in the reader's mind}
+   How to apply: {operational instruction — how a writer uses this same structure with different content}
+
+2. ... (10-15 examples per entry, chosen for VARIETY — different creators, niches, approaches to the same concept)
+
+PATTERNS: {what the examples share — cite specific example numbers as evidence}
+ANTI-PATTERNS: {what would destroy this concept — with specific BAD wording so the writer knows what to avoid}
+
+For TRANSITIONS: each example MUST include BOTH slides (from → to) with the connector text.
+For TECHNIQUES: show the actual text demonstrating the technique and explain what quark/delta it produces.`;
+
+  // User message: data first (biggest chunk), existing codex second, task LAST (recency bias)
+  const userPrompt = `<raw_data>
+${preparedData}
+</raw_data>
+
+<existing_codex>
+${pass1Codex}
+</existing_codex>
+
+<task>
+The existing Codex has a Periodic Table and ~37 detailed entries. The following ${PASS2_CONCEPTS.length} concepts still lack detailed entries with real examples. Write all ${PASS2_CONCEPTS.length} entries sequentially:
+
+${numberedList}
+
+For EVERY entry above:
+- DEFINITION: One precise paragraph — what mechanically happens in the text, what it produces in the reader, why it works psychologically.
+- FREQUENCY: "Appears in X/105 posts" — count from the quark profiles in the raw data.
+- 10-15 REAL EXAMPLES chosen for VARIETY (different creators, niches, approaches to the same concept). Each example must include:
+  • The FULL SLIDE TEXT copied exactly from the raw data — not a reference like "Post 47, Slide 3" but the actual words. The writing model reading this Codex will NOT have access to the original posts.
+  • Post title + slide number for attribution.
+  • "Where active" — point to the SPECIFIC words, phrase, or sentence structure within that slide that make this concept happen. This is the most important line. Without it, the model knows the name but cannot locate the physics in actual sentences.
+  • "Why it works" — the mechanism (sentence structure, word choice, rhythm, position in the post).
+  • "Reader effect" — what changes in the reader's mind and why.
+  • "How to apply" — operational instruction a writer follows to use this same structure with different content.
+- PATTERNS: What the examples share — cite specific example numbers as evidence for each pattern.
+- ANTI-PATTERNS: What would DESTROY this concept — with specific bad wording examples so the writer knows what to avoid.
+
+For TRANSITION entries: every example MUST include BOTH slides (the "from" slide and the "to" slide) with the actual connector/bridge text between them.
+For TECHNIQUE entries: show the actual text demonstrating the technique, and explain what quark or reader delta it produces.
+
+Write entry 1 now, then 2, then 3, continuing through ${PASS2_CONCEPTS.length}. Output will be appended to the existing Codex — do not repeat entries already deeply covered.
+</task>`;
+
+  // Continuation loop — if model stops early, we continue from where it left off
+  const MAX_CONTINUATIONS = 5;
+  let allPass2Text = '';
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  for (let attempt = 0; attempt <= MAX_CONTINUATIONS; attempt++) {
+    const isFirstCall = attempt === 0;
+    const covered = isFirstCall ? new Set<number>() : detectCoveredConcepts(allPass2Text);
+    const remaining = PASS2_CONCEPTS.length - covered.size;
+
+    if (!isFirstCall) {
+      if (remaining === 0) {
+        console.log(`  ✅ All ${PASS2_CONCEPTS.length} concepts covered after ${attempt} calls`);
+        break;
+      }
+      // Check if we got meaningful new output in the last round
+      console.log(`  🔄 Continuation ${attempt}/${MAX_CONTINUATIONS}: ${covered.size}/${PASS2_CONCEPTS.length} concepts covered, ${remaining} remaining`);
+    }
+
+    // Build messages — first call vs continuation
+    const messages: Array<{ role: string; content: string }> = [];
+
+    if (isFirstCall) {
+      messages.push({ role: 'system', content: systemPrompt });
+      messages.push({ role: 'user', content: userPrompt });
+    } else {
+      // Continuation: include previous output as assistant, then ask to continue
+      messages.push({ role: 'system', content: systemPrompt });
+      messages.push({ role: 'user', content: userPrompt });
+      messages.push({ role: 'assistant', content: allPass2Text });
+
+      // Build list of remaining concepts
+      const remainingConcepts = PASS2_CONCEPTS
+        .filter((_, i) => !covered.has(i))
+        .map((c, i) => `${i + 1}. ${c}`)
+        .join('\n');
+
+      messages.push({
+        role: 'user',
+        content: `You wrote ${covered.size} entries. Continue with the remaining ${remaining}:\n\n${remainingConcepts}\n\nPick up exactly where you stopped. Same format. Next entry now.`,
+      });
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-5.4',
+        messages,
+        max_tokens: 128000,
+        temperature: 0.5, // slightly higher to reduce premature convergence
+        stream: true,
+      }),
+      signal: AbortSignal.timeout(7200_000),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Codex deepening failed (${response.status}): ${errText.substring(0, 300)}`);
+    }
+
+    const label = isFirstCall ? 'Pass 2' : `Pass 2 continuation ${attempt}`;
+    const { text, inputTokens, outputTokens } = await streamOpenRouterResponse(response, label);
+
+    totalInputTokens += inputTokens;
+    totalOutputTokens += outputTokens;
+    console.log(`  🔬 ${label} complete: ${text.length} chars (~${Math.round(text.length / 4)} tokens), ${inputTokens} in / ${outputTokens} out`);
+
+    if (!text || text.length < 500) {
+      console.log(`  ⚠️ ${label} produced minimal output — stopping continuations`);
+      break;
+    }
+
+    // Append this round's output
+    if (isFirstCall) {
+      allPass2Text = text;
+    } else {
+      allPass2Text += '\n\n' + text;
+    }
+
+    // Check coverage after this round
+    const newCovered = detectCoveredConcepts(allPass2Text);
+    const newRemaining = PASS2_CONCEPTS.length - newCovered.size;
+    console.log(`  📊 After ${label}: ${newCovered.size}/${PASS2_CONCEPTS.length} concepts covered (${newRemaining} remaining)`);
+
+    // If all covered or model produced a huge output, we're done
+    if (newRemaining === 0 || allPass2Text.length > 400000) {
+      console.log(`  ✅ Pass 2 complete: all concepts covered or output limit reached`);
+      break;
+    }
+  }
+
+  console.log(`  🔬 Pass 2 total: ${allPass2Text.length} chars (~${Math.round(allPass2Text.length / 4)} tokens), ${totalInputTokens} total input, ${totalOutputTokens} total output`);
+  updateProgress({ synthesisTokens: { input: totalInputTokens, output: totalOutputTokens } });
+
+  if (!allPass2Text || allPass2Text.length < 1000) {
     console.log('  ⚠️ Pass 2 produced minimal output — skipping append');
     return;
   }
 
   // Append Pass 2 to the existing Codex atom
-  const combinedCodex = pass1Codex + '\\n\\n═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══\\n\\n' + pass2Text;
+  const combinedCodex = pass1Codex + '\n\n═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══\n\n' + allPass2Text;
 
   const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
   const existingCodex = allAtomsForSave.find(a => a.metadata?.isCodexSynthesis);
@@ -957,6 +1235,9 @@ Read the Pass 1 inventory. Identify every concept that has NO detailed entry yet
         ...existingCodex.metadata,
         updatedAt: new Date().toISOString(),
         pass2Complete: true,
+        pass2Concepts: PASS2_CONCEPTS.length,
+        pass2Covered: detectCoveredConcepts(allPass2Text).size,
+        pass2Continuations: totalOutputTokens > 0 ? Math.ceil(totalOutputTokens / 3000) : 0,
       },
     });
     console.log(`  📊 Updated Codex with Pass 2 content: ${combinedCodex.length} total chars`);
@@ -1068,38 +1349,9 @@ Start with the periodic table. Then the gap-filling entries. Then the variant ma
     throw new Error(`Codex unification failed (${response.status}): ${errText.substring(0, 300)}`);
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body reader for unification');
-
-  const decoder = new TextDecoder();
-  let pass3Text = '';
-  let lastLog = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const chunk = decoder.decode(value, { stream: true });
-    for (const line of chunk.split('\n')) {
-      if (!line.startsWith('data: ')) continue;
-      const eventData = line.slice(6);
-      if (eventData === '[DONE]') continue;
-      try {
-        const event = JSON.parse(eventData);
-        const delta = event.choices?.[0]?.delta?.content;
-        if (delta) pass3Text += delta;
-      } catch {}
-    }
-
-    if (Date.now() - lastLog > 30_000) {
-      const tokens = Math.round(pass3Text.length / 4);
-      console.log(`  🔬 Pass 3 streaming: ${pass3Text.length} chars (~${tokens} tokens)...`);
-      updateProgress({ phase: `Pass 3 unification: ~${tokens} output tokens...` });
-      lastLog = Date.now();
-    }
-  }
-
-  console.log(`  🔬 Pass 3 complete: ${pass3Text.length} chars (~${Math.round(pass3Text.length / 4)} tokens)`);
+  const { text: pass3Text, inputTokens, outputTokens } = await streamOpenRouterResponse(response, 'Pass 3 unification');
+  console.log(`  🔬 Pass 3 complete: ${pass3Text.length} chars (~${Math.round(pass3Text.length / 4)} tokens), ${inputTokens} in / ${outputTokens} out`);
+  updateProgress({ synthesisTokens: { input: inputTokens, output: outputTokens } });
 
   if (!pass3Text || pass3Text.length < 1000) {
     console.log('  ⚠️ Pass 3 produced minimal output — skipping');

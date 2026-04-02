@@ -139,9 +139,9 @@ final class CodexViewModel {
 
     private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
 
-    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false) async {
+    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false, cleanupOnly: Bool = false) async {
         isGenerating = true
-        progress = pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
+        progress = cleanupOnly ? "Cleaning up Codex structure..." : pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
         error = nil
 
         do {
@@ -149,7 +149,7 @@ final class CodexViewModel {
             var startRequest = URLRequest(url: startURL)
             startRequest.httpMethod = "POST"
             startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only])
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only, "cleanupOnly": cleanupOnly])
             startRequest.timeoutInterval = 30
 
             let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
@@ -309,6 +309,12 @@ struct CodexSettingsTab: View {
                 Task { await viewModel.generateCodex(skipExtraction: true) }
             } label: {
                 Label("Synthesize Only (skip extraction)", systemImage: "atom")
+            }
+
+            Button {
+                Task { await viewModel.generateCodex(cleanupOnly: true) }
+            } label: {
+                Label("Cleanup Structure (free)", systemImage: "wand.and.stars")
             }
 
             Button {

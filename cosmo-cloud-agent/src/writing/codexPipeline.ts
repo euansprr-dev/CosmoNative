@@ -767,12 +767,18 @@ async function runCodexDeepening(preparedData: string, pass1Codex: string): Prom
 
   const systemPrompt = `You are continuing the creation of THE EXEMPLAR CODEX — the complete language of Content Physics.
 
-Pass 1 produced a foundation codex with an inventory of every concept found across all posts, plus detailed entries for SOME concepts. Your job in Pass 2 is to DEEPEN and COMPLETE it.
+Pass 1 produced a foundation codex with two parts:
+- A RAW INVENTORY at the top listing every concept type found across all posts (just names + post numbers — NO definitions, NO examples)
+- DETAILED ENTRIES for a few concepts (with definitions, 10-15 real examples, patterns, anti-patterns)
+
+The raw inventory is a TODO LIST. Every single item listed there that doesn't have a detailed entry is UNFINISHED WORK. Your job: convert every unfinished inventory item into a proper entry with definition + 15-20 real examples + patterns + anti-patterns.
+
+The writing model that reads this Codex will NEVER see the raw inventory — it's useless without definitions and examples. So you must transform every inventory item into something a writer can actually learn from and replicate.
 
 You have three inputs:
-1. THE RAW DATA: Every viral post with full text + quark profiles (same data as Pass 1)
-2. THE PASS 1 CODEX: What was already written — inventory, some detailed entries, laws, walkthroughs
-3. YOUR TASK: Write detailed entries for every concept that Pass 1 inventoried but did NOT give a full entry with real examples
+1. THE RAW DATA: Every viral post with full text + quark profiles
+2. THE PASS 1 CODEX: Inventory (your work queue) + some detailed entries (already done — skip these)
+3. YOUR TASK: Write a detailed entry for EVERY inventory item that Pass 1 left as just a name + post numbers
 
 RULES:
 - Read the Pass 1 inventory carefully. For each concept type listed there, check: does it have a detailed entry with 15-20 real examples, patterns, and anti-patterns? If NOT, write that entry now.

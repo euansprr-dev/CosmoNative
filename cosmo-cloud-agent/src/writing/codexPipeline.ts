@@ -78,9 +78,13 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
     const { codexText: prepText } = await prepareExemplarData();
     console.log(`  📊 Exemplar prep data: ${prepText.length} chars (~${Math.round(prepText.length / 4)} tokens)`);
 
-    // STEP 3: Opus Exemplar Synthesis (the big one — unified language + real examples)
-    updateProgress({ status: 'synthesizing', phase: 'Running Opus Exemplar Synthesis across all profiles...' });
-    await runExemplarSynthesis(prepText, statsText);
+    // STEP 3: Pass 1 — Foundation (inventory + first batch of deep concept entries)
+    updateProgress({ status: 'synthesizing', phase: 'Pass 1: Building Codex foundation...' });
+    const pass1Text = await runExemplarSynthesis(prepText, statsText);
+
+    // STEP 4: Pass 2 — Deepening (fill in every concept the first pass missed)
+    updateProgress({ status: 'synthesizing', phase: 'Pass 2: Deepening — filling gaps with real examples...' });
+    await runCodexDeepening(prepText, pass1Text);
 
     updateProgress({ status: 'complete', phase: 'Done', completedAt: new Date().toISOString() });
   } catch (err: any) {
@@ -364,7 +368,7 @@ This is the foundational text of a new field. Cite everything. Discover what's r
 // Phase 3b: Exemplar Synthesis (pre-processed data → unified Codex)
 // ============================================================
 
-async function runExemplarSynthesis(preparedData: string, computedStats: string): Promise<void> {
+async function runExemplarSynthesis(preparedData: string, computedStats: string): Promise<string> {
   const apiKey = config.openRouterApiKey || config.anthropicApiKey;
   if (!apiKey) {
     throw new Error('No API key for Exemplar synthesis');
@@ -733,5 +737,137 @@ This is the foundational text of Content Physics. It should read like a textbook
       structured: {},
     });
     console.log(`  📊 Created new Exemplar Codex atom`);
+  }
+
+  return synthesisText;
+}
+
+// ============================================================
+// Pass 2: Codex Deepening — fill in concepts missed by Pass 1
+// ============================================================
+
+async function runCodexDeepening(preparedData: string, pass1Codex: string): Promise<void> {
+  const apiKey = config.openRouterApiKey || config.anthropicApiKey;
+  if (!apiKey) throw new Error('No API key for Codex deepening');
+
+  console.log(`  🔬 Pass 2: Sending ${pass1Codex.length} chars of Pass 1 Codex + raw data for deepening...`);
+
+  const systemPrompt = `You are continuing the creation of THE EXEMPLAR CODEX — the complete language of Content Physics.
+
+Pass 1 produced a foundation codex with an inventory of every concept found across all posts, plus detailed entries for SOME concepts. Your job in Pass 2 is to DEEPEN and COMPLETE it.
+
+You have three inputs:
+1. THE RAW DATA: Every viral post with full text + quark profiles (same data as Pass 1)
+2. THE PASS 1 CODEX: What was already written — inventory, some detailed entries, laws, walkthroughs
+3. YOUR TASK: Write detailed entries for every concept that Pass 1 inventoried but did NOT give a full entry with real examples
+
+RULES:
+- Read the Pass 1 inventory carefully. For each concept type listed there, check: does it have a detailed entry with 15-20 real examples, patterns, and anti-patterns? If NOT, write that entry now.
+- Every example MUST be a REAL slide/sentence copied exactly from the posts in the raw data. Never fabricate.
+- 15-20 examples per concept. Each with: the exact text, post title, slide number, why it works, how to apply it.
+- Include patterns (what the examples share) and anti-patterns (what would fail) for each concept.
+- Do NOT repeat entries that Pass 1 already covered deeply. Only fill gaps.
+- Your output will be APPENDED to the Pass 1 Codex, so write as a continuation — no need for a new title or inventory.
+- Cover the concepts in this priority order:
+  1. Transition types (the most critical for chaining/flow — cover EVERY type from the inventory)
+  2. Reader Delta types (every emotional shift type with real examples)
+  3. Proof types not yet covered
+  4. Motivations, Compressions, Frames, Distances — each with real examples
+  5. Technique types — each with real examples showing what quark it produces
+  6. Arc shapes — each with a full post summary
+  7. Any remaining concepts from the inventory
+
+You have 128,000 tokens. Fill them. Do NOT stop early. Every concept from the inventory deserves the same depth that Pass 1 gave to Confession, Curiosity+, and Specificity-as-Proof.`;
+
+  const userPrompt = `═══ PASS 1 CODEX (already written — do NOT repeat these entries) ═══
+
+${pass1Codex}
+
+═══ RAW DATA (all posts with full text + quark profiles) ═══
+
+${preparedData}
+
+═══ YOUR TASK ═══
+
+Read the Pass 1 inventory. Identify every concept that has NO detailed entry yet (no 15-20 examples, no patterns, no anti-patterns). Write those entries now. Same format as Pass 1's detailed entries. Start with transitions, then reader deltas, then proof types, then everything else. GO.`;
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'openai/gpt-5.4',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 128000,
+      temperature: 0.3,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(7200_000),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Codex deepening failed (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body reader for deepening');
+
+  const decoder = new TextDecoder();
+  let pass2Text = '';
+  let lastLog = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    for (const line of chunk.split('\\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const eventData = line.slice(6);
+      if (eventData === '[DONE]') continue;
+      try {
+        const event = JSON.parse(eventData);
+        const delta = event.choices?.[0]?.delta?.content;
+        if (delta) pass2Text += delta;
+      } catch {}
+    }
+
+    if (Date.now() - lastLog > 30_000) {
+      const tokens = Math.round(pass2Text.length / 4);
+      console.log(`  🔬 Pass 2 streaming: ${pass2Text.length} chars (~${tokens} tokens)...`);
+      updateProgress({ phase: `Pass 2 deepening: ~${tokens} output tokens...` });
+      lastLog = Date.now();
+    }
+  }
+
+  console.log(`  🔬 Pass 2 complete: ${pass2Text.length} chars (~${Math.round(pass2Text.length / 4)} tokens)`);
+
+  if (!pass2Text || pass2Text.length < 1000) {
+    console.log('  ⚠️ Pass 2 produced minimal output — skipping append');
+    return;
+  }
+
+  // Append Pass 2 to the existing Codex atom
+  const combinedCodex = pass1Codex + '\\n\\n═══ PASS 2: DEEPENED CONCEPT ENTRIES ═══\\n\\n' + pass2Text;
+
+  const allAtomsForSave = await fetchAllByType('research', { limit: 500 });
+  const existingCodex = allAtomsForSave.find(a => a.metadata?.isCodexSynthesis);
+
+  if (existingCodex) {
+    await updateAtom(existingCodex.uuid, {
+      body: combinedCodex,
+      metadata: {
+        ...existingCodex.metadata,
+        updatedAt: new Date().toISOString(),
+        pass2Complete: true,
+      },
+    });
+    console.log(`  📊 Updated Codex with Pass 2 content: ${combinedCodex.length} total chars`);
   }
 }

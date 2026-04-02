@@ -627,25 +627,27 @@ FINAL CHECK BEFORE STOPPING:
 This is the foundational text of Content Physics. It should read like a textbook written by someone who has spent years studying these ${N} posts. USE YOUR FULL OUTPUT BUDGET.`;
 
   const estimatedInput = Math.round((preparedData.length + computedStats.length + systemPrompt.length + userPrompt.length) / 4);
-  console.log(`  🔬 Calling Opus for Exemplar synthesis (~${estimatedInput} input tokens, direct Anthropic streaming, 128K max output)...`);
+  const synthesisModel = 'google/gemini-2.5-pro-preview';
+  console.log(`  🔬 Calling ${synthesisModel} for Exemplar synthesis (~${estimatedInput} est. input tokens, OpenRouter streaming, 65K max output)...`);
 
-  const synthesisApiKey = config.anthropicApiKey || apiKey;
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const synthesisApiKey = config.openRouterApiKey || apiKey;
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': synthesisApiKey,
-      'anthropic-version': '2023-06-01',
+      'Authorization': `Bearer ${synthesisApiKey}`,
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-6',
-      system: [{ type: 'text', text: systemPrompt }],
-      messages: [{ role: 'user', content: userPrompt }],
-      max_tokens: 128000,
+      model: synthesisModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 65536,
       temperature: 0.3,
       stream: true,
     }),
-    signal: AbortSignal.timeout(7200_000), // 2 hour timeout for safety
+    signal: AbortSignal.timeout(7200_000), // 2 hour timeout
   });
 
   if (!response.ok) {
@@ -653,9 +655,9 @@ This is the foundational text of Content Physics. It should read like a textbook
     throw new Error(`Exemplar synthesis failed (${response.status}): ${errText.substring(0, 300)}`);
   }
 
-  // Stream the response — keeps connection alive, shows progress
+  // Stream the response (OpenRouter uses OpenAI SSE format)
   const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body reader for Opus synthesis');
+  if (!reader) throw new Error('No response body reader for synthesis');
 
   const decoder = new TextDecoder();
   let synthesisText = '';
@@ -674,14 +676,12 @@ This is the foundational text of Content Physics. It should read like a textbook
       if (eventData === '[DONE]') continue;
       try {
         const event = JSON.parse(eventData);
-        if (event.type === 'content_block_delta' && event.delta?.text) {
-          synthesisText += event.delta.text;
-        }
-        if (event.type === 'message_delta' && event.usage) {
-          outputTokens = event.usage.output_tokens || 0;
-        }
-        if (event.type === 'message_start' && event.message?.usage) {
-          inputTokens = event.message.usage.input_tokens || 0;
+        // OpenRouter SSE format (OpenAI-compatible)
+        const delta = event.choices?.[0]?.delta?.content;
+        if (delta) synthesisText += delta;
+        if (event.usage) {
+          inputTokens = event.usage.prompt_tokens || inputTokens;
+          outputTokens = event.usage.completion_tokens || outputTokens;
         }
       } catch {}
     }

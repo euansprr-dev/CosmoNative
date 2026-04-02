@@ -208,68 +208,129 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
   const model = useDirectAnthropic ? 'claude-sonnet-4-6' : 'anthropic/claude-sonnet-4-6';
   const apiUrl = useDirectAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://openrouter.ai/api/v1/chat/completions';
 
-  // Build request based on provider
-  const requestBody = useDirectAnthropic ? {
-    model,
-    system: [{ type: 'text', text: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' }],
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 28000,
-    temperature: 0.2,
-  } : {
-    model,
-    messages: [
-      { role: 'system', content: 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.' },
-      { role: 'user', content: prompt },
-    ],
-    max_tokens: 28000,
-    temperature: 0.2,
-  };
-
-  const headers: Record<string, string> = useDirectAnthropic ? {
-    'Content-Type': 'application/json',
-    'x-api-key': apiKey,
-    'anthropic-version': '2023-06-01',
-  } : {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`,
-  };
+  const systemText = 'You are a Content Physics researcher. Output ONLY valid JSON. No markdown, no explanation outside the JSON object.';
 
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(600_000), // 10 min timeout (Opus can be slow)
-      });
+      let rawText: string | undefined;
 
-      if (response.status === 429) {
-        const retryAfter = response.headers.get('retry-after');
-        const waitMs = retryAfter ? Math.ceil(parseFloat(retryAfter) * 1000) : 60_000;
-        console.log(`  ⚠️ Rate limited — waiting ${(waitMs / 1000).toFixed(0)}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, waitMs));
-        continue;
-      }
+      if (useDirectAnthropic) {
+        // Use STREAMING for direct Anthropic — keeps connection alive, prevents Railway from dropping it
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model,
+            system: [{ type: 'text', text: systemText }],
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 28000,
+            temperature: 0.2,
+            stream: true,
+          }),
+          signal: AbortSignal.timeout(600_000),
+        });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        console.log(`  ❌ API error ${response.status}: ${errText.substring(0, 200)}`);
-        if (attempt < MAX_RETRIES - 1) {
-          await new Promise(r => setTimeout(r, (attempt + 1) * 5000));
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          const waitMs = retryAfter ? Math.ceil(parseFloat(retryAfter) * 1000) : 60_000;
+          console.log(`  ⚠️ Rate limited — waiting ${(waitMs / 1000).toFixed(0)}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          await new Promise(r => setTimeout(r, waitMs));
           continue;
         }
-        return null;
-      }
 
-      const data = await response.json() as any;
+        if (!response.ok) {
+          const errText = await response.text();
+          console.log(`  ❌ API error ${response.status}: ${errText.substring(0, 200)}`);
+          if (attempt < MAX_RETRIES - 1) {
+            await new Promise(r => setTimeout(r, (attempt + 1) * 5000));
+            continue;
+          }
+          return null;
+        }
 
-      // Extract text from response (Anthropic vs OpenRouter format)
-      let rawText: string | undefined;
-      if (useDirectAnthropic) {
-        const textBlock = data.content?.find((c: any) => c.type === 'text');
-        rawText = textBlock?.text;
+        // Read SSE stream and accumulate text
+        const reader = response.body?.getReader();
+        if (!reader) { console.log('  ❌ No response body reader'); return null; }
+
+        const decoder = new TextDecoder();
+        let accumulated = '';
+        let inputTokens = 0;
+        let outputTokens = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            try {
+              const event = JSON.parse(data);
+              if (event.type === 'content_block_delta' && event.delta?.text) {
+                accumulated += event.delta.text;
+              }
+              if (event.type === 'message_delta' && event.usage) {
+                outputTokens = event.usage.output_tokens || 0;
+              }
+              if (event.type === 'message_start' && event.message?.usage) {
+                inputTokens = event.message.usage.input_tokens || 0;
+              }
+            } catch {}
+          }
+        }
+
+        console.log(`  🔬 Extraction complete: ${inputTokens} input, ${outputTokens} output tokens [Anthropic]`);
+        rawText = accumulated;
+
       } else {
+        // OpenRouter: non-streaming (no connection issues via OR proxy)
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemText },
+              { role: 'user', content: prompt },
+            ],
+            max_tokens: 28000,
+            temperature: 0.2,
+          }),
+          signal: AbortSignal.timeout(600_000),
+        });
+
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          const waitMs = retryAfter ? Math.ceil(parseFloat(retryAfter) * 1000) : 60_000;
+          console.log(`  ⚠️ Rate limited — waiting ${(waitMs / 1000).toFixed(0)}s (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.log(`  ❌ API error ${response.status}: ${errText.substring(0, 200)}`);
+          if (attempt < MAX_RETRIES - 1) {
+            await new Promise(r => setTimeout(r, (attempt + 1) * 5000));
+            continue;
+          }
+          return null;
+        }
+
+        const data = await response.json() as any;
         rawText = data.choices?.[0]?.message?.content;
       }
 
@@ -320,15 +381,8 @@ export async function extractQuarkProfile(atom: Atom): Promise<QuarkProfile | nu
       }
 
       profile.extractedAt = new Date().toISOString();
-      profile.extractedBy = 'claude-opus-4-6';
+      profile.extractedBy = 'claude-sonnet-4-6';
       profile.version = 1;
-
-      const usage = data.usage || data.choices?.[0]?.usage;
-      if (usage) {
-        const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
-        const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
-        console.log(`  🔬 Extraction complete: ${inputTokens} input, ${outputTokens} output tokens [${useDirectAnthropic ? 'Anthropic' : 'OpenRouter'}]`);
-      }
 
       return profile;
     } catch (err: any) {

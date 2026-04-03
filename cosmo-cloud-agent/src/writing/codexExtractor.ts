@@ -162,7 +162,7 @@ A JSON object with the post's complete physics. The JSON must follow this exact 
 {
   "version": 2,
   "extractedAt": "<ISO timestamp>",
-  "extractedBy": "gpt-5.4-codex",
+  "extractedBy": "sonnet-4.6-codex",
   "slideQuarks": [
     {
       "slideNumber": 1,
@@ -226,6 +226,7 @@ A JSON object with the post's complete physics. The JSON must follow this exact 
     {
       "afterSlide": 1,
       "activeQuestions": ["what's wrong?"],
+      "builtAssumptions": ["this is a relationship story"],
       "prediction": "relationship crisis",
       "dominantEmotion": "concern",
       "investmentLevel": "medium"
@@ -234,9 +235,12 @@ A JSON object with the post's complete physics. The JSON must follow this exact 
   "deepFabric": "<100-200 word synthesis of what makes this post's physics unique>"
 }
 
-Keep ALL mechanism descriptions to ≤15 words. Be precise, not verbose.
-Provide RSV trajectory points at 5 evenly-spaced boundaries through the post.
-Provide reader simulation for EVERY slide.
+CRITICAL FORMAT RULES:
+- Keep ALL mechanism descriptions to ≤15 words. Be precise, not verbose.
+- Provide RSV trajectory points at 5 evenly-spaced boundaries through the post.
+- Provide reader simulation for EVERY slide — include ALL fields: activeQuestions, builtAssumptions, prediction, dominantEmotion, investmentLevel.
+- investmentLevel MUST be one of: "low", "medium", "high", "locked-in" (the UI maps these to graph heights).
+- builtAssumptions is REQUIRED for every slide — what the reader now believes to be true.
 
 PART 2: WALKTHROUGH
 After the JSON, write a full walkthrough exactly like the 10 examples at the end of the Codex.
@@ -288,7 +292,7 @@ ${slideText}
 Analyze this post. Output PART 1 (JSON profile) first, then PART 2 (walkthrough). Do not skip any slides.`;
 
   const estimatedInput = Math.round((systemPrompt.length + userPrompt.length) / 4);
-  console.log(`  🔬 Sending to GPT-5.4 (~${estimatedInput} est. input tokens, streaming)...`);
+  console.log(`  🔬 Sending to Sonnet 4.6 (~${estimatedInput} est. input tokens, streaming)...`);
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -297,7 +301,7 @@ Analyze this post. Output PART 1 (JSON profile) first, then PART 2 (walkthrough)
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'openai/gpt-5.4',
+      model: 'anthropic/claude-sonnet-4.6',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -398,7 +402,7 @@ Analyze this post. Output PART 1 (JSON profile) first, then PART 2 (walkthrough)
   // Ensure version and metadata
   profile.version = 2;
   profile.extractedAt = new Date().toISOString();
-  profile.extractedBy = 'gpt-5.4-codex';
+  profile.extractedBy = 'sonnet-4.6-codex';
 
   console.log(`  ✅ Codex extraction: ${profile.slideQuarks?.length || 0} slides, ${profile.transitions?.length || 0} transitions, walkthrough: ${walkthroughPart.length} chars`);
 

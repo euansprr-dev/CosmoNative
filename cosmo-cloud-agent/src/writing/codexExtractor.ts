@@ -15,7 +15,7 @@ import { QuarkProfile } from './types';
 // Slide Text Resolution (same priority as old extractor)
 // ============================================================
 
-function resolveSlideText(atom: Atom): string {
+function resolveSlideText(atom: Atom): { text: string; sufficient: boolean } {
   const analysis = atom.structured?.swipeAnalysis || {};
 
   // Priority 1: transcriptSlides (pre-parsed boundaries — most accurate)
@@ -26,36 +26,19 @@ function resolveSlideText(atom: Atom): string {
       .map(s => `=== SLIDE ${s.slideNumber} ===\n${s.text}`)
       .join('\n\n');
     console.log(`  🔬 Codex extraction body: ${transcriptSlides.length} slides from transcriptSlides`);
-    return text;
+    return { text, sufficient: true };
   }
 
-  // Priority 2: raw atom.body (if it has meaningful content, not just a title)
+  // Priority 2: raw atom.body (needs meaningful content, not just a title)
   if (atom.body && atom.body.length > 200) {
     console.log(`  🔬 Codex extraction body: raw atom.body (${atom.body.length} chars)`);
-    return atom.body;
+    return { text: atom.body, sufficient: true };
   }
 
-  // Priority 3: reconstruct from old contentPhysics slideQuarks[].text
-  // These are truncated to ~100 chars per slide, but better than nothing
-  const oldProfile = atom.structured?.contentPhysics as any;
-  if (oldProfile?.slideQuarks?.length > 1) {
-    const quarks = oldProfile.slideQuarks as Array<{ slideNumber: number; text: string }>;
-    const text = quarks
-      .sort((a, b) => (a.slideNumber || 0) - (b.slideNumber || 0))
-      .map(q => `=== SLIDE ${q.slideNumber} ===\n${q.text || ''}`)
-      .join('\n\n');
-    const totalChars = quarks.reduce((sum, q) => sum + (q.text?.length || 0), 0);
-    console.log(`  🔬 Codex extraction body: reconstructed from ${quarks.length} old slideQuarks (${totalChars} chars total — truncated per-slide)`);
-    return text;
-  }
-
-  // Priority 4: body even if short (title-only posts like reels)
-  if (atom.body && atom.body.length > 10) {
-    console.log(`  🔬 Codex extraction body: short atom.body (${atom.body.length} chars — may be title only)`);
-    return atom.body;
-  }
-
-  return '[no body text available]';
+  // Insufficient data — the post doesn't have full slide text stored
+  const bodyLen = atom.body?.length || 0;
+  console.log(`  ⚠️ Insufficient slide text for Codex extraction (body: ${bodyLen} chars, no transcriptSlides)`);
+  return { text: atom.body || '', sufficient: false };
 }
 
 // ============================================================
@@ -153,7 +136,10 @@ export async function extractWithCodex(
     throw new Error('No OpenRouter API key configured for Codex extraction');
   }
 
-  const slideText = resolveSlideText(atom);
+  const { text: slideText, sufficient } = resolveSlideText(atom);
+  if (!sufficient) {
+    throw new Error(`Insufficient slide text for Codex extraction. This post needs full slide text in body or transcriptSlides — got only ${slideText.length} chars. Re-transcribe the post first.`);
+  }
   const title = atom.title || 'Untitled';
   const analysis = atom.structured?.swipeAnalysis || {};
   const format = analysis.swipeContentFormat || atom.metadata?.contentSource || 'unknown';

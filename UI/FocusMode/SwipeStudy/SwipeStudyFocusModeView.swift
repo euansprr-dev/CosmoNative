@@ -3080,38 +3080,51 @@ struct SwipeStudyFocusModeView: View {
                 isGeneratingProfile = false
                 return
             }
+
+            // API call is synchronous — extraction is complete when we get 200.
+            // Data is in Supabase now. Force a sync + refresh.
+            print("🔬 Codex extraction API returned 200 — syncing local DB...")
         } catch {
             profileGenerationError = error.localizedDescription
             isGeneratingProfile = false
             return
         }
 
-        // Background poll — detached Task survives view navigation
-        // User can leave the page, extraction continues, notification fires when done
-        Task.detached { [atomUUID, atomTitle, oldExtractedAt] in
-            for attempt in 1...450 { // Poll up to 15 min (2s × 450) — Codex extraction is heavier
-                try? await Task.sleep(for: .seconds(2))
+        // Extraction complete — poll Supabase (not local GRDB) for the updated atom
+        // The data is already in Supabase, but local GRDB might not have synced yet
+        Task.detached { [atomUUID, atomTitle] in
+            // Give Supabase a moment, then fetch directly
+            try? await Task.sleep(for: .seconds(3))
+
+            // Try to refresh from the repository (which syncs from Supabase)
+            for attempt in 1...30 { // Poll up to 60s (2s × 30)
                 if let refreshed = try? await AtomRepository.shared.fetch(uuid: atomUUID),
-                   let profile = refreshed.codexProfile ?? refreshed.contentPhysicsProfile,
-                   profile.extractedAt != oldExtractedAt || oldExtractedAt == nil {
-                    // Extraction complete — notify the app
+                   refreshed.codexProfile != nil || refreshed.blueprintWalkthrough != nil {
                     await MainActor.run {
                         NotificationCenter.default.post(
                             name: .contentPhysicsExtractionComplete,
                             object: nil,
                             userInfo: ["uuid": atomUUID, "title": atomTitle]
                         )
-                        // macOS notification
                         Self.showExtractionNotification(title: atomTitle)
                     }
-                    print("🔬 Extraction complete for \"\(atomTitle)\" after \(attempt * 2)s")
+                    print("🔬 Codex extraction synced for \"\(atomTitle)\" after \(attempt * 2 + 3)s")
                     return
                 }
-                if attempt % 15 == 0 {
-                    print("🔬 Still waiting for extraction... \(attempt * 2)s elapsed")
-                }
+                try? await Task.sleep(for: .seconds(2))
             }
-            print("🔬 Extraction poll timed out for \"\(atomTitle)\" after 15 min")
+
+            // Fallback: still notify even if sync didn't detect the change
+            // (the data IS in Supabase, next manual sync will pick it up)
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: .contentPhysicsExtractionComplete,
+                    object: nil,
+                    userInfo: ["uuid": atomUUID, "title": atomTitle]
+                )
+                Self.showExtractionNotification(title: atomTitle)
+            }
+            print("🔬 Codex extraction: notified after timeout (data in Supabase, awaiting sync)")
         }
 
         // User can navigate away — polling continues in background

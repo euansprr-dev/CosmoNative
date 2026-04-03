@@ -29,9 +29,29 @@ function resolveSlideText(atom: Atom): string {
     return text;
   }
 
-  // Priority 2: raw atom.body
-  if (atom.body && atom.body.length > 50) {
+  // Priority 2: raw atom.body (if it has meaningful content, not just a title)
+  if (atom.body && atom.body.length > 200) {
     console.log(`  🔬 Codex extraction body: raw atom.body (${atom.body.length} chars)`);
+    return atom.body;
+  }
+
+  // Priority 3: reconstruct from old contentPhysics slideQuarks[].text
+  // These are truncated to ~100 chars per slide, but better than nothing
+  const oldProfile = atom.structured?.contentPhysics as any;
+  if (oldProfile?.slideQuarks?.length > 1) {
+    const quarks = oldProfile.slideQuarks as Array<{ slideNumber: number; text: string }>;
+    const text = quarks
+      .sort((a, b) => (a.slideNumber || 0) - (b.slideNumber || 0))
+      .map(q => `=== SLIDE ${q.slideNumber} ===\n${q.text || ''}`)
+      .join('\n\n');
+    const totalChars = quarks.reduce((sum, q) => sum + (q.text?.length || 0), 0);
+    console.log(`  🔬 Codex extraction body: reconstructed from ${quarks.length} old slideQuarks (${totalChars} chars total — truncated per-slide)`);
+    return text;
+  }
+
+  // Priority 4: body even if short (title-only posts like reels)
+  if (atom.body && atom.body.length > 10) {
+    console.log(`  🔬 Codex extraction body: short atom.body (${atom.body.length} chars — may be title only)`);
     return atom.body;
   }
 

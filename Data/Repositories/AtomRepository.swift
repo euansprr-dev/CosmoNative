@@ -382,11 +382,91 @@ class AtomRepository: ObservableObject {
 
         print("[PERSIST] update() rows=\(rowsAffected) uuid=\(atom.uuid) newVersion=\(updatedAtom.localVersion)")
         if rowsAffected == 0 {
-            print("[PERSIST] ⚠️ VERSION CONFLICT — uuid=\(atom.uuid) expectedVersion=\(expectedVersion) — another writer bumped _local_version")
-            throw AtomRepositoryError.versionConflict(
-                uuid: atom.uuid,
-                expectedVersion: expectedVersion
-            )
+            // Version conflict — another writer bumped _local_version (e.g., cloud agent, Supabase realtime).
+            // Auto-retry: re-fetch the fresh atom, apply our changes on top, and update again.
+            print("[PERSIST] ⚠️ VERSION CONFLICT — uuid=\(atom.uuid) expectedVersion=\(expectedVersion) — auto-retrying with fresh version")
+
+            guard let fresh = try await database.asyncRead({ db in
+                try Atom.filter(Column("uuid") == atom.uuid).fetchOne(db)
+            }) else {
+                throw AtomRepositoryError.versionConflict(uuid: atom.uuid, expectedVersion: expectedVersion)
+            }
+
+            // Merge: apply the caller's non-nil field changes onto the fresh atom
+            var merged = fresh
+            if atom.title != nil { merged.title = atom.title }
+            if atom.body != nil && atom.body != fresh.body { merged.body = atom.body }
+            if atom.structured != nil && atom.structured != fresh.structured {
+                // For structured, merge JSON keys rather than overwrite — the cloud agent may have
+                // added codexProfile while the local app is saving transcriptSlides
+                if let freshJSON = fresh.structured?.data(using: .utf8),
+                   let callerJSON = atom.structured?.data(using: .utf8),
+                   var freshDict = try? JSONSerialization.jsonObject(with: freshJSON) as? [String: Any],
+                   let callerDict = try? JSONSerialization.jsonObject(with: callerJSON) as? [String: Any] {
+                    // Caller's keys win for anything they explicitly set
+                    for (key, value) in callerDict {
+                        freshDict[key] = value
+                    }
+                    if let mergedData = try? JSONSerialization.data(withJSONObject: freshDict),
+                       let mergedStr = String(data: mergedData, encoding: .utf8) {
+                        merged.structured = mergedStr
+                    }
+                } else {
+                    merged.structured = atom.structured
+                }
+            }
+            if atom.metadata != nil { merged.metadata = atom.metadata }
+            if atom.links != nil { merged.links = atom.links }
+            merged.updatedAt = ISO8601DateFormatter().string(from: Date())
+            merged.localVersion += 1
+
+            let retryVersion = fresh.localVersion
+            let retryAtom = merged
+            let retryRows = try await database.asyncWrite { db -> Int in
+                try db.execute(
+                    sql: """
+                        UPDATE atoms SET
+                            type = ?, title = ?, body = ?, structured = ?, metadata = ?, links = ?,
+                            updated_at = ?, is_deleted = ?,
+                            _local_version = ?, _server_version = ?, _sync_version = ?
+                        WHERE uuid = ? AND _local_version = ?
+                        """,
+                    arguments: [
+                        retryAtom.type.rawValue,
+                        retryAtom.title,
+                        retryAtom.body,
+                        retryAtom.structured,
+                        retryAtom.metadata,
+                        retryAtom.links,
+                        retryAtom.updatedAt,
+                        retryAtom.isDeleted,
+                        retryAtom.localVersion,
+                        retryAtom.serverVersion,
+                        retryAtom.syncVersion,
+                        retryAtom.uuid,
+                        retryVersion,
+                    ]
+                )
+                return db.changesCount
+            }
+
+            if retryRows == 0 {
+                print("[PERSIST] ⚠️ VERSION CONFLICT — retry also failed for uuid=\(atom.uuid)")
+                throw AtomRepositoryError.versionConflict(uuid: atom.uuid, expectedVersion: retryVersion)
+            }
+
+            print("[PERSIST] ✅ VERSION CONFLICT resolved — uuid=\(atom.uuid) merged fresh version \(retryVersion) → \(retryAtom.localVersion)")
+            updatedAtom = retryAtom
+
+            // Track + sync the merged version
+            await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: retryAtom)
+            refreshEditingLock(uuid: atom.uuid)
+            do {
+                try await NodeGraphEngine.shared.handleAtomUpdated(retryAtom, changedFields: ["title", "body", "links", "metadata"])
+            } catch {
+                print("AtomRepository: NodeGraph sync failed for retried atom \(retryAtom.uuid): \(error)")
+            }
+            return retryAtom
         }
 
         // Track for sync

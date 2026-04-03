@@ -263,17 +263,31 @@ writingRouter.post('/codex/extract-single', async (req: Request, res: Response) 
     const { profile, walkthrough } = await extractWithCodex(atom, codexBody);
     const summary = summarizeCodexExtraction(profile, walkthrough);
 
-    // Save both to atom
+    // Save both to atom — merge into existing structured data
     const existing = atom.structured || {};
-    await updateAtom(swipeUUID, {
-      structured: {
-        ...existing,
-        codexProfile: profile,
-        blueprintWalkthrough: walkthrough,
-        codexProfileVersion: 2,
-        // Keep old contentPhysics untouched for backward compat
-      },
-    });
+    const newStructured = {
+      ...existing,
+      codexProfile: profile,
+      blueprintWalkthrough: walkthrough,
+      codexProfileVersion: 2,
+    };
+
+    const structuredKeys = Object.keys(newStructured);
+    const structuredSize = JSON.stringify(newStructured).length;
+    console.log(`  📦 Saving structured: ${structuredKeys.length} keys, ${structuredSize} chars (keys: ${structuredKeys.join(', ')})`);
+
+    const saved = await updateAtom(swipeUUID, { structured: newStructured });
+    if (!saved) {
+      console.log(`  ❌ updateAtom returned null — save likely failed silently`);
+      res.status(500).json({ error: 'Failed to save extraction results to database' });
+      return;
+    }
+
+    // Verify the save
+    const verify = await fetchAtom(swipeUUID);
+    const hasCodex = !!(verify?.structured as any)?.codexProfile;
+    const hasWalkthrough = !!(verify?.structured as any)?.blueprintWalkthrough;
+    console.log(`  🔍 Verify save: codexProfile=${hasCodex}, walkthrough=${hasWalkthrough}`);
 
     console.log(`  ✅ Codex extraction complete: ${summary.slides} slides, ${summary.transitions} transitions, walkthrough: ${summary.walkthroughLength} chars`);
 

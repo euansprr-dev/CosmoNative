@@ -14,6 +14,8 @@
 import { Request, Response, Router } from 'express';
 import { generateOutline, generateDraft, reviseDraft, readDraft } from '../tools/writing';
 import { batchExtractAll, extractQuarkProfile, buildQuarkSummary } from '../writing/quarkExtractor';
+import { extractWithCodex, summarizeCodexExtraction } from '../writing/codexExtractor';
+import { loadExemplarCodex } from '../writing/codexLoader';
 import { computeCodex, saveCodexAtom, invalidateCodexCache } from '../writing/codex';
 import { startCodexPipeline, getCodexProgress } from '../writing/codexPipeline';
 import { fetchAtom, updateAtom } from '../db/queries';
@@ -185,7 +187,7 @@ writingRouter.post('/read', async (req: Request, res: Response) => {
 
 // Start codex pipeline (background — returns immediately)
 writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
-  const { reExtractAll, skipExtraction, pass2Only, pass3Only, cleanupOnly, rewriteWalkthroughs } = req.body || {};
+  const { reExtractAll, skipExtraction, pass2Only, pass3Only, cleanupOnly, rewriteWalkthroughs, useCodexLanguage } = req.body || {};
 
   const progress = getCodexProgress();
   if (progress.status === 'extracting' || progress.status === 'computing_stats' || progress.status === 'synthesizing' || progress.status === 'saving') {
@@ -194,7 +196,7 @@ writingRouter.post('/codex/generate', async (req: Request, res: Response) => {
   }
 
   // Start in background — don't await
-  startCodexPipeline({ reExtractAll: !!reExtractAll, skipExtraction: !!skipExtraction, pass2Only: !!pass2Only, pass3Only: !!pass3Only, cleanupOnly: !!cleanupOnly, rewriteWalkthroughs: !!rewriteWalkthroughs }).catch(err => {
+  startCodexPipeline({ reExtractAll: !!reExtractAll, skipExtraction: !!skipExtraction, pass2Only: !!pass2Only, pass3Only: !!pass3Only, cleanupOnly: !!cleanupOnly, rewriteWalkthroughs: !!rewriteWalkthroughs, useCodexLanguage: !!useCodexLanguage }).catch(err => {
     console.log(`  ❌ Background pipeline error: ${err.message}`);
   });
 
@@ -206,11 +208,12 @@ writingRouter.get('/codex/progress', async (req: Request, res: Response) => {
   res.json(getCodexProgress());
 });
 
-// Single swipe extraction — used by "Generate Atomic Profile" button in SwipeStudy
-// No auth required — endpoint is behind Railway deployment, and the Mac app's
-// APIKeys.supabaseServiceRoleKey keychain access is unreliable
+// Single swipe extraction — used by "Generate Codex Profile" button in SwipeStudy
+// Produces both a CodexProfile (JSON) and a Blueprint Walkthrough (text) in one call
+// using the Exemplar Codex's Periodic Table as the taxonomy.
+// No auth required — endpoint is behind Railway deployment.
 writingRouter.post('/codex/extract-single', async (req: Request, res: Response) => {
-  const { swipeUUID } = req.body || {};
+  const { swipeUUID, useCodexLanguage } = req.body || {};
 
   if (!swipeUUID) {
     res.status(400).json({ error: 'swipeUUID is required' });
@@ -218,36 +221,63 @@ writingRouter.post('/codex/extract-single', async (req: Request, res: Response) 
   }
 
   try {
-    console.log(`\n  🔬 Single extraction requested: ${swipeUUID}`);
+    console.log(`\n  🔬 Single extraction requested: ${swipeUUID} (codex: ${useCodexLanguage !== false})`);
     const atom = await fetchAtom(swipeUUID);
     if (!atom) {
       res.status(404).json({ error: 'Swipe not found' });
       return;
     }
 
-    const profile = await extractQuarkProfile(atom);
-    if (!profile) {
-      res.status(500).json({ error: 'Extraction failed — check server logs' });
+    // Default to Codex extraction. Fall back to old extractor if useCodexLanguage=false
+    if (useCodexLanguage === false) {
+      // Legacy path — old 10-pass extraction
+      const profile = await extractQuarkProfile(atom);
+      if (!profile) {
+        res.status(500).json({ error: 'Extraction failed — check server logs' });
+        return;
+      }
+      const existing = atom.structured || {};
+      await updateAtom(swipeUUID, {
+        structured: { ...existing, contentPhysics: profile },
+      });
+      res.json({
+        success: true,
+        slides: profile.slideQuarks?.length || 0,
+        transitions: profile.transitions?.length || 0,
+        hasFabric: !!profile.deepFabric,
+        hasRhythm: !!profile.rhythm,
+        hasBonds: !!profile.longRangeInteractions,
+        hasSimulation: (profile.readerSimulation || []).length > 0,
+        profileLanguage: 'legacy',
+      });
       return;
     }
 
-    // Save profile to atom
+    // Codex extraction path — load full Codex, extract profile + walkthrough
+    const codexBody = await loadExemplarCodex();
+    if (!codexBody) {
+      res.status(500).json({ error: 'Exemplar Codex not found — generate it first from Codex settings' });
+      return;
+    }
+
+    const { profile, walkthrough } = await extractWithCodex(atom, codexBody);
+    const summary = summarizeCodexExtraction(profile, walkthrough);
+
+    // Save both to atom
     const existing = atom.structured || {};
     await updateAtom(swipeUUID, {
-      structured: { ...existing, contentPhysics: profile },
+      structured: {
+        ...existing,
+        codexProfile: profile,
+        blueprintWalkthrough: walkthrough,
+        codexProfileVersion: 2,
+        // Keep old contentPhysics untouched for backward compat
+      },
     });
 
-    console.log(`  ✅ Single extraction complete: ${profile.slideQuarks?.length || 0} slides, ${profile.transitions?.length || 0} transitions`);
+    console.log(`  ✅ Codex extraction complete: ${summary.slides} slides, ${summary.transitions} transitions, walkthrough: ${summary.walkthroughLength} chars`);
 
-    res.json({
-      success: true,
-      slides: profile.slideQuarks?.length || 0,
-      transitions: profile.transitions?.length || 0,
-      hasFabric: !!profile.deepFabric,
-      hasRhythm: !!profile.rhythm,
-      hasBonds: !!profile.longRangeInteractions,
-      hasSimulation: (profile.readerSimulation || []).length > 0,
-    });
+    res.json({ success: true, ...summary });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.log(`  ❌ Single extraction failed: ${msg}`);

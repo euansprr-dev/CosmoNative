@@ -5,6 +5,8 @@
 import { config } from '../config';
 import { Atom, fetchAllByType, updateAtom, createAtom } from '../db/queries';
 import { extractQuarkProfile } from './quarkExtractor';
+import { extractWithCodex } from './codexExtractor';
+import { loadExemplarCodex } from './codexLoader';
 import { computeCodex, saveCodexAtom, invalidateCodexCache } from './codex';
 import { prepareExemplarData } from './exemplarCodex';
 import { QuarkProfile } from './types';
@@ -184,7 +186,7 @@ export function cleanupCodexText(raw: string): string {
   return text;
 }
 
-export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean; cleanupOnly?: boolean; rewriteWalkthroughs?: boolean } = {}): Promise<void> {
+export async function startCodexPipeline(options: { reExtractAll?: boolean; skipExtraction?: boolean; pass2Only?: boolean; pass3Only?: boolean; cleanupOnly?: boolean; rewriteWalkthroughs?: boolean; useCodexLanguage?: boolean } = {}): Promise<void> {
   if (currentProgress.status !== 'idle' && currentProgress.status !== 'complete' && currentProgress.status !== 'failed') {
     console.log(`  ⚠️ Codex pipeline already running (${currentProgress.status})`);
     return;
@@ -237,6 +239,13 @@ export async function startCodexPipeline(options: { reExtractAll?: boolean; skip
     }
 
     // STEP 1: Extract all swipes (skip if requested — use existing profiles)
+    if (options.useCodexLanguage) {
+      // Re-extract all swipes using the Codex language
+      console.log(`  🔬 Re-extracting all swipes with Codex language...`);
+      await runCodexExtractionPhase(options.reExtractAll || false);
+      updateProgress({ status: 'complete', phase: 'Codex extraction complete', completedAt: new Date().toISOString() });
+      return;
+    }
     if (options.skipExtraction) {
       console.log(`  ⏭️ Skipping extraction — using existing profiles`);
     } else {
@@ -374,6 +383,92 @@ async function runExtractionPhase(reExtractAll: boolean): Promise<void> {
   }
 
   console.log(`  📊 Extraction complete: ${currentProgress.extracted} succeeded, ${currentProgress.failed} failed, ${alreadyDone} were already done`);
+}
+
+// ============================================================
+// Codex-Language Re-Extraction (all swipes → CodexProfile + Walkthrough)
+// ============================================================
+
+async function runCodexExtractionPhase(reExtractAll: boolean): Promise<void> {
+  const codexBody = await loadExemplarCodex();
+  if (!codexBody) {
+    throw new Error('Exemplar Codex not found — generate it first');
+  }
+
+  const allAtoms = await fetchAllByType('research', { limit: 500 });
+  const swipes = allAtoms.filter(a =>
+    a.metadata?.isSwipeFile &&
+    a.body &&
+    a.body.length > 50
+  );
+
+  // Split into needs-extraction and already-done
+  const needsExtraction = swipes.filter(a =>
+    reExtractAll || !a.structured?.codexProfile?.version || a.structured?.codexProfile?.version < 2
+  );
+  const alreadyDone = swipes.length - needsExtraction.length;
+
+  updateProgress({
+    total: swipes.length,
+    skipped: alreadyDone,
+    phase: `${needsExtraction.length} swipes need Codex extraction (${alreadyDone} already done)...`,
+  });
+
+  if (needsExtraction.length === 0) {
+    console.log(`  ✅ All ${swipes.length} swipes already have Codex profiles`);
+    return;
+  }
+
+  const BATCH_SIZE = 5; // Smaller batches for larger per-swipe calls
+  const totalBatches = Math.ceil(needsExtraction.length / BATCH_SIZE);
+  console.log(`  🚀 Codex-extracting ${needsExtraction.length} swipes in ${totalBatches} batches of ${BATCH_SIZE}...`);
+
+  for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+    const batch = needsExtraction.slice(batchIdx * BATCH_SIZE, (batchIdx + 1) * BATCH_SIZE);
+    console.log(`  📦 Batch ${batchIdx + 1}/${totalBatches}: ${batch.length} swipes`);
+
+    const results = await Promise.allSettled(
+      batch.map(async (atom) => {
+        try {
+          const { profile, walkthrough } = await extractWithCodex(atom, codexBody);
+          const existing = atom.structured || {};
+          await updateAtom(atom.uuid, {
+            structured: {
+              ...existing,
+              codexProfile: profile,
+              blueprintWalkthrough: walkthrough,
+              codexProfileVersion: 2,
+            },
+          });
+          updateProgress({
+            current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+            extracted: currentProgress.extracted + 1,
+            phase: `[${currentProgress.extracted + currentProgress.failed + 1}/${needsExtraction.length}] ✅ ${atom.title?.substring(0, 40)}`,
+          });
+          return { uuid: atom.uuid, success: true };
+        } catch (err: any) {
+          updateProgress({
+            current: alreadyDone + currentProgress.extracted + currentProgress.failed + 1,
+            failed: currentProgress.failed + 1,
+          });
+          console.log(`  ❌ Codex extraction failed for "${atom.title?.substring(0, 40)}": ${err.message}`);
+          return { uuid: atom.uuid, success: false, error: err.message };
+        }
+      })
+    );
+
+    const succeeded = results.filter(r => r.status === 'fulfilled' && (r as any).value?.success).length;
+    const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r as any).value?.success)).length;
+    console.log(`  📦 Batch ${batchIdx + 1} done: ${succeeded} succeeded, ${failed} failed`);
+
+    // Wait between batches — Codex extraction is heavier per call
+    if (batchIdx < totalBatches - 1) {
+      console.log(`  ⏳ Waiting 45s before next batch...`);
+      await new Promise(r => setTimeout(r, 45_000));
+    }
+  }
+
+  console.log(`  📊 Codex extraction complete: ${currentProgress.extracted} succeeded, ${currentProgress.failed} failed, ${alreadyDone} already done`);
 }
 
 // ============================================================
@@ -997,7 +1092,7 @@ const PASS2_CONCEPTS = [
 ];
 
 /** Stream an OpenRouter SSE response and collect text content */
-async function streamOpenRouterResponse(
+export async function streamOpenRouterResponse(
   response: Response,
   label: string,
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {

@@ -38,6 +38,7 @@ struct SwipeStudyFocusModeView: View {
     @State private var isDeepAnalyzing = false
     @State private var isGeneratingProfile = false
     @State private var profileGenerationError: String?
+    @State private var showWalkthroughSheet = false
     @State private var hasAppeared = false
 
     // YouTube player state
@@ -2798,11 +2799,17 @@ struct SwipeStudyFocusModeView: View {
                     }
 
                     // Content Physics Profile (replaces legacy Emotional Arc + Persuasion Stack)
-                    if let physicsProfile = currentAtom?.contentPhysicsProfile {
+                    if let physicsProfile = currentAtom?.bestPhysicsProfile {
                         ContentPhysicsSection(profile: physicsProfile)
+
+                        // Walkthrough section (only for Codex-language profiles)
+                        if let walkthrough = currentAtom?.blueprintWalkthrough {
+                            walkthroughCard(walkthrough)
+                        }
+
                         reExtractProfileButton
                     } else {
-                        generateAtomicProfileCard
+                        generateCodexProfileCard
                     }
 
                     // Taxonomy Classification
@@ -2861,13 +2868,19 @@ struct SwipeStudyFocusModeView: View {
     @ViewBuilder
     private var reExtractProfileButton: some View {
         HStack {
+            if let atom = currentAtom, !atom.hasCodexProfile {
+                // Has legacy profile but no Codex profile — prompt upgrade
+                Text("Legacy profile — re-extract for Codex language")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
             Spacer()
             Button {
-                Task { await generateAtomicProfile() }
+                Task { await generateCodexProfile() }
             } label: {
                 Label(
-                    isGeneratingProfile ? "Re-extracting..." : "Re-extract Profile",
-                    systemImage: "arrow.clockwise"
+                    isGeneratingProfile ? "Extracting..." : "Re-extract with Codex",
+                    systemImage: "book.and.wrench"
                 )
                 .font(DS.caption2)
                 .foregroundStyle(DS.entitySwipe)
@@ -2878,10 +2891,10 @@ struct SwipeStudyFocusModeView: View {
         .padding(.top, DS.space4)
     }
 
-    // MARK: - Generate Atomic Profile
+    // MARK: - Generate Codex Profile
 
     @ViewBuilder
-    private var generateAtomicProfileCard: some View {
+    private var generateCodexProfileCard: some View {
         VStack(spacing: DS.space12) {
             HStack {
                 Text("CONTENT PHYSICS")
@@ -2895,51 +2908,17 @@ struct SwipeStudyFocusModeView: View {
                 VStack(spacing: DS.space10) {
                     ProgressView()
                         .scaleEffect(1.1)
-                    Text("Extracting atomic profile with Opus 4.6...")
+                    Text("Analyzing with Codex language...")
                         .font(DS.callout)
                         .foregroundStyle(DS.textMuted)
-                    Text("10 passes: quarks, transitions, rhythm, reader simulation, fabric synthesis")
+                    Text("Full physics profile + slide-by-slide walkthrough using unified Content Physics language")
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                         .multilineTextAlignment(.center)
                 }
                 .padding(.vertical, DS.space20)
             } else {
-                VStack(spacing: DS.space10) {
-                    Image(systemName: "atom")
-                        .font(.system(size: 28))
-                        .foregroundStyle(DS.entitySwipe)
-
-                    Text("No physics profile yet")
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-
-                    Text("Generate the complete Content Physics profile — every quark, transition, bond, rhythm pattern, and reader state mapped by Opus 4.6 (~$0.05)")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-
-                    if let error = profileGenerationError {
-                        Text(error)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.red)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    Button {
-                        Task { await generateAtomicProfile() }
-                    } label: {
-                        Label("Generate Atomic Profile", systemImage: "atom")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, DS.space16)
-                            .padding(.vertical, DS.space8)
-                            .background(DS.entitySwipe, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.vertical, DS.space16)
+                generateCodexProfileContent
             }
         }
         .frame(maxWidth: .infinity)
@@ -2948,16 +2927,124 @@ struct SwipeStudyFocusModeView: View {
         .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
     }
 
-    private func generateAtomicProfile() async {
+    @ViewBuilder
+    private var generateCodexProfileContent: some View {
+        VStack(spacing: DS.space10) {
+            Image(systemName: "book.and.wrench")
+                .font(.system(size: 28))
+                .foregroundStyle(DS.entitySwipe)
+
+            Text("No physics profile yet")
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+
+            Text("Generate the complete Content Physics profile using the Exemplar Codex language — physics profile + full walkthrough (~$2)")
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+
+            if let error = profileGenerationError {
+                Text(error)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                Task { await generateCodexProfile() }
+            } label: {
+                Label("Generate Codex Profile", systemImage: "book.and.wrench")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.vertical, DS.space8)
+                    .background(DS.entitySwipe, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, DS.space16)
+    }
+
+    // MARK: - Walkthrough Card
+
+    @ViewBuilder
+    private func walkthroughCard(_ walkthrough: String) -> some View {
+        VStack(spacing: DS.space12) {
+            HStack {
+                Image(systemName: "text.book.closed")
+                    .foregroundStyle(DS.entitySwipe)
+                Text("WALKTHROUGH")
+                    .font(DS.caption)
+                    .tracking(1.2)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+                Button {
+                    showWalkthroughSheet = true
+                } label: {
+                    Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.entitySwipe)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Preview — first 500 chars
+            Text(String(walkthrough.prefix(500)) + (walkthrough.count > 500 ? "..." : ""))
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DS.space16)
+        .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusMedium).stroke(DS.border, lineWidth: 1))
+        .sheet(isPresented: $showWalkthroughSheet) {
+            walkthroughFullSheet(walkthrough)
+        }
+    }
+
+    @ViewBuilder
+    private func walkthroughFullSheet(_ walkthrough: String) -> some View {
+        NavigationStack {
+            ScrollView {
+                Text(walkthrough)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.text)
+                    .padding(DS.space20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .navigationTitle("Blueprint Walkthrough")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showWalkthroughSheet = false }
+                }
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(walkthrough, forType: .string)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 600, minHeight: 500)
+    }
+
+    private func generateCodexProfile() async {
         guard let atom = currentAtom else { return }
         isGeneratingProfile = true
         profileGenerationError = nil
 
         let atomUUID = atom.uuid
         let atomTitle = atom.title ?? "Swipe"
-        let oldExtractedAt = atom.contentPhysicsProfile?.extractedAt
+        // Check for existing Codex profile (version 2) — use extractedAt for change detection
+        let oldExtractedAt = atom.codexProfile?.extractedAt ?? atom.contentPhysicsProfile?.extractedAt
 
-        // Fire the API call
+        // Fire the API call — defaults to Codex language extraction
         do {
             let apiKey: String = APIKeys.supabaseServiceRoleKey ?? ""
             let baseURL = "https://cosmonative-production.up.railway.app"
@@ -2966,8 +3053,11 @@ struct SwipeStudyFocusModeView: View {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["swipeUUID": atomUUID])
-            request.timeoutInterval = 600
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "swipeUUID": atomUUID,
+                "useCodexLanguage": true,
+            ] as [String: Any])
+            request.timeoutInterval = 900 // 15 min — Codex extraction is heavier
 
             let (data, response) = try await URLSession.shared.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -2987,10 +3077,10 @@ struct SwipeStudyFocusModeView: View {
         // Background poll — detached Task survives view navigation
         // User can leave the page, extraction continues, notification fires when done
         Task.detached { [atomUUID, atomTitle, oldExtractedAt] in
-            for attempt in 1...180 { // Poll up to 6 min (2s × 180)
+            for attempt in 1...450 { // Poll up to 15 min (2s × 450) — Codex extraction is heavier
                 try? await Task.sleep(for: .seconds(2))
                 if let refreshed = try? await AtomRepository.shared.fetch(uuid: atomUUID),
-                   let profile = refreshed.contentPhysicsProfile,
+                   let profile = refreshed.codexProfile ?? refreshed.contentPhysicsProfile,
                    profile.extractedAt != oldExtractedAt || oldExtractedAt == nil {
                     // Extraction complete — notify the app
                     await MainActor.run {
@@ -3009,7 +3099,7 @@ struct SwipeStudyFocusModeView: View {
                     print("🔬 Still waiting for extraction... \(attempt * 2)s elapsed")
                 }
             }
-            print("🔬 Extraction poll timed out for \"\(atomTitle)\" after 6 min")
+            print("🔬 Extraction poll timed out for \"\(atomTitle)\" after 15 min")
         }
 
         // User can navigate away — polling continues in background

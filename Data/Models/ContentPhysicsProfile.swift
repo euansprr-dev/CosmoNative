@@ -309,6 +309,7 @@ struct ReaderState: Codable, Identifiable {
 // MARK: - Atom Extension for Parsing
 
 extension Atom {
+    /// Legacy physics profile from old 10-pass extraction (atom.structured.contentPhysics)
     var contentPhysicsProfile: ContentPhysicsProfile? {
         guard let structured = structured,
               let data = structured.data(using: .utf8),
@@ -323,11 +324,51 @@ extension Atom {
             return try decoder.decode(ContentPhysicsProfile.self, from: physicsData)
         } catch {
             print("⚠️ ContentPhysicsProfile decode failed: \(error)")
-            // Try to at least confirm the data exists even if decode fails
             if let dict = try? JSONSerialization.jsonObject(with: physicsData) as? [String: Any] {
                 print("⚠️ contentPhysics keys present: \(dict.keys.sorted().joined(separator: ", "))")
             }
             return nil
         }
+    }
+
+    /// Codex-language physics profile (atom.structured.codexProfile) — version 2, unified taxonomy
+    var codexProfile: ContentPhysicsProfile? {
+        guard let structured = structured,
+              let data = structured.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profileJSON = json["codexProfile"],
+              let profileData = try? JSONSerialization.data(withJSONObject: profileJSON) else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        do {
+            return try decoder.decode(ContentPhysicsProfile.self, from: profileData)
+        } catch {
+            print("⚠️ CodexProfile decode failed: \(error)")
+            return nil
+        }
+    }
+
+    /// Blueprint walkthrough text (atom.structured.blueprintWalkthrough) — full slide-by-slide analysis
+    var blueprintWalkthrough: String? {
+        guard let structured = structured,
+              let data = structured.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let walkthrough = json["blueprintWalkthrough"] as? String,
+              walkthrough.count > 100 else {
+            return nil
+        }
+        return walkthrough
+    }
+
+    /// Best available physics profile — prefers Codex profile, falls back to legacy
+    var bestPhysicsProfile: ContentPhysicsProfile? {
+        codexProfile ?? contentPhysicsProfile
+    }
+
+    /// Whether this swipe has a Codex-language profile (version 2)
+    var hasCodexProfile: Bool {
+        codexProfile != nil
     }
 }

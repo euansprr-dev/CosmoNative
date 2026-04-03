@@ -140,6 +140,24 @@ export interface QuarkSummary {
 // ============================================================
 // Content Physics: Full Quark Profile (stored per-swipe in atom.structured.contentPhysics)
 // ============================================================
+//
+// VERSION 1 (extractedBy: "claude-sonnet-*"): Old 10-pass extraction with ad-hoc naming.
+//   Stored at atom.structured.contentPhysics
+//
+// VERSION 2 (extractedBy: "gpt-5.4-codex"): Codex-aware extraction. All concept names
+//   MUST match the Exemplar Codex's Periodic Table exactly:
+//   - Speech Acts: HOOK, CONFESSION, QUESTION, CLAIM, CONTRAST, OBSERVATION, DECISION,
+//     INSTRUCTION, REVEAL, PROOF, REFRAME, VALIDATION, PERMISSION, WARNING, INVITATION,
+//     GRATITUDE, THESIS
+//   - Reader Deltas: CURIOSITY+, IDENTIFICATION+, TENSION+, TRUST+, SURPRISE, EMPATHY+,
+//     ASPIRATION+, RELIEF, FEAR+, AWE, GUILT, BELONGING, VALIDATION, MOTIVATION, WARMTH, CATHARSIS
+//   - Transitions: ANSWER, ESCALATION, ACCUMULATION, PIVOT, PHASE TRANSITION, RESET,
+//     PARTIAL RESOLUTION, REVEAL-TO-PROOF, PROOF-TO-ACTION, PERSONAL-TO-UNIVERSAL,
+//     OBJECTION-TO-RESOLUTION, CAUSE-TO-CONSEQUENCE
+//   - Frames: SETUP, LOSS, DECISION, CONSEQUENCE, SUCCESS, OBSERVATION, ABSURD,
+//     TRANSFORMATION, TUTORIAL, THREAT BRIEFING, IDENTITY REFRAME, GIFT, COMPRESSION PUNCH
+//   Stored at atom.structured.codexProfile (with walkthrough at atom.structured.blueprintWalkthrough)
+//
 
 export interface QuarkProfile {
   version: number;

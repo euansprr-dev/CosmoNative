@@ -139,9 +139,9 @@ final class CodexViewModel {
 
     private static let cloudBaseURL = "https://cosmonative-production.up.railway.app"
 
-    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false, cleanupOnly: Bool = false, rewriteWalkthroughs: Bool = false) async {
+    func generateCodex(reExtractAll: Bool = false, skipExtraction: Bool = false, pass2Only: Bool = false, pass3Only: Bool = false, cleanupOnly: Bool = false, rewriteWalkthroughs: Bool = false, useCodexLanguage: Bool = false) async {
         isGenerating = true
-        progress = rewriteWalkthroughs ? "Rewriting walkthroughs with unified language..." : cleanupOnly ? "Cleaning up Codex structure..." : pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
+        progress = useCodexLanguage ? "Re-extracting all swipes with Codex language..." : rewriteWalkthroughs ? "Rewriting walkthroughs with unified language..." : cleanupOnly ? "Cleaning up Codex structure..." : pass3Only ? "Unifying Content Physics language (Pass 3)..." : pass2Only ? "Deepening existing Codex (Pass 2)..." : skipExtraction ? "Preparing synthesis..." : reExtractAll ? "Re-extracting all swipes..." : "Extracting unanalyzed swipes..."
         error = nil
 
         do {
@@ -149,7 +149,7 @@ final class CodexViewModel {
             var startRequest = URLRequest(url: startURL)
             startRequest.httpMethod = "POST"
             startRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only, "cleanupOnly": cleanupOnly, "rewriteWalkthroughs": rewriteWalkthroughs])
+            startRequest.httpBody = try JSONSerialization.data(withJSONObject: ["reExtractAll": reExtractAll, "skipExtraction": skipExtraction, "pass2Only": pass2Only, "pass3Only": pass3Only, "cleanupOnly": cleanupOnly, "rewriteWalkthroughs": rewriteWalkthroughs, "useCodexLanguage": useCodexLanguage])
             startRequest.timeoutInterval = 30
 
             let (_, startResponse) = try await URLSession.shared.data(for: startRequest)
@@ -204,6 +204,7 @@ final class CodexViewModel {
 struct CodexSettingsTab: View {
     @State private var viewModel = CodexViewModel()
     @State private var showReExtractConfirmation = false
+    @State private var showCodexReExtractConfirmation = false
     @State private var showRawText = false
 
     var body: some View {
@@ -338,9 +339,15 @@ struct CodexSettingsTab: View {
             Divider()
 
             Button {
+                showCodexReExtractConfirmation = true
+            } label: {
+                Label("Re-extract All (Codex Language)", systemImage: "book.and.wrench")
+            }
+
+            Button {
                 showReExtractConfirmation = true
             } label: {
-                Label("Re-extract All Swipes", systemImage: "arrow.clockwise")
+                Label("Re-extract All Swipes (Legacy)", systemImage: "arrow.clockwise")
             }
         } label: {
             Label("Generate", systemImage: "sparkles")
@@ -359,6 +366,13 @@ struct CodexSettingsTab: View {
             }
         } message: {
             Text("This will re-analyze every swipe with Opus 4.6, even those already extracted.")
+        }
+        .confirmationDialog("Re-extract all with Codex language?", isPresented: $showCodexReExtractConfirmation) {
+            Button("Re-extract All (Codex)", role: .destructive) {
+                Task { await viewModel.generateCodex(reExtractAll: true, useCodexLanguage: true) }
+            }
+        } message: {
+            Text("This will re-analyze every swipe using the Exemplar Codex as the taxonomy. Produces both a physics profile and walkthrough per swipe. Cost: ~$2/swipe.")
         }
     }
 

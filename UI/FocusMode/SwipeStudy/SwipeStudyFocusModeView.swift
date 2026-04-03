@@ -3148,33 +3148,42 @@ struct SwipeStudyFocusModeView: View {
 
     private func copySwipeWithProfile() {
         guard let atom = currentAtom else { return }
-        var text = "=== SWIPE: \(atom.title ?? "Untitled") ===\n\n"
+        var text = "═══ SWIPE BREAKDOWN: \(atom.title ?? "Untitled") ═══\n\n"
 
         // Full body
         if let body = atom.body, !body.isEmpty {
-            text += "--- BODY ---\n\(body)\n\n"
+            text += "── FULL TEXT ──\n\(body)\n\n"
         }
 
-        // Existing analysis (hook, beats, score, framework, voice)
+        // Surface analysis (hook, beats, score)
         if let structured = atom.structured,
            let data = structured.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let sa = json["swipeAnalysis"] as? [String: Any] {
+            text += "── SURFACE ANALYSIS ──\n"
             if let hookText = sa["hookText"] as? String { text += "Hook: \(hookText)\n" }
             if let hookType = sa["hookType"] as? String { text += "Hook Type: \(hookType)\n" }
             if let hookScore = sa["hookScore"] as? Double { text += "Hook Score: \(hookScore)/10\n" }
             if let hookMechanism = sa["hookMechanism"] as? String { text += "Hook Mechanism: \(hookMechanism)\n" }
-            if let hookReason = sa["hookScoreReason"] as? String { text += "Hook Score Reason: \(hookReason)\n" }
             if let beatFP = sa["beatFingerprint"] as? String { text += "Beats: \(beatFP)\n" }
             if let framework = sa["frameworkType"] as? String { text += "Framework: \(framework)\n" }
-            if let recipe = sa["structuralRecipe"] as? String { text += "Structural Recipe: \(recipe)\n" }
             if let voice = sa["voiceMarkers"] as? [String] { text += "Voice: \(voice.joined(separator: ", "))\n" }
-            if let emotion = sa["dominantEmotion"] as? String { text += "Dominant Emotion: \(emotion)\n" }
             text += "\n"
         }
 
-        // Content Physics — EVERYTHING
-        if let p = atom.contentPhysicsProfile {
+        // Glossary — definitions of every concept used in this profile
+        if let p = atom.bestPhysicsProfile {
+            let glossary = buildConceptGlossary(profile: p)
+            if !glossary.isEmpty {
+                text += "── CONCEPT GLOSSARY ──\n"
+                text += "(Definitions from the Exemplar Codex of Content Physics)\n\n"
+                text += glossary
+                text += "\n"
+            }
+        }
+
+        // Content Physics Profile
+        if let p = atom.bestPhysicsProfile {
             text += "--- CONTENT PHYSICS ---\n"
 
             // Arc
@@ -3393,12 +3402,83 @@ struct SwipeStudyFocusModeView: View {
 
             // The Fabric (full)
             if let fabric = p.deepFabric, !fabric.isEmpty {
-                text += "\nThe Fabric:\n\(fabric)\n"
+                text += "\n── THE FABRIC ──\n\(fabric)\n"
             }
+        }
+
+        // Blueprint Walkthrough (full slide-by-slide analysis in Codex language)
+        if let walkthrough = atom.blueprintWalkthrough, !walkthrough.isEmpty {
+            text += "\n── FULL WALKTHROUGH ──\n"
+            text += walkthrough
+            text += "\n"
+        }
+
+        // Profile language indicator
+        if atom.hasCodexProfile {
+            text += "\n[Profile: Codex Language v2 — unified taxonomy from 105 viral posts]\n"
+        } else {
+            text += "\n[Profile: Legacy extraction — pre-Codex taxonomy]\n"
         }
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Build a glossary of Codex definitions for every concept used in this profile
+    private func buildConceptGlossary(profile: ContentPhysicsProfile) -> String {
+        guard codexLookup.isLoaded else { return "" }
+
+        // Collect all unique concept names from the profile
+        var conceptNames = Set<String>()
+
+        // Speech acts
+        if let quarks = profile.slideQuarks {
+            for q in quarks {
+                if let type = q.speechAct.type { conceptNames.insert(type) }
+                if let deltas = q.readerDeltas {
+                    for d in deltas { if let t = d.type { conceptNames.insert(t) } }
+                }
+                if let t = q.proofType?.type { conceptNames.insert(t) }
+                if let t = q.motivation?.type { conceptNames.insert(t) }
+                if let t = q.frame?.type { conceptNames.insert(t) }
+                if let t = q.experientialDistance?.type { conceptNames.insert(t) }
+                if let techs = q.techniques {
+                    for tech in techs { conceptNames.insert(tech.technique) }
+                }
+            }
+        }
+
+        // Transitions
+        if let transitions = profile.transitions {
+            for t in transitions { conceptNames.insert(t.type) }
+        }
+
+        // Arc
+        if let shape = profile.arcQuarks?.shape { conceptNames.insert(shape) }
+        if let df = profile.arcQuarks?.dominantFrame?.type { conceptNames.insert(df) }
+
+        // Look up each concept and build glossary
+        var entries: [(String, String, String)] = [] // (name, category, definition)
+        for name in conceptNames.sorted() {
+            if let entry = codexLookup.lookup(name), !entry.definition.isEmpty {
+                entries.append((entry.name, entry.category, entry.definition))
+            }
+        }
+
+        guard !entries.isEmpty else { return "" }
+
+        // Group by category
+        let grouped = Dictionary(grouping: entries, by: { $0.1 })
+        var glossary = ""
+        for category in grouped.keys.sorted() {
+            glossary += "\(category):\n"
+            for (name, _, definition) in grouped[category] ?? [] {
+                glossary += "  \(name): \(definition)\n"
+            }
+            glossary += "\n"
+        }
+
+        return glossary
     }
 
     private func emptyAnalysisCard(title: String, icon: String, message: String) -> some View {

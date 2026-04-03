@@ -1248,12 +1248,22 @@ export function assembleBlock3StableCodex(
     sections.push(walkthrough);
   }
 
-  // Include blueprint body as density reference even though walkthrough has the text
-  // (the raw body preserves exact formatting/spacing the model should match)
+  // Blueprint body is the PRIMARY formatting + density + voice reference
   if (blueprintBody && blueprintBody.length > 100) {
     sections.push('');
-    sections.push('═══ BLUEPRINT BODY (density reference) ═══');
-    sections.push('(Count the actual words per slide below. Match this density in your draft.)');
+    sections.push('═══ BLUEPRINT BODY — YOUR PRIMARY REFERENCE ═══');
+    sections.push('');
+    sections.push('This is the EXACT text the reader sees in the blueprint post. This is what viral looks like.');
+    sections.push('');
+    sections.push('BEFORE YOU WRITE EACH SLIDE, read the corresponding slide below and:');
+    sections.push('1. Count its words. Your slide must be within ±10% of this count.');
+    sections.push('2. Study its FORMAT: arrows (→)? Bullets? Numbered lists? Parenthetical asides? Short punchy lines? Line breaks? Your slide must use the SAME formatting with different content.');
+    sections.push('3. Study its TONE: Is it punchy and compressed? Or explanatory? Match that energy.');
+    sections.push('4. Study its SENTENCE STRUCTURE: How long are the sentences? Do they start with connectors? Replicate the rhythm.');
+    sections.push('');
+    sections.push('If the blueprint slide is 4 short lines with arrows, write 4 short lines with arrows.');
+    sections.push('If the blueprint slide is one punchy sentence, write one punchy sentence.');
+    sections.push('NEVER write a paragraph when the blueprint writes a formatted list.');
     sections.push('');
     sections.push(blueprintBody);
   }
@@ -1321,6 +1331,9 @@ What "spoken" means:
 
 - Follow the blueprint walkthrough's slide count and ALL physics per slide
 - Each slide must produce the speech act, reader deltas, frame, distance, techniques, and transition the walkthrough specifies — plus proof type, motivation, and compression where present
+- The BLUEPRINT BODY is your visual template. Your draft's slides must LOOK like the blueprint's slides — same formatting, same density, same line structure. Never write paragraphs when the blueprint writes formatted lists.
+- Every slide must causally connect to the next via "so", "but", "because", or "and then". Read the Codex's transition entries to see what these bridges look like in real viral text. If you can't say one of these connectors between two slides, the transition is broken.
+- Never reference data about a concept before the reader knows what that concept IS. Introduce first, then present data.
 - The walkthrough IS the skeleton. The client's content IS the flesh. The Codex IS why each bone matters.
 - Never copy >80% of any blueprint phrase — steal STRUCTURE, not words
 - Use [PLACEHOLDER] for any fact not in the client profile
@@ -1377,13 +1390,20 @@ Include 3 HOOK VARIANTS. Each must:
 export function buildCodexPhase2Prompt(clientName: string): string {
   return `═══ PHASE 2: WRITE ═══
 
-Your plan is your thinking. Write directly — no additional think calls needed. Call write_draft with the complete content.
+Write directly via write_draft. No think calls needed — your plan IS your thinking.
 
-For each slide, your plan tells you WHAT to write. Now focus entirely on HOW it sounds.
+FOR EACH SLIDE:
+1. Read your plan for this slide — what content goes here
+2. Read the BLUEPRINT BODY's corresponding slide — study its word count, format, line structure, sentence length
+3. Write YOUR version that produces the same physics with the client's content, matching the blueprint's visual format and density
 
-The test for every slide: Would ${clientName} say this exact sentence at dinner? If not, it's wrong. Compare against their top posts — match their sentence length, their energy, their level of formality. Not a template. THEIR voice.
-
-DENSITY IS TRUTH: The walkthrough shows the density pattern per slide position. Sparse emotional slides stay sparse (5-15 words). Dense proof slides stay dense (30-60 words). Don't flatten the rhythm into uniform slide lengths.
+CRITICAL RULES:
+- The BLUEPRINT BODY is your formatting and density bible. Before writing each slide, READ the blueprint's corresponding slide. Match its word count, line count, formatting (arrows, bullets, etc.), and visual structure.
+- Every sentence must sound like ${clientName} talking at dinner. Read their TOP POSTS in the client profile — match their sentence length, their word choices, their energy. If your sentence doesn't match their real posts, rewrite it.
+- When presenting data or statistics, read how the blueprint and the client's top posts present data. They don't use research-report language — they use plain numbers conversationally. Match THEIR style.
+- Each slide must causally connect to the next. Read the TRANSITION types in the walkthrough and study those transition entries in the Codex to see what causal bridges look like in real viral text.
+- Never introduce data about something before the reader knows WHAT it is.
+- Check the ANTIMATTER section in the Codex. If you catch yourself writing any banned pattern — rewrite using the Codex's examples of how viral creators phrase things instead.
 
 Call write_draft with the complete content.`;
 }
@@ -1394,37 +1414,39 @@ Call write_draft with the complete content.`;
 export function buildCodexPhase3Prompt(clientName: string): string {
   return `═══ PHASE 3: SELF-EDIT ═══
 
-Call the think tool first. In your think, compare each slide of your draft against the corresponding walkthrough slide and ${clientName}'s top posts. Then call write_draft with the corrected version.
+Call the think tool. Compare each slide against the BLUEPRINT BODY, ${clientName}'s top posts, and the walkthrough. Then call write_draft with corrections.
 
-In your think, check each slide for:
+CHECK EACH SLIDE:
 
-1. VOICE (most important — overrides everything):
-   - Are sentences complete and natural? People speak in full thoughts, not fragments.
-   - Are most sentences 10-15 words? Short but not choppy.
-   - Do sentences flow into each other like speech? (connectors: but, and, so, then)
-   - Would ${clientName} actually say these exact words? Compare to their real posts.
-   - Fragments ONLY at slide transitions or final impact lines. Never mid-paragraph, never consecutive.
+1. FORMATTING (compare to blueprint body):
+   - Does your slide LOOK like the blueprint's slide at this position?
+   - Same word count (±10%)? Same number of lines?
+   - Same formatting moves? (arrows, bullets, numbered steps, parenthetical asides, line breaks)
+   - If your slide is a paragraph but the blueprint's is a formatted list — rewrite as a list
 
-2. PHYSICS: Does each slide produce what the walkthrough specifies?
-   Check EVERY field the walkthrough labels for each slide:
-   - Speech act: same type and mechanism?
-   - Reader deltas: all the deltas the walkthrough lists — not just one
-   - Frame: correct frame type?
-   - Experiential distance: zero/near/far matching the walkthrough?
-   - Techniques: are the right craft moves active? (ellipsis, subject drop, direct address, etc.)
-   - Proof type / motivation / compression: if the walkthrough specifies them, are they present?
-   If unsure what a concept should sound like, find its entry in the Codex and read the examples.
+2. VOICE (compare to ${clientName}'s top posts AND Codex Conversational DNA):
+   - Does this sound like ${clientName} at dinner? Compare each slide to their actual top posts.
+   - Read the Codex's Conversational DNA section — does your text match the patterns found in real viral posts?
+   - Read the Codex's ANTIMATTER section — is any banned pattern present? If yes, find how the Codex's real examples phrase similar ideas and use that instead.
+   - Sentences should be 10-15 words, complete thoughts, connected with "but", "so", "and"
 
-3. TRANSITIONS: Does each slide CAUSE the next?
-   - Can you say "so", "but", or "and then" between them?
-   - If you swapped two adjacent slides, would it feel wrong? If not, the chain is broken.
+3. TRANSITIONS (check every slide pair):
+   - Can you say "so" or "but" or "because" between slides N and N+1?
+   - Does slide N+1 reference or build on something established in slide N?
+   - If a concept appears with data, was it introduced to the reader first?
+   - If two slides feel disconnected — add a bridge phrase or reorder
 
-4. ANTIMATTER: Did any of these sneak in?
-   - AI transitions ("Furthermore", "Additionally"), hedging, overexplaining
-   - Round numbers where odd numbers would be more believable
-   - Generic references where named entities should be
-   - Morals stated before they're felt
-   - Multiple fragments in a row (the #1 tell of AI writing)
+4. PHYSICS (compare to walkthrough):
+   - Does each slide produce ALL the physics the walkthrough specifies? (speech act, deltas, frame, distance, techniques, proof, motivation, compression, transition)
+   - Are the right techniques ACTIVE? If walkthrough says ARROW_FORMATTING, are there arrows? If it says MAXIMUM_COMPRESSION, is the slide compressed?
+   - Find each concept's entry in the Codex if unsure what it should look like in actual text.
 
-After your think, call write_draft with the corrected version. Prioritize voice — a slightly imperfect structure that sounds human beats a perfect structure that sounds like AI.`;
+5. ANTIMATTER (final sweep using the Codex's Antimatter section):
+   - Read the Codex's Antimatter entries. Does your draft contain ANY of these patterns?
+   - Check specifically: "it's not X, it's Y" formula, corporate jargon, round numbers, generic references, overexplained morals, multiple fragments in a row
+   - For each violation found, rewrite using how the Codex's real viral examples phrase similar ideas
+
+Fix everything. Formatting + voice > transitions > physics.
+
+Call write_draft with the corrected version.`;
 }

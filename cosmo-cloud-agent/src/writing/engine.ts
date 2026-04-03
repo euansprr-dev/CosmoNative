@@ -262,7 +262,20 @@ export class CloudWritingEngine {
       if (this.blueprintAnchor) {
         const bpAtom = await fetchAtom(this.blueprintAnchor.uuid);
         walkthrough = (bpAtom?.structured as any)?.blueprintWalkthrough || null;
-        blueprintBody = this.blueprintAnchor.fullBody || bpAtom?.body || null;
+
+        // Prefer transcriptSlides for blueprint body — they have explicit slide markers
+        // so the model can clearly see slide boundaries and count words per slide
+        const ts = (bpAtom?.structured as any)?.swipeAnalysis?.transcriptSlides as Array<{ text: string; slideNumber: number }> | undefined;
+        if (ts && Array.isArray(ts) && ts.length > 1) {
+          blueprintBody = ts
+            .sort((a, b) => (a.slideNumber || 0) - (b.slideNumber || 0))
+            .map(s => `--- Slide ${s.slideNumber} ---\n${s.text}`)
+            .join('\n\n');
+          console.log(`  ✍️ Blueprint body: ${ts.length} slides from transcriptSlides (with markers)`);
+        } else {
+          blueprintBody = this.blueprintAnchor.fullBody || bpAtom?.body || null;
+          console.log(`  ✍️ Blueprint body: raw text (${blueprintBody?.length || 0} chars, no slide markers)`);
+        }
         if (walkthrough) {
           console.log(`  ✍️ Blueprint walkthrough loaded: ${walkthrough.length} chars`);
         } else {

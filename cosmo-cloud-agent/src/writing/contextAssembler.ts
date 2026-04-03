@@ -1329,6 +1329,7 @@ What "spoken" means:
 
 ═══ STRUCTURAL RULES ═══
 
+- HARD CAP: No slide may EVER exceed 310 characters. This is a platform limit.
 - Follow the blueprint walkthrough's slide count and ALL physics per slide
 - Each slide must produce the speech act, reader deltas, frame, distance, techniques, and transition the walkthrough specifies — plus proof type, motivation, and compression where present
 - The BLUEPRINT BODY is your visual template. Your draft's slides must LOOK like the blueprint's slides — same formatting, same density, same line structure. Never write paragraphs when the blueprint writes formatted lists.
@@ -1398,12 +1399,16 @@ FOR EACH SLIDE:
 3. Write YOUR version that produces the same physics with the client's content, matching the blueprint's visual format and density
 
 CRITICAL RULES:
+- HARD CAP: No slide may EVER exceed 310 characters. This is a platform limit. If a slide is over 310 characters, cut it immediately.
 - The BLUEPRINT BODY is your formatting and density bible. Before writing each slide, READ the blueprint's corresponding slide. Match its word count, line count, formatting (arrows, bullets, etc.), and visual structure.
 - Every sentence must sound like ${clientName} talking at dinner. Read their TOP POSTS in the client profile — match their sentence length, their word choices, their energy. If your sentence doesn't match their real posts, rewrite it.
 - When presenting data or statistics, read how the blueprint and the client's top posts present data. They don't use research-report language — they use plain numbers conversationally. Match THEIR style.
 - Each slide must causally connect to the next. Read the TRANSITION types in the walkthrough and study those transition entries in the Codex to see what causal bridges look like in real viral text.
 - Never introduce data about something before the reader knows WHAT it is.
 - Check the ANTIMATTER section in the Codex. If you catch yourself writing any banned pattern — rewrite using the Codex's examples of how viral creators phrase things instead.
+
+DENSITY CHECK (do this for EVERY slide before moving to the next):
+After writing each slide, count your characters. If it exceeds 310, cut immediately. Then compare your word count to the blueprint body's corresponding slide. If yours is more than 10% over, cut until it matches. Do NOT move to the next slide until both checks pass.
 
 Call write_draft with the complete content.`;
 }
@@ -1418,10 +1423,15 @@ Call the think tool. Compare each slide against the BLUEPRINT BODY, ${clientName
 
 CHECK EACH SLIDE:
 
-1. FORMATTING (compare to blueprint body):
-   - Does your slide LOOK like the blueprint's slide at this position?
-   - Same word count (±10%)? Same number of lines?
-   - Same formatting moves? (arrows, bullets, numbered steps, parenthetical asides, line breaks)
+1. DENSITY + FORMATTING (compare to blueprint body):
+   For each slide, actually COUNT:
+   - Your slide character count: ___ (HARD CAP: 310 characters. No slide may EVER exceed this.)
+   - Blueprint slide word count: ___
+   - Your slide word count: ___
+   - Over/under by: ___%
+   If any slide exceeds 310 characters, cut it immediately. Then if more than 10% over the blueprint's word count, cut further.
+   Also check:
+   - Does your slide LOOK like the blueprint's slide? Same formatting moves? (arrows, bullets, steps, line breaks)
    - If your slide is a paragraph but the blueprint's is a formatted list — rewrite as a list
 
 2. VOICE (compare to ${clientName}'s top posts AND Codex Conversational DNA):

@@ -1319,8 +1319,8 @@ What "spoken" means:
 
 ═══ STRUCTURAL RULES ═══
 
-- Follow the blueprint walkthrough's slide count and physics per slide
-- Each slide must produce the speech act, reader deltas, and transition named in the walkthrough
+- Follow the blueprint walkthrough's slide count and ALL physics per slide
+- Each slide must produce the speech act, reader deltas, frame, distance, techniques, and transition the walkthrough specifies — plus proof type, motivation, and compression where present
 - The walkthrough IS the skeleton. The client's content IS the flesh. The Codex IS why each bone matters.
 - Never copy >80% of any blueprint phrase — steal STRUCTURE, not words
 - Use [PLACEHOLDER] for any fact not in the client profile
@@ -1344,10 +1344,10 @@ Content format: ${format} | Platform: ${platform}
 
 First, call the think tool. In your think, work through every slide in the walkthrough:
 
-1. Read the walkthrough's physics for this slide (speech act, deltas, distance, techniques, transition)
-2. Look up that speech act and transition in the Codex — read 2-3 real examples to understand what the concept actually sounds like in viral text, not just what the label means
-3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot
-4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm
+1. Read ALL the walkthrough's physics for this slide: speech act, reader deltas, frame, experiential distance, techniques, proof type, motivation, compression, and the transition to the next slide. Every field matters.
+2. Look up the key concepts in the Codex (especially the speech act and transition) — read 2-3 real examples to understand what each concept actually sounds and looks like in viral text, not just what the label means
+3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot while producing the same physics
+4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm from their real posts
 
 Then think about macro physics:
 - ARC: How does ${clientName}'s story map to the walkthrough's arc shape?
@@ -1356,13 +1356,14 @@ Then think about macro physics:
 - PEAK GRAVITY: Where are the most open loops + highest trust + maximum tension simultaneously?
 - ANTIMATTER: What specific things would destroy THIS post's physics? (Not generic — specific to the client's content and this idea)
 
-After thinking, output your plan via create_writing_plan with this structure per slide:
+After your think, call create_writing_plan with this structure per slide:
 
 SLIDE {N}:
-  Blueprint: {speech act} → {deltas} → {transition}
-  Client content: {specific detail from profile}
+  Blueprint physics: speech act={X}, deltas={X,Y}, frame={X}, distance={zero/near/far}, techniques={X,Y,Z}, transition→next={X}
+  Plus if present: proof={X}, motivation={X}, compression={X}
+  Client content: {specific detail from profile that produces these physics}
   Voice: {how they'd say it — reference a specific top post for tone}
-  Density: ~{X} words
+  Density: ~{X} words (match walkthrough's density at this position)
 
 Include 3 HOOK VARIANTS. Each must:
 - Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)

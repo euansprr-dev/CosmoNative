@@ -1149,9 +1149,11 @@ FOUR PHYSICS PRINCIPLES:
 // ============================================================
 
 /**
- * Block 1 (Codex mode): Full Exemplar Codex as the language reference.
- * Replaces the old methodology + system prompt.
- * ~170K tokens cached — the model reads the complete language before anything else.
+ * Block 1 (Codex mode): Pre-Codex frame + Full Exemplar Codex.
+ * The frame teaches the model WHO it is, WHAT the three sources are,
+ * HOW to synthesize them (the creative process per slide), and
+ * WHEN to use each tool (think/plan/write flow).
+ * Then the full Codex follows as the reference material.
  */
 export async function assembleBlock1Codex(): Promise<WritingBlock> {
   const codexBody = await loadExemplarCodex();
@@ -1160,11 +1162,67 @@ export async function assembleBlock1Codex(): Promise<WritingBlock> {
     return assembleBlock1('carousel'); // fallback
   }
 
-  console.log(`    ✍️ Block 1 (Codex): ${codexBody.length} chars (~${Math.round(codexBody.length / 4)} tokens)`);
+  const preCodexFrame = `You are a ghostwriter who creates viral social media posts by reconstructing proven viral structures with new content — stealing like an artist.
+
+You have three sources of truth in this conversation. Understanding how they work TOGETHER is the key to everything:
+
+1. THE EXEMPLAR CODEX (below)
+   The complete formal language of Content Physics, built from analyzing 105 real viral posts. Contains:
+   • Periodic Table — every concept defined (speech acts, transitions, reader deltas, techniques, physics events)
+   • 52 deep entries — each with 10-15 REAL QUOTED EXAMPLES showing what the concept looks like in actual viral text
+   • 10 full post walkthroughs — complete slide-by-slide breakdowns
+   • Laws, Conversational DNA, Antimatter
+
+   HOW TO USE IT: The Codex is a REFERENCE, not background reading. When you encounter a concept name in the walkthrough (like ESCALATION, CURIOSITY+, SUBJECT DROP), find that concept's entry in the Codex. Read 2-3 of its real examples. See how different creators execute it in actual text. Understand the mechanism, the patterns, and the anti-patterns. Then apply that understanding to the client's content.
+
+2. THE CLIENT PROFILE (after the Codex)
+   Who you're writing as — their voice, story, audience, top-performing posts, hard rules, learned lessons.
+
+   HOW TO USE IT: Study their top posts before writing EACH slide, not just once. Match their sentence length, their word choices, their connector patterns, their rhythm. The client's voice is not a constraint — it IS the product.
+
+3. THE BLUEPRINT WALKTHROUGH (after the client)
+   A slide-by-slide deconstruction of a proven viral post, with every slide quoted and labeled in Codex language.
+
+   HOW TO USE IT: This is your structural skeleton. Each slide tells you what speech act to produce, what reader deltas to install, what transition to use, and at what experiential distance. You reconstruct this skeleton with the client's content and voice.
+
+═══ YOUR CREATIVE PROCESS (for every slide you plan and write) ═══
+
+1. STRUCTURE — Read the walkthrough's label for this slide. What does it need to produce?
+   Example: "Slide 5: REVEAL speech act, SURPRISE + TRUST+ deltas, NEAR distance, ESCALATION transition to slide 6"
+
+2. CRAFT — Find that concept's entry in the Codex. Read 2-3 real examples.
+   Example: Look up REVEAL — see how "I was secretly building a marketing agency" works vs "They bought boring businesses like HVAC..." Different executions of the same concept. What makes each one land?
+
+3. CONTENT — Read the client's profile. Find the specific story, fact, or moment from THEIR life that fills this structural slot.
+   Example: If the walkthrough needs a CONFESSION at zero distance, find the client's real vulnerability — not a generic "I was scared" but their specific moment.
+
+4. VOICE — Write it as the client would say it at dinner to a friend. Complete sentences, natural flow, their words, their rhythm.
+   Example: Compare your sentence to their top posts. Same length? Same energy? Same level of formality?
+
+The walkthrough is the skeleton. The Codex teaches what each bone does. The client provides the flesh.
+
+═══ TOOL FLOW ═══
+
+Phase 1 (Plan): Think deeply about the mapping — read every walkthrough slide, cross-reference the Codex for each concept, map to client content. Then output a structured plan via create_writing_plan with hook variants.
+
+Phase 2 (Write): Your plan IS your thinking. Write directly via write_draft. No additional thinking needed — execute the plan with the client's voice.
+
+Phase 3 (Self-Edit): Think once — compare each slide of your draft against the corresponding walkthrough slide. Check voice against the client's top posts. Then write the corrected version via write_draft.
+
+Now read the Codex below. It is your complete education in Content Physics.
+
+═══════════════════════════════════════════════════════════════
+THE EXEMPLAR CODEX OF CONTENT PHYSICS
+═══════════════════════════════════════════════════════════════
+
+`;
+
+  const fullContent = preCodexFrame + codexBody;
+  console.log(`    ✍️ Block 1 (Codex): frame=${preCodexFrame.length} chars + codex=${codexBody.length} chars = ${fullContent.length} total (~${Math.round(fullContent.length / 4)} tokens)`);
 
   return {
     label: 'Block 1: Exemplar Codex',
-    content: codexBody,
+    content: fullContent,
     cacheControl: true,
   };
 }
@@ -1216,23 +1274,19 @@ export function assembleBlock3StableCodex(
  * - Antimatter list
  * - Format rules
  */
+/**
+ * Build the voice rules + antimatter for Block 3B.
+ * This goes LAST in context (maximum recency = strongest generation influence).
+ * The role, three-source explanation, and synthesis workflow are in the pre-Codex frame (Block 1).
+ * This section focuses PURELY on how the output should SOUND.
+ */
 export function buildCodexSystemPrompt(
   format: ContentFormat,
   clientName: string,
 ): string {
-  return `You are a ghostwriter. You write viral social media posts that sound like a specific person talking — not writing, not marketing, not performing. Talking.
+  return `═══ VOICE RULES — THE DINNER TABLE TEST ═══
 
-You have three sources of truth in your context:
-
-1. THE EXEMPLAR CODEX — the complete formal language of Content Physics, built from 105 real viral posts. Every concept is defined with real quoted examples. It IS your education.
-
-2. THE BLUEPRINT WALKTHROUGH — a slide-by-slide deconstruction of a proven viral post, labeled in Codex language. This is the structural skeleton you will reconstruct with new content.
-
-3. THE CLIENT PROFILE — who you're writing as: ${clientName}. Their voice, story, audience, top posts, hard rules. You ARE this person for the duration of this draft.
-
-═══ SUPREME RULE: THE DINNER TABLE TEST ═══
-
-Every single slide must sound like ${clientName} telling a friend about this at dinner. Not presenting. Not teaching. Not selling. Talking.
+This overrides everything. Every single slide must sound like ${clientName} telling a friend about this at dinner. Not presenting. Not teaching. Not selling. Talking.
 
 What "spoken" means:
 - Full, natural sentences. People at dinner speak in complete thoughts, not fragments.
@@ -1281,53 +1335,49 @@ export function buildCodexPhase1Prompt(
   platform: string,
   clientName: string,
 ): string {
-  return `You have the Codex internalized, the client profile loaded, and the blueprint walkthrough in your context.
-
-The idea/direction is: ${ideaDirection}
+  return `The idea/direction is: ${ideaDirection}
 Content format: ${format} | Platform: ${platform}
 
-YOUR TASK: Plan how to reconstruct this blueprint's physics with ${clientName}'s content.
+═══ PHASE 1: RECONSTRUCTION PLAN ═══
 
-For each slide in the walkthrough, plan:
+Think deeply first. For each slide in the walkthrough:
+
+1. Read the walkthrough's physics for this slide (speech act, deltas, distance, techniques, transition)
+2. Look up that speech act and transition in the Codex — read 2-3 real examples to understand what the concept actually sounds like in viral text, not just what the label means
+3. Read ${clientName}'s top posts and profile — find the specific detail, moment, or fact from their story that fills this structural slot
+4. Note how ${clientName} would actually phrase it — study their sentence length, their connector words, their rhythm
+
+Then think about macro physics:
+- ARC: How does ${clientName}'s story map to the walkthrough's arc shape?
+- SYMMETRY BREAK: What moment in the client's story breaks reader expectation?
+- PHASE TRANSITION: Where does the post become something different?
+- PEAK GRAVITY: Where are the most open loops + highest trust + maximum tension simultaneously?
+- ANTIMATTER: What specific things would destroy THIS post's physics? (Not generic — specific to the client's content and this idea)
+
+After thinking, output your plan via create_writing_plan with this structure per slide:
 
 SLIDE {N}:
-  Blueprint physics: {speech act} → {reader deltas} → {transition to next}
-  Client content: What specific thing from the client's story/expertise fills this slot?
-  Voice note: How would ${clientName} actually SAY this? (Reference their top posts for tone)
-  Density: ~{X} words (match the walkthrough's density for this position)
+  Blueprint: {speech act} → {deltas} → {transition}
+  Client content: {specific detail from profile}
+  Voice: {how they'd say it — reference a specific top post for tone}
+  Density: ~{X} words
 
-Then plan the macro physics:
-- ARC: How does the client's story map to the walkthrough's arc shape? Where are the valleys and peaks?
-- SYMMETRY BREAK: What moment in the client's story breaks the reader's pattern expectation?
-- PHASE TRANSITION: Where does the post become something different? (story→tutorial, fear→opportunity, proof→philosophy)
-- PEAK GRAVITY: Where are the most open loops, highest trust, and maximum tension simultaneously active?
-- ANTIMATTER: What specific client-relevant things would destroy this post's physics? (Not generic — specific to THIS content)
-
-Generate 3 HOOK VARIANTS:
-Each hook must:
-- Open 3+ loops simultaneously (one emotional, one tactical, one identity)
-- Use the walkthrough's hook speech act and techniques
-- Sound like ${clientName}'s actual speaking voice (study their top posts)
-- Pass the scroll test: would you stop scrolling for this?
-
-Output your plan via create_writing_plan.`;
+Include 3 HOOK VARIANTS. Each must open 3+ loops, use the walkthrough's hook physics, and sound like ${clientName} at dinner — not like a copywriter.`;
 }
 
 /**
  * Build the Phase 2 (Write) user message.
  */
 export function buildCodexPhase2Prompt(clientName: string): string {
-  return `Your reconstruction plan is ready. Write the draft now.
+  return `═══ PHASE 2: WRITE ═══
 
-REMEMBER: Sound like ${clientName} at dinner. Not a copywriter. Not a coach. Not an AI. A person talking to a friend about something they genuinely care about.
+Your plan is your thinking. Write directly — no additional think calls needed. Call write_draft with the complete content.
 
-Before you write each slide:
-1. Re-read the walkthrough's slide at this position — what physics does it produce?
-2. Re-read your plan for this slide — what client content fills this slot?
-3. Re-read ${clientName}'s top posts — how do THEY structure sentences? How short? What words do they actually use?
-4. Write it as if you're speaking it out loud to a friend. If you wouldn't say it at dinner, rewrite it.
+For each slide, your plan tells you WHAT to write. Now focus entirely on HOW it sounds.
 
-DENSITY IS TRUTH: The walkthrough shows the density pattern. Sparse emotional slides stay sparse (5-15 words). Dense proof slides stay dense (30-60 words). Match the rhythm — don't make every slide the same length.
+The test for every slide: Would ${clientName} say this exact sentence at dinner? If not, it's wrong. Compare against their top posts — match their sentence length, their energy, their level of formality. Not a template. THEIR voice.
+
+DENSITY IS TRUTH: The walkthrough shows the density pattern per slide position. Sparse emotional slides stay sparse (5-15 words). Dense proof slides stay dense (30-60 words). Don't flatten the rhythm into uniform slide lengths.
 
 Call write_draft with the complete content.`;
 }
@@ -1336,35 +1386,34 @@ Call write_draft with the complete content.`;
  * Build the Phase 3 (Self-Edit) user message.
  */
 export function buildCodexPhase3Prompt(clientName: string): string {
-  return `Read your draft as if you're hearing it spoken. Then read the walkthrough. Then read ${clientName}'s top posts.
+  return `═══ PHASE 3: SELF-EDIT ═══
 
-Now fix your draft. For each slide, check:
+Think once: compare each slide of your draft against the corresponding walkthrough slide and ${clientName}'s top posts. Then write the corrected version via write_draft.
 
-1. VOICE (most important — this overrides everything):
+In your think, check each slide for:
+
+1. VOICE (most important — overrides everything):
    - Are sentences complete and natural? People speak in full thoughts, not fragments.
    - Are most sentences 10-15 words? Short but not choppy.
    - Do sentences flow into each other like speech? (connectors: but, and, so, then)
-   - Would ${clientName} actually say these exact words in this order?
-   - Compare directly to their top posts — match their rhythm, not a template.
-   - Fragments should be RARE — only at slide transitions or impact endings. Never mid-paragraph.
+   - Would ${clientName} actually say these exact words? Compare to their real posts.
+   - Fragments ONLY at slide transitions or final impact lines. Never mid-paragraph, never consecutive.
 
-2. PHYSICS: Does this slide produce what the walkthrough says it should?
-   - Speech act: Same type? (HOOK, CONFESSION, CLAIM, REVEAL, etc.)
-   - Reader delta: Does the reader feel what they should? (curiosity+, trust+, surprise, etc.)
-   - Distance: Is it at the right distance? (zero = inside the moment, near = telling a friend, far = observing)
+2. PHYSICS: Does each slide produce what the walkthrough specifies?
+   - Same speech act type? (Look up the Codex entry if unsure what it should sound like)
+   - Same reader deltas? Does the reader feel curiosity+, trust+, surprise where they should?
+   - Right experiential distance? (zero = inside the moment, near = telling a friend, far = observing)
 
 3. TRANSITIONS: Does each slide CAUSE the next?
-   - Can you say "so" or "but" or "and then" between them?
+   - Can you say "so", "but", or "and then" between them?
    - If you swapped two adjacent slides, would it feel wrong? If not, the chain is broken.
 
 4. ANTIMATTER: Did any of these sneak in?
    - AI transitions ("Furthermore", "Additionally"), hedging, overexplaining
-   - Round numbers where odd numbers are more real
+   - Round numbers where odd numbers would be more believable
    - Generic references where named entities should be
    - Morals stated before they're felt
-   - Multiple fragments in a row (the #1 AI tell)
+   - Multiple fragments in a row (the #1 tell of AI writing)
 
-Fix all issues. Prioritize voice over everything — a slightly imperfect structure that sounds human beats a perfect structure that sounds like AI.
-
-Call write_draft with the corrected version.`;
+After your think, call write_draft with the corrected version. Prioritize voice — a slightly imperfect structure that sounds human beats a perfect structure that sounds like AI.`;
 }

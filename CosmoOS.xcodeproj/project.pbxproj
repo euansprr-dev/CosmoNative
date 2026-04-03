@@ -182,7 +182,6 @@
 		61AE6E10E6AE89382CE3E381 /* GhostCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7C6320201B991A481A70EC /* GhostCardView.swift */; };
 		61B7BB90A561E73AAC518E31 /* ObsidianPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A9E3C6F7D5DAA5B4402C06C /* ObsidianPalette.swift */; };
 		624520441708046250237305 /* SanctuarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508034948877066137948206 /* SanctuarySettingsView.swift */; };
-		C0D3X5E771B8A93F01234567 /* CodexSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */; };
 		62D9902811E41698A9B1566F /* IdeaEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2EECB1864218BE781E7FFE8 /* IdeaEditorView.swift */; };
 		64599EA49CF44F6A8592CF92 /* AutomationRuleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0770CC669F9149F9B52B304D /* AutomationRuleRow.swift */; };
 		647E8F4DE9EC3734513F156E /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8CD10D86DD112EEAD95F75 /* HotkeyManager.swift */; };
@@ -249,24 +248,12 @@
 		83480C2BD02E38FEB6225966 /* BadgeDefinitionSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F742593B09ABB38A759F44B /* BadgeDefinitionSystem.swift */; };
 		8424D4918807F94B384469C9 /* BlockContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A95B53231B529DFC27DAE73 /* BlockContextMenu.swift */; };
 		843809879013121345105110 /* InstagramDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 052955334452704736230383 /* InstagramDataProvider.swift */; };
+		865D3470F93DBDD97446C467 /* CodexConceptLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22578CC7B4A5FEBC3770E727 /* CodexConceptLookup.swift */; };
 		86A8AF83C388808E8F6A490C /* GraphEdge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D83B38147823FF34E324A214 /* GraphEdge.swift */; };
 		8705ABF088851D4C83CD2C08 /* SwipeFileEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0599709A8879A9131F5F3 /* SwipeFileEngine.swift */; };
 		8765C49BB9A6DCDFECC0FBCB /* FunctionGemmaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E650D41B7677E26ECB6AC7 /* FunctionGemmaEngine.swift */; };
 		878EB062F56B8C7549A9B93C /* CanvasBlockFrameTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E335A930FACCBF88CE7922C /* CanvasBlockFrameTracker.swift */; };
 		8822374716D4A1BECF43006B /* PersuasionStackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */; };
-		CP01A1B2C3D4E5F601234567 /* ContentPhysicsProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */; };
-		CP02A1B2C3D4E5F601234567 /* ContentPhysicsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */; };
-		CP03A1B2C3D4E5F601234567 /* PhysicsSlideQuarksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */; };
-		CP04A1B2C3D4E5F601234567 /* PhysicsTransitionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */; };
-		CP05A1B2C3D4E5F601234567 /* PhysicsReaderJourneyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */; };
-		CP06A1B2C3D4E5F601234567 /* PhysicsRhythmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */; };
-		CP07A1B2C3D4E5F601234567 /* PhysicsBondsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */; };
-		CP08A1B2C3D4E5F601234567 /* PhysicsFabricView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */; };
-		CPCBE4E178359D5D1D9B8F75 /* PhysicsHeroHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP78BE5D52FA32B7BFA55395 /* PhysicsHeroHeaderView.swift */; };
-		CP8130FABED150A3A3C63030 /* PhysicsEventTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP000ECB23D2083D95756D1A /* PhysicsEventTimelineView.swift */; };
-		CPB454BF299BF906E1BA3C96 /* PhysicsArcVisualizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP2086A5DB2A17D4103D14FD /* PhysicsArcVisualizationView.swift */; };
-		CPE953CCE439AA84DD1F1A4F /* PhysicsSectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPC9FC4D7368136B79711FE5 /* PhysicsSectionCardView.swift */; };
-		CP09A1B2C3D4E5F601234567 /* PhysicsBondArcView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP09A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondArcView.swift */; };
 		885D7EC748F4E86F9FCE55CC /* IntelligenceModelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122BC26D8F6FD1CE7BBBC48F /* IntelligenceModelView.swift */; };
 		890920DAF1A4698B5A9C1ACA /* CrystallizationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521A8F94BE805C03298AE029 /* CrystallizationEngine.swift */; };
 		898197C3EBBD7D00277B9FAC /* ReadwiseBookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44B5D2F2B24BEC3ECB6FB427 /* ReadwiseBookStore.swift */; };
@@ -316,6 +303,7 @@
 		9JBT1SCMQ6JEEUO6WZKYNG8O /* CanvasDatabasePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1KMN5LY5IX68T42N8ZG168V9 /* CanvasDatabasePicker.swift */; };
 		A0DE0EB122BB48E8810C428A /* PipelineTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E80962A18F34E839CE304DE /* PipelineTemplates.swift */; };
 		A0EAFA56D481845FDC5E16C2 /* LevelSystemService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0989380D17344D1651F469A3 /* LevelSystemService.swift */; };
+		A15180ABC51A87C9CE272A5C /* CodexConceptTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E04D6EC62D36106576BCA /* CodexConceptTag.swift */; };
 		A16E02E4BEDA8394E97492B9 /* XPSummaryOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A560491F69BED5875D5944A7 /* XPSummaryOverlay.swift */; };
 		A1B2C3D4E5F60718293A4B56 /* ClusterCreationPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829304A5B67 /* ClusterCreationPopover.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* IdeaInsight.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3A4B5C6D7E8F9A0B1C2 /* IdeaInsight.swift */; };
@@ -419,6 +407,7 @@
 		BFF0DAD7BE37FBE49DF00E26 /* RichDocumentPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76E66E143A58F68BF86E67 /* RichDocumentPersistence.swift */; };
 		C04145186996D302AEDBCFD5 /* SwipeDraftEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46BFDFF392B5F3A8A79CA172 /* SwipeDraftEngine.swift */; };
 		C0C6945037E18B1A40EFD000 /* QueryResultCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6443E2395ACB64F44A736EE3 /* QueryResultCache.swift */; };
+		C0D3X5E771B8A93F01234567 /* CodexSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */; };
 		C0D5FE67900C9ECA5AAACD97 /* CosmoVoiceDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 891FE94AF6E3DE3235B5036C /* CosmoVoiceDaemon.swift */; };
 		C1E51748A7A2E27DCFDC4FD2 /* FocusFloatingBlocksManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725D4D19AB69FA3F5D6BC1D8 /* FocusFloatingBlocksManager.swift */; };
 		C1F9805A0B3C1A910371CFF6 /* EditableConnectionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB9B9F2355E9BE521DCB7A0A /* EditableConnectionSection.swift */; };
@@ -471,6 +460,19 @@
 		CEC52C39B6EABD0913413C0D /* OrbitingBlocksEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B2F14A04D89C0A852E5853F /* OrbitingBlocksEngine.swift */; };
 		CF041F2EDBE8AFEDD6CA4C52 /* ConnectionFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C1ACA9C241F9206915A45E8 /* ConnectionFocusModeView.swift */; };
 		CF7764E9796FCC25BBD58C26 /* ProfileTranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 774A458FC5FC6802A4E8B96D /* ProfileTranscriptionManager.swift */; };
+		CP01A1B2C3D4E5F601234567 /* ContentPhysicsProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */; };
+		CP02A1B2C3D4E5F601234567 /* ContentPhysicsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */; };
+		CP03A1B2C3D4E5F601234567 /* PhysicsSlideQuarksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */; };
+		CP04A1B2C3D4E5F601234567 /* PhysicsTransitionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */; };
+		CP05A1B2C3D4E5F601234567 /* PhysicsReaderJourneyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */; };
+		CP06A1B2C3D4E5F601234567 /* PhysicsRhythmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */; };
+		CP07A1B2C3D4E5F601234567 /* PhysicsBondsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */; };
+		CP08A1B2C3D4E5F601234567 /* PhysicsFabricView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */; };
+		CP09A1B2C3D4E5F601234567 /* PhysicsBondArcView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP09A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondArcView.swift */; };
+		CP8130FABED150A3A3C63030 /* PhysicsEventTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP000ECB23D2083D95756D1A /* PhysicsEventTimelineView.swift */; };
+		CPB454BF299BF906E1BA3C96 /* PhysicsArcVisualizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP2086A5DB2A17D4103D14FD /* PhysicsArcVisualizationView.swift */; };
+		CPCBE4E178359D5D1D9B8F75 /* PhysicsHeroHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CP78BE5D52FA32B7BFA55395 /* PhysicsHeroHeaderView.swift */; };
+		CPE953CCE439AA84DD1F1A4F /* PhysicsSectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CPC9FC4D7368136B79711FE5 /* PhysicsSectionCardView.swift */; };
 		D00DC6547DF24E5E1DC914C3 /* TaxonomyManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3028CE018CBFFD6F94EB7C6C /* TaxonomyManagementView.swift */; };
 		D0CD973E6694BFD32C96B46E /* DeleteDrawingAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */; };
 		D0D22C21070FAB05B7D154E8 /* AtomMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE62FCA1D4C0E9CF716666 /* AtomMigration.swift */; };
@@ -682,6 +684,7 @@
 		21022F5E11B156F7DCBB8A7E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2102FEA4B0C930DF27F2DA7F /* LevelSystemVoicePatterns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelSystemVoicePatterns.swift; sourceTree = "<group>"; };
 		21BAFA2200FB442A907F9676 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
+		22578CC7B4A5FEBC3770E727 /* CodexConceptLookup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexConceptLookup.swift; path = UI/FocusMode/SwipeStudy/CodexConceptLookup.swift; sourceTree = SOURCE_ROOT; };
 		229A581FC01C4C1886C9D2FA /* LevelUpCelebrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelUpCelebrationView.swift; sourceTree = "<group>"; };
 		24D7DA3674BBC5215AF7B2BC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		2592701606783E9FDCA1CC31 /* DateFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateFormatters.swift; sourceTree = "<group>"; };
@@ -762,7 +765,6 @@
 		4F8B02C3E5D6A71F9B2C4D6E /* CanvasCluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCluster.swift; sourceTree = "<group>"; };
 		4FA4481C07F33D2172547489 /* DeleteDrawingAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteDrawingAction.swift; sourceTree = "<group>"; };
 		508034948877066137948206 /* SanctuarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SanctuarySettingsView.swift; sourceTree = "<group>"; };
-		C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSettingsTab.swift; sourceTree = "<group>"; };
 		50DDC3ED65C2C443AB74FAD5 /* CommandCenterZone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterZone.swift; sourceTree = "<group>"; };
 		510127420EC790D32FECDB2F /* VisualEffectBlur.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectBlur.swift; sourceTree = "<group>"; };
 		511232F099CC20A77E8086FE /* NordicFrostPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NordicFrostPalette.swift; sourceTree = "<group>"; };
@@ -845,6 +847,7 @@
 		7830A609414A29F053016E77 /* SemanticSearchEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SemanticSearchEngine.swift; sourceTree = "<group>"; };
 		79BBD71329538F82DE07B956 /* DailyCronEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyCronEngine.swift; sourceTree = "<group>"; };
 		79D7BE34CF53EC7AC7E8F322 /* CorrelationRequestBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrelationRequestBuilder.swift; sourceTree = "<group>"; };
+		7A1E04D6EC62D36106576BCA /* CodexConceptTag.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CodexConceptTag.swift; path = UI/FocusMode/SwipeStudy/CodexConceptTag.swift; sourceTree = SOURCE_ROOT; };
 		7A244F8ABF3E499F9531DC6A /* AutomationListPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AutomationListPanel.swift; path = UI/Automation/AutomationListPanel.swift; sourceTree = SOURCE_ROOT; };
 		7A9E3C6F7D5DAA5B4402C06C /* ObsidianPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianPalette.swift; sourceTree = "<group>"; };
 		7B3E0FCB981B80A64D66CAAE /* InboxActionExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InboxActionExecutor.swift; path = AI/InboxActionExecutor.swift; sourceTree = SOURCE_ROOT; };
@@ -1007,6 +1010,7 @@
 		BF85FE689B3618B9EAC59CDB /* com.cosmo.voicedaemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = com.cosmo.voicedaemon.plist; sourceTree = "<group>"; };
 		BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmicHaptics.swift; sourceTree = "<group>"; };
 		C04A45CC0F89F894C641EC1D /* ClusterGridContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterGridContent.swift; sourceTree = "<group>"; };
+		C0D3X5E771B8A93F89ABCDEF /* CodexSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSettingsTab.swift; sourceTree = "<group>"; };
 		C12AA7602A1DF318E80265B8 /* EditingContextTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingContextTracker.swift; sourceTree = "<group>"; };
 		C1F7E82A3B9D45F6A0E12D73 /* FilmGrainOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmGrainOverlay.swift; sourceTree = "<group>"; };
 		C2107CE41A783C7B48FD2E2B /* MediaBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaBlockView.swift; sourceTree = "<group>"; };
@@ -1057,6 +1061,19 @@
 		CEDBDCEFE8596071829304CB /* WeeklyReportData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyReportData.swift; sourceTree = "<group>"; };
 		CFEE39B0E0751F2B08503004 /* SyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatusView.swift; sourceTree = "<group>"; };
 		CFF52109613B99EA112BAB54 /* AgentContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextAssembler.swift; sourceTree = "<group>"; };
+		CP000ECB23D2083D95756D1A /* PhysicsEventTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsEventTimelineView.swift; path = UI/FocusMode/SwipeStudy/PhysicsEventTimelineView.swift; sourceTree = SOURCE_ROOT; };
+		CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsProfile.swift; path = Data/Models/ContentPhysicsProfile.swift; sourceTree = SOURCE_ROOT; };
+		CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsSection.swift; path = UI/FocusMode/SwipeStudy/ContentPhysicsSection.swift; sourceTree = SOURCE_ROOT; };
+		CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsSlideQuarksView.swift; path = UI/FocusMode/SwipeStudy/PhysicsSlideQuarksView.swift; sourceTree = SOURCE_ROOT; };
+		CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsTransitionFlowView.swift; path = UI/FocusMode/SwipeStudy/PhysicsTransitionFlowView.swift; sourceTree = SOURCE_ROOT; };
+		CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsReaderJourneyView.swift; path = UI/FocusMode/SwipeStudy/PhysicsReaderJourneyView.swift; sourceTree = SOURCE_ROOT; };
+		CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsRhythmView.swift; path = UI/FocusMode/SwipeStudy/PhysicsRhythmView.swift; sourceTree = SOURCE_ROOT; };
+		CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsBondsView.swift; path = UI/FocusMode/SwipeStudy/PhysicsBondsView.swift; sourceTree = SOURCE_ROOT; };
+		CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsFabricView.swift; path = UI/FocusMode/SwipeStudy/PhysicsFabricView.swift; sourceTree = SOURCE_ROOT; };
+		CP09A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondArcView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsBondArcView.swift; path = UI/FocusMode/SwipeStudy/PhysicsBondArcView.swift; sourceTree = SOURCE_ROOT; };
+		CP2086A5DB2A17D4103D14FD /* PhysicsArcVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsArcVisualizationView.swift; path = UI/FocusMode/SwipeStudy/PhysicsArcVisualizationView.swift; sourceTree = SOURCE_ROOT; };
+		CP78BE5D52FA32B7BFA55395 /* PhysicsHeroHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsHeroHeaderView.swift; path = UI/FocusMode/SwipeStudy/PhysicsHeroHeaderView.swift; sourceTree = SOURCE_ROOT; };
+		CPC9FC4D7368136B79711FE5 /* PhysicsSectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsSectionCardView.swift; path = UI/FocusMode/SwipeStudy/PhysicsSectionCardView.swift; sourceTree = SOURCE_ROOT; };
 		D05E0BD68289AD700C0CC11D /* ResearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchService.swift; sourceTree = "<group>"; };
 		D0D174FED1EFA89B96545A44 /* CosmoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoApp.swift; sourceTree = "<group>"; };
 		D1AF9ABBFDF6601F3D43015B /* VoiceTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTypes.swift; sourceTree = "<group>"; };
@@ -1092,19 +1109,6 @@
 		DC015AD19E281A8886EA2EF9 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
 		DD8B4C2A5F0E3B9C6A2D7F1E /* ContentContextPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContentContextPanel.swift; path = UI/FocusMode/Content/ContentContextPanel.swift; sourceTree = SOURCE_ROOT; };
 		DF220EDB87DD72BE9855B558 /* PersuasionStackView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PersuasionStackView.swift; path = UI/FocusMode/SwipeStudy/PersuasionStackView.swift; sourceTree = SOURCE_ROOT; };
-		CP01A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsProfile.swift; path = Data/Models/ContentPhysicsProfile.swift; sourceTree = SOURCE_ROOT; };
-		CP02A1B2C3D4E5F6A7B8C9D0 /* ContentPhysicsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentPhysicsSection.swift; path = UI/FocusMode/SwipeStudy/ContentPhysicsSection.swift; sourceTree = SOURCE_ROOT; };
-		CP03A1B2C3D4E5F6A7B8C9D0 /* PhysicsSlideQuarksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsSlideQuarksView.swift; path = UI/FocusMode/SwipeStudy/PhysicsSlideQuarksView.swift; sourceTree = SOURCE_ROOT; };
-		CP04A1B2C3D4E5F6A7B8C9D0 /* PhysicsTransitionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsTransitionFlowView.swift; path = UI/FocusMode/SwipeStudy/PhysicsTransitionFlowView.swift; sourceTree = SOURCE_ROOT; };
-		CP05A1B2C3D4E5F6A7B8C9D0 /* PhysicsReaderJourneyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsReaderJourneyView.swift; path = UI/FocusMode/SwipeStudy/PhysicsReaderJourneyView.swift; sourceTree = SOURCE_ROOT; };
-		CP06A1B2C3D4E5F6A7B8C9D0 /* PhysicsRhythmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsRhythmView.swift; path = UI/FocusMode/SwipeStudy/PhysicsRhythmView.swift; sourceTree = SOURCE_ROOT; };
-		CP07A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsBondsView.swift; path = UI/FocusMode/SwipeStudy/PhysicsBondsView.swift; sourceTree = SOURCE_ROOT; };
-		CP08A1B2C3D4E5F6A7B8C9D0 /* PhysicsFabricView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsFabricView.swift; path = UI/FocusMode/SwipeStudy/PhysicsFabricView.swift; sourceTree = SOURCE_ROOT; };
-		CP78BE5D52FA32B7BFA55395 /* PhysicsHeroHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsHeroHeaderView.swift; path = UI/FocusMode/SwipeStudy/PhysicsHeroHeaderView.swift; sourceTree = SOURCE_ROOT; };
-		CP000ECB23D2083D95756D1A /* PhysicsEventTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsEventTimelineView.swift; path = UI/FocusMode/SwipeStudy/PhysicsEventTimelineView.swift; sourceTree = SOURCE_ROOT; };
-		CP2086A5DB2A17D4103D14FD /* PhysicsArcVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsArcVisualizationView.swift; path = UI/FocusMode/SwipeStudy/PhysicsArcVisualizationView.swift; sourceTree = SOURCE_ROOT; };
-		CPC9FC4D7368136B79711FE5 /* PhysicsSectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsSectionCardView.swift; path = UI/FocusMode/SwipeStudy/PhysicsSectionCardView.swift; sourceTree = SOURCE_ROOT; };
-		CP09A1B2C3D4E5F6A7B8C9D0 /* PhysicsBondArcView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PhysicsBondArcView.swift; path = UI/FocusMode/SwipeStudy/PhysicsBondArcView.swift; sourceTree = SOURCE_ROOT; };
 		DF42D197C4D4141B80DB7E24 /* ConnectionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSidebarView.swift; sourceTree = "<group>"; };
 		DF5FEDB8FB985F915B6C235E /* IdeaBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaBlockView.swift; sourceTree = "<group>"; };
 		DF860CF734F5A6FCD81379FE /* InfiniteCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfiniteCanvasView.swift; sourceTree = "<group>"; };
@@ -2459,6 +2463,8 @@
 				BB64E7D10A927E05CD23BC08 /* InstagramEmbedView.swift */,
 				560552925842914323481031 /* CreatorImportSheet.swift */,
 				493090644904674200147833 /* ImportedPostCard.swift */,
+				22578CC7B4A5FEBC3770E727 /* CodexConceptLookup.swift */,
+				7A1E04D6EC62D36106576BCA /* CodexConceptTag.swift */,
 			);
 			name = SwipeStudy;
 			sourceTree = "<group>";
@@ -3188,6 +3194,8 @@
 				C671086B9D592D87DDC5AB01 /* InboxBatchBar.swift in Sources */,
 				0D5E86A25E93B8B51C9B8C99 /* InboxGroupSuggestionCard.swift in Sources */,
 				EA94F5DC3626B3E64328B679 /* InboxIntelligenceEngine.swift in Sources */,
+				865D3470F93DBDD97446C467 /* CodexConceptLookup.swift in Sources */,
+				A15180ABC51A87C9CE272A5C /* CodexConceptTag.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

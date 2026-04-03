@@ -247,12 +247,7 @@ struct PhysicsBondsView: View {
     @ViewBuilder
     private func forcePills(_ forces: [String]) -> some View {
         ForEach(forces, id: \.self) { force in
-            Text(force)
-                .font(DS.caption2)
-                .foregroundStyle(DS.orange)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(DS.orangeSoft, in: Capsule())
+            CodexConceptTag(name: force, color: DS.orange)
         }
     }
 

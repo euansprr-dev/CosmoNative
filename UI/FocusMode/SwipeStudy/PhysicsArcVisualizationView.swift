@@ -32,12 +32,7 @@ struct PhysicsArcVisualizationView: View {
         HStack(spacing: DS.space8) {
             if let shape = arcQuarks?.shape, !shape.isEmpty {
                 let arcType = extractArcType(from: shape)
-                Text(arcType)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.entitySwipe)
-                    .padding(.horizontal, DS.space10)
-                    .padding(.vertical, DS.space4)
-                    .background(DS.entitySwipe.opacity(DS.opacitySubtle), in: Capsule())
+                CodexConceptTag(name: arcType, color: DS.entitySwipe)
             }
             if let reversals = arcQuarks?.winLossReversals, reversals > 0 {
                 Label("\(reversals) reversals", systemImage: "arrow.up.arrow.down")

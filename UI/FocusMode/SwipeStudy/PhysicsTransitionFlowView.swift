@@ -130,12 +130,7 @@ struct PhysicsTransitionFlowView: View {
 
     private func typeBadge(_ t: QuarkTransition) -> some View {
         let color = transitionColor(t.type)
-        return Text(t.type)
-            .font(DS.caption2)
-            .foregroundStyle(color)
-            .padding(.horizontal, DS.space6)
-            .padding(.vertical, 2)
-            .background(color.opacity(DS.opacitySubtle), in: Capsule())
+        return CodexConceptTag(name: t.type, color: color)
     }
 
     // MARK: - Special Markers

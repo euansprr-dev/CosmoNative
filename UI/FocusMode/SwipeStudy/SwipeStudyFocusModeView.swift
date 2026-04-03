@@ -40,6 +40,7 @@ struct SwipeStudyFocusModeView: View {
     @State private var profileGenerationError: String?
     @State private var showWalkthroughSheet = false
     @State private var hasAppeared = false
+    @State private var codexLookup = CodexConceptLookup()
 
     // YouTube player state
     @State private var isPlayerActive = false
@@ -177,6 +178,16 @@ struct SwipeStudyFocusModeView: View {
                     loadAtom(using: fresh)
                 } else {
                     loadAtom()
+                }
+            }
+            // Load Codex concept lookup for interactive tags
+            if !codexLookup.isLoaded {
+                Task {
+                    let codexAtoms = try? await AtomRepository.shared.fetchAll(type: .research)
+                    if let codexAtom = codexAtoms?.first(where: { $0.metadataDict?["isCodexSynthesis"] as? Bool == true }),
+                       let body = codexAtom.body, body.count > 10000 {
+                        codexLookup.parse(codexBody: body)
+                    }
                 }
             }
             // Register context provider for global Cosmo window
@@ -2801,6 +2812,7 @@ struct SwipeStudyFocusModeView: View {
                     // Content Physics Profile (replaces legacy Emotional Arc + Persuasion Stack)
                     if let physicsProfile = currentAtom?.bestPhysicsProfile {
                         ContentPhysicsSection(profile: physicsProfile)
+                            .environment(\.codexLookup, codexLookup)
 
                         // Walkthrough section (only for Codex-language profiles)
                         if let walkthrough = currentAtom?.blueprintWalkthrough {

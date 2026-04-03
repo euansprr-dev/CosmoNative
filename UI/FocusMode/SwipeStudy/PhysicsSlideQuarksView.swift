@@ -103,12 +103,7 @@ struct PhysicsSlideQuarksView: View {
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 40, alignment: .leading)
-                Text(cleanTypeName(value))
-                    .font(DS.caption2)
-                    .foregroundStyle(color)
-                    .padding(.horizontal, DS.space4)
-                    .padding(.vertical, 1)
-                    .background(color.opacity(DS.opacitySubtle), in: Capsule())
+                CodexConceptTag(name: cleanTypeName(value), color: color)
             }
         }
     }
@@ -228,12 +223,7 @@ struct PhysicsSlideQuarksView: View {
                     .foregroundStyle(DS.textMuted)
                 ForEach(Array(techniques.enumerated()), id: \.offset) { _, tech in
                     HStack(spacing: DS.space4) {
-                        Text(tech.technique)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.info)
-                            .padding(.horizontal, DS.space4)
-                            .padding(.vertical, 1)
-                            .background(DS.info.opacity(DS.opacitySubtle), in: Capsule())
+                        CodexConceptTag(name: tech.technique, color: DS.info)
                         if let usage = tech.usage, !usage.isEmpty {
                             Text(usage)
                                 .font(DS.caption2)
@@ -256,12 +246,7 @@ struct PhysicsSlideQuarksView: View {
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
                 if let type, !type.isEmpty {
-                    Text(cleanTypeName(type))
-                        .font(DS.caption2)
-                        .foregroundStyle(color)
-                        .padding(.horizontal, DS.space4)
-                        .padding(.vertical, 1)
-                        .background(color.opacity(DS.opacitySubtle), in: Capsule())
+                    CodexConceptTag(name: cleanTypeName(type), color: color)
                 }
             }
             if let mechanism, !mechanism.isEmpty {

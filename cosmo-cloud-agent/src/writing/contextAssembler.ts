@@ -1203,11 +1203,13 @@ The walkthrough is the skeleton. The Codex teaches what each bone does. The clie
 
 ═══ TOOL FLOW ═══
 
-Phase 1 (Plan): Think deeply about the mapping — read every walkthrough slide, cross-reference the Codex for each concept, map to client content. Then output a structured plan via create_writing_plan with hook variants.
+You have access to these tools: think, create_writing_plan, write_draft, read_draft.
 
-Phase 2 (Write): Your plan IS your thinking. Write directly via write_draft. No additional thinking needed — execute the plan with the client's voice.
+Phase 1 (Plan): Call the think tool FIRST — work through every walkthrough slide, cross-reference the Codex for each concept, map to client content. Your think output stays in conversation context and informs the next step. THEN call create_writing_plan with the structured plan + hook variants.
 
-Phase 3 (Self-Edit): Think once — compare each slide of your draft against the corresponding walkthrough slide. Check voice against the client's top posts. Then write the corrected version via write_draft.
+Phase 2 (Write): Your plan IS your thinking. Call write_draft DIRECTLY. No think call needed — the plan already contains your analysis. Focus entirely on voice execution.
+
+Phase 3 (Self-Edit): Call the think tool FIRST — compare each draft slide against the walkthrough slide and the client's voice. THEN call write_draft with corrections.
 
 Now read the Codex below. It is your complete education in Content Physics.
 
@@ -1340,7 +1342,7 @@ Content format: ${format} | Platform: ${platform}
 
 ═══ PHASE 1: RECONSTRUCTION PLAN ═══
 
-Think deeply first. For each slide in the walkthrough:
+First, call the think tool. In your think, work through every slide in the walkthrough:
 
 1. Read the walkthrough's physics for this slide (speech act, deltas, distance, techniques, transition)
 2. Look up that speech act and transition in the Codex — read 2-3 real examples to understand what the concept actually sounds like in viral text, not just what the label means
@@ -1362,7 +1364,10 @@ SLIDE {N}:
   Voice: {how they'd say it — reference a specific top post for tone}
   Density: ~{X} words
 
-Include 3 HOOK VARIANTS. Each must open 3+ loops, use the walkthrough's hook physics, and sound like ${clientName} at dinner — not like a copywriter.`;
+Include 3 HOOK VARIANTS. Each must:
+- Reproduce the walkthrough's hook physics (same speech act, same reader deltas, same techniques)
+- Sound like ${clientName}'s actual voice (study their top posts for hook style)
+- Use the client's specific content, not the blueprint's content`;
 }
 
 /**
@@ -1388,7 +1393,7 @@ Call write_draft with the complete content.`;
 export function buildCodexPhase3Prompt(clientName: string): string {
   return `═══ PHASE 3: SELF-EDIT ═══
 
-Think once: compare each slide of your draft against the corresponding walkthrough slide and ${clientName}'s top posts. Then write the corrected version via write_draft.
+Call the think tool first. In your think, compare each slide of your draft against the corresponding walkthrough slide and ${clientName}'s top posts. Then call write_draft with the corrected version.
 
 In your think, check each slide for:
 
@@ -1400,9 +1405,14 @@ In your think, check each slide for:
    - Fragments ONLY at slide transitions or final impact lines. Never mid-paragraph, never consecutive.
 
 2. PHYSICS: Does each slide produce what the walkthrough specifies?
-   - Same speech act type? (Look up the Codex entry if unsure what it should sound like)
-   - Same reader deltas? Does the reader feel curiosity+, trust+, surprise where they should?
-   - Right experiential distance? (zero = inside the moment, near = telling a friend, far = observing)
+   Check EVERY field the walkthrough labels for each slide:
+   - Speech act: same type and mechanism?
+   - Reader deltas: all the deltas the walkthrough lists — not just one
+   - Frame: correct frame type?
+   - Experiential distance: zero/near/far matching the walkthrough?
+   - Techniques: are the right craft moves active? (ellipsis, subject drop, direct address, etc.)
+   - Proof type / motivation / compression: if the walkthrough specifies them, are they present?
+   If unsure what a concept should sound like, find its entry in the Codex and read the examples.
 
 3. TRANSITIONS: Does each slide CAUSE the next?
    - Can you say "so", "but", or "and then" between them?

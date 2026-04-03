@@ -190,7 +190,7 @@ struct CodexConceptPopover: View {
 
     private var examplesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("REAL EXAMPLES")
+            Text("EXAMPLES FROM VIRAL POSTS")
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(DS.textMuted)
@@ -231,7 +231,7 @@ struct CodexConceptPopover: View {
 
     private func whereActiveSection(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("WHERE ACTIVE")
+            Text("HOW TO SPOT IT (from Codex)")
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(DS.textMuted)

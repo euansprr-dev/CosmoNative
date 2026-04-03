@@ -69,29 +69,33 @@ final class CodexConceptLookup {
             guard !key.isEmpty, key.count > 1 else { continue }
 
             // Extract up to 3 examples — look for numbered entries with quoted text
+            // Codex format: 1. "slide text here" \n   — [Post title] Slide N
+            // or: 1. **"slide text here"** \n   — [Post title] Slide N
             var examples: [String] = []
-            let examplePattern = /\d+\.\s+(?:\*\*)?"(.+?)(?:\*\*)?"\s*\n\s*(?:—\s*\[.+?\])/
-            for exMatch in body.matches(of: examplePattern) {
-                if examples.count >= 3 { break }
-                let text = String(exMatch.output.1).trimmingCharacters(in: .whitespaces)
-                if text.count > 10 && text.count < 500 {
-                    // Get the full attribution line
-                    let matchRange = exMatch.range
-                    let contextEnd = min(body.index(matchRange.upperBound, offsetBy: 100, limitedBy: body.endIndex) ?? body.endIndex, body.endIndex)
-                    let contextStr = String(body[matchRange.lowerBound..<contextEnd])
-                    examples.append(contextStr.trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-            }
+            let lines = body.components(separatedBy: "\n")
+            var i2 = 0
+            while i2 < lines.count && examples.count < 3 {
+                let line = lines[i2].trimmingCharacters(in: .whitespaces)
+                // Match numbered example lines: starts with digit + period, contains a quote
+                if line.first?.isNumber == true && line.contains(".") && line.contains("\"") {
+                    // This is an example line — grab it plus the attribution line below
+                    var example = line
+                        .replacingOccurrences(of: "**", with: "")
+                        .trimmingCharacters(in: .whitespaces)
 
-            // Simpler example extraction fallback — look for "1. **" pattern
-            if examples.isEmpty {
-                let simplePattern = /\d+\.\s+\*\*"(.{15,300})"\*\*\s*\n\s*—\s*\[([^\]]+)\]/
-                for exMatch in body.matches(of: simplePattern) {
-                    if examples.count >= 3 { break }
-                    let quote = String(exMatch.output.1)
-                    let source = String(exMatch.output.2)
-                    examples.append("\"\(quote)\" — [\(source)]")
+                    // Check next line for attribution "— [Post...]"
+                    if i2 + 1 < lines.count {
+                        let nextLine = lines[i2 + 1].trimmingCharacters(in: .whitespaces)
+                        if nextLine.hasPrefix("—") || nextLine.hasPrefix("-") {
+                            example += "\n   " + nextLine
+                        }
+                    }
+
+                    if example.count > 20 {
+                        examples.append(example)
+                    }
                 }
+                i2 += 1
             }
 
             // Extract "Where active" line from first example
